@@ -1,0 +1,1247 @@
+# FlightSite — Canonical v1 Roadmap
+#
+# This file is the CANONICAL execution plan (SPEC.md §92). docs/ROADMAP.md is the
+# human-readable representation and must be kept consistent with this file.
+#
+# Schema (SPEC.md §93):
+#   id                  three-digit slice number, stable forever, never repurposed
+#   title               short slice name
+#   phase               phase number (see `phases` below)
+#   branch              feature branch name: <id>-<short-description>
+#   status              planned | ready | in_progress | review | merged | blocked | deferred
+#   depends_on          list of slice ids that must be merged first
+#   objective           one-sentence goal
+#   scope               in-scope work items
+#   out_of_scope        explicitly excluded (deferred or other-slice) work
+#   acceptance_criteria testable statements gating the PR
+#   required_tests      test layers/cases the PR must add
+#   expected_artifacts  files/areas the PR is expected to touch/create
+#   preferred_agent     opus | sonnet  (SPEC.md §1; escalation to opus always allowed)
+#   risk_level          low | medium | high
+#   notes               anything else
+#
+# Global conventions applying to EVERY slice (not repeated per-slice):
+#   - One slice = one numbered branch = one PR into dev, merged with a merge commit.
+#   - Each slice gets a GitHub Issue at start; the PR links and closes it.
+#   - Conventional Commits; no CHANGELOG updates outside release branches.
+#   - dev must remain deployable after every merge (build + tests + migrations +
+#     compose + demo mode).
+#   - Coverage gates: backend >= 80%, frontend >= 70% global; critical domains higher.
+#   - Documentation relevant to the slice is updated within the slice.
+
+version: 1
+updated: "2026-08-31"
+
+phases:
+  - number: 0
+    name: "Planning"
+    goal: "Complete planning package, architecture, data model, API design, roadmap, review gate."
+  - number: 1
+    name: "Foundation"
+    goal: "Repository, backend/frontend skeletons, CI, configuration, database, Docker packaging."
+  - number: 2
+    name: "Ingestion & Live Domain"
+    goal: "Decoder ingestion, live aircraft state, sighting lifecycle, live API/WebSocket, demo/replay tooling."
+  - number: 3
+    name: "Live Map Experience"
+    goal: "Map foundation, aircraft rendering, labels, detail panel, filters, setup wizard, settings, E2E foundation."
+  - number: 4
+    name: "Metadata & Enrichment"
+    goal: "Offline metadata import, FAA registry, classification/operator normalization, route enrichment, airport context, overlays."
+  - number: 5
+    name: "History & Analytics"
+    goal: "Aircraft/Sightings pages, analytics, receiver analytics, activity feed, milestones, today-at-a-glance."
+  - number: 6
+    name: "Alerts & Notifications"
+    goal: "Watchlists, rule engine, interesting-aircraft surfaces, browser notifications, alerts page."
+  - number: 7
+    name: "Operations"
+    goal: "Health/diagnostics, backup/restore, database maintenance, retention, data reset."
+  - number: 8
+    name: "Hardening & Release Qualification"
+    goal: "Full E2E, visual regression, accessibility, performance gates, multi-year storage qualification, docs."
+
+# Release checkpoints (SPEC.md §109–113). Releases are prepared on release/vX.Y.Z
+# branches from qualified dev; the main merge requires human approval.
+releases:
+  - version: "v0.1.0"
+    after_phase: 3
+    theme: "Live radar MVP: ingestion, sightings, live map, demo mode, setup wizard."
+  - version: "v0.2.0"
+    after_phase: 4
+    theme: "Aircraft identity: offline metadata, classification, enrichment, overlays."
+  - version: "v0.3.0"
+    after_phase: 5
+    theme: "History & analytics."
+  - version: "v0.4.0"
+    after_phase: 6
+    theme: "Alerts & notifications."
+  - version: "v0.5.0"
+    after_phase: 7
+    theme: "Operations: backup/restore, maintenance, diagnostics."
+  - version: "v1.0.0"
+    after_phase: 8
+    theme: "Qualified stable release per SPEC.md §114 definition of done."
+
+# Explicit v1 non-goals (SPEC.md §79) tracked as future backlog, never implemented
+# silently during v1.
+backlog:
+  - multi-receiver deployments
+  - built-in authentication (reverse-proxy/app auth)
+  - Slack / Home Assistant / email / native mobile push notifications
+  - global aircraft overlay
+  - aircraft photos (photo provider interface exists, unused in v1)
+  - historical animated playback (schema-ready in v1; feature deferred)
+  - free-form global search
+  - data export
+  - manual aircraft notes and manual metadata overrides
+  - full offline map-region download manager
+  - weather integration
+  - airport-level historical analytics
+  - period-over-period analytics
+  - aircraft-follow mode
+  - circling / loitering / repeated-pass behavioral detection
+  - complex nested boolean alert expressions
+  - user-installable plugins
+  - Prometheus/Grafana integration
+  - automatic self-updater
+  - additional decoder adapters (BeastAdapter, SbsAdapter, RemoteReceiverAdapter)
+  - scheduled (automatic) aircraft metadata updates
+
+slices:
+  # ---------------------------------------------------------------- Phase 1
+  - id: "001"
+    title: "Backend skeleton"
+    phase: 1
+    branch: "001-backend-skeleton"
+    status: planned
+    depends_on: []
+    objective: "Establish the Python backend package with app factory, health/readiness endpoints, structured logging, and quality tooling."
+    scope:
+      - backend/ project managed with uv; package `flightsite`; Python 3.12
+      - FastAPI app factory; uvicorn entrypoint
+      - GET /api/v1/health and GET /api/v1/ready endpoints with version info
+      - structured JSON logging (structlog) with configurable level; rotating file handler scaffold
+      - internal counters registry (ingestion failures, db errors, enrichment failures, ws disconnects — counters exist, mostly unused yet)
+      - ruff (format+lint), mypy (strict), pytest + pytest-asyncio + coverage configured
+    out_of_scope: [ingestion, database, configuration files (slice 004), Docker]
+    acceptance_criteria:
+      - "`uv run pytest` passes; ruff and mypy clean"
+      - "app starts locally; /api/v1/health returns 200 with app version"
+      - "readiness endpoint distinguishes started vs ready"
+      - "log output is structured JSON with configurable level"
+    required_tests: [unit tests for app factory + health/ready endpoints + counters registry]
+    expected_artifacts: [backend/pyproject.toml, backend/src/flightsite/, backend/tests/]
+    preferred_agent: sonnet
+    risk_level: low
+    notes: "Foundational slice; minimal by design (SPEC.md §95 justification: nothing exists yet)."
+
+  - id: "002"
+    title: "Frontend skeleton"
+    phase: 1
+    branch: "002-frontend-skeleton"
+    status: planned
+    depends_on: []
+    objective: "Establish the React/TypeScript frontend with navigation shell, theming, and quality tooling."
+    scope:
+      - frontend/ Vite + React 18 + TypeScript strict
+      - Tailwind CSS + shadcn/ui + Lucide; aviation-instrument design tokens (dark default + light theme)
+      - app shell with primary navigation (Live Map, Aircraft, Sightings, Analytics, Receiver, Alerts, Settings) and placeholder routes
+      - theme toggle persisted in localStorage; respects dark default
+      - Zustand store scaffold; TanStack Query client scaffold
+      - ESLint + Prettier + tsc + Vitest + React Testing Library configured
+    out_of_scope: [map, real pages, API integration]
+    acceptance_criteria:
+      - "`npm run build`, lint, typecheck, and tests pass"
+      - "shell renders all seven nav sections with keyboard-navigable, focus-visible nav"
+      - "dark theme is default; toggle persists across reloads"
+    required_tests: [component tests for shell/nav/theme persistence]
+    expected_artifacts: [frontend/package.json, frontend/src/, frontend/src/components/]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "003"
+    title: "CI pipeline"
+    phase: 1
+    branch: "003-ci-pipeline"
+    status: planned
+    depends_on: ["001", "002"]
+    objective: "Stand up GitHub Actions quality gates and security scanning as required status checks."
+    scope:
+      - backend workflow: ruff, mypy, pytest with coverage gate (>=80%)
+      - frontend workflow: eslint, prettier check, tsc, vitest with coverage gate (>=70%)
+      - security workflow: pip-audit, npm audit, gitleaks secret scan, license check
+      - Dependabot config (pip, npm, github-actions, docker)
+      - configure required status checks on dev/main branch protection
+    out_of_scope: [Docker build workflow (slice 006), E2E in CI (slice 020), container scanning (slice 006)]
+    acceptance_criteria:
+      - "all workflows pass on a PR from a feature branch"
+      - "coverage below threshold fails the build"
+      - "required status checks enforced on dev"
+    required_tests: [workflows validated by a passing PR run]
+    expected_artifacts: [.github/workflows/backend.yml, .github/workflows/frontend.yml, .github/workflows/security.yml, .github/dependabot.yml]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "004"
+    title: "Configuration system"
+    phase: 1
+    branch: "004-config-system"
+    status: planned
+    depends_on: ["001"]
+    objective: "Implement the canonical config.yaml / secrets.yaml / environment-override configuration model."
+    scope:
+      - pydantic-settings model covering SPEC.md §30 areas (receiver endpoint, location, units, timezone, display radius, alert radius, sighting timing, retention, map, enrichment, notifications)
+      - defaults per Phase 0 decisions (nm/ft/kt; 15s/60s/600s lifecycle; display radius 250 NM; alert radius unlimited; 14-day high-res metric window)
+      - load order: defaults < config.yaml < secrets.yaml < FLIGHTSITE_* env vars
+      - data directory resolution (FLIGHTSITE_DATA_DIR, default /opt/flightsite/data in containers)
+      - atomic config write-back (Settings UI will edit the same model); first-run detection
+      - secret values never logged or serialized into non-secret API responses
+    out_of_scope: [Settings UI, setup wizard]
+    acceptance_criteria:
+      - "missing config.yaml yields valid defaults and first-run state"
+      - "env vars override file values; secrets load from secrets.yaml and env"
+      - "config round-trips through write-back preserving comments is NOT required; YAML output is clean and stable"
+      - "secret masking verified by test (no secret in logs or config API dump)"
+    required_tests: [unit tests for precedence, validation errors, write-back, secret masking]
+    expected_artifacts: [backend/src/flightsite/config/, config.example.yaml]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "005"
+    title: "Database foundation"
+    phase: 1
+    branch: "005-database-foundation"
+    status: planned
+    depends_on: ["001", "004"]
+    objective: "Establish SQLite persistence with SQLAlchemy 2.x async, Alembic migrations, WAL configuration, and integrity checks."
+    scope:
+      - async engine (aiosqlite) with WAL, busy_timeout, synchronous=NORMAL, foreign_keys=ON
+      - single-writer discipline: dedicated writer session pattern; read sessions for queries
+      - Alembic wired to models; migration applied automatically at startup
+      - meta table (schema for T0, app-level metadata); T0 write-once semantics
+      - startup integrity check (PRAGMA quick_check) with diagnostics on failure
+      - migration test harness (empty + fixture upgrade path)
+    out_of_scope: [domain tables (arrive with their slices), maintenance jobs (slice 044)]
+    acceptance_criteria:
+      - "fresh start creates DB in data dir, applies migrations, records nothing until first observation (T0 unset)"
+      - "WAL mode and pragmas verified by test"
+      - "migration harness upgrades an empty and a fixture DB successfully"
+      - "startup integrity failure is surfaced, not silently ignored"
+    required_tests: [persistence unit tests, migration tests, pragma verification]
+    expected_artifacts: [backend/src/flightsite/db/, backend/alembic/, backend/tests/db/]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "006"
+    title: "Docker packaging"
+    phase: 1
+    branch: "006-docker-packaging"
+    status: planned
+    depends_on: ["003", "004", "005"]
+    objective: "Package FlightSite as two multi-arch containers with Compose deployment and GHCR publishing."
+    scope:
+      - backend Dockerfile (multi-stage, non-root, linux/arm64+amd64)
+      - frontend Dockerfile (static build served by nginx; proxies /api to backend)
+      - compose.yaml with /opt/flightsite/data bind mount; no anonymous volumes; healthchecks
+      - GH Actions workflow: buildx multi-arch build, Trivy container scan, GHCR publish on tags; build+smoke on PRs
+      - CI smoke test: compose up, health endpoint, compose down
+    out_of_scope: [release automation (release branches), demo-mode container defaults (slice 011 wires flag)]
+    acceptance_criteria:
+      - "`docker compose up -d` serves frontend shell and healthy backend on a clean host"
+      - "all persistent state lands under the bind mount"
+      - "images build for arm64 and amd64 in CI; Trivy scan gate wired"
+    required_tests: [CI compose smoke test]
+    expected_artifacts: [backend/Dockerfile, frontend/Dockerfile, frontend/nginx.conf, compose.yaml, .github/workflows/docker.yml]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  # ---------------------------------------------------------------- Phase 2
+  - id: "007"
+    title: "Decoder ingestion adapter"
+    phase: 2
+    branch: "007-ingestion-adapter"
+    status: planned
+    depends_on: ["004"]
+    objective: "Implement the DecoderAdapter abstraction and ReadsbJsonAdapter polling readsb/dump1090-fa aircraft.json into normalized state updates."
+    scope:
+      - DecoderAdapter protocol producing normalized AircraftStateUpdate batches (decoder-agnostic domain types)
+      - ReadsbJsonAdapter: aircraft.json polling at configured interval; tolerant parsing of readsb and dump1090-fa variants
+      - position source classification (adsb / mlat / modes-no-position / other) from decoder fields
+      - malformed-input hardening: bad JSON, missing fields, absurd values never crash ingestion
+      - connection health state machine (connected / degraded / down) with automatic reconnect + backoff
+      - connection test service (used later by wizard/settings) as internal endpoint
+      - ingestion failure counters wired
+    out_of_scope: [live state store, persistence, Beast/SBS adapters]
+    acceptance_criteria:
+      - "fixtures from real readsb and dump1090-fa outputs normalize correctly, including MLAT and non-positioned aircraft"
+      - "decoder outage triggers health transitions and recovery without restart"
+      - "malformed payload fuzz tests pass without exceptions escaping the adapter"
+      - "no readsb-specific field names appear outside the adapter module"
+    required_tests: [ingestion unit tests with real-world fixtures, malformed-input tests, reconnect tests]
+    expected_artifacts: [backend/src/flightsite/ingest/, backend/tests/ingest/, fixture files]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "008"
+    title: "Live aircraft state store"
+    phase: 2
+    branch: "008-live-state-store"
+    status: planned
+    depends_on: ["007"]
+    objective: "Maintain the in-memory live aircraft registry with lifecycle timing, derived fields, and provenance."
+    scope:
+      - live registry keyed by ICAO applying AircraftStateUpdate batches
+      - lifecycle: fresh -> stale (15s) -> removed from live (60s); configurable; monotonic-clock driven
+      - derived fields: distance/bearing from receiver (great-circle), airborne/on-ground/unknown (decoder-preferred, conservative inference)
+      - non-positioned aircraft retained as first-class live entries
+      - field provenance tagging (decoder vs derived) on live state
+      - current-track accumulation per live aircraft (full resolution while live)
+      - event stream (aircraft appeared / updated / stale / removed) consumed by later slices
+      - 500-aircraft update batch benchmarked (informal perf sanity test)
+    out_of_scope: [sighting persistence, WebSocket, alert evaluation]
+    acceptance_criteria:
+      - "lifecycle transitions occur at configured thresholds under simulated time"
+      - "non-positioned aircraft appear in live state with correct position source"
+      - "distance/bearing correct against known geodesic fixtures"
+      - "500-aircraft 1 Hz batch applies well under one polling interval on dev hardware"
+    required_tests: [domain unit tests with simulated clock, geodesic fixtures, lifecycle edge cases]
+    expected_artifacts: [backend/src/flightsite/live/, backend/tests/live/]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Core domain. Critical-coverage area (SPEC.md §84)."
+
+  - id: "009"
+    title: "Sighting lifecycle & persistence"
+    phase: 2
+    branch: "009-sighting-lifecycle"
+    status: planned
+    depends_on: ["005", "008"]
+    objective: "Persist aircraft and sightings: open/close lifecycle, track checkpointing and simplification, reception stats, sighting events, lifetime records, T0, and unclean-shutdown recovery."
+    scope:
+      - aircraft + sightings + track points + sighting_events tables (Alembic migrations)
+      - write-behind persistence worker consuming live events; ingestion never blocks on DB
+      - sighting open on first observation; close after 10 min absence (configurable); no new sighting until previous closed
+      - full-resolution track checkpointed to DB in batches while active (bounded loss on power cut)
+      - on close: Douglas-Peucker simplification of the track; timestamped ordered points retained (playback-capable); full-res checkpoint rows replaced
+      - per-sighting reception stats (peak/avg/min signal, message count, position count, duration, % with position)
+      - sighting events for meaningful changes (callsign change, squawk change, emergency, enrichment arrival)
+      - flight-context fields on sighting (callsign, squawk, ...) kept distinct from aircraft identity
+      - aircraft lifetime records maintained (first/last seen, sighting count, cumulative duration, closest/farthest, lowest/highest altitude)
+      - T0 set exactly once at first persisted observation
+      - startup recovery: sightings left open by unclean shutdown are closed/repaired with diagnostics
+    out_of_scope: [analytics rollups, alert evaluation, receiver metrics]
+    acceptance_criteria:
+      - "sighting open/close/gap semantics verified under simulated time, including the no-reopen-before-close rule"
+      - "closed sighting stores simplified, timestamped, ordered path; simplification error bounded and tested"
+      - "kill -9 during active sightings recovers on restart: open sightings closed sanely, bounded track loss"
+      - "lifetime records and T0 correct across multiple sightings"
+      - "ingestion throughput unaffected by artificially slowed writer (backpressure test)"
+    required_tests: [domain tests, persistence tests, migration tests, recovery tests, simplification property tests]
+    expected_artifacts: [backend/src/flightsite/sightings/, backend/alembic/versions/, backend/tests/sightings/]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Most critical backend slice. Critical-coverage area."
+
+  - id: "010"
+    title: "Live API & WebSocket"
+    phase: 2
+    branch: "010-live-api-websocket"
+    status: planned
+    depends_on: ["008"]
+    objective: "Expose live aircraft state via versioned REST and a snapshot+delta WebSocket stream."
+    scope:
+      - GET /api/v1/aircraft/current (positioned + non-positioned, provenance, position source)
+      - WS /api/v1/ws/live: snapshot on connect, batched deltas at ~1 Hz, staleness/removal notices, ping/pong
+      - connection management: slow-consumer handling (drop + resync), disconnect counters
+      - receiver info endpoint (location, site name — non-secret subset)
+      - OpenAPI schema exposure for documented read-only endpoints
+    out_of_scope: [history endpoints, analytics endpoints, mutation endpoints]
+    acceptance_criteria:
+      - "REST and WS agree on state for the same instant"
+      - "WS client reconnect receives a coherent snapshot"
+      - "slow consumer does not stall ingestion or other clients"
+      - "OpenAPI docs generated for exposed endpoints"
+    required_tests: [API tests, WS integration tests including reconnect and slow-consumer]
+    expected_artifacts: [backend/src/flightsite/api/, backend/tests/api/]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "011"
+    title: "Demo mode"
+    phase: 2
+    branch: "011-demo-mode"
+    status: planned
+    depends_on: ["007", "008"]
+    objective: "Provide a deterministic demo adapter simulating rich traffic for development, tests, and visual regression."
+    scope:
+      - DemoAdapter implementing DecoderAdapter; seeded PRNG; fixed scenario timeline
+      - scenario coverage: commercial, military, government, police, non-positioned Mode S, MLAT, emergency squawks (7500/7600/7700), rare + first-ever aircraft, stale/disappearing aircraft, realistic tracks
+      - activation via config/env flag (FLIGHTSITE_DEMO=1); clearly indicated in health/receiver info
+      - deterministic: same seed + elapsed time => identical state (stable for visual regression)
+    out_of_scope: [capture/replay (slice 012), synthetic multi-year history (slice 050)]
+    acceptance_criteria:
+      - "demo mode runs the full stack with no decoder and no internet"
+      - "two runs with the same seed produce identical update sequences"
+      - "all listed scenario types observable within the first simulated 10 minutes"
+    required_tests: [determinism tests, scenario coverage tests]
+    expected_artifacts: [backend/src/flightsite/demo/, backend/tests/demo/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "012"
+    title: "Capture & replay tooling"
+    phase: 2
+    branch: "012-capture-replay"
+    status: planned
+    depends_on: ["007"]
+    objective: "Developer tool to capture normalized decoder snapshots into compact fixtures and replay them deterministically."
+    scope:
+      - CLI (backend dev command) to capture normalized update stream for a bounded duration to a compressed fixture
+      - ReplayAdapter implementing DecoderAdapter driving fixtures at real or accelerated speed
+      - fixture format documented; used by regression tests
+    out_of_scope: [end-user playback UI]
+    acceptance_criteria:
+      - "capture produces a compact fixture from a live or demo source"
+      - "replaying a fixture reproduces identical live-state sequences"
+      - "at least one ingest regression test consumes a captured fixture"
+    required_tests: [round-trip capture/replay tests]
+    expected_artifacts: [backend/src/flightsite/devtools/, docs note in DEVELOPMENT.md]
+    preferred_agent: sonnet
+    risk_level: low
+
+  # ---------------------------------------------------------------- Phase 3
+  - id: "013"
+    title: "Map foundation"
+    phase: 3
+    branch: "013-map-foundation"
+    status: planned
+    depends_on: ["002"]
+    objective: "Integrate MapLibre with an abstracted basemap registry, dark aviation default style, range rings, and receiver marker."
+    scope:
+      - MapLibre GL JS integration on Live Map route
+      - basemap registry abstraction; >=2 selectable basemaps; dark aviation-styled default; light-compatible alternative
+      - basemap/tile licensing + attribution rendered and documented (ADR for default provider choice)
+      - receiver marker + configurable range rings (unit-aware)
+      - opportunistic browser tile caching of recently used tiles
+      - graceful degraded mode when tiles unreachable (rings/aircraft still usable)
+    out_of_scope: [aircraft rendering, overlays (airports/airspace), offline tile packs]
+    acceptance_criteria:
+      - "map renders with dark default basemap, attribution, rings at correct radii"
+      - "tile outage leaves a usable dark canvas with rings (verified with network blocked)"
+      - "basemap switch persists per browser"
+    required_tests: [component tests; tile-failure behavior test]
+    expected_artifacts: [frontend/src/features/map/, docs/adr/ basemap ADR]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "014"
+    title: "Live aircraft rendering"
+    phase: 3
+    branch: "014-live-aircraft-layer"
+    status: planned
+    depends_on: ["010", "013"]
+    objective: "Render live aircraft on the map from the WebSocket stream with hierarchical icons, selection, and stale fading."
+    scope:
+      - WS client with reconnect/backoff feeding a Zustand live store
+      - aircraft layer: hierarchical silhouette selection (type -> category -> generic), heading rotation, licensed icon set documented
+      - selection state; strong selection highlight; current-sighting track polyline for selected aircraft
+      - stale fade; removal animation; position-source indicator styling (ADS-B vs MLAT)
+      - smooth position interpolation between 1 Hz updates
+      - performance: 500 aircraft at 60fps-target on desktop, usable on Pi-class clients
+    out_of_scope: [labels (015), filters (017), interesting styling (039)]
+    acceptance_criteria:
+      - "demo mode shows moving, rotating, correctly-iconed aircraft with selectable state and visible track for selection"
+      - "MLAT and ADS-B visually distinguishable beyond color alone"
+      - "500-aircraft demo scenario renders without dropped interaction"
+    required_tests: [store/component tests; icon-selection unit tests; WS reconnect test]
+    expected_artifacts: [frontend/src/features/map/aircraft/, icon assets + licensing docs]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "015"
+    title: "Map labels & decluttering"
+    phase: 3
+    branch: "015-map-labels"
+    status: planned
+    depends_on: ["014"]
+    objective: "Add aircraft labels with priority-based decluttering."
+    scope:
+      - label content: callsign (fallback tail), operator, altitude, interesting indicator slot
+      - declutter: suppress operator first, then secondary text; icons never hidden; selected + interesting labels prioritized
+      - zoom/density-aware behavior; no marker clustering
+    out_of_scope: [interesting-status wiring (arrives with alerts)]
+    acceptance_criteria:
+      - "dense demo scene remains readable; selected aircraft always fully labeled"
+      - "label priority rules covered by unit tests"
+    required_tests: [declutter priority unit tests, component tests]
+    expected_artifacts: [frontend/src/features/map/labels/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "016"
+    title: "Aircraft detail panel"
+    phase: 3
+    branch: "016-aircraft-detail"
+    status: planned
+    depends_on: ["014"]
+    objective: "Comprehensive aircraft detail panel for the selected aircraft with provenance indicators and external links."
+    scope:
+      - detail drawer/panel on selection: live fields (callsign, ICAO, altitude, speed, heading, distance, bearing, squawk, signal, message count, last-seen age, position source)
+      - provenance indicators/tooltips per field group
+      - external tracker links (FR24, FlightAware, ADS-B Exchange) using best identifier
+      - graceful Unknown rendering; sections for history/metadata/route that later slices populate
+      - unit-aware formatting (nm/ft/kt + metric mode), receiver-local time display
+    out_of_scope: [metadata/enrichment content (phase 4), history content (phase 5)]
+    acceptance_criteria:
+      - "all live fields render with correct units/timezone; absent data shows Unknown, never fabricated"
+      - "provenance tooltips present; external links correct per identifier availability"
+    required_tests: [component tests incl. missing-data cases, unit/timezone formatting tests]
+    expected_artifacts: [frontend/src/features/aircraft-detail/]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "017"
+    title: "Live filters & non-positioned list"
+    phase: 3
+    branch: "017-live-filters"
+    status: planned
+    depends_on: ["014"]
+    objective: "Filter drawer, quick filters, and the non-positioned aircraft list for the live map."
+    scope:
+      - filter drawer: altitude range, distance, category/type, operator, operator group, classification, mission category, interesting-only, hide non-positioned, hide ground, staleness (classification-based filters activate fully once phase 4 data exists; UI + plumbing here)
+      - callsign/tail/ICAO narrowing within live set only (not global search)
+      - quick filter chips for common groups
+      - non-positioned aircraft list panel (ICAO, callsign, altitude, squawk, signal), selectable
+      - filter state in URL/query where practical
+    out_of_scope: [faceted search, saved filters]
+    acceptance_criteria:
+      - "filters compose (AND) and update live without stutter in 500-aircraft demo"
+      - "non-positioned panel lists and selects aircraft lacking positions"
+      - "ground traffic can be de-emphasized or hidden"
+    required_tests: [filter logic unit tests, component tests]
+    expected_artifacts: [frontend/src/features/filters/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "018"
+    title: "First-run setup wizard"
+    phase: 3
+    branch: "018-setup-wizard"
+    status: planned
+    depends_on: ["002", "004", "007"]
+    objective: "Guide a new install through receiver, decoder, units, timezone, and notification/alert preferences, landing on the Live Map."
+    scope:
+      - first-run detection routes to wizard
+      - steps: site name, lat/lon (map-pick + manual), decoder endpoint + live connection test, polling interval, units, timezone, browser notification preference, optional metadata setup pointer, optional AeroDataBox key, initial alert template selection (stored; templates activate in phase 6)
+      - writes canonical config via internal API; lands on Live Map
+    out_of_scope: [full settings page (019)]
+    acceptance_criteria:
+      - "clean install completes wizard end-to-end against demo or real decoder; config.yaml reflects choices"
+      - "connection test gives clear success/failure feedback"
+      - "wizard never reappears after completion; re-runnable from settings"
+    required_tests: [component tests per step, API integration test, connection-test failure cases]
+    expected_artifacts: [frontend/src/features/setup/, internal config API endpoints]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "019"
+    title: "Settings page"
+    phase: 3
+    branch: "019-settings-page"
+    status: planned
+    depends_on: ["004", "002"]
+    objective: "Settings UI editing the canonical configuration model with masked secrets."
+    scope:
+      - settings sections: receiver, decoder endpoint (+test), units, timezone, display/alert radius, sighting timing, map, notifications, enrichment key (masked), retention
+      - internal mutation API for config (not part of documented external API)
+      - secret fields masked; never round-tripped in plaintext to the client
+      - validation with helpful errors; restart-required indicators where applicable
+    out_of_scope: [metadata update action (025), data reset (045), alert rule UI (041)]
+    acceptance_criteria:
+      - "edits persist to config.yaml and take effect (or clearly flag restart)"
+      - "stored API key is masked in UI and absent from API responses/logs"
+    required_tests: [component tests, config API tests incl. secret masking]
+    expected_artifacts: [frontend/src/features/settings/, backend internal config API]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "020"
+    title: "E2E foundation"
+    phase: 3
+    branch: "020-e2e-foundation"
+    status: planned
+    depends_on: ["006", "011", "014", "018"]
+    objective: "Stand up Playwright E2E infrastructure over demo mode and cover the first critical flows."
+    scope:
+      - Playwright config (Chromium, Firefox, WebKit where practical) against composed app in demo mode
+      - flows: first-run setup, decoder connection test, demo-mode live map renders aircraft, aircraft selection + detail panel
+      - CI integration (required check), trace/screenshot artifacts on failure
+    out_of_scope: [full flow coverage (046), visual regression (047)]
+    acceptance_criteria:
+      - "E2E suite green in CI on all three engines (or documented engine exceptions)"
+      - "failures produce actionable traces"
+    required_tests: [the E2E suite itself]
+    expected_artifacts: [e2e/, .github/workflows/e2e.yml]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  # ---------------------------------------------------------------- Phase 4
+  - id: "021"
+    title: "Metadata framework"
+    phase: 4
+    branch: "021-metadata-framework"
+    status: planned
+    depends_on: ["005"]
+    objective: "Normalized aircraft-metadata schema, provider interface, and transactional import pipeline with per-source status."
+    scope:
+      - normalized tables: aircraft_metadata (type, model, registration, operator, year, flags), metadata_sources (status, last success, version/hash)
+      - MetadataProvider interface (download, validate, transform) — provider architecture per SPEC.md §78
+      - transactional import: staging -> validate -> swap; previous dataset preserved on failure
+      - field-precedence model (source priority per field) with provenance recording
+      - lookup service joining live/persisted aircraft to metadata with provenance
+    out_of_scope: [specific importers (022/023), classification (024), UI (025)]
+    acceptance_criteria:
+      - "failed import leaves prior dataset fully intact (fault-injection test)"
+      - "precedence and provenance verified for overlapping sources"
+      - "lookup enriches live state without measurable ingestion impact"
+    required_tests: [import transactionality tests, precedence/provenance unit tests, migration tests]
+    expected_artifacts: [backend/src/flightsite/metadata/, migrations]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Metadata precedence is a critical-coverage domain."
+
+  - id: "022"
+    title: "Mictronics/tar1090 importer"
+    phase: 4
+    branch: "022-mictronics-import"
+    status: planned
+    depends_on: ["021"]
+    objective: "Import the Mictronics/tar1090 aircraft database as the primary offline metadata source."
+    scope:
+      - downloader + format parser for the upstream database (isolated from domain model)
+      - mapping to normalized schema incl. type, registration, operator, military flag
+      - validation (row counts, sanity checks) before swap
+      - attribution and license documentation (docs/LICENSES.md section)
+    out_of_scope: [FAA (023), classification logic (024)]
+    acceptance_criteria:
+      - "real upstream snapshot imports; known aircraft resolve with correct fields and provenance=mictronics"
+      - "upstream format quirks isolated to the importer module"
+      - "attribution documented"
+    required_tests: [parser fixtures, end-to-end import test with sampled snapshot]
+    expected_artifacts: [backend/src/flightsite/metadata/sources/mictronics.py, docs/LICENSES.md]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "023"
+    title: "FAA registry importer"
+    phase: 4
+    branch: "023-faa-import"
+    status: planned
+    depends_on: ["021"]
+    objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
+    scope:
+      - FAA releasable database download/parse (registration, year, owner, make/model)
+      - N-number/ICAO correlation; owner 'Unknown' when withheld — never speculation
+      - precedence integration (supplements, does not clobber better data)
+    out_of_scope: [non-US registries]
+    acceptance_criteria:
+      - "US aircraft gain year/owner with provenance=faa; withheld owners show Unknown"
+      - "precedence rules verified where FAA and Mictronics overlap"
+    required_tests: [parser fixtures, precedence tests]
+    expected_artifacts: [backend/src/flightsite/metadata/sources/faa.py]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "024"
+    title: "Classification & operator normalization"
+    phase: 4
+    branch: "024-classification-engine"
+    status: planned
+    depends_on: ["021", "022"]
+    objective: "Classify aircraft (military/government/law-enforcement, mission/use categories) and normalize operators into groups, with provenance and calibrated confidence."
+    scope:
+      - classification engine over normalized metadata + live fields: military, government, law enforcement, mission categories (SPEC.md §39 list)
+      - operator normalization: exact operator preserved + curated operator-group mapping (major carriers/cargo/brands), extensible data file
+      - icon-category derivation for the map icon hierarchy
+      - provenance + confidence on every classification; weak evidence => unknown, never false certainty
+      - exposure through live state, aircraft APIs, and detail panel; live-map classification filters become fully active
+    out_of_scope: [alert rules (038), rarity (038)]
+    acceptance_criteria:
+      - "curated test set of known military/government/police/airline/GA aircraft classifies correctly with provenance"
+      - "ambiguous aircraft yield unknown rather than guessed classifications"
+      - "operator groups aggregate correctly while exact operator is preserved"
+    required_tests: [classification unit tests over curated fixtures, normalization table tests]
+    expected_artifacts: [backend/src/flightsite/classification/, operator-groups data file]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "025"
+    title: "Metadata update action"
+    phase: 4
+    branch: "025-metadata-update-ui"
+    status: planned
+    depends_on: ["019", "022", "023"]
+    objective: "Settings action to manually update all metadata sources with independent per-source status reporting."
+    scope:
+      - 'Update Aircraft Metadata' action: per-source download/validate/import, independent success/failure, last-success timestamps
+      - progress + result UI; failures leave previous data intact (framework guarantee surfaced)
+      - metadata age shown (feeds health later)
+    out_of_scope: [scheduled updates (backlog)]
+    acceptance_criteria:
+      - "one source failing does not affect the other; both statuses reported accurately"
+      - "timestamps persist and display; repeat runs are idempotent"
+    required_tests: [API tests with injected source failures, component tests]
+    expected_artifacts: [frontend settings section, backend update orchestration endpoint]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "026"
+    title: "Route enrichment (AeroDataBox)"
+    phase: 4
+    branch: "026-route-enrichment"
+    status: planned
+    depends_on: ["009", "016"]
+    objective: "Optional AeroDataBox route enrichment behind a generic provider interface with caching, rate limiting, and provenance."
+    scope:
+      - RouteEnrichmentProvider interface; AeroDataBox implementation (API key from secrets)
+      - trigger policy: only with sufficient flight context (callsign pattern etc.); aggressive caching (per callsign/route with TTL); provider rate limiting + circuit breaker
+      - async enrichment; never blocks ingestion/live path; sighting event on arrival
+      - origin/destination/route on sighting flight context with provenance=aerodatabox
+      - graceful degradation offline/exhausted; Unknown when uncertain; no fabricated routes
+      - documentation of exactly what data leaves the network (docs/SECURITY.md update)
+    out_of_scope: [multi-provider selector UI, local route inference]
+    acceptance_criteria:
+      - "with key: eligible sightings gain routes with provenance; cache prevents duplicate queries (verified)"
+      - "without key or offline: zero external calls, clean Unknowns"
+      - "rate-limit and error responses degrade gracefully (mocked provider tests)"
+      - "key never appears in logs or API responses"
+    required_tests: [provider tests with mocked HTTP, cache/limit tests, secret-leak tests]
+    expected_artifacts: [backend/src/flightsite/enrichment/, docs/SECURITY.md update]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "027"
+    title: "Airport data & context"
+    phase: 4
+    branch: "027-airport-context"
+    status: planned
+    depends_on: ["009", "016"]
+    objective: "Import an openly licensed airport dataset and provide nearest-airport plus clearly-labeled arrival/departure inference."
+    scope:
+      - airport dataset import (OurAirports, public domain) into local table; bundled or fetched with metadata update
+      - nearest-airport computation for low/descending aircraft near fields
+      - conservative arrival/departure inference (altitude/vertical-rate/distance heuristics), always labeled 'inferred', confidence-gated
+      - display in detail panel, distinct from externally reported routes (provenance=heuristic)
+    out_of_scope: [full route inference, airport analytics]
+    acceptance_criteria:
+      - "known approach/departure fixture tracks yield correct, inferred-labeled context; cruise traffic yields none"
+      - "inference and external route data visually and semantically distinct"
+    required_tests: [inference unit tests over fixture tracks, dataset import tests]
+    expected_artifacts: [backend/src/flightsite/airports/, dataset licensing docs]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "028"
+    title: "Aviation overlays"
+    phase: 4
+    branch: "028-aviation-overlays"
+    status: planned
+    depends_on: ["013", "027"]
+    objective: "Airport and airspace map overlays with documented open licensing."
+    scope:
+      - airport markers/labels layer (from 027 data) with zoom-appropriate density
+      - airspace boundary overlay from an openly licensed source (e.g., openAIP — license verified and documented; ADR records choice)
+      - layer toggles in map UI; unobtrusive default styling
+    out_of_scope: [weather, additional aviation layers]
+    acceptance_criteria:
+      - "airports and airspace render, toggle, and perform acceptably; licensing documented"
+      - "overlays fail gracefully when data absent (offline core intact)"
+    required_tests: [component tests, layer-toggle tests]
+    expected_artifacts: [frontend/src/features/map/overlays/, docs/LICENSES.md update, ADR]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  # ---------------------------------------------------------------- Phase 5
+  - id: "029"
+    title: "Aircraft page"
+    phase: 5
+    branch: "029-aircraft-page"
+    status: planned
+    depends_on: ["009", "016", "024"]
+    objective: "Sortable historical Aircraft page backed by paginated aircraft-history APIs."
+    scope:
+      - GET /api/v1/aircraft (paginated, sortable: tail, ICAO, type/model, operator, classification, first/last seen, sighting count, closest, farthest)
+      - Aircraft page table; rows open aircraft detail (detail gains historical/lifetime + metadata sections for any aircraft, not just live)
+    out_of_scope: [global free-form search, notes/overrides]
+    acceptance_criteria:
+      - "sorting/pagination correct on a multi-thousand-aircraft fixture DB with responsive queries"
+      - "detail for a non-live aircraft shows lifetime records and metadata"
+    required_tests: [API tests with fixture DB, component tests, query performance sanity]
+    expected_artifacts: [backend history API, frontend/src/features/aircraft-page/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "030"
+    title: "Sightings page"
+    phase: 5
+    branch: "030-sightings-page"
+    status: planned
+    depends_on: ["009", "013", "016"]
+    objective: "Chronological sightings log with per-sighting detail including the simplified path."
+    scope:
+      - GET /api/v1/sightings (paginated, filter by aircraft/date) + GET /api/v1/sightings/{id} with path + events + reception stats
+      - Sightings page (SPEC.md §57 columns); sighting detail view with path rendered on a map, events timeline, stats
+    out_of_scope: [animated playback]
+    acceptance_criteria:
+      - "log paginates efficiently over large fixture history"
+      - "sighting detail renders simplified path with correct geography and ordered timestamps"
+    required_tests: [API tests, component tests, path-rendering test]
+    expected_artifacts: [backend sightings API, frontend/src/features/sightings/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "031"
+    title: "Analytics backend"
+    phase: 5
+    branch: "031-analytics-backend"
+    status: planned
+    depends_on: ["009", "024"]
+    objective: "Daily rollups and aggregation APIs powering the Analytics page and today-at-a-glance."
+    scope:
+      - daily rollup tables (aircraft counts, sighting counts, new aircraft, max range, classification activity) maintained incrementally by the persistence worker + backfill job
+      - GET /api/v1/analytics/* endpoints for SPEC.md §58 analytics with presets (Today/7d/30d/YTD/Since T0)
+      - rare aircraft/type queries (receiver-relative, since T0)
+      - query budgets: all analytics endpoints responsive on multi-year fixture (target <500ms on dev hardware; Pi validated in 049)
+    out_of_scope: [charts UI (032), receiver metrics (033), period-over-period]
+    acceptance_criteria:
+      - "rollups match brute-force recomputation on fixture data (property test)"
+      - "all §58 analytics available across all presets with correct timezone-aware day bucketing (DST fixture)"
+      - "multi-year fixture queries within budget"
+    required_tests: [rollup correctness tests, DST bucketing tests, API tests, perf sanity]
+    expected_artifacts: [backend/src/flightsite/analytics/, migrations]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "032"
+    title: "Analytics page"
+    phase: 5
+    branch: "032-analytics-page"
+    status: planned
+    depends_on: ["031"]
+    objective: "Analytics UI with time presets and aviation-styled charts."
+    scope:
+      - Analytics page with preset selector; ECharts visualizations for §58 analytics (top aircraft/types/operators, mil/gov/police activity, daily counts, max distance, activity over time, never-seen-before counts, rarity)
+      - consistent chart theming (dark/light), unit-aware, accessible (text alternatives)
+    out_of_scope: [receiver charts (034), comparisons]
+    acceptance_criteria:
+      - "all presets render correct data from fixture history; empty states handled"
+      - "charts legible in both themes and pass automated a11y checks"
+    required_tests: [component tests with mocked API, a11y checks]
+    expected_artifacts: [frontend/src/features/analytics/]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "033"
+    title: "Receiver metrics & retention"
+    phase: 5
+    branch: "033-receiver-metrics"
+    status: planned
+    depends_on: ["005", "007"]
+    objective: "Ingest decoder-native statistics plus FlightSite metrics with high-res retention, downsampling, and pruning."
+    scope:
+      - stats.json polling (readsb/dump1090-fa), normalized metric names; unsupported metrics gracefully absent
+      - FlightSite metrics: simultaneous aircraft, positions/sec, messages/sec, range observations by bearing
+      - storage: high-res samples (default 14-day window, configurable 7–30) -> hourly -> daily downsampling; automatic pruning; lifetime aggregates (max range ever, busiest day, totals) never lost
+      - runs in persistence worker; never blocks ingestion
+    out_of_scope: [receiver UI (034), db maintenance generalization (044)]
+    acceptance_criteria:
+      - "downsampling produces correct hourly/daily aggregates (property-tested); pruning removes only expired high-res rows"
+      - "lifetime records survive downsampling and pruning"
+      - "dump1090-fa missing metrics degrade gracefully"
+    required_tests: [downsampling property tests, pruning tests, normalization fixtures]
+    expected_artifacts: [backend/src/flightsite/receiver_metrics/, migrations]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Retention is a critical-coverage domain."
+
+  - id: "034"
+    title: "Receiver page"
+    phase: 5
+    branch: "034-receiver-page"
+    status: planned
+    depends_on: ["033", "031"]
+    objective: "Receiver scorecard and charts including the range-by-bearing polar plot."
+    scope:
+      - scorecard (SPEC.md §61): current visible, positions/sec, messages/sec, max range today/ever, unique today/since T0, decoder uptime, FlightSite uptime, health
+      - charts (SPEC.md §62) incl. polar max-range-by-bearing and signal distribution
+      - lifetime statistics section (SPEC.md §63)
+    out_of_scope: [health/diagnostics detail (042)]
+    acceptance_criteria:
+      - "scorecard live-updates; charts correct against fixture metrics in both themes"
+      - "polar plot orientation/bearing verified against fixtures"
+    required_tests: [component tests, polar-plot data-mapping tests]
+    expected_artifacts: [frontend/src/features/receiver/, receiver stats API]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "035"
+    title: "Activity feed & milestones"
+    phase: 5
+    branch: "035-activity-milestones"
+    status: planned
+    depends_on: ["009", "024"]
+    objective: "Persistent activity event stream and receiver milestone/record detection with a feed UI."
+    scope:
+      - activity_events table + API (paginated, typed events per SPEC.md §55)
+      - event producers: first-ever aircraft, new type, range records, receiver offline/restored, metadata update results (alert events join in phase 6)
+      - milestone engine (SPEC.md §54): firsts, counts (1,000th aircraft), busiest day, highest simultaneous, longest sighting — fun, lightweight
+      - Activity feed UI (part of Live Map experience + standalone view)
+    out_of_scope: [alert-triggered events (wired in 039), notifications]
+    acceptance_criteria:
+      - "fixture scenarios emit exactly the expected events (no duplicates on restart/replay)"
+      - "milestones fire once, persist, and appear in the feed"
+    required_tests: [event-emission tests incl. restart idempotency, milestone tests]
+    expected_artifacts: [backend/src/flightsite/activity/, frontend/src/features/activity/]
+    preferred_agent: opus
+    risk_level: medium
+
+  - id: "036"
+    title: "Today at a glance"
+    phase: 5
+    branch: "036-today-glance"
+    status: planned
+    depends_on: ["031", "035"]
+    objective: "Compact daily summary surfaced on the Live Map experience."
+    scope:
+      - summary component (SPEC.md §59): unique aircraft, sightings, interesting count (activates fully in phase 6), mil/gov/police, max range, busiest hour, new aircraft, new milestones
+      - receiver-local 'today' semantics (DST-correct)
+    out_of_scope: []
+    acceptance_criteria:
+      - "values match analytics APIs for 'today' in receiver-local time; updates live"
+    required_tests: [component tests, day-boundary test]
+    expected_artifacts: [frontend/src/features/today/]
+    preferred_agent: sonnet
+    risk_level: low
+
+  # ---------------------------------------------------------------- Phase 6
+  - id: "037"
+    title: "Watchlists"
+    phase: 6
+    branch: "037-watchlists"
+    status: planned
+    depends_on: ["009", "024"]
+    objective: "User-defined watchlists with CRUD UI and live matching."
+    scope:
+      - watchlist + entry tables (entries: ICAO hex, registration, type, operator, category/tag)
+      - internal CRUD API + management UI (within Alerts section)
+      - live matching service flagging watchlist membership on live aircraft
+    out_of_scope: [alert rules (038), notes/overrides]
+    acceptance_criteria:
+      - "entries of every reference kind match correctly against live demo traffic"
+      - "CRUD round-trips; matching updates without restart"
+    required_tests: [matching unit tests per entry type, API + component tests]
+    expected_artifacts: [backend/src/flightsite/watchlists/, frontend/src/features/watchlists/]
+    preferred_agent: sonnet
+    risk_level: low
+
+  - id: "038"
+    title: "Alert rule engine"
+    phase: 6
+    branch: "038-alert-engine"
+    status: planned
+    depends_on: ["024", "031", "037"]
+    objective: "Evaluate interesting-aircraft rules (AND-combined conditions, severities) with rarity, emergency squawk handling, templates, and per-sighting dedup."
+    scope:
+      - rule model: conditions (classification, type/model, watchlist membership, locally-rare aircraft, locally-rare type, distance, altitude) AND-combined; severity (Info/Interesting/High/Critical); enabled flag; alert-radius awareness
+      - rarity conditions from receiver history since T0 (never seen / fewer than N times / type fewer than N)
+      - built-in emergency squawk detection (7500/7600/7700 -> Critical) independent of user rules
+      - evaluation on live updates; efficient (no full rescan per update); ground-traffic exclusion honored
+      - match lifecycle: once per sighting per rule; higher-severity re-notification allowed; match records persisted with reason
+      - shipped templates (military, government, police, emergency, first-ever, locally rare, watchlist); setup-wizard selections honored
+      - activity events for triggered alerts (joins 035 feed)
+    out_of_scope: [notification delivery (040), rule builder UI (041), nested boolean trees]
+    acceptance_criteria:
+      - "each condition type + AND combinations verified; per-sighting dedup and severity-upgrade renotification exact (critical-coverage tests)"
+      - "emergency squawks alert with zero user configuration"
+      - "500-aircraft demo evaluates within live update budget"
+      - "rarity thresholds correct against fixture history"
+    required_tests: [rule evaluation matrix tests, dedup/upgrade tests, rarity tests, perf sanity]
+    expected_artifacts: [backend/src/flightsite/alerts/, migrations]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Critical-coverage domain (SPEC.md §84)."
+
+  - id: "039"
+    title: "Interesting aircraft surfaces"
+    phase: 6
+    branch: "039-interesting-panel"
+    status: planned
+    depends_on: ["038", "014", "035"]
+    objective: "Surface interesting aircraft: panel, map emphasis, label indicator, and feed integration."
+    scope:
+      - interesting-aircraft panel (severity then distance ordering; callsign/tail, type, operator, reason, distance, altitude; click selects)
+      - map attention styling by severity + non-color indicator; label interesting-slot wired; interesting-only filter activated
+      - alert reasons in aircraft detail; alert events visible in activity feed
+    out_of_scope: [notifications (040)]
+    acceptance_criteria:
+      - "demo emergency + military scenarios populate panel ordered correctly; selection wiring works"
+      - "severity distinguishable without color alone"
+    required_tests: [ordering tests, component tests, map-styling tests]
+    expected_artifacts: [frontend/src/features/interesting/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "040"
+    title: "Browser notifications"
+    phase: 6
+    branch: "040-browser-notifications"
+    status: planned
+    depends_on: ["038", "039"]
+    objective: "Deliver alert notifications via the browser Notification API with correct permission handling and deduplication."
+    scope:
+      - permission request flow (wizard preference honored; re-promptable in settings); status shown
+      - notifications from alert matches: callsign/tail, type, classification, altitude, distance, reason; severity-aware
+      - once per sighting per rule (backend dedup respected end-to-end); works in background/minimized tabs; click focuses/selects aircraft
+      - per-severity enable/disable in settings
+    out_of_scope: [service-worker push when tab closed, external channels]
+    acceptance_criteria:
+      - "demo alert produces exactly one notification per rule per sighting; upgrade path produces the allowed extra"
+      - "clicking selects the aircraft; denied permission degrades cleanly with status surfaced"
+    required_tests: [notification-dispatch unit tests (mocked API), E2E permission flow, dedup E2E]
+    expected_artifacts: [frontend/src/features/notifications/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "041"
+    title: "Alerts page & rule builder"
+    phase: 6
+    branch: "041-alerts-page"
+    status: planned
+    depends_on: ["038", "037"]
+    objective: "Visual rule builder, template management, and alert history on the Alerts page."
+    scope:
+      - rule list with enable/disable, severity, template provenance
+      - visual builder: add AND conditions from the v1 condition set with unit-aware inputs; validation
+      - template gallery (enable/customize shipped templates)
+      - alert history (recent matches with reasons) from match records
+      - internal CRUD API for rules
+    out_of_scope: [nested expressions, OR groups]
+    acceptance_criteria:
+      - "rules created in UI evaluate identically to API-created rules (round-trip test)"
+      - "builder prevents invalid rules; history reflects fired matches"
+    required_tests: [builder component tests, round-trip API tests]
+    expected_artifacts: [frontend/src/features/alerts/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  # ---------------------------------------------------------------- Phase 7
+  - id: "042"
+    title: "Health & diagnostics"
+    phase: 7
+    branch: "042-health-diagnostics"
+    status: planned
+    depends_on: ["010", "019", "033"]
+    objective: "Comprehensive health/diagnostics UI and API so users never need SSH to assess FlightSite."
+    scope:
+      - diagnostics API aggregating SPEC.md §67 items (decoder state, last update, DB health/size/row counts, disk free, uptimes, versions, metadata age, notification status, recent ingestion/db/enrichment/ws errors)
+      - health area in UI (within Receiver/Settings navigation) with clear states
+      - rotating file logging finalized; error ring buffers surfaced; secrets provably absent from diagnostics
+    out_of_scope: [Prometheus/Grafana]
+    acceptance_criteria:
+      - "every §67 item present with sensible degraded-state rendering"
+      - "diagnostics output contains no secrets (tested)"
+    required_tests: [API tests incl. degraded fixtures, secret-absence test, component tests]
+    expected_artifacts: [backend/src/flightsite/diagnostics/, frontend/src/features/health/]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "043"
+    title: "Backup & restore"
+    phase: 7
+    branch: "043-backup-restore"
+    status: planned
+    depends_on: ["005", "004"]
+    objective: "Version-aware, checksum-validated backup and restore commands safe for live SQLite."
+    scope:
+      - backup CLI (in-container command): SQLite-safe snapshot (VACUUM INTO / backup API), config, optional-and-explicit secrets inclusion, manifest (version, schema revision, created, checksums, metadata source versions)
+      - restore CLI: checksum + schema-compatibility validation; refuse newer-schema on older app; older backups restore then migrate on startup; destructive steps require explicit confirmation flag
+      - documented backup location under the data dir; portability documented (docs/BACKUP.md or RELEASE/README section)
+    out_of_scope: [scheduled backups, UI-driven backup]
+    acceptance_criteria:
+      - "backup during active ingestion yields a consistent, restorable snapshot (tested)"
+      - "corrupted archive and newer-schema restores are refused with clear errors"
+      - "old-backup -> newer-app restore migrates cleanly (fixture test)"
+    required_tests: [live-backup consistency test, manifest validation tests, cross-version restore tests]
+    expected_artifacts: [backend/src/flightsite/backup/, docs/BACKUP.md]
+    preferred_agent: opus
+    risk_level: high
+    notes: "Critical-coverage domain."
+
+  - id: "044"
+    title: "Database maintenance"
+    phase: 7
+    branch: "044-db-maintenance"
+    status: planned
+    depends_on: ["005", "033", "009"]
+    objective: "Automated conservative maintenance: integrity checks, pruning, optimization, and hardened unclean-shutdown handling."
+    scope:
+      - scheduled internal maintenance: periodic quick_check, PRAGMA optimize, WAL checkpoint management, retention pruning execution, guarded VACUUM policy (only when reclaimable space justifies; never during ingestion pressure)
+      - maintenance outcomes into diagnostics + activity feed on problems
+      - unclean-shutdown recovery hardening pass across subsystems (corruption drill: recover or clearly diagnose)
+    out_of_scope: [user-facing scheduling controls]
+    acceptance_criteria:
+      - "maintenance runs unattended without blocking ingestion (contention test)"
+      - "corruption drill produces actionable diagnostics; healthy DB passes untouched"
+      - "VACUUM triggers only under justified conditions (tested)"
+    required_tests: [maintenance scheduling tests, contention tests, corruption-fixture tests]
+    expected_artifacts: [backend/src/flightsite/maintenance/]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "045"
+    title: "Data reset actions"
+    phase: 7
+    branch: "045-data-reset"
+    status: planned
+    depends_on: ["019", "043"]
+    objective: "Deliberate, confirmed Reset FlightSite Data and Clear Metadata Cache actions."
+    scope:
+      - Reset: full data reset (typed confirmation, strong backup suggestion, preserves nothing except optionally config)
+      - Clear Metadata Cache: removes imported metadata + enrichment cache only
+      - both via settings UI + internal API; audit entry in activity feed
+    out_of_scope: [per-aircraft deletion]
+    acceptance_criteria:
+      - "reset requires typed confirmation and suggests backup; post-reset app behaves as fresh install (new T0 on next observation)"
+      - "metadata clear leaves history intact"
+    required_tests: [API tests, E2E confirmation-flow test]
+    expected_artifacts: [frontend settings additions, backend reset endpoints]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  # ---------------------------------------------------------------- Phase 8
+  - id: "046"
+    title: "E2E expansion"
+    phase: 8
+    branch: "046-e2e-expansion"
+    status: planned
+    depends_on: ["020", "025", "030", "032", "040", "043", "045"]
+    objective: "Complete the SPEC.md §82 critical-flow E2E suite."
+    scope:
+      - add flows: interesting-aircraft alert, notification permission, Aircraft page, Sightings page, Analytics presets, metadata update, backup/restore smoke path
+      - stabilize suite (deterministic demo seeds, no flaky waits); CI-required across engines
+    out_of_scope: [visual regression (047)]
+    acceptance_criteria:
+      - "all §82 flows covered and green in CI; flake rate ~zero over repeated runs"
+    required_tests: [the expanded E2E suite]
+    expected_artifacts: [e2e/ additions]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "047"
+    title: "Visual regression suite"
+    phase: 8
+    branch: "047-visual-regression"
+    status: planned
+    depends_on: ["020", "032", "034", "039", "041"]
+    objective: "Deterministic screenshot regression over stable views using demo data."
+    scope:
+      - Playwright screenshot suite: Live Map, aircraft detail, Analytics, Receiver, Alerts (dark + light)
+      - stabilized inputs: fixed demo seed, frozen clock, offline/stub basemap tiles
+      - review-friendly diff workflow in CI
+    out_of_scope: [pixel-perfect coverage of every state]
+    acceptance_criteria:
+      - "suite deterministic across repeated CI runs; intentional UI changes produce reviewable diffs"
+    required_tests: [the visual suite]
+    expected_artifacts: [e2e/visual/, tile stubs]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "048"
+    title: "Accessibility baseline"
+    phase: 8
+    branch: "048-accessibility"
+    status: planned
+    depends_on: ["032", "034", "039", "041"]
+    objective: "Apply and verify the SPEC.md §80 accessibility baseline across main flows."
+    scope:
+      - audit + fixes: keyboard navigation, focus visibility, semantic structure, contrast (both themes), labels/tooltips, ARIA, non-color severity signaling
+      - automated axe checks integrated into E2E for main flows; CI-gated
+    out_of_scope: [formal WCAG certification claims]
+    acceptance_criteria:
+      - "main flows pass automated checks; keyboard-only walkthrough of critical flows succeeds"
+    required_tests: [axe-integrated E2E checks]
+    expected_artifacts: [fixes across frontend, e2e a11y checks]
+    preferred_agent: sonnet
+    risk_level: medium
+
+  - id: "049"
+    title: "Performance harness & Pi gates"
+    phase: 8
+    branch: "049-performance-harness"
+    status: planned
+    depends_on: ["009", "010", "011", "012", "038"]
+    objective: "Performance regression harness measuring SPEC.md §85 metrics with hard gates for correctness-critical limits."
+    scope:
+      - repeatable load harness (demo/replay driven): 500-aircraft 1 Hz sustained; measures ingestion throughput, live-update latency, SQLite write/read latency, WS fan-out, memory, analytics latency, startup, recovery time
+      - hard gates in CI (dev-hardware calibrated): ingestion keeps up, no live-state stalls, memory < 1 GB budget, core API responsiveness
+      - trend tracking for remaining metrics; documented Pi 4 qualification procedure + baseline capture (converts trends to gates when baselines exist)
+    out_of_scope: [multi-year dataset behavior (050)]
+    acceptance_criteria:
+      - "harness runs in CI with stable results; hard gates enforce the §85 list"
+      - "Pi 4 procedure documented and executed at least once with recorded baselines"
+    required_tests: [the perf harness + gate assertions]
+    expected_artifacts: [perf/, .github/workflows/perf.yml, docs/PERFORMANCE.md]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "050"
+    title: "Multi-year storage qualification"
+    phase: 8
+    branch: "050-storage-qualification"
+    status: planned
+    depends_on: ["031", "043", "044", "049"]
+    objective: "Generate a realistic synthetic multi-year dataset and qualify growth, queries, retention, and backup/restore at scale."
+    scope:
+      - synthetic history generator (years of sightings/metrics consistent with domain rules)
+      - qualification checks: DB growth projection, analytics/query responsiveness, index behavior, downsampling/pruning at scale, backup size + duration, restore, Pi I/O behavior
+      - findings documented; regressions filed as slices/issues
+    out_of_scope: []
+    acceptance_criteria:
+      - "3-year synthetic dataset passes all query/maintenance/backup budgets; results recorded in docs/PERFORMANCE.md"
+    required_tests: [the qualification suite]
+    expected_artifacts: [perf/storage_qualification/, docs/PERFORMANCE.md update]
+    preferred_agent: opus
+    risk_level: high
+
+  - id: "051"
+    title: "Documentation & install polish"
+    phase: 8
+    branch: "051-docs-polish"
+    status: planned
+    depends_on: ["042", "045", "046"]
+    objective: "Complete user-facing documentation so a fresh install succeeds from docs alone."
+    scope:
+      - README overhaul (features, screenshots from demo mode, quick start)
+      - install/deployment guide (Pi 4 + generic Linux, compose, data dir, upgrade via pull)
+      - API documentation publication (read-only external API), configuration reference, backup/restore guide finalization, attribution/licenses page completeness
+      - docs accuracy pass: ARCHITECTURE/DATA_MODEL/API match reality (v1.0.0 DoD requirement)
+    out_of_scope: [marketing site]
+    acceptance_criteria:
+      - "clean-machine install following only the docs succeeds (validated)"
+      - "documented API matches served OpenAPI; docs accuracy pass recorded"
+    required_tests: [docs-driven fresh-install validation]
+    expected_artifacts: [README.md, docs/INSTALL.md, docs/CONFIGURATION.md, docs/API.md refresh]
+    preferred_agent: sonnet
+    risk_level: low
+
+# Parallelization guide (dependency-derived; Fable owns merge order):
+#   Wave A: 001 ∥ 002
+#   Wave B: 003, 004 (after 001) ∥ 013 (after 002)
+#   Wave C: 005, 007 ∥ 006 ∥ 019
+#   Wave D: 008 -> {009, 010, 011, 012 ∥ 018}
+#   Wave E: phase-3 UI slices (014 -> 015/016/017) ∥ 021 -> 022/023 ∥ 033
+#   Wave F: 024 -> phase-4 tail ∥ phase-5 backend (031, 035) ∥ 020
+#   Wave G: phase-5 UI ∥ phase-6 chain (037 -> 038 -> 039/040/041)
+#   Wave H: phase-7 ∥ remaining phase-5/6 UI
+#   Wave I: phase-8 qualification largely sequentialized on feature completeness.
