@@ -187,7 +187,7 @@ slices:
     title: "Configuration system"
     phase: 1
     branch: "004-config-system"
-    status: planned
+    status: merged
     depends_on: ["001"]
     objective: "Implement the canonical config.yaml / secrets.yaml / environment-override configuration model."
     scope:
