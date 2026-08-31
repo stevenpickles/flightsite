@@ -151,7 +151,7 @@ def mocked_decoder(monkeypatch: pytest.MonkeyPatch, readsb_document: Any) -> Cou
     return factory
 
 
-@pytest.mark.parametrize("path", ["/api/internal/decoder/test", "/api/internal/connection-test"])
+@pytest.mark.parametrize("path", ["/api/internal/decoder/test"])
 def test_endpoint_tests_a_supplied_endpoint(
     path: str, mocked_decoder: CountingClientFactory
 ) -> None:

@@ -100,7 +100,6 @@ async def put_config(
 
 
 @router.post("/decoder/test")
-@router.post("/connection-test")
 async def test_decoder_connection(
     request: Request,
     receiver: Annotated[ReceiverSettings | None, Body()] = None,
@@ -115,10 +114,6 @@ async def test_decoder_connection(
     Nothing is written and the running ingestion loop is untouched: this opens
     its own short-lived client, which is what makes it safe to call repeatedly
     from a settings form while the live map keeps running.
-
-    Two paths are mounted for the one handler: ``/decoder/test`` is the name
-    in ``docs/API.md`` §5, and ``/connection-test`` is the spelling the setup
-    wizard was specified against.
     """
     settings: Settings = request.app.state.settings
     candidate = receiver if receiver is not None else settings.receiver
