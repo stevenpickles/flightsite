@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 # Build stage: produce the static production build (frontend/dist).
 # ---------------------------------------------------------------------------
-FROM node:22.23.2-trixie-slim AS build
+FROM node:26.8.1-trixie-slim AS build
 
 WORKDIR /build
 
