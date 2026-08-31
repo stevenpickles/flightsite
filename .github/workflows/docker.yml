@@ -119,9 +119,11 @@ jobs:
           echo "health response via proxy:"; cat /tmp/health.json; echo
 
           echo "checking the SQLite database landed under the bind mount..."
-          if [ ! -f "$FLIGHTSITE_HOST_DATA_DIR/flightsite.sqlite3" ]; then
+          # The dir is chowned to the container uid with mktemp's 0700 mode,
+          # so the runner user needs sudo to look inside it.
+          if ! sudo test -f "$FLIGHTSITE_HOST_DATA_DIR/flightsite.sqlite3"; then
             echo "::error::flightsite.sqlite3 not found under the bind mount" >&2
-            ls -la "$FLIGHTSITE_HOST_DATA_DIR"
+            sudo ls -la "$FLIGHTSITE_HOST_DATA_DIR"
             exit 1
           fi
 
