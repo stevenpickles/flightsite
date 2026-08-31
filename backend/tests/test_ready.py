@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from flightsite.app import create_app
+from flightsite.db.startup import DATABASE_SUBSYSTEM
 
 
-def test_ready_after_startup_with_no_registered_subsystems() -> None:
+def test_ready_after_startup_with_only_the_database_subsystem() -> None:
     app = create_app()
 
     with TestClient(app) as client:
@@ -16,7 +17,19 @@ def test_ready_after_startup_with_no_registered_subsystems() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["ready"] is True
-    assert body["subsystems"] == {}
+    assert body["subsystems"] == {DATABASE_SUBSYSTEM: True}
+
+
+def test_ready_reports_503_before_the_lifespan_migrates_the_database() -> None:
+    """The database subsystem is registered by the factory, not the lifespan.
+
+    Without that, a request arriving between "app object exists" and "schema
+    migrated" would be answered with a cheerful 200.
+    """
+    app = create_app()
+
+    assert app.state.readiness.snapshot() == {DATABASE_SUBSYSTEM: False}
+    assert app.state.readiness.is_ready is False
 
 
 def test_ready_returns_503_while_registered_subsystem_not_ready() -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from flightsite.config import ConfigStore
+from flightsite.counters import counters
 
 SECRET_SENTINEL = "sentinel-aerodatabox-key-9c1f4a"
 """A recognisable fake secret. Secret-leak tests search serialized output,
@@ -33,6 +34,19 @@ def _reset_logging_state() -> Iterator[None]:
     root_logger.handlers.clear()
     root_logger.handlers.extend(original_handlers)
     root_logger.setLevel(original_level)
+
+
+@pytest.fixture(autouse=True)
+def _reset_counters() -> Iterator[None]:
+    """Zero the process-global counter registry around every test.
+
+    Tests that deliberately provoke failures (a corrupt database, a failed
+    ingest) increment the shared registry; without this, whether an unrelated
+    test sees a zeroed counter would depend on test ordering.
+    """
+    counters.reset()
+    yield
+    counters.reset()
 
 
 @pytest.fixture(autouse=True)
