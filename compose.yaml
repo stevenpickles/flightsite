@@ -1,0 +1,84 @@
+# FlightSite Docker Compose deployment.
+#
+# ---------------------------------------------------------------------------
+# Data directory contract (READ BEFORE CHANGING THE BIND MOUNT BELOW)
+# ---------------------------------------------------------------------------
+# All of FlightSite's persistent state — config.yaml, secrets.yaml, the
+# SQLite database (+ -wal/-shm), logs/, and backups/ — lives under ONE host
+# bind mount (docs/ARCHITECTURE.md §2.1, docs/adr/0002). There are
+# deliberately NO anonymous or named Docker volumes for anything that
+# matters: moving this directory plus this file to another compatible host
+# moves the whole installation (SPEC §116), and backup is just "stop or
+# snapshot, copy the directory".
+#
+# - Production default (and what this file uses out of the box):
+#     /opt/flightsite/data  (host)  ->  /opt/flightsite/data  (container)
+#   Create it once on the host with the right ownership before first run,
+#   e.g.: sudo mkdir -p /opt/flightsite/data && sudo chown 1000:1000 /opt/flightsite/data
+#   (the backend container runs as uid 1000).
+# - Local development / CI, where writing to /opt on the host is
+#   undesirable or unavailable, override the host side with
+#   FLIGHTSITE_HOST_DATA_DIR, e.g.:
+#     FLIGHTSITE_HOST_DATA_DIR=./data docker compose up -d
+#   The container-side path never changes: the backend image's
+#   FLIGHTSITE_DATA_DIR is always /opt/flightsite/data.
+# ---------------------------------------------------------------------------
+
+services:
+  # ADR-0002: the FastAPI process — ingestion, live state, in-process SQLite
+  # persistence, alerts, analytics, APIs. Not reachable directly from the
+  # browser; the frontend container is the one origin.
+  flightsite-backend:
+    image: ghcr.io/stevenpickles/flightsite-backend:latest
+    build:
+      context: ./backend
+    container_name: flightsite-backend
+    restart: unless-stopped
+    # Network alias "backend" is what frontend/nginx.conf proxies /api/ to.
+    networks:
+      default:
+        aliases:
+          - backend
+    volumes:
+      - ${FLIGHTSITE_HOST_DATA_DIR:-/opt/flightsite/data}:/opt/flightsite/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ADR-0002: nginx serving the built React app and reverse-proxying /api
+  # (including WebSocket upgrade) to flightsite-backend. This is the only
+  # container the browser talks to.
+  flightsite-frontend:
+    image: ghcr.io/stevenpickles/flightsite-frontend:latest
+    build:
+      context: ./frontend
+    container_name: flightsite-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      flightsite-backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
