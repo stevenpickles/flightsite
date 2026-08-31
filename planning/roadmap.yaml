@@ -460,7 +460,7 @@ slices:
     title: "Map foundation"
     phase: 3
     branch: "013-map-foundation"
-    status: planned
+    status: merged
     depends_on: ["002"]
     objective: "Integrate MapLibre with an abstracted basemap registry, dark aviation default style, range rings, and receiver marker."
     scope:
