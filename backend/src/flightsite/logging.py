@@ -6,10 +6,13 @@ uvicorn or third-party libraries) — is rendered as a single JSON line with an
 ISO-8601 UTC timestamp. The log level is configurable via the
 ``FLIGHTSITE_LOG_LEVEL`` environment variable (default ``INFO``).
 
-A rotating-file handler scaffold is included but disabled by default; the
-full configuration system (config.yaml / secrets.yaml / env layering) arrives
-in slice 004, so for now this module only reads plain environment variables
-and accepts direct arguments.
+A rotating-file handler scaffold is included but disabled by default.
+
+:func:`flightsite.app.create_app` passes ``settings.log_level``, which the
+settings model has already resolved through the config.yaml / secrets.yaml /
+environment layering — so ``FLIGHTSITE_LOG_LEVEL`` still outranks
+``config.yaml``. The environment fallback below keeps this module usable on
+its own, before any settings object exists.
 """
 
 from __future__ import annotations
