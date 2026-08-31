@@ -48,16 +48,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "backend/uv.lock"
 
-      - name: Install backend dependencies
-        working-directory: backend
-        run: uv sync --locked
-
-      # pip-audit inspects the currently active (uv-managed) environment, so it
-      # covers every backend dependency resolved from backend/uv.lock. This is
-      # the blocking check: any known vulnerability fails the build.
+      # Audit the exported, locked dependency list rather than the installed
+      # environment: the local `flightsite` package itself is not on PyPI, so
+      # an environment audit in --strict mode always fails on it. The export
+      # covers every dependency pinned in backend/uv.lock. This is the
+      # blocking check: any known vulnerability fails the build.
       - name: pip-audit (backend, blocking)
         working-directory: backend
-        run: uv run --with pip-audit==2.10.1 pip-audit --strict --desc
+        run: |
+          uv export --locked --no-emit-project --format requirements-txt -o /tmp/requirements-audit.txt
+          uvx pip-audit@2.10.1 --strict --desc --no-deps --disable-pip -r /tmp/requirements-audit.txt
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
