@@ -1,0 +1,215 @@
+name: docker
+
+# Docker packaging workflow (docs/ARCHITECTURE.md §2, docs/adr/0002,
+# docs/SECURITY.md §7-8, roadmap slice 006).
+#
+# Two jobs:
+#   - `docker`: builds both images for linux/amd64 only (fast, no push),
+#     runs a docker-compose smoke test — the backend health endpoint must
+#     answer 200 reached THROUGH the frontend's nginx proxy, which is what
+#     actually proves /api proxying works, not just that the backend is
+#     alive — then a blocking Trivy scan of both images. This job becomes a
+#     required status check on dev/main branch protection once that lands,
+#     which is why (mirroring backend.yml/frontend.yml) its `pull_request`
+#     trigger has no path filter: GitHub only evaluates required checks that
+#     a workflow run actually reports for a given PR, and a path-filtered
+#     trigger would silently skip (and therefore permanently block merge of)
+#     any PR that doesn't touch backend/**, frontend/**, or compose.yaml.
+#   - `publish`: true multi-arch (linux/amd64 + linux/arm64) build and push
+#     to GHCR, gated to version tags (`v*`) plus manual `workflow_dispatch`
+#     for re-publishing an existing tag. Not path-filtered either — a
+#     release tag's commit may not itself touch backend/** or frontend/**,
+#     and a tag push must always be able to publish.
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/flightsite-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/flightsite-frontend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + compose smoke test + Trivy scan. Runs on PRs and pushes to dev;
+  # excluded from tag pushes (the `publish` job below does the real build for
+  # those) and from workflow_dispatch (manual re-publish only).
+  # Required status check name (once wired into branch protection): docker
+  # ---------------------------------------------------------------------------
+  docker:
+    name: docker
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # linux/amd64 only + --load: fast, and puts the image in the local
+      # Docker daemon so it can be composed up and scanned below. Multi-arch
+      # (amd64+arm64) is only exercised on the real publish path, since
+      # --load does not support multi-platform output.
+      - name: Build backend image (linux/amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Build frontend image (linux/amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: frontend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.FRONTEND_IMAGE }}:latest
+
+      # compose.yaml's `image:` values match ${BACKEND,FRONTEND}_IMAGE:latest
+      # exactly, and both are already loaded into the local Docker daemon, so
+      # `docker compose up` (no --build, no pull) runs precisely the images
+      # just built and about to be scanned.
+      - name: Compose smoke test
+        run: |
+          set -euo pipefail
+          export FLIGHTSITE_HOST_DATA_DIR
+          FLIGHTSITE_HOST_DATA_DIR="$(mktemp -d)"
+          # The backend container runs as uid 1000; the runner user is uid 1001,
+          # so the freshly created temp dir must be handed to the container's
+          # uid or the backend cannot write its config/database and reports
+          # unhealthy before the proxy check even starts.
+          sudo chown 1000:1000 "$FLIGHTSITE_HOST_DATA_DIR"
+          trap 'docker compose down -v; sudo rm -rf "$FLIGHTSITE_HOST_DATA_DIR"' EXIT
+
+          if ! docker compose up -d; then
+            echo "::error::docker compose up failed" >&2
+            docker compose logs
+            exit 1
+          fi
+
+          echo "waiting for backend health via the frontend's nginx proxy..."
+          ok=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/api/v1/health >/tmp/health.json; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::backend /api/v1/health never answered 200 through the frontend proxy" >&2
+            docker compose logs
+            exit 1
+          fi
+          echo "health response via proxy:"; cat /tmp/health.json; echo
+
+          echo "checking the SQLite database landed under the bind mount..."
+          # The dir is chowned to the container uid with mktemp's 0700 mode,
+          # so the runner user needs sudo to look inside it.
+          if ! sudo test -f "$FLIGHTSITE_HOST_DATA_DIR/flightsite.sqlite3"; then
+            echo "::error::flightsite.sqlite3 not found under the bind mount" >&2
+            sudo ls -la "$FLIGHTSITE_HOST_DATA_DIR"
+            exit 1
+          fi
+
+      - name: Trivy scan — backend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:latest
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy scan — frontend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}:latest
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------------
+  # Multi-arch build + GHCR publish. Tag pushes only (plus manual dispatch).
+  # ---------------------------------------------------------------------------
+  publish:
+    name: docker/publish
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only this job publishes images, so only this job gets the extra
+      # permission beyond the workflow-level read-only default.
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up QEMU (arm64 emulation on the amd64 runner)
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backend image metadata
+        id: meta_backend
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest
+
+      - name: Frontend image metadata
+        id: meta_frontend
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.FRONTEND_IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest
+
+      - name: Build and push backend (linux/amd64,linux/arm64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta_backend.outputs.tags }}
+          labels: ${{ steps.meta_backend.outputs.labels }}
+
+      - name: Build and push frontend (linux/amd64,linux/arm64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta_frontend.outputs.tags }}
+          labels: ${{ steps.meta_frontend.outputs.labels }}
