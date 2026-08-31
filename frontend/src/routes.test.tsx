@@ -6,16 +6,18 @@ import { NAV_ITEMS, requireNavItem } from "@/components/shell/nav-items";
 import { renderApp } from "@/test/test-utils";
 
 describe("routing", () => {
-  it("renders the Live Map placeholder at the index route", () => {
+  it("renders the Live Map (slice 013: a real map, no longer a placeholder) at the index route", () => {
     renderApp("/");
     const liveMap = requireNavItem("/");
+    // The Live Map page's heading is visually hidden (the map is the
+    // content) but stays in the a11y tree, so `getByRole` still finds it.
     expect(
       screen.getByRole("heading", { level: 1, name: liveMap.label }),
     ).toBeInTheDocument();
-    expect(screen.getByText(liveMap.description)).toBeInTheDocument();
+    expect(screen.getByTestId("maplibre-container")).toBeInTheDocument();
   });
 
-  it("switches to each section's placeholder page on navigation", async () => {
+  it("switches to each section's page on navigation", async () => {
     const user = userEvent.setup();
     renderApp("/");
 
@@ -26,7 +28,11 @@ describe("routing", () => {
       expect(
         screen.getByRole("heading", { level: 1, name: item.label }),
       ).toBeInTheDocument();
-      expect(screen.getByText(item.description)).toBeInTheDocument();
+      // Every section except Live Map is still a placeholder page
+      // (slice 013 only implements the map foundation).
+      if (item.to !== "/") {
+        expect(screen.getByText(item.description)).toBeInTheDocument();
+      }
     }
   });
 });
