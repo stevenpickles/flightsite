@@ -14,6 +14,8 @@ from flightsite import __version__
 from flightsite.api.internal import router as internal_router
 from flightsite.api.v1 import router as v1_router
 from flightsite.config import ConfigStore
+from flightsite.db import Database, database_path, initialize_database
+from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.logging import configure_logging
 from flightsite.readiness import ReadinessRegistry
 
@@ -23,11 +25,20 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     readiness: ReadinessRegistry = app.state.readiness
+    database: Database = app.state.database
+
+    # Migrations and the integrity check run before startup is declared
+    # complete. They never abort startup: a failure leaves the `database`
+    # subsystem not-ready (so /api/v1/ready answers 503) while the process
+    # stays reachable for diagnosis — see flightsite.db.startup.
+    await initialize_database(database, readiness)
+
     readiness.mark_startup_complete()
     logger.info("app_startup_complete")
     try:
         yield
     finally:
+        await database.dispose()
         logger.info("app_shutdown")
 
 
@@ -40,9 +51,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     ``PUT /api/internal/config`` replaces ``app.state.settings`` in place, so
     request handlers must read it from state rather than caching it at import
     time. Then configures structured logging, initializes the readiness
-    registry and uptime clock, and mounts the routers. With no subsystems
-    registered against the readiness registry, the app becomes ready as soon
-    as the lifespan startup hook runs.
+    registry and uptime clock, constructs the database, and mounts the
+    routers.
+
+    The ``database`` subsystem is registered here, not in the lifespan hook,
+    so it reads as not-ready from the very first request; the lifespan hook
+    migrates the database and marks it ready. Constructing
+    :class:`~flightsite.db.Database` opens nothing and creates no directory —
+    building an app is still side-effect free.
 
     Args:
         data_dir: overrides data-directory resolution (``FLIGHTSITE_DATA_DIR``,
@@ -60,6 +76,8 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     app.state.config_store = store
     app.state.settings = settings
     app.state.readiness = ReadinessRegistry()
+    app.state.readiness.register(DATABASE_SUBSYSTEM)
+    app.state.database = Database(database_path(store.data_dir))
     app.state.start_time = time.monotonic()
 
     app.include_router(v1_router, prefix="/api/v1")

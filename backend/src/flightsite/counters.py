@@ -47,5 +47,15 @@ class CounterRegistry:
         with self._lock:
             return dict(self._counters)
 
+    def reset(self) -> None:
+        """Zero every predeclared counter, keeping the declared names.
+
+        The module-level :data:`counters` registry is process-global, so the
+        test suite resets it between tests to keep one test's failures out of
+        another's assertions.
+        """
+        with self._lock:
+            self._counters = dict.fromkeys(self._counters, 0)
+
 
 counters = CounterRegistry()
