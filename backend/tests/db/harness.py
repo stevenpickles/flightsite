@@ -104,6 +104,37 @@ def create_sql(path: Path, table: str) -> str:
     return str(row[0]) if row else ""
 
 
+def index_names(path: Path, table: str) -> set[str]:
+    """Names of every index SQLite holds for ``table``.
+
+    Includes the implicit ``sqlite_autoindex_*`` entries a ``UNIQUE`` column
+    creates, which is how a test can assert uniqueness was actually enforced
+    rather than merely declared.
+    """
+    with _connect(path) as connection:
+        rows = connection.execute(f"PRAGMA index_list({table})").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def index_sql(path: Path, name: str) -> str:
+    """The ``CREATE INDEX`` statement SQLite stored for ``name``.
+
+    Empty for implicit indexes, which have no statement of their own.
+    """
+    with _connect(path) as connection:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", (name,)
+        ).fetchone()
+    return str(row[0]) if row and row[0] else ""
+
+
+def foreign_keys(path: Path, table: str) -> set[tuple[str, str, str]]:
+    """``(column, referenced table, referenced column)`` for each foreign key."""
+    with _connect(path) as connection:
+        rows = connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+    return {(str(row[3]), str(row[2]), str(row[4])) for row in rows}
+
+
 def seed_meta_rows(path: Path, rows: Mapping[str, str], *, updated_ms: int = 1) -> None:
     """Insert ``meta`` rows directly, bypassing the ORM.
 
