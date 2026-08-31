@@ -164,7 +164,7 @@ slices:
     title: "CI pipeline"
     phase: 1
     branch: "003-ci-pipeline"
-    status: planned
+    status: merged
     depends_on: ["001", "002"]
     objective: "Stand up GitHub Actions quality gates and security scanning as required status checks."
     scope:
@@ -187,7 +187,7 @@ slices:
     title: "Configuration system"
     phase: 1
     branch: "004-config-system"
-    status: planned
+    status: merged
     depends_on: ["001"]
     objective: "Implement the canonical config.yaml / secrets.yaml / environment-override configuration model."
     scope:
