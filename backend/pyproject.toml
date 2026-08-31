@@ -81,6 +81,12 @@ disallow_untyped_defs = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--cov=flightsite --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    # Informal performance sanity checks. They run in the normal suite — a
+    # regression should fail an ordinary test run — but the marker lets CI or a
+    # developer select (`-m perf`) or exclude (`-m 'not perf'`) them.
+    "perf: performance sanity checks with a wall-clock budget",
+]
 
 [tool.coverage.run]
 source = ["src/flightsite"]

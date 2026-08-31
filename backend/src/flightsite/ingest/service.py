@@ -1,10 +1,11 @@
 """The ingestion loop: runs an adapter and fans batches out to consumers.
 
 One asyncio task drains a :class:`~flightsite.ingest.protocol.DecoderAdapter`
-and hands each batch to every subscriber. In this slice there are no
-subscribers — the live aircraft state store arrives in slice 008 — so the
-service ships with :func:`null_sink` and a :meth:`IngestionService.subscribe`
-hook, which keeps the seam exercised and lets 008 be an additive change.
+and hands each batch to every subscriber. In production the subscriber is the
+live aircraft state store (:class:`flightsite.live.LiveStore`), which the app
+passes in as the sole consumer. :func:`null_sink` remains the default for a
+service constructed without one, so "nothing consumes this service" stays an
+explicit, testable fact rather than an empty list that might mean anything.
 
 Readiness
 ---------
@@ -64,9 +65,8 @@ BatchConsumer = Callable[[AircraftStateBatch], None]
 def null_sink(batch: AircraftStateBatch) -> None:
     """Discard a batch.
 
-    The default consumer until the live state store (slice 008) subscribes.
-    It exists so "nothing consumes ingestion yet" is an explicit, testable
-    fact rather than an empty subscriber list that might mean anything.
+    The default consumer for a service built without one — a connection
+    smoke test, a fixture, an adapter exercised on its own.
     """
 
 
@@ -166,9 +166,15 @@ def build_ingestion_service(
     endpoint: DecoderEndpoint,
     *,
     readiness: ReadinessRegistry | None = None,
+    consumers: tuple[BatchConsumer, ...] = (null_sink,),
 ) -> IngestionService:
-    """Build the v1 ingestion service: a polling readsb/dump1090-fa adapter."""
-    return IngestionService(ReadsbJsonAdapter(endpoint), readiness=readiness)
+    """Build the v1 ingestion service: a polling readsb/dump1090-fa adapter.
+
+    ``consumers`` replaces the default sink outright rather than adding to it,
+    so the app hands in the live store and no batch is handed to a discard
+    function on the hot path.
+    """
+    return IngestionService(ReadsbJsonAdapter(endpoint), readiness=readiness, consumers=consumers)
 
 
 __all__ = [
