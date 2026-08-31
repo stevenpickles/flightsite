@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>FlightSite</title>
+    <script>
+      (function () {
+        var STORAGE_KEY = "flightsite-ui-theme";
+        var theme = "dark";
+        try {
+          var stored = window.localStorage.getItem(STORAGE_KEY);
+          if (stored === "light" || stored === "dark") {
+            theme = stored;
+          }
+        } catch (_err) {
+          theme = "dark";
+        }
+        var root = document.documentElement;
+        root.classList.toggle("dark", theme === "dark");
+        root.style.colorScheme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

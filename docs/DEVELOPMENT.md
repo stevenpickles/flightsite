@@ -31,20 +31,23 @@ compose.yaml Docker Compose deployment                      — arrives in slice
 
 ## Local development quickstart
 
-> **Placeholder.** Concrete commands land with the foundation slices: backend
-> bootstrap in slice 001, frontend bootstrap in slice 002, Docker Compose in
-> slice 006. This section must be updated by those slices.
-
-Expected shape once foundations exist:
-
 ```bash
-# backend
-cd backend && uv sync && uv run pytest && uv run flightsite serve
+# backend (uv fetches Python 3.12 automatically)
+cd backend
+uv sync                        # install deps
+uv run pytest                  # tests + coverage gate (>= 80%)
+uv run ruff check . && uv run ruff format --check .
+uv run mypy                    # strict type checking
+uv run flightsite-serve        # serve on :8000 (or: python -m flightsite)
 
-# frontend
-cd frontend && npm install && npm test && npm run dev
+# frontend (Node >= 22)
+cd frontend
+npm install
+npm run test:coverage          # Vitest + RTL, coverage gate (>= 70%)
+npm run lint && npm run format:check && npm run typecheck
+npm run dev                    # Vite dev server
 
-# full stack, no hardware required
+# full stack, no hardware required (lands with slices 006 + 011)
 FLIGHTSITE_DEMO=1 docker compose up -d
 ```
 
