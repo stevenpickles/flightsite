@@ -56,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # installs prebuilt manylinux wheels, and only the resulting venv is copied
 # across, so there is no glibc-ABI coupling between the two stages.
 # ---------------------------------------------------------------------------
-FROM python:3.12.14-slim-bookworm AS runtime
+FROM python:3.14.7-slim-bookworm AS runtime
 
 # Non-root, fixed-uid user (docs/SECURITY.md §7: both containers run as
 # non-root on minimal base images). uid/gid 1000 is the conventional
