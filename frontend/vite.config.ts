@@ -16,6 +16,19 @@ export default defineConfig({
       "@": path.resolve(rootDir, "./src"),
     },
   },
+  server: {
+    proxy: {
+      // Forwards the internal (§5) and v1 APIs to a locally-running
+      // backend (`cd backend && uv run fastapi dev`) so `npm run dev`
+      // exercises real config/decoder-test/live data without a separate
+      // reverse proxy in front of the dev server. Production instead runs
+      // both containers behind the deployment's own proxy (docs/DEVELOPMENT.md).
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     globals: false,

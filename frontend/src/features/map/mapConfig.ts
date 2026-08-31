@@ -6,15 +6,16 @@ export const DEFAULT_RING_RADII_NM: readonly number[] = [
 ];
 
 /**
- * Development placeholder map configuration (receiver near Seattle, WA).
+ * Fallback map configuration (receiver near Seattle, WA).
  *
- * There is no config API to read a real receiver position from yet: that
- * arrives with slice 004 (configuration system) and is exposed to the
- * frontend via slice 010's receiver-info endpoint. Until those land, the
- * Live Map renders against this fixed placeholder so the map, rings, and
- * marker are all exercisable end-to-end. Replacing it is a matter of
- * swapping the `useMapConfigStore` initial value / wiring a fetch — no
- * other map code depends on this constant being real data.
+ * The setup wizard (slice 018) now wires the real receiver position into
+ * `useMapConfigStore` — see `src/features/setup/lib/mapConfigSync.ts`,
+ * called from `RootLayout` on every config load and again once the wizard
+ * finishes. This constant is what the store initializes with before that
+ * first config load resolves, and what the map keeps rendering against if
+ * the receiver location has never been configured (`location.latitude` /
+ * `location.longitude` are `null` — a valid, if incomplete, config state)
+ * — so the Live Map is always exercisable end-to-end, never blank.
  */
 export const DEV_PLACEHOLDER_MAP_CONFIG: MapConfig = {
   receiver: {
