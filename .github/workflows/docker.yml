@@ -89,9 +89,18 @@ jobs:
           set -euo pipefail
           export FLIGHTSITE_HOST_DATA_DIR
           FLIGHTSITE_HOST_DATA_DIR="$(mktemp -d)"
-          trap 'docker compose down -v; rm -rf "$FLIGHTSITE_HOST_DATA_DIR"' EXIT
+          # The backend container runs as uid 1000; the runner user is uid 1001,
+          # so the freshly created temp dir must be handed to the container's
+          # uid or the backend cannot write its config/database and reports
+          # unhealthy before the proxy check even starts.
+          sudo chown 1000:1000 "$FLIGHTSITE_HOST_DATA_DIR"
+          trap 'docker compose down -v; sudo rm -rf "$FLIGHTSITE_HOST_DATA_DIR"' EXIT
 
-          docker compose up -d
+          if ! docker compose up -d; then
+            echo "::error::docker compose up failed" >&2
+            docker compose logs
+            exit 1
+          fi
 
           echo "waiting for backend health via the frontend's nginx proxy..."
           ok=0
