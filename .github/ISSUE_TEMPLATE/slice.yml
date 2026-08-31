@@ -1,0 +1,63 @@
+name: Roadmap slice
+description: Tracking issue for a numbered roadmap slice (created when the slice starts)
+title: "Slice NNN: <title>"
+labels: ["slice"]
+body:
+  - type: input
+    id: slice-id
+    attributes:
+      label: Slice ID
+      description: Three-digit slice number from planning/roadmap.yaml
+      placeholder: "007"
+    validations:
+      required: true
+  - type: input
+    id: roadmap-link
+    attributes:
+      label: Roadmap reference
+      description: Link to the slice entry in planning/roadmap.yaml (permalink preferred)
+      placeholder: https://github.com/stevenpickles/flightsite/blob/dev/planning/roadmap.yaml
+    validations:
+      required: true
+  - type: input
+    id: objective
+    attributes:
+      label: Objective
+      description: One-sentence goal, matching the roadmap objective
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Copied from the roadmap slice; the PR checks these off
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: Depends on
+      description: Slice IDs that must be merged first
+      placeholder: "004, 005"
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Preferred agent
+      options:
+        - opus
+        - sonnet
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true

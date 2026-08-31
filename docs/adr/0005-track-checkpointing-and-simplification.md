@@ -1,0 +1,58 @@
+# ADR-0005: Track checkpointing, simplification, and packed storage at sighting close
+
+**Status:** Accepted (2026-08-31; revised at the Phase 0 review gate — packed
+row-per-sighting storage promoted from contingency to the v1 design)
+
+## Context
+
+A sighting's full-resolution track (1 Hz × potentially an hour × 500 aircraft) is too
+voluminous to keep forever on a Pi (SPEC §19), yet v1 must retain enough
+ordered/timestamped path data that historical playback can be added later, and power
+loss must not erase an active sighting's path (SPEC §71). Bézier fitting for
+compression is explicitly ruled out. The Phase 0 storage model showed that at the
+SPEC §5 load envelope (~500 simultaneous aircraft ⇒ ~15–20k sightings/day),
+row-per-point storage of even *simplified* tracks exceeds 25 GB/year — unacceptable
+for Pi-class storage — while a packed per-sighting encoding keeps the same data at
+~8–9 GB/year.
+
+## Decision
+
+- **While a sighting is active:** the full-resolution track lives in memory in the
+  live store and is **checkpointed to SQLite in batches** (persistence-worker cadence,
+  ~30 s; `sighting_track_checkpoints`, row per point, integer enum codes) so an
+  unclean shutdown loses at most the last uncheckpointed batch. Checkpoints are
+  **lightly thinned** (collinear cruise points at unchanged altitude may be skipped);
+  they are a crash-recovery record, not an archival one.
+- **At sighting close:** the in-memory track is simplified with **Douglas-Peucker**
+  (altitude-aware tolerance chosen and property-tested in slice 052), then written as
+  **one `sighting_tracks` row per sighting**: a compact packed binary encoding
+  (delta-encoded scaled integers, ~16 B/point) of the ordered, timestamped points —
+  per point: time, position, altitude, ground speed, track, position source — plus
+  `point_count` and `encoding_version`. Checkpoint rows are deleted in the same
+  transaction.
+- **After close:** only the packed simplified path exists, retained indefinitely
+  (SPEC §65). Per-sighting reception statistics are computed before raw data is
+  discarded.
+- Points always remain real received/derived fixes — no curve fitting, no synthesized
+  positions. The pack/unpack layer is a repository detail: callers see
+  points-in/points-out, and the decoder ships with the encoder, keeping the data
+  playback-capable per SPEC §19.
+
+## Consequences
+
+- Per-sighting track storage is **~1–2 KB** in a single clustered row — roughly 20×
+  smaller than row-per-point storage of the same simplified track — which is what
+  makes multi-year retention feasible at the SPEC §5 envelope (see DATA_MODEL §9).
+- Simplification error is bounded and tested; extreme maneuvering keeps more points
+  by construction of Douglas-Peucker. `encoding_version` makes format evolution an
+  additive migration.
+- Crash recovery has a defined contract: bounded loss (one checkpoint batch), and
+  recovery closes orphaned sightings from their checkpointed points. Because
+  checkpoints are lightly thinned, **a recovered sighting's path is pre-thinned** —
+  slightly lower fidelity than a normally closed one — which is accepted and visible
+  via `closure_reason = shutdown_recovery`.
+- SQL cannot query individual track points (no per-point WHERE clauses). No v1
+  feature needs that: every read is "the whole path for one sighting". A future
+  feature needing point-level queries would require a superseding ADR.
+- The delete-after-pack step makes sighting close a transactional sequence owned by
+  the single writer (ADR-0001/0008).

@@ -1,0 +1,173 @@
+# FlightSite — v1 Roadmap
+
+> **Canonical source:** [`planning/roadmap.yaml`](../planning/roadmap.yaml). This
+> document is the human-readable representation. If the two disagree, the YAML wins
+> and the disagreement must be fixed immediately (SPEC §92). Slice IDs are stable and
+> never repurposed.
+
+Every slice is one numbered feature branch (`<id>-<short-description>`) and one PR
+into `dev`, merged with a merge commit after CI gates and Fable self-review. `dev`
+must remain deployable after every merge.
+
+## Phases
+
+| # | Phase | Goal |
+|---|---|---|
+| 0 | Planning | Planning package, architecture, data model, API design, roadmap, review gate |
+| 1 | Foundation | Repo, backend/frontend skeletons, CI, configuration, database, Docker |
+| 2 | Ingestion & Live Domain | Decoder ingestion, live state, sighting lifecycle, live API/WS, demo/replay |
+| 3 | Live Map Experience | Map, aircraft rendering, labels, detail, filters, wizard, settings, E2E foundation |
+| 4 | Metadata & Enrichment | Offline metadata, FAA, classification, route enrichment, airports, overlays |
+| 5 | History & Analytics | Aircraft/Sightings pages, analytics, receiver analytics, activity, milestones |
+| 6 | Alerts & Notifications | Watchlists, rule engine, interesting surfaces, notifications, alerts page |
+| 7 | Operations | Health/diagnostics, backup/restore, maintenance, data reset |
+| 8 | Hardening & Release Qualification | Full E2E, visual regression, a11y, performance, storage qualification, docs |
+
+## Release Checkpoints
+
+Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the merge to
+`main` requires human approval (SPEC §113).
+
+| Version | After Phase | Theme |
+|---|---|---|
+| v0.1.0 | 3 | Live radar MVP: ingestion, sightings, live map, demo mode, setup wizard |
+| v0.2.0 | 4 | Aircraft identity: offline metadata, classification, enrichment, overlays |
+| v0.3.0 | 5 | History & analytics |
+| v0.4.0 | 6 | Alerts & notifications |
+| v0.5.0 | 7 | Operations: backup/restore, maintenance, diagnostics |
+| v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
+
+## Slices
+
+### Phase 1 — Foundation
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 001 | Backend skeleton | — | sonnet | low | Python backend package with app factory, health/readiness, structured logging, quality tooling |
+| 002 | Frontend skeleton | — | sonnet | low | React/TS frontend with nav shell, theming, quality tooling |
+| 003 | CI pipeline | 001, 002 | sonnet | low | GitHub Actions quality gates and security scanning as required checks |
+| 004 | Configuration system | 001 | opus | medium | config.yaml / secrets.yaml / env-override configuration model |
+| 005 | Database foundation | 001, 004 | opus | medium | SQLite via SQLAlchemy 2.x async, Alembic, WAL, integrity checks |
+| 006 | Docker packaging | 003, 004, 005 | sonnet | medium | Two multi-arch containers, Compose deployment, GHCR publishing |
+
+### Phase 2 — Ingestion & Live Domain
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 007 | Decoder ingestion adapter | 004 | opus | medium | DecoderAdapter abstraction + ReadsbJsonAdapter polling normalized state updates |
+| 008 | Live aircraft state store | 007 | opus | high | In-memory live registry with lifecycle timing, derived fields, provenance |
+| 009 | Sighting persistence core | 005, 008 | opus | high | Write-behind worker, sighting open/close lifecycle, flight context, lifetime records, T0 |
+| 052 | Sighting tracks & reception stats | 009 | opus | high | Track checkpointing, DP-simplified packed tracks, reception stats, sighting events |
+| 053 | Unclean-shutdown recovery | 052 | opus | high | Power-loss recovery of open sightings with bounded loss and diagnostics |
+| 010 | Live API & WebSocket | 005, 008, 009 | opus | medium | Versioned REST + snapshot/delta WebSocket for live state |
+| 011 | Demo mode | 007, 008 | sonnet | medium | Deterministic demo adapter simulating rich traffic |
+| 012 | Capture & replay tooling | 007 | sonnet | low | Developer capture of normalized snapshots + deterministic replay |
+
+> Slices 052/053 carry out-of-sequence IDs: they were split from the original slice
+> 009 at the Phase 0 review gate, and existing IDs are never renumbered (SPEC §97).
+
+### Phase 3 — Live Map Experience
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 013 | Map foundation | 002 | sonnet | medium | MapLibre with basemap registry, dark default, range rings, receiver marker |
+| 014 | Live aircraft rendering | 010, 013 | opus | high | WS-driven aircraft layer with hierarchical icons, selection, stale fade |
+| 015 | Map labels & decluttering | 014 | sonnet | medium | Priority-based aircraft labels |
+| 016 | Aircraft detail panel | 014 | sonnet | low | Comprehensive detail panel with provenance and external links |
+| 017 | Live filters & non-positioned list | 014 | sonnet | medium | Filter drawer, quick filters, non-positioned aircraft panel |
+| 018 | First-run setup wizard | 002, 004, 007, 013 | sonnet | medium | Guided first-run configuration landing on the Live Map |
+| 019 | Settings page | 002, 004, 007 | sonnet | medium | Settings UI over the canonical config model with masked secrets |
+| 020 | E2E foundation | 006, 011, 014, 016, 018 | sonnet | medium | Playwright infrastructure over demo mode + first critical flows |
+
+### Phase 4 — Metadata & Enrichment
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 021 | Metadata framework | 005 | opus | high | Normalized metadata schema, provider interface, transactional imports |
+| 022 | Mictronics/tar1090 importer | 021 | sonnet | medium | Primary offline metadata source import with attribution |
+| 023 | FAA registry importer | 021 | sonnet | low | Optional supplemental U.S. registry import |
+| 024 | Classification & operator normalization | 021, 022 | opus | high | Military/gov/police + mission classification and operator groups with provenance |
+| 025 | Metadata update action | 019, 022, 023 | sonnet | low | Manual per-source metadata update with independent status |
+| 026 | Route enrichment (AeroDataBox) | 009, 016, 052 | opus | medium | Optional route enrichment: caching, rate limiting, provenance, graceful degradation |
+| 027 | Airport data & context | 009, 016, 021, 025, 026 | opus | medium | Airport dataset + nearest-airport and labeled arrival/departure inference |
+| 028 | Aviation overlays | 013, 027 | sonnet | medium | Airport and airspace map overlays with documented licensing |
+
+### Phase 5 — History & Analytics
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 029 | Aircraft page | 009, 016, 024 | sonnet | medium | Sortable historical Aircraft page over paginated APIs |
+| 030 | Sightings page | 009, 013, 016, 024, 052 | sonnet | medium | Chronological sightings log with per-sighting detail and path |
+| 031 | Analytics backend | 009, 024 | opus | high | Daily rollups and aggregation APIs with time presets |
+| 032 | Analytics page | 031, 033 | sonnet | low | Analytics UI with presets and themed charts |
+| 033 | Receiver metrics & retention | 005, 007 | opus | high | Decoder + FlightSite metrics with downsampling and pruning |
+| 034 | Receiver page | 031, 033, 052 | sonnet | medium | Scorecard, charts, range-by-bearing polar plot, lifetime stats |
+| 035 | Activity feed & milestones | 009, 010, 024, 025 | opus | medium | Persistent activity events, milestone/record detection, feed UI |
+| 036 | Today at a glance | 031, 033, 035 | sonnet | low | Compact daily summary on the Live Map experience |
+
+### Phase 6 — Alerts & Notifications
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 037 | Watchlists | 009, 024 | sonnet | low | User-defined watchlists with CRUD and live matching |
+| 038 | Alert rule engine | 024, 031, 037 | opus | high | AND-combined rule evaluation, rarity, emergency squawks, templates, dedup |
+| 039 | Interesting aircraft surfaces | 038, 014, 035 | sonnet | medium | Interesting panel, map emphasis, label indicator, feed integration |
+| 040 | Browser notifications | 038, 039 | sonnet | medium | Notification API delivery with permission handling and dedup |
+| 041 | Alerts page & rule builder | 038, 037 | sonnet | medium | Visual rule builder, templates, alert history |
+
+### Phase 7 — Operations
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 042 | Health & diagnostics | 010, 019, 025, 026, 033, 040 | sonnet | medium | Full health/diagnostics UI and API — no SSH required |
+| 043 | Backup & restore | 004, 005, 021 | opus | high | Version-aware, checksum-validated, SQLite-safe backup/restore |
+| 044 | Database maintenance | 005, 009, 033, 053 | opus | high | Automated integrity checks, pruning, optimization, recovery hardening |
+| 045 | Data reset actions | 019, 043 | sonnet | medium | Confirmed Reset FlightSite Data and Clear Metadata Cache |
+
+### Phase 8 — Hardening & Release Qualification
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 046 | E2E expansion | 020, 025, 030, 032, 040, 043, 045 | sonnet | medium | Complete SPEC §82 critical-flow E2E suite |
+| 047 | Visual regression suite | 020, 032, 034, 039, 041 | sonnet | medium | Deterministic screenshot regression over stable views |
+| 048 | Accessibility baseline | 032, 034, 039, 041 | sonnet | medium | SPEC §80 accessibility baseline verified across main flows |
+| 049 | Performance harness & Pi gates | 009, 010, 011, 012, 038, 053 | opus | high | SPEC §85 performance regression harness with hard gates |
+| 050 | Multi-year storage qualification | 031, 043, 044, 049 | opus | high | Synthetic multi-year dataset qualification of growth, queries, retention |
+| 051 | Documentation & install polish | 042, 045, 046 | sonnet | low | Docs complete enough for a fresh install from documentation alone |
+
+## Parallelization Guide
+
+Dependency-derived waves; Fable owns merge order and reconciles drift before merging.
+Parallel slices use isolated worktrees and must not edit the same files concurrently.
+Slices adding Alembic migrations or extending the slice-009 persistence worker (021,
+024, 026, 027, 031, 033, 035, 037, 038, 052) are additionally serialized against each
+other per the parallel-migration rule in `docs/DEVELOPMENT.md`, even where the graph
+would allow parallelism.
+
+- **Wave A:** 001 ∥ 002
+- **Wave B:** 003, 004 (after 001) ∥ 013 (after 002)
+- **Wave C:** 005, 007 (after 004)
+- **Wave D:** 006 ∥ 012 ∥ 019 ∥ 018 ∥ 008 → {011, 009 → {052 → 053, 010}}
+- **Wave E:** 014 (after 010, 013) → {015, 016, 017} ∥ 021 → {022, 023} ∥ 033 (serialized vs 021 on migrations)
+- **Wave F:** 024 → {025, 029, 031, 037} ∥ 020 (after 014/016/018)
+- **Wave G:** 026 → 027 → 028 ∥ 030, 032, 034 ∥ 035 (after 025) → 036 ∥ 038 (after 031/037) → {039, 041} → 040
+- **Wave H:** 042 (after 040) ∥ 043 → 045 ∥ 044
+- **Wave I:** phase-8 qualification, largely sequential on feature completeness
+
+Bootstrap gating note: slices 001/002 merge before CI (003) exists. `dev` branch
+protection (PR required, no direct pushes) is applied before any merge; Fable reviews
+001/002 manually against their acceptance criteria, and 003 retroactively gates them.
+
+## Future / Backlog (v1 Non-Goals)
+
+Tracked here per SPEC §79; never implemented silently during v1:
+
+multi-receiver deployments · built-in authentication · Slack/Home Assistant/email/
+native push notifications · global aircraft overlay · aircraft photos · historical
+animated playback · free-form global search · data export · manual aircraft notes and
+metadata overrides · full offline map-region download manager · weather integration ·
+airport-level historical analytics · period-over-period analytics · aircraft-follow
+mode · circling/loitering/repeated-pass detection · complex nested boolean alert
+expressions · user-installable plugins · Prometheus/Grafana integration · automatic
+self-updater · additional decoder adapters (Beast, SBS, remote receiver) · scheduled
+metadata updates

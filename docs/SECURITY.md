@@ -1,0 +1,135 @@
+# FlightSite Security Baseline
+
+This document records FlightSite's security assumptions, controls, and known risk
+areas (SPEC §87). It is updated whenever a slice changes a security-relevant behavior.
+
+---
+
+## 1. Threat Model and Deployment Assumption
+
+**FlightSite v1 assumes a trusted-LAN deployment.** There is no built-in
+authentication, authorization, or transport encryption in v1 (SPEC §75). Anyone who
+can reach the FlightSite ports can read all data and change all settings, rules, and
+watchlists.
+
+What FlightSite does defend against, even on a trusted LAN:
+
+- Malformed or malicious decoder output (untrusted network input parser)
+- Accidental secret disclosure through logs, APIs, diagnostics, or backups
+- Data corruption from power loss or unclean shutdown
+- Vulnerable dependencies and container images (scanned, gated)
+
+What it explicitly does not defend against in v1:
+
+- A hostile actor on the same network
+- Public-internet exposure
+
+## 2. Public Exposure Is Unsupported
+
+**Do not expose FlightSite directly to the public internet.** It is not supported
+securely by default. If remote access is needed:
+
+- Prefer a VPN (WireGuard/Tailscale-style) into the LAN, or
+- Front FlightSite with a reverse proxy that terminates TLS and enforces
+  authentication (e.g., basic auth, forward-auth/SSO).
+
+Built-in or reverse-proxy-aware application authentication is future work
+(roadmap backlog), not a v1 feature.
+
+## 3. Secrets Handling
+
+Canonical layout (SPEC §29):
+
+- Non-secret configuration: `/opt/flightsite/data/config.yaml`
+- Secrets: `/opt/flightsite/data/secrets.yaml` and/or `FLIGHTSITE_*` environment
+  variable overrides. The only v1 secret is the optional AeroDataBox API key.
+
+Enforced rules (tested, not aspirational — see slices 004, 019, 026, 042, 043):
+
+- Secrets never appear in logs at any log level.
+- Secrets never appear in any documented read-only API response.
+- The Settings UI masks stored values; plaintext secrets are never round-tripped to
+  the client.
+- Diagnostics/support output provably contains no secrets (automated test).
+- Backups include secrets only when explicitly requested, and the backup manifest
+  states whether they are included.
+
+## 4. Untrusted Input: Decoder Ingestion
+
+The decoder endpoint is network input and is treated as untrusted, even on the LAN.
+The ingestion adapter (slice 007) must survive, without crashing or corrupting state:
+invalid JSON, missing/extra fields, absurd values (positions, altitudes, timestamps),
+oversized payloads, and abrupt disconnects. Malformed-input handling is covered by
+fuzz-style tests, and no decoder-specific assumption may leak past the adapter
+boundary. The same posture applies to downloaded metadata files (slices 021–023):
+downloads are validated before transactional import, and a failed or suspect import
+leaves the previous dataset intact.
+
+## 5. Browser Notifications
+
+Notifications use the browser Notification API only (SPEC §48). Permission is
+requested only after the user opts in (setup wizard or settings), never unprompted.
+Notification content includes aircraft data only — never secrets or configuration.
+Denied/blocked permission degrades cleanly and is surfaced in diagnostics.
+
+## 6. Data Integrity: SQLite, Power Loss
+
+- WAL mode with recovery on startup; automatic integrity checks (`quick_check`) at
+  startup and during scheduled maintenance.
+- No assumption that shutdown hooks run; sighting recovery closes/repairs state left
+  open by unclean shutdown (slice 053), with diagnostics on problems.
+- Backups use SQLite-safe snapshotting (VACUUM INTO / backup API), are
+  checksum-verified, and restores validate manifest checksums and schema
+  compatibility before touching existing data (slice 043). Destructive restore and
+  reset operations require explicit confirmation.
+
+## 7. Container Boundaries
+
+- Both containers run as non-root users on minimal base images.
+- The backend's writable filesystem surface is the `/opt/flightsite/data` bind mount;
+  everything else is immutable application content.
+- No anonymous volumes hold important state (SPEC §6, §116).
+- The frontend proxies API traffic to the backend; only intended ports are published.
+- Images are scanned (Trivy) in CI; scan gates block releases on material findings.
+
+## 8. Dependency and Supply-Chain Controls
+
+CI-enforced from slice 003/006 (SPEC §88):
+
+- `pip-audit` (Python) and `npm audit` (Node) dependency vulnerability scanning
+- Trivy container image scanning
+- gitleaks secret scanning on the repository
+- License compatibility checks for dependencies and bundled data/assets
+- Dependabot automated update PRs (pip, npm, GitHub Actions, Docker)
+
+**Release-blocking rule:** material high/critical findings block releases. They may be
+waived only with a documented justification (false positive or not exploitable in
+FlightSite's deployment model) recorded in the release PR.
+
+## 9. External API Expectations
+
+The documented external API is read-only in v1 (SPEC §74). Mutation endpoints used by
+the frontend (configuration, rules, watchlists) are internal, undocumented, and not a
+compatibility surface — but they share the same trust model: no auth in v1, trusted
+LAN only. Nothing in the read-only API exposes secrets or filesystem paths beyond the
+documented data directory.
+
+## 10. What Data Leaves Your Network
+
+FlightSite is local-first. The complete list of optional outbound traffic:
+
+| Traffic | When | What is sent |
+|---|---|---|
+| AeroDataBox route enrichment | Only if an API key is configured | Flight identifiers (callsign/registration/ICAO) needed for route lookup, plus your API key, to the AeroDataBox API |
+| Basemap tiles | When using internet basemaps (default) | Standard tile HTTP requests, which reveal the viewed map area (and therefore approximately your receiver's region) to the tile provider |
+| Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, and airport-data sources; nothing about your receiver is uploaded |
+
+Everything else — aircraft observations, sightings, analytics, alerts, configuration —
+stays on your host. FlightSite has no telemetry, no phone-home, and no account system.
+Core functionality works with all outbound traffic blocked (offline basemap
+degradation is a tested path).
+
+## 11. Reporting
+
+Security issues in FlightSite may be reported via GitHub issues (or GitHub private
+vulnerability reporting once enabled for the repository).

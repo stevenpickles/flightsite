@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a problem with FlightSite
+title: "bug: <short description>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not paste secrets** — redact API keys,
+        `secrets.yaml` contents, and anything sensitive from logs and configs.
+  - type: input
+    id: version
+    attributes:
+      label: FlightSite version
+      description: From the Settings/health page or image tag
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment type
+      options:
+        - Docker Compose on Raspberry Pi 4
+        - Docker Compose on other Linux host
+        - Development environment
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: decoder
+    attributes:
+      label: Decoder
+      description: Decoder and version feeding FlightSite (or demo mode)
+      placeholder: readsb v3.14.x / dump1090-fa 9.0 / demo mode
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / diagnostics
+      description: Backend logs, browser console, or the health page. Redact anything sensitive.
+      render: text
