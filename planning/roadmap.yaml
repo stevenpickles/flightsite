@@ -239,7 +239,7 @@ slices:
     title: "Docker packaging"
     phase: 1
     branch: "006-docker-packaging"
-    status: planned
+    status: merged
     depends_on: ["003", "004", "005"]
     objective: "Package FlightSite as two multi-arch containers with Compose deployment and GHCR publishing."
     scope:
@@ -438,7 +438,7 @@ slices:
     title: "Capture & replay tooling"
     phase: 2
     branch: "012-capture-replay"
-    status: planned
+    status: merged
     depends_on: ["007"]
     objective: "Developer tool to capture normalized decoder snapshots into compact fixtures and replay them deterministically."
     scope:

@@ -1,0 +1,48 @@
+# Build context excludes for backend/Dockerfile.
+# Keep the build context to exactly what the image needs: pyproject.toml,
+# uv.lock, README.md, and src/. Everything else here would otherwise bust
+# Docker's layer cache or leak local/dev-only state into the build context.
+
+# Version control / CI
+.git/
+.github/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+
+# Tests (not needed to build or run the image)
+tests/
+
+# Local data / secrets (never belongs in an image layer)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+secrets.yaml
+*.secret
+.env
+.env.*
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
