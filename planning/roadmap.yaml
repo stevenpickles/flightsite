@@ -214,7 +214,7 @@ slices:
     title: "Database foundation"
     phase: 1
     branch: "005-database-foundation"
-    status: planned
+    status: merged
     depends_on: ["001", "004"]
     objective: "Establish SQLite persistence with SQLAlchemy 2.x async, Alembic migrations, WAL configuration, and integrity checks."
     scope:
@@ -231,7 +231,7 @@ slices:
       - "migration harness upgrades an empty and a fixture DB successfully"
       - "startup integrity failure is surfaced, not silently ignored"
     required_tests: [persistence unit tests, migration tests, pragma verification]
-    expected_artifacts: [backend/src/flightsite/db/, backend/alembic/, backend/tests/db/]
+    expected_artifacts: [backend/src/flightsite/db/, backend/src/flightsite/db/migrations/, backend/alembic.ini, backend/tests/db/]
     preferred_agent: opus
     risk_level: medium
 
@@ -460,7 +460,7 @@ slices:
     title: "Map foundation"
     phase: 3
     branch: "013-map-foundation"
-    status: planned
+    status: merged
     depends_on: ["002"]
     objective: "Integrate MapLibre with an abstracted basemap registry, dark aviation default style, range rings, and receiver marker."
     scope:

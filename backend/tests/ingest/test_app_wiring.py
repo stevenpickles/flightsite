@@ -56,7 +56,7 @@ def test_first_run_starts_no_ingestion() -> None:
 
         assert app.state.ingestion is None
         assert ready.status_code == 200
-        assert ready.json()["subsystems"] == {}
+        assert ready.json()["subsystems"] == {"database": True}
 
 
 def test_a_configured_install_starts_ingestion(
@@ -72,7 +72,7 @@ def test_a_configured_install_starts_ingestion(
         assert service is not None
         assert service.running is True
         assert ready.status_code == 200
-        assert ready.json()["subsystems"] == {READINESS_SUBSYSTEM: True}
+        assert ready.json()["subsystems"] == {"database": True, READINESS_SUBSYSTEM: True}
 
 
 def test_an_unreachable_decoder_keeps_the_app_ready(
