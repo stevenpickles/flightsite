@@ -114,7 +114,7 @@ slices:
     title: "Backend skeleton"
     phase: 1
     branch: "001-backend-skeleton"
-    status: planned
+    status: merged
     depends_on: []
     objective: "Establish the Python backend package with app factory, health/readiness endpoints, structured logging, and quality tooling."
     scope:
