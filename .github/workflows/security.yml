@@ -1,0 +1,176 @@
+name: security
+
+# Supply-chain and secret-scanning gates (docs/SECURITY.md §8, roadmap slice 003):
+# dependency vulnerability audits (pip-audit, npm audit), gitleaks secret
+# scanning, and license-compatibility checks for both dependency trees.
+#
+# Runs on every PR and on pushes to dev/main (no path filter — dependency
+# manifests, lockfiles, and the workflow file itself can change independent of
+# backend/frontend source, and these are lightweight scans), plus a weekly
+# schedule so newly disclosed CVEs and license changes surface even when
+# nothing in the repo has changed.
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  schedule:
+    # Every Monday 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.8"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Dependency vulnerability scanning: pip-audit (backend) + npm audit (frontend).
+  # Required status check name: security/audit
+  # ---------------------------------------------------------------------------
+  audit:
+    name: security/audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      # Audit the exported, locked dependency list rather than the installed
+      # environment: the local `flightsite` package itself is not on PyPI, so
+      # an environment audit in --strict mode always fails on it. The export
+      # covers every dependency pinned in backend/uv.lock. This is the
+      # blocking check: any known vulnerability fails the build.
+      - name: pip-audit (backend, blocking)
+        working-directory: backend
+        run: |
+          uv export --locked --no-emit-project --format requirements-txt -o /tmp/requirements-audit.txt
+          uvx pip-audit@2.10.1 --strict --desc --no-deps --disable-pip -r /tmp/requirements-audit.txt
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Blocking: high and critical severity findings fail the build.
+      - name: npm audit (frontend, high+critical, blocking)
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      # Non-blocking: surfaces low/moderate findings in the log for visibility
+      # without failing PRs on advisories that don't meet the blocking bar.
+      - name: npm audit (frontend, full report, non-blocking)
+        working-directory: frontend
+        continue-on-error: true
+        run: npm audit
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning across full repository history.
+  # Required status check name: security/secrets
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: security/secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks-action posts a PR comment summarizing findings; this is the
+      # minimal extra permission that requires beyond read-only.
+      pull-requests: write
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only required for GitHub *organization* accounts; this repository
+          # is owned by a personal account, so GITLEAKS_LICENSE is unused
+          # (empty secret references resolve to "" and are accepted for
+          # personal accounts per gitleaks-action's documented behavior).
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ---------------------------------------------------------------------------
+  # License-compatibility checks for production dependencies.
+  #
+  # FlightSite is MIT-licensed and ships public container images (docs/SECURITY.md
+  # §8, docs/LICENSES.md). Strong copyleft licenses on a *production* dependency
+  # would impose redistribution/source-disclosure obligations incompatible with
+  # shipping MIT-licensed public images, so those fail the build here.
+  #
+  # Documented allowlist policy (inline, per roadmap slice 003):
+  #   - BLOCKED (fails the build): GPL-3.0-only, and any AGPL variant (network
+  #     copyleft is the sharpest incompatibility risk for a service FlightSite
+  #     users may expose on their LAN/self-host).
+  #   - ALLOWED: permissive licenses (MIT, BSD-*, Apache-2.0, ISC, ...), weak
+  #     copyleft (LGPL, MPL-2.0) used as unmodified libraries, and
+  #     GPL-3.0-or-later / GPL-2.0 (out of scope for this gate; revisit if one
+  #     is ever introduced — see docs/LICENSES.md for the dataset/asset
+  #     register, which is separate from this dependency-license gate).
+  #   - Dev-only tooling (ruff, mypy, pytest, eslint, vitest, ...) is not
+  #     shipped in the frontend/backend runtime artifacts, so only production
+  #     dependencies are checked.
+  #
+  # Required status check name: security/licenses
+  # ---------------------------------------------------------------------------
+  licenses:
+    name: security/licenses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      # --no-dev: license gate covers production (runtime) dependencies only.
+      - name: Install backend production dependencies
+        working-directory: backend
+        run: uv sync --locked --no-dev
+
+      - name: pip-licenses (backend, blocking on GPL-3.0-only/AGPL)
+        working-directory: backend
+        run: |
+          uv run --with pip-licenses==5.5.5 pip-licenses --from=mixed --format=markdown \
+            --fail-on="GNU General Public License v3 (GPLv3);GNU Affero General Public License v3;GNU Affero General Public License v3 (AGPLv3)"
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: license-checker (frontend, blocking on GPL-3.0-only/AGPL)
+        working-directory: frontend
+        run: |
+          npx --yes license-checker-rseidelsohn@5.0.1 --production --summary \
+            --failOn "GPL-3.0;GPL-3.0-only;AGPL-1.0;AGPL-1.0-only;AGPL-1.0-or-later;AGPL-3.0;AGPL-3.0-only;AGPL-3.0-or-later"

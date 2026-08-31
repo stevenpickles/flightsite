@@ -1,0 +1,65 @@
+name: backend
+
+# Backend quality gates: ruff (lint + format), mypy (strict), pytest with the
+# coverage gate enforced via backend/pyproject.toml (--cov-fail-under=80).
+#
+# Trigger note (roadmap slice 003): the `pull_request` trigger intentionally has
+# NO path filter, even though this workflow only touches backend/. The `backend`
+# job below becomes a required status check on dev/main branch protection, and
+# GitHub only evaluates required checks that a workflow run actually reports for
+# a given PR. A path-filtered pull_request trigger would silently skip (and
+# therefore permanently block merge of) any PR that doesn't touch backend/** —
+# e.g. a frontend-only or docs-only PR. The repo is small enough that always
+# running this workflow on every PR is cheap, so that's the simpler and safer
+# choice over a paths-filter + no-op-skip-job pattern. `push` to dev/main is not
+# a required check, so it keeps a path filter to avoid unnecessary runs there.
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.8"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      # uv fetches the pinned Python 3.12 toolchain automatically per
+      # backend/pyproject.toml's requires-python.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy (strict)
+        run: uv run mypy
+
+      - name: pytest (coverage gate enforced by pyproject.toml)
+        run: uv run pytest
