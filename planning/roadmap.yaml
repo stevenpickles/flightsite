@@ -263,7 +263,7 @@ slices:
     title: "Decoder ingestion adapter"
     phase: 2
     branch: "007-ingestion-adapter"
-    status: planned
+    status: merged
     depends_on: ["004"]
     objective: "Implement the DecoderAdapter abstraction and ReadsbJsonAdapter polling readsb/dump1090-fa aircraft.json into normalized state updates."
     scope:

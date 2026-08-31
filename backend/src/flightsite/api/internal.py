@@ -10,6 +10,9 @@ This slice owns configuration mutation. The setup wizard (slice 018) and the
 Settings UI (slice 019) consume these endpoints rather than touching
 ``config.yaml`` themselves, so validation and atomic write-back have exactly
 one implementation.
+
+Slice 007 adds the decoder connection test the same two consumers need before
+they can save a receiver endpoint (SPEC §11).
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ import structlog
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from pydantic import ValidationError
 
-from flightsite.config import ConfigError, ConfigStore, Settings
+from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
+from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, check_connection
 
 logger = structlog.get_logger(__name__)
 
@@ -93,3 +97,31 @@ async def put_config(
     # secret the caller just set (SPEC §29).
     logger.info("config_updated", fields=sorted(patch))
     return _config_response(store, settings)
+
+
+@router.post("/decoder/test")
+async def test_decoder_connection(
+    request: Request,
+    receiver: Annotated[ReceiverSettings | None, Body()] = None,
+) -> ConnectionTestResult:
+    """Probe a decoder endpoint once and report what was found.
+
+    The body is a receiver document (``host`` / ``port`` / ``path``), validated
+    by the same model ``PUT /config`` uses, so the wizard cannot test an
+    endpoint it would not be allowed to save. An empty body tests the
+    currently configured receiver.
+
+    Nothing is written and the running ingestion loop is untouched: this opens
+    its own short-lived client, which is what makes it safe to call repeatedly
+    from a settings form while the live map keeps running.
+    """
+    settings: Settings = request.app.state.settings
+    candidate = receiver if receiver is not None else settings.receiver
+    return await check_connection(
+        DecoderEndpoint(
+            host=candidate.host,
+            port=candidate.port,
+            path=candidate.path,
+            poll_interval_s=candidate.poll_interval_s,
+        )
+    )
