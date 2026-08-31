@@ -1,0 +1,61 @@
+{
+  "now": 1758124830.25,
+  "messages": 5512418,
+  "aircraft": [
+    {
+      "hex": "3949e8",
+      "squawk": "7462",
+      "flight": "AFR1194 ",
+      "lat": 48.902110,
+      "lon": 2.312450,
+      "nucp": 7,
+      "seen_pos": 0.4,
+      "altitude": 18000,
+      "vert_rate": 1216,
+      "track": 88,
+      "speed": 324,
+      "messages": 12017,
+      "seen": 0.1,
+      "rssi": -21.3
+    },
+    {
+      "hex": "3c4b26",
+      "squawk": "1000",
+      "flight": "DLH441  ",
+      "lat": 48.723910,
+      "lon": 2.379870,
+      "nucp": 8,
+      "seen_pos": 0.2,
+      "altitude": "ground",
+      "vert_rate": 0,
+      "track": 264,
+      "speed": 15,
+      "messages": 38221,
+      "seen": 0.2,
+      "rssi": -11.7
+    },
+    {
+      "hex": "407f2b",
+      "squawk": "7700",
+      "flight": "BAW56    ",
+      "lat": 48.550120,
+      "lon": 2.101440,
+      "nucp": 7,
+      "seen_pos": 1.2,
+      "altitude": 9800,
+      "vert_rate": -1408,
+      "track": 12,
+      "speed": 271,
+      "messages": 6604,
+      "seen": 1.0,
+      "rssi": -19.6
+    },
+    {
+      "hex": "484ba9",
+      "squawk": "3055",
+      "messages": 143,
+      "seen": 5.6,
+      "rssi": -34.2
+    }
+  ]
+}

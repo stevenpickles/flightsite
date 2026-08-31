@@ -13,13 +13,49 @@ from fastapi import FastAPI
 from flightsite import __version__
 from flightsite.api.internal import router as internal_router
 from flightsite.api.v1 import router as v1_router
-from flightsite.config import ConfigStore
+from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
+from flightsite.ingest import DecoderEndpoint, IngestionService, build_ingestion_service
 from flightsite.logging import configure_logging
 from flightsite.readiness import ReadinessRegistry
 
 logger = structlog.get_logger(__name__)
+
+
+def _decoder_endpoint(settings: Settings) -> DecoderEndpoint:
+    """Translate the receiver section of settings into an ingestion endpoint."""
+    receiver = settings.receiver
+    return DecoderEndpoint(
+        host=receiver.host,
+        port=receiver.port,
+        path=receiver.path,
+        poll_interval_s=receiver.poll_interval_s,
+    )
+
+
+async def _start_ingestion(app: FastAPI) -> IngestionService | None:
+    """Start decoder ingestion, unless this install has never been configured.
+
+    On a first run there is no ``config.yaml``, so there is no receiver the
+    user has actually chosen — only model defaults. Polling those would
+    produce a stream of connection failures and a ``down`` decoder before the
+    setup wizard has even been opened, so ingestion is skipped and starts on
+    the next boot after a configuration is saved.
+
+    Decoder health deliberately never affects ``/ready``; the reasoning is in
+    :mod:`flightsite.ingest.service`.
+    """
+    store: ConfigStore = app.state.config_store
+    if store.first_run:
+        logger.info("ingestion_skipped", reason="first_run")
+        return None
+
+    service = build_ingestion_service(
+        _decoder_endpoint(app.state.settings), readiness=app.state.readiness
+    )
+    await service.start()
+    return service
 
 
 @asynccontextmanager
@@ -33,11 +69,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # stays reachable for diagnosis — see flightsite.db.startup.
     await initialize_database(database, readiness)
 
+    app.state.ingestion = await _start_ingestion(app)
     readiness.mark_startup_complete()
     logger.info("app_startup_complete")
     try:
         yield
     finally:
+        service: IngestionService | None = app.state.ingestion
+        if service is not None:
+            await service.stop()
         await database.dispose()
         logger.info("app_shutdown")
 
@@ -59,6 +99,10 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     migrates the database and marks it ready. Constructing
     :class:`~flightsite.db.Database` opens nothing and creates no directory —
     building an app is still side-effect free.
+
+    Startup also launches decoder ingestion when a configuration exists, and
+    shutdown stops it. A decoder that is unreachable does not hold up
+    readiness — the app is fully usable without one.
 
     Args:
         data_dir: overrides data-directory resolution (``FLIGHTSITE_DATA_DIR``,
