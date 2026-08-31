@@ -469,7 +469,7 @@ config/domain models the backend uses.
 | Group | Endpoints (sketch) | Slice |
 |---|---|---|
 | Setup / first-run | `GET /setup/state`, `POST /setup/complete` | 018 |
-| Config | `GET /config` (secrets masked as `"•••" + last4`), `PUT /config` (masked values ignored unless replaced; secrets never echoed back) | 004/019 |
+| Config | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`), `PUT /config` (masked values ignored unless replaced; secrets never echoed back) | 004/019 |
 | Connection test | `POST /decoder/test` → reachability, parse result, sample aircraft count | 007/018 |
 | Watchlists | `GET/POST /watchlists`, `PUT/DELETE /watchlists/{id}`, entries CRUD | 037 |
 | Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates` | 038/041 |
