@@ -289,7 +289,7 @@ slices:
     title: "Live aircraft state store"
     phase: 2
     branch: "008-live-state-store"
-    status: planned
+    status: merged
     depends_on: ["007"]
     objective: "Maintain the in-memory live aircraft registry with lifecycle timing, derived fields, and provenance."
     scope:

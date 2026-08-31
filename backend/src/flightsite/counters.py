@@ -16,11 +16,18 @@ from __future__ import annotations
 import threading
 from typing import Final
 
+#: Live domain events shed because an event-stream subscriber fell behind
+#: (``flightsite.live.events``). Shedding is the documented backpressure
+#: response — a slow consumer must never stall ingestion — so it has to be
+#: visible rather than silent.
+LIVE_EVENTS_DROPPED: Final = "live_events_dropped"
+
 KNOWN_COUNTERS: Final[tuple[str, ...]] = (
     "ingestion_failures",
     "db_errors",
     "enrichment_failures",
     "ws_disconnects",
+    LIVE_EVENTS_DROPPED,
 )
 
 
