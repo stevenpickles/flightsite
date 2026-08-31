@@ -1,7 +1,21 @@
 import "@testing-library/jest-dom/vitest";
 
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
+
+import { AttributionControlMock, MapLibreMockMap } from "@/test/maplibreGlMock";
+
+/**
+ * MapLibre GL JS requires a real WebGL context, which jsdom does not
+ * provide. Every test file that renders map components goes through this
+ * same jsdom environment, so the mock is registered once, globally, here
+ * rather than repeated per test file — the standard approach for this
+ * class of dependency (canvas/WebGL libraries) under jsdom.
+ */
+vi.mock("maplibre-gl", () => ({
+  Map: MapLibreMockMap,
+  AttributionControl: AttributionControlMock,
+}));
 
 /**
  * Minimal in-memory Storage polyfill.
