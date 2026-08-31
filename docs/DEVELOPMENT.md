@@ -56,10 +56,22 @@ FLIGHTSITE_DEMO=1 docker compose up -d
 No ADS-B hardware is required for development. **Demo mode** (slice 011) provides a
 deterministic simulated receiver covering commercial, military, government, police,
 MLAT, non-positioned, emergency-squawk, rare, and stale/disappearing traffic. The
-**capture/replay tool** (slice 012) records normalized decoder snapshots into compact
-fixtures and replays them deterministically — the preferred way to reproduce
-real-world bugs and build regression tests. Prefer demo/replay over a live decoder for
-day-to-day work and for all automated tests.
+**capture/replay tool** (slice 012, `flightsite.devtools`) records normalized decoder
+snapshots into compact, gzip-compressed `.fsrec.gz` fixtures and replays them
+deterministically — the preferred way to reproduce real-world bugs and build
+regression tests. Prefer demo/replay over a live decoder for day-to-day work and for
+all automated tests.
+
+```bash
+# record 60s of a live decoder to a fixture
+uv run flightsite-capture --host 192.168.1.50 --port 8080 \
+    --path /data/aircraft.json --duration 60 --out session.fsrec.gz
+
+# replay it as a DecoderAdapter, e.g. from a script or test:
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=1.0)   # real-time pacing
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=4.0)   # 4x accelerated
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=None)  # as fast as possible (tests)
+```
 
 ## Branch model
 
