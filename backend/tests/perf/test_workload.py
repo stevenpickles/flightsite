@@ -13,6 +13,8 @@ directly, in milliseconds, with no application at all.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from flightsite.demo import DemoAdapter
@@ -29,6 +31,11 @@ from flightsite.perf.workload import (
 #: no gain: the population moves smoothly, so a dip between samples of this
 #: size cannot be large enough to matter.
 STEP = 5
+
+#: Comfortably more ticks than a client's default outbound queue holds
+#: (``DEFAULT_CLIENT_QUEUE_SIZE`` is 32), so a drain that falls even slightly
+#: behind per tick has overflowed well before the run ends.
+TICKS_PAST_THE_QUEUE_BOUND = 50
 
 
 def test_every_tick_of_the_sustained_window_carries_the_target_population() -> None:
@@ -97,6 +104,35 @@ def test_the_duty_cycle_is_every_stage_against_the_poll() -> None:
     assert cost.duty_cycle(1.0) == pytest.approx(0.2)
     # Halving the poll interval doubles the fraction of it consumed.
     assert cost.duty_cycle(0.5) == pytest.approx(0.4)
+
+
+async def test_the_simulated_clients_keep_up_and_stay_connected(tmp_path: Path) -> None:
+    """A regression test for a bug this harness actually had.
+
+    The first version drained exactly one frame per client per tick. A tick can
+    queue more than one — a delta, a keepalive ping, an activity frame — so the
+    simulated clients fell steadily behind their bounded queues and the
+    broadcaster evicted every one of them as a slow consumer partway through a
+    run. Fan-out carried on being "measured" against nobody, and the figure
+    looked healthy precisely because there was no longer anything to deliver
+    to.
+
+    So: after enough ticks to have overflowed a 32-frame queue several times
+    over, every client must still be connected and must have consumed frames.
+    """
+    config = WorkloadConfig(ticks=TICKS_PAST_THE_QUEUE_BOUND, warmup_ticks=0, ws_clients=3)
+    async with Workload(config, data_dir=tmp_path / "data") as workload:
+        for _ in range(config.ticks):
+            await workload.run_tick()
+
+        assert workload.clients_connected == config.ws_clients, (
+            "the broadcaster evicted a simulated client, so the fan-out figure "
+            "is for fewer clients than the report claims"
+        )
+        assert workload.frames_read >= config.ticks, (
+            f"clients consumed only {workload.frames_read} frames across "
+            f"{config.ticks} ticks; the reader tasks are not draining"
+        )
 
 
 def test_an_unstarted_workload_refuses_to_hand_out_components() -> None:

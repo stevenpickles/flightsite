@@ -61,6 +61,7 @@ than any inside the window rather than an easier one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -98,6 +99,11 @@ SUSTAINED_TICKS: Final = 600
 #: install is a handful of browser tabs, not a fleet; ``docs/API.md`` §4.3
 #: describes fan-out to "multiple clients" rather than to many.
 DEFAULT_WS_CLIENTS: Final = 4
+
+#: Scheduling rounds yielded after each tick so the per-client reader tasks can
+#: drain what the broadcast queued. Not a timeout: ``asyncio.sleep(0)`` waits
+#: on nothing but the loop running work that is already ready.
+SETTLE_ROUNDS: Final = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +196,8 @@ class Workload:
         self._worker: PersistenceWorker | None = None
         self._broadcaster: LiveBroadcaster | None = None
         self._clients: list[ClientConnection] = []
+        self._readers: list[asyncio.Task[None]] = []
+        self._frames_read = 0
         self._lifespan: Any = None
         self._tick = 0
 
@@ -238,6 +246,26 @@ class Workload:
         """Aircraft currently in the live set."""
         return len(self.live)
 
+    @property
+    def frames_read(self) -> int:
+        """Frames the simulated clients have actually consumed.
+
+        Zero while frames are being produced means the readers are not running,
+        which would make the fan-out figure a measurement of filling queues
+        rather than of delivering to clients.
+        """
+        return self._frames_read
+
+    @property
+    def clients_connected(self) -> int:
+        """Clients the broadcaster still has. Drops mean a consumer fell behind.
+
+        Worth checking at the end of a run: the broadcaster evicts a slow
+        consumer rather than stalling for it, so a fan-out figure measured
+        after an eviction is a figure for fewer clients than the report claims.
+        """
+        return self.broadcaster.client_count
+
     # -------------------------------------------------------------- lifecycle
 
     async def __aenter__(self) -> Self:
@@ -282,11 +310,34 @@ class Workload:
         self._clients = [
             broadcaster.connect(dict(receiver)) for _ in range(self._config.ws_clients)
         ]
-        for client in self._clients:
-            await client.next_frame()  # drain the opening snapshot
+        self._readers = [
+            asyncio.create_task(self._read_client(client), name=f"flightsite-perf-{client.name}")
+            for client in self._clients
+        ]
 
         self._tick = 0
         return self
+
+    async def _read_client(self, client: ClientConnection) -> None:
+        """Consume everything the broadcaster queues for one client.
+
+        A reader task per client, which is exactly the shape of production's
+        ``_write_to_client``: the connection's queue is bounded and a client
+        that stops draining is dropped as a slow consumer rather than allowed
+        to apply backpressure to the broadcaster (``docs/API.md`` §4.5).
+
+        Draining a fixed number of frames per tick — one, say — is *not*
+        equivalent and was the first thing this harness got wrong: a tick can
+        emit a delta, a ping and an activity frame, so a fixed drain falls
+        steadily behind until the queue overflows and every simulated client is
+        evicted. The fan-out figure then quietly becomes a measurement of
+        delivering to nobody.
+        """
+        while True:
+            frame = await client.next_frame()
+            if frame is None:
+                return
+            self._frames_read += 1
 
     async def __aexit__(
         self,
@@ -294,6 +345,13 @@ class Workload:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        readers, self._readers = self._readers, []
+        for reader in readers:
+            reader.cancel()
+        for reader in readers:
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
+
         lifespan, self._lifespan = self._lifespan, None
         if lifespan is not None:
             await lifespan.__aexit__(exc_type, exc, traceback)
@@ -346,11 +404,14 @@ class Workload:
         await self.broadcaster.broadcast_once()
         broadcast_ms = (time.perf_counter() - started) * 1_000.0
 
-        # Clients must actually consume, or the fan-out is measured against
-        # queues that only ever fill and a slow-consumer eviction would be
-        # mistaken for cheap delivery.
-        for client in self._clients:
-            await client.next_frame()
+        # Let the reader tasks drain what this tick queued, outside the
+        # measured window: fan-out cost is what the broadcaster spends, and a
+        # client's consumption belongs to the client. A few scheduling rounds
+        # are enough — nothing here waits on time passing, only on tasks that
+        # are already runnable (the technique tests/api/conftest.py calls
+        # `settle`).
+        for _ in range(SETTLE_ROUNDS):
+            await asyncio.sleep(0)
 
         cost = TickCost(
             apply_ms=apply_ms,

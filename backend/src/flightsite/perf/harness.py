@@ -272,7 +272,10 @@ async def run_load(
                     resident = rss_bytes()
                     if resident is not None:
                         rss_mib.append(resident / MIB)
+        # Read inside the context manager: leaving it tears the components down.
         clients = len(workload.clients)
+        still_connected = workload.clients_connected
+        frames_read = workload.frames_read
 
     measurements = [
         Measurement(
@@ -309,7 +312,10 @@ async def run_load(
             metric="ws_fanout_ms",
             unit="ms",
             samples=tuple(cost.broadcast_ms for cost in costs),
-            note=f"{clients} clients",
+            note=(
+                f"{still_connected}/{clients} clients still connected, "
+                f"{frames_read} frames consumed"
+            ),
         ),
     ]
     for metric, _path in PROBES:
