@@ -11,11 +11,28 @@ completed import, never precede or accompany one: a cache repopulated while a
 promotion is still in flight would refill from the *old* resolved rows and then
 believe itself current. Because promotion is a single transaction, "after the
 importer returns" is exactly "after the new rows are visible".
+
+Slice 027 adds a second thing that has to happen on the same edge: the airport
+index rebuilding after the ``airports`` source imports. Rather than teaching
+this module about airports — which would invert the dependency, since
+:mod:`flightsite.airports` consumes the import pipeline and not the reverse —
+the "and then" becomes a list of :data:`ImportListener` callables the app wires
+in. They run in registration order once the run has completed.
+
+Listeners run on **every** completed run, not only on one that changed data.
+That is slice 035's requirement and it is the right rule: SPEC §55 puts
+*"metadata update results"* in the activity feed and SPEC §27 is explicit that
+the user must be able to see which sources worked, so a run in which every
+source failed is news rather than a non-event. Cache invalidation keeps its
+narrower condition — a cache repopulated from rows nothing replaced would be a
+repopulation for no new data — which is why the two are no longer one branch.
+A listener that only cares about fresh data still guards on ``run.succeeded``,
+exactly as the airport index rebuild does.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -31,6 +48,12 @@ from flightsite.metadata.repository import MetadataRepository
 
 logger = structlog.get_logger(__name__)
 
+#: Something to do once an import run has completed, whatever it achieved.
+#: Receives the run, so a listener can decide from ``run.succeeded`` and
+#: ``run.failed`` what it cares about. Exceptions are caught and logged: a
+#: listener that fails must not turn an import into a failed request.
+ImportListener = Callable[[ImportRun], Awaitable[None]]
+
 
 class MetadataService:
     """Import orchestration plus the live metadata cache.
@@ -43,9 +66,12 @@ class MetadataService:
             ships no concrete provider, so a stock install has nothing to
             import until slices 022/023 register theirs.
         clock: UTC epoch-millisecond source, injected for tests.
+        listeners: called after every completed run, in order. Slice 027 wires
+            the airport index rebuild in here and slice 035 the activity
+            feed's per-source outcome events.
     """
 
-    __slots__ = ("_cache", "_importer", "_registry", "_repository")
+    __slots__ = ("_cache", "_importer", "_listeners", "_registry", "_repository")
 
     def __init__(
         self,
@@ -55,6 +81,7 @@ class MetadataService:
         data_dir: Path,
         registry: SourceRegistry | None = None,
         clock: ClockFn = utc_now_ms,
+        listeners: Sequence[ImportListener] = (),
     ) -> None:
         self._registry = registry if registry is not None else SourceRegistry()
         self._repository = MetadataRepository(database)
@@ -62,6 +89,7 @@ class MetadataService:
             database=database, registry=self._registry, data_dir=data_dir, clock=clock
         )
         self._cache = MetadataCache(database=database, live=live)
+        self._listeners = tuple(listeners)
 
     @property
     def cache(self) -> MetadataCache:
@@ -135,7 +163,26 @@ class MetadataService:
         run = await self._importer.run(sources)
         if run.changed_data:
             await self._cache.invalidate()
+        await self._notify(run)
         return run
+
+    async def _notify(self, run: ImportRun) -> None:
+        """Run the post-import listeners, surviving any of them failing.
+
+        A listener rebuilds a derived, in-memory structure; if one throws, the
+        import itself still succeeded and its rows are still in the database.
+        Turning that into an error the user sees would misreport what happened,
+        so the failure is logged and the remaining listeners still run.
+        """
+        for listener in self._listeners:
+            try:
+                await listener(run)
+            except Exception as exc:
+                logger.error(
+                    "metadata_import_listener_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     async def statuses(self) -> tuple[SourceStatusRecord, ...]:
         """Per-source status, durable outcome merged with in-flight state.
@@ -160,4 +207,4 @@ def _with_run(record: SourceStatusRecord, registry: SourceRegistry) -> SourceSta
     return replace(record, run=registry.run_state(record.source))
 
 
-__all__ = ["MetadataService"]
+__all__ = ["ImportListener", "MetadataService"]

@@ -35,6 +35,13 @@
   --sidebar: oklch(0.97 0.004 240);
   --sidebar-foreground: oklch(0.2 0.03 250);
   --sidebar-border: oklch(0.9 0.006 240);
+
+  /* Chart categorical series (slice 032) — three validated, CVD-safe hues in
+   * fixed order (never cycled/reassigned): blue, orange, aqua. Series 1
+   * doubles as the single-hue color for a chart with only one series. */
+  --chart-series-1: #2a78d6;
+  --chart-series-2: #eb6834;
+  --chart-series-3: #1baf7a;
 }
 
 .dark {
@@ -61,6 +68,13 @@
   --sidebar: oklch(0.125 0.02 250);
   --sidebar-foreground: oklch(0.93 0.01 235);
   --sidebar-border: oklch(0.24 0.02 250);
+
+  /* Chart categorical series — the same three hues, stepped for the dark
+   * surface (docs/DEVELOPMENT.md's data-viz palette; see index.css light
+   * block for the ordering rationale). */
+  --chart-series-1: #3987e5;
+  --chart-series-2: #d95926;
+  --chart-series-3: #199e70;
 }
 
 @theme inline {

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -29,11 +28,7 @@ from flightsite.db import Database, MetaRepository, database_path, initialize_da
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.logging import configure_logging
 from flightsite.readiness import ReadinessRegistry
-from tests.db.harness import table_names
-
-CORRUPTION_BYTE = 0xA5
-SQLITE_PAGE_SIZE = 4096
-FILLER_ROWS = 400
+from tests.db.harness import build_then_corrupt, table_names, write_garbage
 
 
 @pytest.fixture
@@ -47,62 +42,6 @@ def readiness() -> ReadinessRegistry:
 def isolated_counters() -> CounterRegistry:
     """A private counter registry — the module-level one is process-global."""
     return CounterRegistry()
-
-
-def _write_garbage(path: Path) -> None:
-    """Replace the database with bytes that are not a SQLite file at all."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"this is not a sqlite database" * 200)
-
-
-def _smash_data_pages(path: Path) -> None:
-    """Overwrite every page past the schema of an existing database file.
-
-    The schema and the ``alembic_version`` row must stay readable, so that the
-    migration step still succeeds and it is the integrity check that catches
-    the damage — the failure mode this slice exists to surface.
-
-    The boundary is read from ``sqlite_master`` rather than guessed. Two
-    guesses have already been wrong: a hardcoded page-2 boundary stopped
-    clearing the schema when slice 052's three tables landed, and the fraction
-    that replaced it stopped clearing it when slice 024's table and its four
-    indexes pushed the last root page past the file's midpoint. Asking the
-    database where its schema ends cannot go stale, and the filler rows are
-    what guarantee there are data pages beyond it worth corrupting.
-    """
-    connection = sqlite3.connect(path)
-    try:
-        highest = connection.execute("SELECT MAX(rootpage) FROM sqlite_master").fetchone()[0]
-    finally:
-        connection.close()
-
-    raw = bytearray(path.read_bytes())
-    pages = len(raw) // SQLITE_PAGE_SIZE
-    # ``rootpage`` is 1-based, so page N occupies bytes [(N-1) * size, N * size).
-    start = SQLITE_PAGE_SIZE * int(highest)
-    assert pages - int(highest) >= 4, (
-        f"fixture database has {pages} pages and a schema reaching page {highest}: "
-        "too few data pages left to corrupt safely"
-    )
-    for offset in range(start, len(raw)):
-        raw[offset] = CORRUPTION_BYTE
-    path.write_bytes(bytes(raw))
-
-
-async def _build_then_corrupt(path: Path) -> None:
-    """Build a real migrated database with data pages, then corrupt them.
-
-    Disposing the database first checkpoints the WAL into the main file, so the
-    bytes being rewritten are the bytes SQLite will later read back.
-    """
-    database = Database(path)
-    meta = MetaRepository(database)
-    await database.upgrade_to("head")
-    for index in range(FILLER_ROWS):
-        await meta.set(f"filler-{index:04d}", "x" * 200)
-    await database.dispose()
-
-    _smash_data_pages(path)
 
 
 def _json_events(capsys: pytest.CaptureFixture[str]) -> list[dict[str, Any]]:
@@ -154,7 +93,7 @@ async def test_unreadable_database_file_fails_migration_loudly(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     configure_logging(level="INFO")
-    _write_garbage(db_path)
+    write_garbage(db_path)
 
     assert await _initialize(db_path, readiness, isolated_counters) is False
 
@@ -176,7 +115,7 @@ async def test_corrupt_data_pages_fail_the_integrity_check_loudly(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Migration succeeds, ``quick_check`` does not — the intended detection point."""
-    await _build_then_corrupt(db_path)
+    await build_then_corrupt(db_path)
     configure_logging(level="INFO")
 
     assert await _initialize(db_path, readiness, isolated_counters) is False
@@ -239,7 +178,7 @@ def test_app_stays_up_but_not_ready_when_the_database_is_corrupt(
     isolated_data_dir: Path,
 ) -> None:
     """The app keeps answering /health; /ready is 503 so an orchestrator sees it."""
-    _write_garbage(database_path(isolated_data_dir))
+    write_garbage(database_path(isolated_data_dir))
     app = create_app(isolated_data_dir)
 
     with TestClient(app) as client:

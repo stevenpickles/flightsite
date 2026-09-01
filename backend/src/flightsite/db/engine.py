@@ -23,10 +23,13 @@ convention:
   whose connections set ``PRAGMA query_only=ON``. A stray write on a read
   session raises instead of quietly becoming a second writer.
 
-From slice 009 onward the write-behind persistence worker is the sole caller of
-:meth:`writer_session`; API queries and analytics use :meth:`read_session`. The
-lock means an accidental second writer degrades to serialization, never to
-``SQLITE_BUSY`` storms or interleaved transactions.
+From slice 009 onward the write-behind persistence worker is the principal
+caller of :meth:`writer_session` — and the only writer of ``aircraft`` and
+``sightings``. The subsystems that own tables of their own reach them the same
+way: the metadata import, the airport dataset, and the receiver metrics each
+take this lock rather than opening a writer of their own. API queries and
+analytics use :meth:`read_session`. The lock means a second writer degrades to
+serialization, never to ``SQLITE_BUSY`` storms or interleaved transactions.
 
 Connection pragmas
 ------------------
@@ -61,6 +64,7 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -184,6 +188,36 @@ class Database:
             except BaseException:
                 await session.rollback()
                 raise
+
+    @property
+    def writer_busy(self) -> bool:
+        """True while some caller holds the single writer lock.
+
+        A point sample of write contention, offered for exactly one purpose:
+        slice 044's maintenance service uses it as half of the cheap heuristic
+        that keeps a ``VACUUM`` away from a busy period. It is deliberately not
+        a wait, a count or a guarantee — by the time a caller reads it the lock
+        may already be free — so nothing may branch on it for correctness.
+        """
+        return self._writer_lock.locked()
+
+    @asynccontextmanager
+    async def maintenance_connection(self) -> AsyncIterator[AsyncConnection]:
+        """A raw autocommit connection on the writer engine, under the lock.
+
+        SQLite refuses to run ``VACUUM`` inside a transaction, and
+        ``PRAGMA wal_checkpoint(TRUNCATE)`` cannot reset the log from inside
+        one either, so these statements cannot go through
+        :meth:`writer_session`. They are still writes — they rewrite the
+        database file and the write-ahead log — so they take the same writer
+        lock everything else does, and a concurrent writer queues in the
+        application rather than racing SQLite's file lock.
+
+        Never nest this inside :meth:`writer_session` (or itself): the lock is
+        not reentrant.
+        """
+        async with self._writer_lock, self._writer_engine.connect() as connection:
+            yield await connection.execution_options(isolation_level="AUTOCOMMIT")
 
     @asynccontextmanager
     async def read_session(self) -> AsyncIterator[AsyncSession]:

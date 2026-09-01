@@ -37,6 +37,45 @@ export interface Classification {
   confidence: string | null;
 }
 
+/** Origin and destination of the flight — `docs/API.md` §2.6, filled by
+ * route enrichment (slice 026) and attributed in `provenance.route`.
+ *
+ * Never `null` as a whole: both keys are always present and either may be
+ * `null` on its own, so the panel renders `Unknown` without having to tell an
+ * absent block from a block of nulls (§2.7). External data only — local
+ * arrival/departure inference is a separate field, kept distinct on purpose
+ * (SPEC §41). */
+export interface RouteInfo {
+  origin: string | null;
+  destination: string | null;
+}
+
+/** Locally inferred flight phase relative to a nearby field (slice 027).
+ * `docs/DATA_MODEL.md` §2.3's `inferred_phase` vocabulary. The panel renders
+ * these as *likely arriving* / *likely departing* and labels them inferred —
+ * SPEC §41 requires the hedge, and it belongs in the wording, not the value. */
+export type InferredPhase = "arriving" | "departing";
+
+/** Nearest-airport context — `docs/API.md` §3.3, SPEC §41.
+ *
+ * Nullable **as a whole**, unlike {@link RouteInfo}. A route is a thing every
+ * flight has whether or not FlightSite knows it, so an object of nulls is the
+ * honest shape there; a nearest airport is something most aircraft genuinely
+ * do not have — at cruise there is no nearest field in any useful sense — and
+ * an object of nulls would imply the question was asked and came back empty.
+ *
+ * Everything here is a local heuristic, attributed `heuristic` under
+ * `provenance.nearest_airport`, and it is a different field from `route` on
+ * purpose: what FlightSite guessed and what somebody told it stay apart. */
+export interface NearestAirportInfo {
+  ident: string;
+  name: string;
+  distance_nm: number;
+  /** `null` whenever the kinematics were ambiguous — which is most of the
+   * time, including whenever the aircraft is on the ground. */
+  phase: InferredPhase | null;
+}
+
 /** An active alert match (slice 038); `null` when nothing matches. */
 export interface InterestingMatch {
   severity: "info" | "interesting" | "high" | "critical";
@@ -75,6 +114,9 @@ export interface LiveAircraft {
   operator: string | null;
   operator_group: string | null;
   classification: Classification | null;
+  route: RouteInfo;
+  /** `null` whenever there is nothing to say — see {@link NearestAirportInfo}. */
+  nearest_airport: NearestAirportInfo | null;
   interesting: InterestingMatch | null;
 
   /** §2.6: keys name fields, values name the source. A field with no entry is

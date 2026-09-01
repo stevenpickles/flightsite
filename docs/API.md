@@ -256,14 +256,20 @@ Aircraft object (the same shape used by the WebSocket):
     "severity": "high",
     "reasons": ["Rule: Military aircraft"]
   },
+  "route": { "origin": "KATL", "destination": "KSEA" },
   "provenance": {
     "registration": "mictronics",
     "operator": "mictronics",
     "classification": "mictronics",
-    "distance_nm": "derived"
+    "distance_nm": "derived",
+    "route": "aerodatabox"
   }
 }
 ```
+
+- `route`: the current sighting's externally reported route (§2.6 shape) — always
+  present, members `null` until enrichment lands (slice 026); never a locally
+  inferred value (that is the separate nearest-airport context, slice 027).
 
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.
@@ -305,7 +311,9 @@ Lifetime record block (SPEC §53):
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`. Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/airports` | Airport overlay rows for a map viewport. Query: `bbox=minLat,minLon,maxLat,maxLon`, `min_size` (size class); capped count, largest-first. |
+| `GET /api/v1/airspace` | The user-supplied airspace overlay (`airspace.geojson` in the data dir) as a validated FeatureCollection; empty when absent (ADR-0012). |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to` (UTC calendar days), `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 Sighting detail sketch:

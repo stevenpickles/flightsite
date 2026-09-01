@@ -1,0 +1,50 @@
+/**
+ * The Analytics page's time-preset selector (SPEC §58: Today / 7 days /
+ * 30 days / This year / Since T0), URL-persisted via
+ * `useAnalyticsPresetState`. A `role="radiogroup"` of toggle buttons rather
+ * than a `<select>` — five short, mutually-exclusive options read faster as
+ * always-visible buttons than behind a dropdown, and the roving `aria-checked`
+ * state keeps this understandable to assistive tech as one choice, not five
+ * independent toggles.
+ */
+import { ANALYTICS_PRESETS, type AnalyticsPreset } from "@/lib/api/analytics";
+
+import { PRESET_LABELS } from "@/features/analytics/lib/urlState";
+import { cn } from "@/lib/utils";
+
+export interface PresetSelectorProps {
+  preset: AnalyticsPreset;
+  onChange: (preset: AnalyticsPreset) => void;
+}
+
+export function PresetSelector({ preset, onChange }: PresetSelectorProps) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Time range"
+      className="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+    >
+      {ANALYTICS_PRESETS.map((option) => {
+        const active = option === preset;
+        return (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(option)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              active
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+            )}
+          >
+            {PRESET_LABELS[option]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

@@ -29,3 +29,4 @@ Trivial implementation details do not get ADRs.
 | [0009](0009-receiver-metric-retention.md) | Receiver metric retention and downsampling | Accepted |
 | [0010](0010-no-auth-trusted-lan.md) | No built-in authentication in v1 (trusted LAN) | Accepted |
 | [0011](0011-default-basemap-provider.md) | Default basemap provider (OpenFreeMap, no user-supplied key) | Accepted |
+| [0012](0012-airspace-data-source.md) | Airspace overlay data source (user-supplied GeoJSON, no shipped default) | Accepted |

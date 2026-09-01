@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  asActivityEvent,
   asDeltaData,
   asSnapshotData,
   LIVE_WS_PATH,
@@ -105,6 +106,69 @@ describe("asDeltaData", () => {
 
   it("rejects a non-object body", () => {
     expect(asDeltaData("delta")).toBeNull();
+  });
+});
+
+describe("asActivityEvent", () => {
+  it("narrows a well-formed §3.9 event", () => {
+    const event = asActivityEvent({
+      id: 4021,
+      type: "range_record",
+      severity: "interesting",
+      at: "2026-08-31T14:03:22.418Z",
+      icao: "ae1463",
+      sighting_id: 88213,
+      payload: { range_nm: 412.75 },
+    });
+    expect(event).toEqual({
+      id: 4021,
+      type: "range_record",
+      severity: "interesting",
+      at: "2026-08-31T14:03:22.418Z",
+      icao: "ae1463",
+      sighting_id: 88213,
+      payload: { range_nm: 412.75 },
+    });
+  });
+
+  it("keeps a type this build predates rather than dropping the event", () => {
+    // §6 from the other side: the vocabulary may grow, and the feed renders
+    // an unknown type from its own slug.
+    expect(asActivityEvent({ id: 1, type: "maintenance_issue" })?.type).toBe(
+      "maintenance_issue",
+    );
+  });
+
+  it("defaults the optional members a receiver-wide event has none of", () => {
+    const event = asActivityEvent({ id: 7, type: "receiver_offline" });
+    expect(event).toEqual({
+      id: 7,
+      type: "receiver_offline",
+      severity: "info",
+      at: "",
+      icao: null,
+      sighting_id: null,
+      payload: {},
+    });
+  });
+
+  it("falls back to info for a severity outside the §2.8 ladder", () => {
+    expect(
+      asActivityEvent({ id: 7, type: "milestone", severity: "urgent" })
+        ?.severity,
+    ).toBe("info");
+  });
+
+  it.each([
+    ["a non-object body", "activity"],
+    ["a missing id", { type: "milestone" }],
+    ["a non-numeric id", { id: "7", type: "milestone" }],
+    ["a missing type", { id: 7 }],
+  ])("returns null for %s", (_label, data) => {
+    // Stricter than the snapshot/delta narrowings on purpose: `id` is what the
+    // feed dedupes on and `type` is what decides the rendering, so an event
+    // missing either could only ever be a blank row.
+    expect(asActivityEvent(data)).toBeNull();
   });
 });
 

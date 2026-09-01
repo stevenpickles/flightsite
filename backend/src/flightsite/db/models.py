@@ -11,8 +11,15 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`SightingEvent` in slice 052, and the metadata group
 (:class:`MetadataSource`, :class:`AircraftMetadata`,
 :class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
-:class:`OperatorGroup`, :class:`Operator`) in slice 021, and
-:class:`AircraftClassification` in slice 024.
+:class:`OperatorGroup`, :class:`Operator`) in slice 021,
+:class:`AircraftClassification` in slice 024, :class:`RouteCache` in slice 026,
+:class:`Airport` in slice 027, and the receiver-metric group
+(:class:`ReceiverMetricRaw`, :class:`ReceiverMetricHourly`,
+:class:`ReceiverMetricDaily`, :class:`RangeByBearingDaily`,
+:class:`LifetimeStat`) in slice 033, and the analytics rollup group
+(:class:`DailyStats`, :class:`DailyTypeStats`, :class:`DailyOperatorStats`,
+:class:`TypeStats`) in slice 031, and the activity group
+(:class:`ActivityEvent`, :class:`Milestone`) in slice 035.
 """
 
 from __future__ import annotations
@@ -60,6 +67,12 @@ ALERT_SEVERITY_CHECK: Final[str] = (
     "max_alert_severity IN ('info', 'interesting', 'high', 'critical')"
 )
 
+#: The same §2.8 ladder on ``activity_events.severity`` (``docs/DATA_MODEL.md``
+#: §5), where the column is named ``severity`` rather than
+#: ``max_alert_severity``. Constrained — unlike ``activity_events.type``,
+#: which stays open — because the ladder is fixed and shared.
+ACTIVITY_SEVERITY_CHECK: Final[str] = "severity IN ('info', 'interesting', 'high', 'critical')"
+
 #: SPEC §39's mission/use categories, spelled as ``docs/DATA_MODEL.md`` §3.4's
 #: ``CHECK`` predicate.
 #:
@@ -101,6 +114,22 @@ SIGHTING_EVENT_TYPE_CHECK: Final[str] = (
 #: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``metadata``
 #: depends on ``db``, not the reverse), so a test asserts the two agree.
 METADATA_SOURCE_STATUS_CHECK: Final[str] = "status IN ('never_run', 'ok', 'failed')"
+
+#: The ``route_cache.status`` vocabulary of ``docs/DATA_MODEL.md`` §7, spelled
+#: as the SQL ``CHECK`` predicate.
+#:
+#: All three values are constrained from birth. Slice 026 writes ``ok`` and
+#: ``not_found``: it never records a *provider unavailability* — a timeout, a
+#: 429, a 5xx, an open circuit — because those say nothing about the callsign
+#: and caching them would turn one bad minute into hours of false "no route".
+#: ``error`` is the shape reserved for the different case of a provider that
+#: answers definitively and unusably for a particular key, the same way
+#: :data:`CLOSURE_REASON_CHECK` carried values before the code that writes them
+#: existed. The runtime enum is
+#: :class:`flightsite.enrichment.model.RouteCacheStatus`; as with
+#: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``enrichment``
+#: depends on ``db``, not the reverse), so a test asserts the two agree.
+ROUTE_CACHE_STATUS_CHECK: Final[str] = "status IN ('ok', 'not_found', 'error')"
 
 
 class Base(DeclarativeBase):
@@ -652,3 +681,478 @@ class AircraftClassification(Base):
             f"AircraftClassification(icao24={self.icao24!r}, "
             f"mission_category={self.mission_category!r})"
         )
+
+
+class RouteCache(Base):
+    """Cached route lookups for the enrichment provider (§7, slice 026).
+
+    SPEC §28's instruction is to *cache aggressively and respect provider
+    limits*, and this table is what makes that mechanical: a callsign is asked
+    about at most once per key, however many sightings, restarts or aircraft
+    ask about it.
+
+    The key is a **normalized callsign plus a UTC date bucket** (§7). The date
+    is part of the key rather than an implicit TTL because the fact being cached
+    is a fact about a *flight on a day* — ``DAL1234`` flies a different pair of
+    airports next week — so a key that omitted it would eventually serve a
+    correct answer to the wrong question. ``expires_ms`` then bounds staleness
+    *within* a day, and is shorter for a negative result than for a positive
+    one: "no route yet" is often a schedule that has not been filed, and is
+    worth re-asking about later in the day.
+
+    ``WITHOUT ROWID`` with the text key as the primary key: every access is a
+    point lookup by that key, and the table is small — one row per airline
+    flight actually heard, pruned by expiry.
+
+    The index is on ``expires_ms`` alone, which is the only non-key query:
+    maintenance deleting what has expired.
+    """
+
+    __tablename__ = "route_cache"
+    __table_args__ = (
+        CheckConstraint(ROUTE_CACHE_STATUS_CHECK, name="ck_route_cache_status"),
+        Index("ix_route_cache_expiry", "expires_ms"),
+        {"sqlite_with_rowid": False},
+    )
+
+    cache_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    origin_ident: Mapped[str | None] = mapped_column(Text)
+    destination_ident: Mapped[str | None] = mapped_column(Text)
+    #: Provider extras kept verbatim for diagnostics — never the request, and
+    #: therefore never the API key. Schema-validated on the way in by
+    #: :mod:`flightsite.enrichment.aerodatabox`.
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    fetched_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RouteCache(cache_key={self.cache_key!r}, status={self.status!r})"
+
+
+class Airport(Base):
+    """One airport, heliport or landing field (``docs/DATA_MODEL.md`` §3.6).
+
+    Imported from OurAirports (public domain) by
+    :mod:`flightsite.airports.ourairports` and read exactly twice in a process's
+    life: once at startup and once after an import, both times to build the
+    in-memory grid index :mod:`flightsite.airports.index`. Nothing on the live
+    path queries this table — nearest-airport lookups answer from that index,
+    which is what keeps SQLite off the per-observation path
+    (``docs/ARCHITECTURE.md`` §3.1).
+
+    The surrogate ``id`` is OurAirports' own row id rather than a fresh
+    sequence: it is stable upstream, it makes a re-import diffable, and
+    ``ident`` — the ICAO/GPS identifier everything else joins on — carries the
+    ``UNIQUE`` constraint that actually matters.
+
+    ``ix_airports_lat`` covers ``(lat, lon)`` because §3.6's documented lookup
+    is a **bounding box refined by great-circle in code**: at ~70k rows that
+    needs no R*Tree, and SQLite ships none by default. In practice the index
+    serves the rebuild's ordered scan; the box query itself lives in the
+    in-memory index.
+
+    ``type`` has no ``CHECK``. The vocabulary is upstream's and grows
+    (``balloonport`` postdates the dataset's first release); the *filter* over
+    it is FlightSite's decision and lives in
+    :data:`flightsite.airports.records.IMPORTED_AIRPORT_TYPES`, where it can be
+    changed without rebuilding a table.
+    """
+
+    __tablename__ = "airports"
+    __table_args__ = (
+        Index("ix_airports_lat", "lat", "lon"),
+        # Partial: fewer than one row in seven carries an IATA code, so
+        # indexing only those keeps the by-IATA lookup independent of the
+        # 60k-odd rows that could never answer it.
+        Index("ix_airports_iata", "iata", sqlite_where=text("iata IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ICAO or GPS identifier, e.g. ``KSEA``, ``EGLL``, ``00AK``. Unique.
+    ident: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    iata: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Upstream size class: ``large_airport``/``medium_airport``/
+    #: ``small_airport``/``heliport``. See the class docstring on the absent
+    #: ``CHECK``.
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    lat: Mapped[float] = mapped_column(REAL, nullable=False)
+    lon: Mapped[float] = mapped_column(REAL, nullable=False)
+    #: Field elevation, ``NULL`` for the ~16% of rows upstream has none for.
+    #: The inference treats a missing elevation as sea level rather than
+    #: skipping the field — see :mod:`flightsite.airports.inference`.
+    elevation_ft: Mapped[int | None] = mapped_column(Integer)
+    iso_country: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Airport(ident={self.ident!r}, name={self.name!r})"
+
+
+class ReceiverMetricRaw(Base):
+    """One high-resolution receiver sample (``docs/DATA_MODEL.md`` §6.1).
+
+    A wide row per ~15 s sample: whatever the decoder's own statistics
+    endpoint supplied, normalized, plus what FlightSite computed from the live
+    set. Every measurement column is nullable because a decoder that does not
+    report a metric must leave it *absent* rather than zero (SPEC §60) — zero
+    is a measurement, and FlightSite does not invent measurements (SPEC §39).
+
+    ``WITHOUT ROWID`` keyed on ``ts_ms``: every read is a time range and every
+    write is an append at the high end, so the clustered b-tree is exactly the
+    access order and there is no second copy of the key to maintain. This is
+    the only prunable table in the group — ADR-0009's rolling window — and the
+    clustering also makes the prune a contiguous head-of-table delete.
+    """
+
+    __tablename__ = "receiver_metrics_raw"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    ts_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+    messages_per_sec: Mapped[float | None] = mapped_column(REAL)
+    positions_per_sec: Mapped[float | None] = mapped_column(REAL)
+    aircraft_visible: Mapped[int | None] = mapped_column(Integer)
+    aircraft_with_pos: Mapped[int | None] = mapped_column(Integer)
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    rssi_avg_db: Mapped[float | None] = mapped_column(REAL)
+    rssi_peak_db: Mapped[float | None] = mapped_column(REAL)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricRaw(ts_ms={self.ts_ms!r})"
+
+
+class _ReceiverMetricSummaryColumns:
+    """The summary column set shared by the hourly and daily tables.
+
+    ``docs/DATA_MODEL.md`` §6.2 states the daily table as *"identical shape
+    keyed by local calendar day"*, so the two are one declaration and a
+    different primary key rather than two copies that could drift. The
+    aggregation code folds raw samples into this shape once and writes the
+    result to whichever table the bucket belongs to.
+
+    ``sample_count`` is the only non-nullable column: how many raw samples a
+    bucket was built from is always known, even when every metric in it was
+    absent.
+    """
+
+    messages_total: Mapped[int | None] = mapped_column(Integer)
+    positions_total: Mapped[int | None] = mapped_column(Integer)
+    msgs_per_sec_avg: Mapped[float | None] = mapped_column(REAL)
+    msgs_per_sec_max: Mapped[float | None] = mapped_column(REAL)
+    pos_per_sec_avg: Mapped[float | None] = mapped_column(REAL)
+    pos_per_sec_max: Mapped[float | None] = mapped_column(REAL)
+    aircraft_avg: Mapped[float | None] = mapped_column(REAL)
+    aircraft_max: Mapped[int | None] = mapped_column(Integer)
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    rssi_avg_db: Mapped[float | None] = mapped_column(REAL)
+    rssi_peak_db: Mapped[float | None] = mapped_column(REAL)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ReceiverMetricHourly(_ReceiverMetricSummaryColumns, Base):
+    """Hourly receiver summaries (``docs/DATA_MODEL.md`` §6.2).
+
+    Keyed by the UTC hour the bucket starts at. Retained **indefinitely** —
+    ADR-0009 is explicit that hourly and daily rows are permanent, because
+    ~8.8k rows a year is nothing next to the detail they preserve once the
+    high-resolution window has rolled past.
+    """
+
+    __tablename__ = "receiver_metrics_hourly"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    hour_start_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricHourly(hour_start_ms={self.hour_start_ms!r})"
+
+
+class ReceiverMetricDaily(_ReceiverMetricSummaryColumns, Base):
+    """Daily receiver summaries (``docs/DATA_MODEL.md`` §6.2).
+
+    Keyed by the **receiver-local** calendar date (``docs/DATA_MODEL.md``
+    §10), so a DST day rolls up as the 23 or 25 hours it actually was.
+    Retained indefinitely, like the hourly table.
+    """
+
+    __tablename__ = "receiver_metrics_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    #: ``YYYY-MM-DD`` in the configured IANA timezone at write time.
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricDaily(day={self.day!r})"
+
+
+class RangeByBearingDaily(Base):
+    """Per-day maximum range in each 5° bearing sector (§6.3).
+
+    72 buckets of 5°, which is what the polar plot (SPEC §62) draws and what
+    the coverage records are read from. One row per (day, sector) that had any
+    positioned aircraft in it, kept indefinitely: 72 x 365 rows a year is
+    trivial, and this is the only record of where the receiver could actually
+    hear.
+
+    ``icao24`` records *which* aircraft set the record. It is deliberately not
+    a foreign key to ``aircraft``: this row must outlive any conceivable
+    aircraft-row cleanup, and its purpose is a fact about the moment, not a
+    join.
+    """
+
+    __tablename__ = "range_by_bearing_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: ``0..71``; sector ``n`` covers bearings ``[5n, 5n + 5)`` degrees true.
+    bearing_bucket: Mapped[int] = mapped_column(Integer, primary_key=True)
+    max_range_nm: Mapped[float] = mapped_column(REAL, nullable=False)
+    at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    icao24: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RangeByBearingDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r})"
+
+
+class LifetimeStat(Base):
+    """Since-T0 receiver aggregates and records (§6.4, SPEC §63).
+
+    A narrow key/value table rather than a wide row, because the set of
+    records grows slice by slice (035 adds milestones over the same facts) and
+    a new record should be a new key, not a migration.
+
+    These rows are the half of ADR-0009 that pruning may never touch: totals
+    are accumulated from the *increments* observed as each sample is recorded,
+    never re-derived from ``receiver_metrics_raw``, so a record survives every
+    downsample-and-prune cycle by construction rather than by luck.
+    """
+
+    __tablename__ = "lifetime_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value_num: Mapped[float | None] = mapped_column(REAL)
+    value_text: Mapped[str | None] = mapped_column(Text)
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"LifetimeStat(key={self.key!r}, value_num={self.value_num!r})"
+
+
+class DailyStats(Base):
+    """One receiver-local calendar day of analytics rollup (§6.5, slice 031).
+
+    The row a chart reads instead of aggregating a year of ``sightings``. Every
+    figure on it is a **total function of the sightings that started that local
+    day** (``docs/DATA_MODEL.md`` §10 fixes the bucket to the receiver-local
+    date), so the row can be rebuilt from ground truth at any time and the
+    rebuild always produces the same values — which is what makes the
+    incremental maintenance in :mod:`flightsite.analytics.service` and the
+    repair job in :mod:`flightsite.analytics.backfill` two callers of one
+    fold rather than two implementations that have to be kept in step.
+
+    ``busiest_hour`` is deliberately ``NULL`` while the day is still in
+    progress: §6.5 makes this column the finalized **closed-day** value, and
+    the in-progress day's busiest hour is served from slice 033's
+    ``receiver_metrics_hourly`` instead. A number here always means "this day
+    is over and this was its busiest local hour".
+
+    ``WITHOUT ROWID`` on the ``day`` text key: every read is either a point
+    lookup or an ordered range over that key (a preset's window is a
+    contiguous run of days), so the clustered b-tree is the access path.
+    """
+
+    __tablename__ = "daily_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    #: Receiver-local ``YYYY-MM-DD`` (``docs/DATA_MODEL.md`` §10).
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    unique_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    #: Aircraft whose first-ever sighting fell on this day.
+    new_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    sightings: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    #: Sightings carrying a non-null ``max_alert_severity`` (slice 038 fills it).
+    interesting: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    military: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    government: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    law_enforcement: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    #: 0-23 receiver-local; ``NULL`` until the day has closed (see above).
+    busiest_hour: Mapped[int | None] = mapped_column(Integer)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyStats(day={self.day!r}, sightings={self.sightings!r})"
+
+
+class DailyTypeStats(Base):
+    """Per-day counts for one ICAO type designator (§6.5, slice 031).
+
+    Written only for sightings whose airframe has a *resolved* type
+    (``aircraft_metadata_resolved.type_code``): an aircraft nobody has metadata
+    for contributes to :class:`DailyStats` and to nothing here, which is
+    ``docs/API.md`` §2.7's rule that unknown is unknown rather than a bucket.
+    """
+
+    __tablename__ = "daily_type_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    type_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    sightings: Mapped[int] = mapped_column(Integer, nullable=False)
+    unique_aircraft: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyTypeStats(day={self.day!r}, type_code={self.type_code!r})"
+
+
+class DailyOperatorStats(Base):
+    """Per-day counts for one curated operator group (§6.5, slice 031).
+
+    Keyed by the *group* rather than by the exact operator string: SPEC §38
+    keeps the exact string on the metadata row and the grouping beside it, and
+    "most common operators" is a question about the group. An airframe whose
+    operator no group claims contributes nowhere here, for the same reason
+    :class:`DailyTypeStats` skips an unresolved type.
+    """
+
+    __tablename__ = "daily_operator_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    operator_group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sightings: Mapped[int] = mapped_column(Integer, nullable=False)
+    unique_aircraft: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyOperatorStats(day={self.day!r}, group={self.operator_group_id!r})"
+
+
+class TypeStats(Base):
+    """Since-T0 totals for one ICAO type designator (§6.5, slice 031).
+
+    The **receiver-relative** rarity source: "how unusual is a B738 *here*" is
+    a statement about what this receiver has heard since T0, not about the
+    world's fleet. Slice 038's rarity alert conditions read it, and slice 031's
+    ``GET /api/v1/analytics/rarity`` already does.
+
+    Re-derived in full from ``aircraft`` joined to the resolved metadata rather
+    than accumulated: that join is bounded by *airframes ever heard* (thousands
+    at multi-year scale), and re-deriving is what makes a type resolved late —
+    the ordinary case, since metadata imports land hours after a first sighting
+    — correct the moment it resolves, with no backfill of its own.
+    """
+
+    __tablename__ = "type_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    type_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    unique_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    total_sightings: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    first_seen_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_seen_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"TypeStats(type_code={self.type_code!r}, unique={self.unique_aircraft!r})"
+
+
+class ActivityEvent(Base):
+    """One thing worth telling the user about (§5, SPEC §55, slice 035).
+
+    The activity feed's storage. Two columns carry the whole design:
+
+    * ``type`` has **no** ``CHECK``. ``docs/DATA_MODEL.md`` §5 names its values
+      in a comment rather than a constraint, and it deliberately lists more
+      than slice 035 emits — the alert and emergency events belong to phase 6,
+      ``maintenance_issue`` and ``data_reset`` to later slices still. Widening
+      a ``CHECK`` on SQLite means rebuilding the table, so the vocabulary stays
+      open and lives in :class:`flightsite.activity.model.ActivityEventType`,
+      with a test asserting it covers what ``docs/API.md`` §3.9 publishes.
+    * ``dedupe_key`` is ``UNIQUE``, and it is the restart/replay idempotency
+      guarantee at the storage layer. Every producer derives it from *stored
+      state* rather than from the moment it ran, so re-observing the same fact
+      after a restart, a catch-up scan or an event replay computes the same
+      string and the insert becomes a no-op. It is nullable because SQLite
+      treats each ``NULL`` as distinct, which is the shape a future genuinely
+      repeatable event would want; slice 035 fills it on every row it writes.
+
+    ``severity`` does carry a ``CHECK``: it is the fixed four-value ladder of
+    ``docs/API.md`` §2.8, shared with ``alert_rules`` and ``alert_matches``.
+    """
+
+    __tablename__ = "activity_events"
+    __table_args__ = (
+        CheckConstraint(ACTIVITY_SEVERITY_CHECK, name="ck_activity_events_severity"),
+        # Newest-first is the feed's only ordering, so migration 0010 creates
+        # this index `ON activity_events (ts_ms DESC)` exactly as §5 spells it.
+        # It is declared here as a plain column index on purpose: SQLite's
+        # index reflection cannot report a column's sort direction, so
+        # declaring the expression would make every autogenerate run report a
+        # phantom drop-and-recreate of an index that never changed.
+        Index("ix_activity_ts", "ts_ms"),
+        Index("ix_activity_type_ts", "type", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: UTC epoch milliseconds — when the thing described happened, which is not
+    #: the moment the row was written: a producer runs on its own pass.
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(
+        Text, nullable=False, default="info", server_default=text("'info'")
+    )
+    aircraft_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("aircraft.id"))
+    sighting_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sightings.id"))
+    #: The renderable detail as JSON; the shape is per event type and lives in
+    #: :mod:`flightsite.activity.model`.
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    dedupe_key: Mapped[str | None] = mapped_column(Text, unique=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ActivityEvent(id={self.id!r}, type={self.type!r})"
+
+
+class Milestone(Base):
+    """One achievement that can happen only once (§5, SPEC §54, slice 035).
+
+    The primary key **is** the fire-once guarantee: ``first_military``,
+    ``unique_aircraft_1000``, ``first_type_B52``. A producer inserts with
+    ``ON CONFLICT DO NOTHING``, so a restart, a catch-up scan or two passes
+    racing the same fact all leave exactly one milestone row and exactly one
+    activity event announcing it.
+
+    Rolling records — the furthest detection ever, the busiest day, the highest
+    simultaneous count — deliberately do *not* live here: they can be beaten,
+    which a natural-key table cannot express. They live in ``lifetime_stats``
+    (§6.4) and announce themselves as ``activity_events`` whose ``dedupe_key``
+    names the record value they describe.
+    """
+
+    __tablename__ = "milestones"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    achieved_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    aircraft_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("aircraft.id"))
+    value_num: Mapped[float | None] = mapped_column(REAL)
+    payload_json: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Milestone(key={self.key!r}, achieved_ms={self.achieved_ms!r})"

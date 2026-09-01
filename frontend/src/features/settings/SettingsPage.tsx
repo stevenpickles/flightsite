@@ -6,6 +6,7 @@ import { AlertsSection } from "@/features/settings/sections/AlertsSection";
 import { DecoderSection } from "@/features/settings/sections/DecoderSection";
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
 import { EnrichmentSection } from "@/features/settings/sections/EnrichmentSection";
+import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import { NotificationsSection } from "@/features/settings/sections/NotificationsSection";
 import { ReceiverSection } from "@/features/settings/sections/ReceiverSection";
 import { RetentionSection } from "@/features/settings/sections/RetentionSection";
@@ -87,6 +88,7 @@ export function SettingsPage() {
         <AlertsSection config={config} />
         <NotificationsSection config={config} />
         <EnrichmentSection config={config} hasStoredKey={hasStoredKey} />
+        <MetadataSection timezone={config.timezone} />
         <RetentionSection config={config} />
       </div>
     </div>

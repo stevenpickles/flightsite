@@ -1,4 +1,5 @@
 import { requireNavItem } from "@/components/shell/nav-items";
+import { ActivityPanel } from "@/features/activity/ActivityPanel";
 import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
 import { DisplayRadiusIndicator } from "@/features/filters/components/DisplayRadiusIndicator";
 import { FilterDrawer } from "@/features/filters/components/FilterDrawer";
@@ -9,6 +10,8 @@ import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
+import { LayersControl } from "@/features/map/overlays/LayersControl";
+import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 
@@ -18,9 +21,11 @@ const item = requireNavItem("/");
  * The Live Map route: a full-viewport MapLibre map (dark aviation default,
  * selectable basemaps, range rings, and receiver marker — slice 013) carrying
  * the live aircraft layer (slice 014), the aircraft detail panel (slice
- * 016), and the live filters (drawer, quick chips, non-positioned list, and
+ * 016), the live filters (drawer, quick chips, non-positioned list, and
  * the display-radius cap indicator — slice 017), all of which read and
- * write the same filtered set via `features/filters`.
+ * write the same filtered set via `features/filters`, and the activity feed
+ * panel (slice 035), which is the one floating control fed by the socket's
+ * `activity` frames rather than by the live picture.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -42,12 +47,15 @@ export function LiveMapPage() {
        * section for screen-reader navigation. */}
       <h1 className="sr-only">{item.label}</h1>
       <MapLibreMap config={config} basemap={basemap} className="h-full w-full">
+        <OverlaysLayer />
         <AircraftLayer />
       </MapLibreMap>
       <BasemapSwitcher />
+      <LayersControl />
       <QuickFilterChips />
       <FilterDrawer />
       <NonPositionedPanel />
+      <ActivityPanel />
       <DisplayRadiusIndicator />
       <AircraftDetailPanel />
     </div>
