@@ -48,8 +48,26 @@ npm run lint && npm run format:check && npm run typecheck
 npm run dev                    # Vite dev server
 
 # full stack, no hardware required (lands with slices 006 + 011)
-FLIGHTSITE_DEMO=1 docker compose up -d
+FLIGHTSITE_DEMO=1 docker compose up -d      # then browse http://localhost:8090/
 ```
+
+Three host-side variables steer the compose stack; none of them reach the application
+except `FLIGHTSITE_DEMO` (see `docs/CONFIGURATION.md` for the full list):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FLIGHTSITE_DEMO` | unset | Runs the simulated decoder — no hardware, no config needed |
+| `FLIGHTSITE_HOST_DATA_DIR` | `/opt/flightsite/data` | Host side of the data bind mount; use `./data` locally rather than writing to `/opt` |
+| `FLIGHTSITE_HOST_PORT` | `8090` | Published host port. The container always listens on 8080 |
+
+The published port is **8090**, not 8080: decoder web UIs conventionally own 8080 and
+FlightSite normally shares a host with one.
+
+`FLIGHTSITE_HOST_PORT` frees the *port* for a second stack, but it is not by itself
+enough to run two: `compose.yaml` pins `container_name`, which is global to the
+daemon, so a second stack fails with a name conflict even under a different
+`docker compose -p` project. Bring one stack down before starting another from
+another worktree.
 
 ### Running E2E locally
 

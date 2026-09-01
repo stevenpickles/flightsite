@@ -9,14 +9,22 @@
  * imports nothing from Playwright so either side can use it freely.
  */
 
+import { STACK_BASE_URL } from "../../stackContract";
+
 /** Directory (relative to `visual/`) holding the committed fixture set. */
 export const FIXTURE_DIR_NAME = "fixtures";
 
 /**
  * Origin the fixtures are RECORDED against — the compose stack's published
  * port (`compose.yaml`), which is what the demo stack serves on.
+ *
+ * Derived from `stackContract.ts` rather than repeated, so moving the
+ * published host port cannot leave capture aimed at an origin nothing is
+ * listening on. That particular mismatch fails quietly: `rewriteHar.ts` only
+ * `console.warn`s when it rewrites no entries, so the result is a committed
+ * fixture set full of "Failed to fetch" states rather than an error.
  */
-export const CAPTURE_BASE_URL = "http://127.0.0.1:8080";
+export const CAPTURE_BASE_URL = STACK_BASE_URL;
 
 /**
  * Origin the fixtures are REPLAYED against — `vite preview` over
@@ -24,9 +32,10 @@ export const CAPTURE_BASE_URL = "http://127.0.0.1:8080";
  *
  * These two differ, and that difference is load-bearing enough to be worth
  * spelling out: Playwright's HAR router matches a request against recorded
- * entries by full URL, origin included, so a recording made on :8080 matches
- * nothing when replayed on :4173 — every API call aborts and every view
- * quietly renders its error state, which a screenshot will happily baseline.
+ * entries by full URL, origin included, so a recording made on the compose
+ * stack's port matches nothing when replayed on :4173 — every API call aborts
+ * and every view quietly renders its error state, which a screenshot will
+ * happily baseline.
  * `visual/capture/rewriteHar.ts` rewrites the recorded origin to this one as
  * the last step of a capture, which is why the committed HAR names :4173.
  *
