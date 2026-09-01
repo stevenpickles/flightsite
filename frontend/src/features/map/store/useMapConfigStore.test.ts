@@ -20,6 +20,7 @@ describe("useMapConfigStore", () => {
       receiver: { lat: 51.5, lon: -0.1, label: "A real receiver" },
       ringRadiiNm: [25, 75],
       unit: "km",
+      displayRadiusNm: 150,
     };
 
     useMapConfigStore.getState().setConfig(realConfig);

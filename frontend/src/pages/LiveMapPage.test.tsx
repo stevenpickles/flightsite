@@ -1,7 +1,11 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
+import { useFilterStore } from "@/features/filters/store/useFilterStore";
+import { DEFAULT_FILTERS } from "@/features/filters/types";
 import {
   AIRCRAFT_SOURCE_ID,
   AIRCRAFT_SYMBOL_LAYER_ID,
@@ -23,10 +27,25 @@ import { getLastWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 // The `maplibre-gl` and `WebSocket` mocks are registered globally in
 // src/test/setup.ts (jsdom has neither a WebGL context nor a socket server).
 
+/** `LiveMapPage` uses `react-router`'s `useSearchParams` for filter URL sync
+ * (`features/filters/hooks/useFilterUrlSync`), so every render needs a
+ * router in the tree — a plain `MemoryRouter` here, distinct from
+ * `test/test-utils.tsx`'s full route tree, since this file exercises the
+ * page in isolation. */
+function renderPage(initialPath = "/") {
+  return render(
+    <MemoryRouter initialEntries={[initialPath]}>
+      <LiveMapPage />
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(() => {
   resetMapLibreMock();
   resetWebSocketMock();
+  resetFilteredLiveAircraftCache();
   useLiveAircraftStore.getState().reset();
+  useFilterStore.setState({ filters: DEFAULT_FILTERS });
 });
 
 afterEach(() => {
@@ -38,7 +57,7 @@ afterEach(() => {
 /** Renders the page and drives the map through its first style load, which is
  * what registers the icons and attaches the aircraft layers. */
 async function renderLoadedMap() {
-  render(<LiveMapPage />);
+  renderPage();
   const map = getLastMockMap();
   await act(async () => {
     map.emit("load");
@@ -70,7 +89,7 @@ function aircraftFeatures(map: MapLibreMockMap) {
 
 describe("LiveMapPage", () => {
   it("renders a heading and a full-viewport map container", () => {
-    render(<LiveMapPage />);
+    renderPage();
     expect(
       screen.getByRole("heading", { level: 1, name: "Live Map" }),
     ).toBeInTheDocument();
@@ -78,20 +97,20 @@ describe("LiveMapPage", () => {
   });
 
   it("initializes MapLibre with the default dark-aviation basemap", () => {
-    render(<LiveMapPage />);
+    renderPage();
     expect(MapLibreMockMap.instances).toHaveLength(1);
     expect(getLastMockMap().options.style).toBeTruthy();
   });
 
   it("renders the basemap switcher control", () => {
-    render(<LiveMapPage />);
+    renderPage();
     expect(
       screen.getByRole("radiogroup", { name: /basemap/i }),
     ).toBeInTheDocument();
   });
 
   it("opens the live socket against the documented path", () => {
-    render(<LiveMapPage />);
+    renderPage();
     expect(getLastWebSocket().url).toMatch(/\/api\/v1\/ws\/live$/);
   });
 
@@ -269,7 +288,7 @@ describe("LiveMapPage", () => {
   });
 
   it("closes the socket and clears the picture on unmount", async () => {
-    const { unmount } = render(<LiveMapPage />);
+    const { unmount } = renderPage();
     const socket = getLastWebSocket();
     await act(async () => {
       socket.emitFrame(snapshotFrame(1, [makeAircraft()]));
