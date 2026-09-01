@@ -7,19 +7,24 @@
  * 500-aircraft target unreachable; `setData` on an existing source is the one
  * cheap update path MapLibre offers.
  *
- * Six layers, bottom to top:
+ * Seven layers, bottom to top:
  *
  * 1. the selected aircraft's track polyline;
- * 2. the selection halo — a ring under the selected icon (SPEC §36 "strong
+ * 2. the attention ring — a severity-scaled ring under any aircraft with an
+ *    active alert match (SPEC §36 "interesting/alerting: distinct attention
+ *    styling", roadmap slice 039). Outermost of the three rings, so an
+ *    aircraft that is selected, multilaterated *and* alerting shows all
+ *    three nested rather than one hiding another;
+ * 3. the selection halo — a ring under the selected icon (SPEC §36 "strong
  *    selection highlight");
- * 3. the MLAT ring — a *dashed* ring under multilaterated positions, so the
+ * 4. the MLAT ring — a *dashed* ring under multilaterated positions, so the
  *    position source is distinguishable without relying on colour (SPEC §36);
- * 4. the aircraft symbols themselves, rotated to `track_deg`;
- * 5. non-selected aircraft labels — `text-allow-overlap: false`, so
+ * 5. the aircraft symbols themselves, rotated to `track_deg`;
+ * 6. non-selected aircraft labels — `text-allow-overlap: false`, so
  *    MapLibre's own collision system hides whichever labels lose the
  *    `symbol-sort-key` contest (roadmap slice 015: "MapLibre's own collision
  *    system plus zoom/density-driven tiering");
- * 6. the selected aircraft's label — its own layer because
+ * 7. the selected aircraft's label — its own layer because
  *    `text-allow-overlap`/`text-ignore-placement` are layer-level, not
  *    data-driven, and the selected label must never be the one collision
  *    hides (roadmap slice 015 acceptance criterion: "selected aircraft
@@ -51,6 +56,7 @@ import {
 export const AIRCRAFT_SOURCE_ID = "flightsite-aircraft";
 export const AIRCRAFT_TRACK_SOURCE_ID = "flightsite-aircraft-track";
 export const AIRCRAFT_TRACK_LAYER_ID = "flightsite-aircraft-track-line";
+export const AIRCRAFT_ATTENTION_LAYER_ID = "flightsite-aircraft-attention";
 export const AIRCRAFT_SELECTION_LAYER_ID = "flightsite-aircraft-selection";
 export const AIRCRAFT_MLAT_RING_LAYER_ID = "flightsite-aircraft-mlat-ring";
 export const AIRCRAFT_SYMBOL_LAYER_ID = "flightsite-aircraft-symbols";
@@ -72,6 +78,107 @@ const SELECTION_COLOR = "#8ab4ff";
 const LABEL_TEXT_COLOR = "#f2f6ff";
 const LABEL_HALO_COLOR = "#0b1220";
 const LABEL_HALO_WIDTH = 1.2;
+
+/**
+ * The attention ring's severity palette (SPEC §36 "interesting/alerting:
+ * distinct attention styling", `docs/API.md` §2.8's ladder).
+ *
+ * Fixed rather than theme-driven, like `SELECTION_COLOR` and the range
+ * rings: it must read identically on the dark aviation basemap, the light
+ * one, and OSM raster imagery. Warm and escalating, and deliberately clear
+ * of the selection blue so "selected" and "alerting" never read as the same
+ * state on an aircraft that is both.
+ *
+ * **Colour is the redundant channel here, not the message.** SPEC §36 ends
+ * *"never rely exclusively on color to communicate classification or
+ * severity"*, so severity is carried first by geometry: {@link
+ * ATTENTION_RADIUS} and {@link ATTENTION_STROKE_WIDTH} both step
+ * monotonically with it, so a larger, heavier ring means a more serious
+ * match whether or not the viewer can separate amber from red. The panel
+ * (`features/interesting`) states the severity in words on top of that.
+ */
+const ATTENTION_COLOR: ExpressionSpecification = [
+  "match",
+  ["get", "severity"],
+  "critical",
+  "#ff5470",
+  "high",
+  "#f2803c",
+  "interesting",
+  "#f2b544",
+  "#9aa7bd",
+];
+
+/** Ring radius by severity, per zoom stop. Every value sits outside the
+ * selection halo's 14→22, so an aircraft that is both selected and alerting
+ * shows both rings nested rather than one swallowing the other.
+ *
+ * Folded into each zoom stop's *output* for the same reason `ICON_SIZE` is:
+ * `["zoom"]` must be the direct input of a top-level `interpolate`, and
+ * multiplying a zoom interpolation by a separate severity expression fails
+ * style validation silently. */
+const ATTENTION_RADIUS: ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  3,
+  [
+    "match",
+    ["get", "severity"],
+    "critical",
+    23,
+    "high",
+    21,
+    "interesting",
+    19,
+    17,
+  ],
+  11,
+  [
+    "match",
+    ["get", "severity"],
+    "critical",
+    35,
+    "high",
+    32,
+    "interesting",
+    29,
+    26,
+  ],
+];
+
+/** Ring weight by severity — the second non-colour channel. */
+const ATTENTION_STROKE_WIDTH: ExpressionSpecification = [
+  "match",
+  ["get", "severity"],
+  "critical",
+  3.5,
+  "high",
+  2.75,
+  "interesting",
+  2,
+  1.5,
+];
+
+/** Fill strength by severity, multiplied by the feature's own opacity so a
+ * stale or ground-dimmed alerting aircraft's ring fades exactly as its icon
+ * does. Kept low throughout: at these radii the fill is a wash behind the
+ * silhouette, and the stroke is what the eye actually catches. */
+const ATTENTION_FILL_OPACITY: ExpressionSpecification = [
+  "*",
+  ["get", "opacity"],
+  [
+    "match",
+    ["get", "severity"],
+    "critical",
+    0.16,
+    "high",
+    0.1,
+    "interesting",
+    0.07,
+    0.04,
+  ],
+];
 
 const EMPTY: FeatureCollection<Geometry> = {
   type: "FeatureCollection",
@@ -143,6 +250,26 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
         "line-color": SELECTION_COLOR,
         "line-width": 2,
         "line-opacity": 0.8,
+      },
+    });
+  }
+
+  if (!map.getLayer(AIRCRAFT_ATTENTION_LAYER_ID)) {
+    map.addLayer({
+      id: AIRCRAFT_ATTENTION_LAYER_ID,
+      type: "circle",
+      source: AIRCRAFT_SOURCE_ID,
+      // `severity` is `""` for everything that is not currently matching,
+      // which is most of the sky — so this layer draws nothing at all on a
+      // quiet picture rather than drawing 500 invisible circles.
+      filter: ["!=", ["get", "severity"], ""],
+      paint: {
+        "circle-radius": ATTENTION_RADIUS,
+        "circle-color": ATTENTION_COLOR,
+        "circle-opacity": ATTENTION_FILL_OPACITY,
+        "circle-stroke-color": ATTENTION_COLOR,
+        "circle-stroke-width": ATTENTION_STROKE_WIDTH,
+        "circle-stroke-opacity": ["get", "opacity"],
       },
     });
   }
