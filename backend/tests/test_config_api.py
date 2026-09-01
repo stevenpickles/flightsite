@@ -195,7 +195,7 @@ def test_validation_errors_do_not_echo_the_rejected_secret(client: TestClient) -
 
 
 def test_internal_api_is_excluded_from_the_openapi_schema(client: TestClient) -> None:
-    schema = client.get("/openapi.json").json()
+    schema = client.get("/api/v1/openapi.json").json()
 
     assert "/api/v1/health" in schema["paths"]
     assert not any(path.startswith("/api/internal") for path in schema["paths"])
