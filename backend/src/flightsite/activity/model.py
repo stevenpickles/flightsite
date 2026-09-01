@@ -11,11 +11,14 @@ the list to SPEC §55. :class:`ActivityEventType` spells §3.9's names, because
 those are the strings a client sees and the ones the published OpenAPI document
 has to match; §5's list is a comment on a column that deliberately carries no
 ``CHECK``, which is what "leave the vocabulary open" means in practice. The
-enum therefore also carries the values *no producer in this slice emits* —
+enum therefore also carries values *no producer emits yet* — §5 reserves
+``maintenance_issue`` and ``data_reset`` — so that adding a producer later is
+a producer, not a schema change.
 :attr:`ActivityEventType.ALERT_TRIGGERED` and
-:attr:`ActivityEventType.EMERGENCY_SQUAWK` are phase 6's (roadmap slice 039),
-and §5 reserves ``maintenance_issue`` and ``data_reset`` beyond them — so that
-adding a producer later is a producer, not a schema change.
+:attr:`ActivityEventType.EMERGENCY_SQUAWK` were two such reservations until
+slice 038's alert engine began emitting them through
+:func:`flightsite.activity.producers.alert_events`, which is exactly what
+that open-vocabulary bet was for.
 
 Milestones versus events
 ------------------------
