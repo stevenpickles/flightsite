@@ -45,7 +45,10 @@ export default defineConfig({
     : [["list"], ["html", { open: "never", outputFolder: `playwright-report${outputSuffix}` }]],
 
   use: {
-    baseURL: "http://localhost:8080",
+    // 127.0.0.1, not localhost: on Linux CI runners Firefox resolves localhost
+    // to ::1 while Docker publishes the compose port on IPv4 only, which made
+    // every Firefox test fail at its first assertion (page never loaded).
+    baseURL: "http://127.0.0.1:8080",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

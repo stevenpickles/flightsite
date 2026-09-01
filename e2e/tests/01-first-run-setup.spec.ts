@@ -84,7 +84,7 @@ test.describe("first-run setup wizard", () => {
     await page.getByRole("button", { name: "Finish setup" }).click();
 
     // Lands on the Live Map.
-    await expect(page).toHaveURL("http://localhost:8080/");
+    await expect(page).toHaveURL("http://127.0.0.1:8080/");
     await expect(page.locator('[role="status"][data-status]')).toBeVisible();
 
     // A reload must never show the wizard again — the wizard-redirect
@@ -92,7 +92,7 @@ test.describe("first-run setup wizard", () => {
     // here now that setup has actually been completed against a real
     // backend.
     await page.reload();
-    await expect(page).toHaveURL("http://localhost:8080/");
+    await expect(page).toHaveURL("http://127.0.0.1:8080/");
     await expect(
       page.getByRole("heading", { name: "Setup wizard" }),
     ).toHaveCount(0);
