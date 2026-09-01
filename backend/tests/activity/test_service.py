@@ -11,13 +11,17 @@ This is where the roadmap's acceptance criteria are actually drilled:
 * *"milestones fire once, persist, and appear in the feed"* — the same drill,
   asserted against ``milestones`` and against the feed.
 
-Nothing here sleeps. :meth:`ActivityService.flush` is driven directly against a
-hand-driven clock, so a minute of debounce and a fortnight of catch-up cost
-microseconds (``docs/TEST_STRATEGY.md`` §3).
+Nothing here waits on time passing. :meth:`ActivityService.flush` is driven
+directly against a hand-driven clock, so a minute of debounce and a fortnight
+of catch-up cost microseconds (``docs/TEST_STRATEGY.md`` §3); the one test
+about the background task's *cadence* injects a sleeper that returns
+immediately, so even that asserts about the interval rather than about how long
+a second is.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -58,6 +62,9 @@ from .conftest import (
 )
 
 MS_PER_HOUR = 60 * MS_PER_MINUTE
+
+#: Long enough that a parked task never wakes during a test.
+NEVER_S = 3_600.0
 
 
 async def feed_types(repository: ActivityRepository) -> list[str]:
@@ -820,6 +827,40 @@ async def test_a_pass_whose_reads_fail_does_not_raise(
 
 
 # ----------------------------------------------------------------- lifecycle
+
+
+async def test_the_background_task_runs_a_pass_on_its_own_cadence(
+    database: Database, clock: ManualClock
+) -> None:
+    """Everything else drives ``flush`` by hand; this is the path production takes.
+
+    The sleeper is injected and returns immediately, so the loop's cadence is
+    exercised without a second of wall clock passing: what is asserted is that
+    the task waits its configured interval and then runs a pass, not how long a
+    second is (``docs/TEST_STRATEGY.md`` §3).
+    """
+    await seed(database, [airframe("ae1463")], [sighting("ae1463")])
+    await MetaRepository(database).set(SCAN_WATERMARK_KEY, "0")
+    intervals: list[float] = []
+    ran = asyncio.Event()
+
+    async def sleeper(seconds: float) -> None:
+        intervals.append(seconds)
+        if len(intervals) > 1:
+            # Second time round the task parks here rather than spinning the
+            # loop for the rest of the test.
+            ran.set()
+            await asyncio.sleep(NEVER_S)
+
+    service = ActivityService(database=database, flush_interval_s=2.5, clock=clock, sleep=sleeper)
+    await service.start()
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=5.0)
+    finally:
+        await service.stop()
+
+    assert intervals[0] == 2.5
+    assert await feed_keys(database) == ["first_ever_aircraft:ae1463"]
 
 
 async def test_start_and_stop_are_idempotent(database: Database, clock: ManualClock) -> None:
