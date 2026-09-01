@@ -10,9 +10,12 @@ and a rule mutation must recompile the engine before the request answers, or
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
+import structlog
 
 from flightsite.alerts import AlertRuleNotFoundError, AlertRuleValueError, AlertSeverity
 from flightsite.alerts.model import ClassificationCondition, RarityCondition, RuleConditions
@@ -169,6 +172,349 @@ async def test_an_unknown_template_key_is_skipped_rather_than_fatal(
         await service.stop()
 
     assert [rule.template_key for rule in rules] == ["military"]
+
+
+# --------------------------------------------- instantiation on a config save
+
+
+async def test_a_config_save_instantiates_the_templates_it_just_enabled(
+    make_service: ServiceFactory,
+) -> None:
+    """Issue #110, and the whole reason this path exists. ``start`` runs before
+    the setup wizard has written anything, so on a fresh install the list it
+    reads is empty; the wizard's save is the only edge that can create the
+    rules the user just chose."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["military", "watchlist"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 2
+    assert [rule.template_key for rule in rules] == ["military", "watchlist"]
+
+
+async def test_the_rules_a_save_created_are_in_force_before_it_returns(
+    make_service: ServiceFactory,
+) -> None:
+    """Same property ``start`` has, for the same reason: the wizard's user is
+    watching the map, not waiting for a later reconciliation pass."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        await service.apply_enabled_templates(["military", "first_ever"])
+
+        assert len(service.engine.rules) == 2
+    finally:
+        await service.stop()
+
+
+async def test_a_save_that_does_not_change_the_list_instantiates_nothing(
+    make_service: ServiceFactory,
+) -> None:
+    """Every save about the receiver, the map or the units re-sends the alerts
+    section unchanged; none of them may touch the rule set."""
+    service = make_service(template_keys=["military"])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["military"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 0
+    assert len(rules) == 1
+
+
+async def test_a_save_adds_only_the_keys_it_added(
+    make_service: ServiceFactory,
+) -> None:
+    """The delta, not the list: the templates already enabled already have
+    their rules, and the user may have tuned them since."""
+    service = make_service(template_keys=["military"])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["military", "government"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 1
+    assert [rule.template_key for rule in rules] == ["military", "government"]
+
+
+async def test_a_deleted_shipped_rule_is_not_resurrected_by_a_later_save(
+    make_service: ServiceFactory,
+) -> None:
+    """The startup guard's purpose, preserved on the save path. The deleted
+    template is still *enabled* in the configuration, so a later save did not
+    add it — and rule deletion is a hard delete, so the delta is the only thing
+    that can tell "deleted" from "never instantiated"."""
+    service = make_service(template_keys=["military", "watchlist"])
+    await service.start()
+    try:
+        rules = await service.list_rules()
+        await service.delete_rule(rules[0].id)
+
+        # A save that also enables `government` — the kind of save that would
+        # rewrite the rule set if this diffed against the database alone.
+        await service.apply_enabled_templates(["military", "watchlist", "government"])
+        remaining = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert [rule.template_key for rule in remaining] == ["watchlist", "government"]
+
+
+async def test_a_deleted_rule_stays_deleted_across_any_number_of_saves(
+    make_service: ServiceFactory,
+) -> None:
+    """Not just the next save: the template is enabled in every list from here
+    on, so it is never again something a save added."""
+    service = make_service(template_keys=["military"])
+    await service.start()
+    try:
+        rules = await service.list_rules()
+        await service.delete_rule(rules[0].id)
+
+        for _ in range(3):
+            await service.apply_enabled_templates(["military"])
+        remaining = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert remaining == ()
+
+
+async def test_re_enabling_a_template_the_user_deleted_creates_it_again(
+    make_service: ServiceFactory,
+) -> None:
+    """Documented, deliberate, and the other half of the guarantee above: a
+    deletion is not *silently* undone, but unticking and re-ticking is the user
+    asking for the rule again in the only vocabulary the settings page has."""
+    service = make_service(template_keys=["military"])
+    await service.start()
+    try:
+        rules = await service.list_rules()
+        await service.delete_rule(rules[0].id)
+
+        await service.apply_enabled_templates([])
+        created = await service.apply_enabled_templates(["military"])
+        remaining = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 1
+    assert [rule.template_key for rule in remaining] == ["military"]
+
+
+async def test_a_save_does_not_duplicate_a_template_the_gallery_created(
+    make_service: ServiceFactory,
+) -> None:
+    """Condition 2: provenance already present means the template has its row,
+    whoever made it. The startup guard cannot serve here — "no template row at
+    all" would refuse the wizard's first save on exactly this install."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        await service.instantiate_template("military")
+
+        created = await service.apply_enabled_templates(["military", "watchlist"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 1
+    assert [rule.template_key for rule in rules] == ["military", "watchlist"]
+
+
+async def test_disabling_a_template_on_a_save_deletes_nothing(
+    make_service: ServiceFactory,
+) -> None:
+    """Unticking is not a delete. From first run on the Alerts page owns the
+    rules, and a rule the user may have tuned is not thrown away by a checkbox
+    on a different screen."""
+    service = make_service(template_keys=["military", "watchlist"])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["military"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 0
+    assert [rule.template_key for rule in rules] == ["military", "watchlist"]
+
+
+async def test_a_save_naming_the_alias_creates_the_police_rule(
+    make_service: ServiceFactory,
+) -> None:
+    """Issue #111's compatibility half, end to end through the save path."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["law_enforcement"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 1
+    assert [rule.template_key for rule in rules] == ["police"]
+
+
+async def test_correcting_the_alias_spelling_does_not_create_a_second_rule(
+    make_service: ServiceFactory,
+) -> None:
+    """The upgrade path: the fixed wizard re-saves the same answer spelled
+    ``police``, which is the same template and must stay one rule."""
+    service = make_service(template_keys=["law_enforcement"])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["police"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 0
+    assert [rule.template_key for rule in rules] == ["police"]
+
+
+async def test_the_emergency_template_creates_no_rule_on_a_save_either(
+    make_service: ServiceFactory,
+) -> None:
+    """SPEC §47: built in and always on, so there is nothing to instantiate."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["emergency_squawk"])
+    finally:
+        await service.stop()
+
+    assert created == 0
+
+
+async def test_an_unknown_key_on_a_save_is_skipped_rather_than_fatal(
+    make_service: ServiceFactory,
+) -> None:
+    """The save must not fail over a key from another build — the rest of the
+    configuration has already been written and is already live."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        created = await service.apply_enabled_templates(["military", "no_such_template"])
+        rules = await service.list_rules()
+    finally:
+        await service.stop()
+
+    assert created == 1
+    assert [rule.template_key for rule in rules] == ["military"]
+
+
+async def test_a_service_that_never_started_records_the_list_without_touching_the_db(
+    make_service: ServiceFactory,
+) -> None:
+    """The app builds this service even when a failed migration stopped it from
+    starting it, and a save must not then try to write rules."""
+    service = make_service(template_keys=[])
+
+    created = await service.apply_enabled_templates(["military"])
+
+    assert created == 0
+    # The list is still recorded, so a later start is configured from the save
+    # rather than from whatever was on disk when the process booted.
+    assert await service.list_rules() == ()
+
+
+# ------------------------------------------------ what a skipped key says out loud
+
+
+@pytest.fixture
+def captured_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """Route structlog through the stdlib logger ``caplog`` can see."""
+    structlog.configure(
+        processors=[structlog.stdlib.render_to_log_kwargs],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=False,
+    )
+    caplog.set_level(logging.DEBUG)
+    yield caplog
+    structlog.reset_defaults()
+
+
+def swept(records: list[logging.LogRecord]) -> str:
+    """Every log record flattened into one string to search."""
+    return "\n".join(f"{record.getMessage()} {record.__dict__}" for record in records)
+
+
+async def test_an_unknown_key_on_a_save_is_warned_about(
+    make_service: ServiceFactory, captured_logs: pytest.LogCaptureFixture
+) -> None:
+    """Silence is what let issue #111 ship: the wizard sent a key no template
+    had, it was skipped, and the only evidence was the rule the user never
+    got."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        captured_logs.clear()
+        await service.apply_enabled_templates(["military", "no_such_template"])
+    finally:
+        await service.stop()
+
+    logged = swept(captured_logs.records)
+    assert "alert_template_unknown" in logged
+    assert "no_such_template" in logged
+
+
+async def test_an_unknown_key_at_startup_is_warned_about(
+    make_service: ServiceFactory, captured_logs: pytest.LogCaptureFixture
+) -> None:
+    """The same warning on the boot path, which is where an install carrying a
+    bad key from an older build announces itself first."""
+    service = make_service(template_keys=["no_such_template"])
+    captured_logs.clear()
+    await service.start()
+    await service.stop()
+
+    assert "alert_template_unknown" in swept(captured_logs.records)
+
+
+async def test_a_recognized_key_is_not_warned_about(
+    make_service: ServiceFactory, captured_logs: pytest.LogCaptureFixture
+) -> None:
+    """A warning every ordinary save emits is one nobody reads."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        captured_logs.clear()
+        await service.apply_enabled_templates(["military"])
+    finally:
+        await service.stop()
+
+    logged = swept(captured_logs.records)
+    assert "alert_template_unknown" not in logged
+    assert "alert_template_key_deprecated" not in logged
+
+
+async def test_the_alias_is_warned_about_as_deprecated_rather_than_unknown(
+    make_service: ServiceFactory, captured_logs: pytest.LogCaptureFixture
+) -> None:
+    """It works, so it is not an error; it is also not a spelling a client may
+    keep using, so accepting it silently would leave the file quietly wrong."""
+    service = make_service(template_keys=[])
+    await service.start()
+    try:
+        captured_logs.clear()
+        await service.apply_enabled_templates(["law_enforcement"])
+    finally:
+        await service.stop()
+
+    logged = swept(captured_logs.records)
+    assert "alert_template_key_deprecated" in logged
+    assert "law_enforcement" in logged
+    assert "police" in logged
+    assert "alert_template_unknown" not in logged
 
 
 async def test_the_shipped_rules_are_in_force_the_moment_the_service_starts(
