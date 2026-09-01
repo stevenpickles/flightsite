@@ -25,6 +25,7 @@
     "report:visual": "playwright show-report playwright-report-visual"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "1.62.1",
     "@types/node": "^24.13.3",
     "typescript": "~6.0.3"

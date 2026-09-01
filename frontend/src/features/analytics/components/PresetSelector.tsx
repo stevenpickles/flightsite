@@ -7,9 +7,12 @@
  * state keeps this understandable to assistive tech as one choice, not five
  * independent toggles.
  */
+import { useRef } from "react";
+
 import { ANALYTICS_PRESETS, type AnalyticsPreset } from "@/lib/api/analytics";
 
 import { PRESET_LABELS } from "@/features/analytics/lib/urlState";
+import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { cn } from "@/lib/utils";
 
 export interface PresetSelectorProps {
@@ -18,10 +21,20 @@ export interface PresetSelectorProps {
 }
 
 export function PresetSelector({ preset, onChange }: PresetSelectorProps) {
+  // A radiogroup is one tab stop; the arrows move (and select) within it.
+  // `both` because the group wraps, so "down" reads as "next" too.
+  const groupRef = useRef<HTMLDivElement>(null);
+  const onKeyDown = useRovingFocus(groupRef, {
+    itemRole: "radio",
+    orientation: "both",
+  });
+
   return (
     <div
       role="radiogroup"
       aria-label="Time range"
+      ref={groupRef}
+      onKeyDown={onKeyDown}
       className="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
     >
       {ANALYTICS_PRESETS.map((option) => {
@@ -38,6 +51,7 @@ export function PresetSelector({ preset, onChange }: PresetSelectorProps) {
             // not have to keep a copy of these five display strings in step.
             data-testid="analytics-preset"
             data-preset={option}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(option)}
             className={cn(
               "rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors",

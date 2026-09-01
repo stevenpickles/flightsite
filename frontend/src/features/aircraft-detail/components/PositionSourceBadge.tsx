@@ -26,7 +26,7 @@ const TITLES: Record<PositionSource, string> = {
 
 const TONE_CLASSES: Record<PositionSource, string> = {
   adsb: "border-accent/60 text-accent",
-  mlat: "border-amber-500/60 text-amber-600 dark:text-amber-400",
+  mlat: "border-warning/60 text-warning",
   none: "border-border text-muted-foreground",
   other: "border-border text-muted-foreground",
 };

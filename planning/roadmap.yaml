@@ -1215,7 +1215,7 @@ slices:
     title: "Accessibility baseline"
     phase: 8
     branch: "048-accessibility"
-    status: planned
+    status: merged
     depends_on: ["032", "034", "039", "041"]
     objective: "Apply and verify the SPEC.md §80 accessibility baseline across main flows."
     scope:
