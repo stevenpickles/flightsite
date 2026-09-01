@@ -1,6 +1,6 @@
 [project]
 name = "flightsite"
-version = "0.0.1"
+version = "0.1.0"
 description = "FlightSite backend: self-hosted ADS-B observatory API and ingestion service."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
