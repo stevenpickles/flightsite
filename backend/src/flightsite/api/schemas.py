@@ -960,6 +960,258 @@ class AlertMatchListResponse(_Model):
     offset: int
 
 
+# --------------------------------------------------------------------------
+# Diagnostics — docs/API.md §3.10, SPEC §67 (slice 042)
+# --------------------------------------------------------------------------
+
+#: Roll-up health of the whole install and of individual sections. Coarse on
+#: purpose: the health area renders one banner from it, and the detail lives in
+#: the sections themselves.
+DiagnosticsStatusLiteral = Literal["ok", "degraded", "down"]
+
+#: Decoder link state. ``unconfigured`` is the first-run install that has no
+#: receiver yet — distinct from ``down``, which is a receiver that should be
+#: answering and is not.
+DecoderStateLiteral = Literal["unconfigured", "connected", "degraded", "down"]
+
+
+class DiagnosticsVersions(_Model):
+    """SPEC §67: frontend/backend version, plus the schema revision."""
+
+    backend: str
+    #: Served from the same image and build as the backend, so it is the same
+    #: string rather than a second source that could disagree.
+    frontend: str
+    api: str
+    schema_revision: str | None = None
+
+
+class DiagnosticsUptime(_Model):
+    """SPEC §67: backend uptime, and the decoder's own reported uptime."""
+
+    backend_s: float | None = None
+    #: Derived from the monotonic origin the process records; a duration clock
+    #: cannot name an instant, so this is a reconstruction, not a measurement.
+    started_at: IsoTimestamp | None = None
+    decoder_s: float | None = None
+
+
+class DiagnosticsDecoder(_Model):
+    """SPEC §67: decoder connection state."""
+
+    configured: bool
+    state: DecoderStateLiteral
+    last_success: IsoTimestamp | None = None
+    last_failure: IsoTimestamp | None = None
+    last_error: str | None = None
+    consecutive_failures: int = 0
+    total_failures: int = 0
+    total_successes: int = 0
+    next_retry_delay_s: float | None = None
+    batches_ingested: int = 0
+    updates_ingested: int = 0
+    demo_mode: bool = False
+
+
+class DiagnosticsLive(_Model):
+    """SPEC §67: last successful aircraft update, and the current picture."""
+
+    #: The freshest ``last_seen`` in the live picture. ``null`` on an empty
+    #: sky, which is a different fact from a broken feed — read it together
+    #: with :class:`DiagnosticsDecoder`.
+    last_aircraft_update: IsoTimestamp | None = None
+    last_aircraft_update_age_s: float | None = None
+    total: int = 0
+    positioned: int = 0
+    non_positioned: int = 0
+    stale: int = 0
+
+
+class DiagnosticsQuickCheck(_Model):
+    """SPEC §67: database health, as the last retained integrity check."""
+
+    #: ``null`` before maintenance has ever run one.
+    healthy: bool | None = None
+    checked_at: IsoTimestamp | None = None
+    error: str | None = None
+    rows: list[str] = Field(default_factory=list)
+
+
+class DiagnosticsStorage(_Model):
+    """SPEC §67: database size and free disk space."""
+
+    database_bytes: int | None = None
+    file_bytes: int | None = None
+    wal_bytes: int | None = None
+    reclaimable_bytes: int | None = None
+    reclaimable_ratio: float | None = None
+    disk_free_bytes: int | None = None
+    page_count: int | None = None
+    page_size: int | None = None
+
+
+class DiagnosticsRowCounts(_Model):
+    """SPEC §67: useful row counts.
+
+    A curated set, not the whole schema: the question a user is asking is
+    whether their data is accumulating. ``null`` means the count could not be
+    read, which is itself worth showing.
+    """
+
+    aircraft: int | None = None
+    sightings: int | None = None
+    sighting_tracks: int | None = None
+    activity_events: int | None = None
+    alert_matches: int | None = None
+    aircraft_metadata: int | None = None
+    airports: int | None = None
+    receiver_metrics_raw: int | None = None
+
+
+class DiagnosticsMaintenanceJob(_Model):
+    """One maintenance job's last attempt (SPEC §70)."""
+
+    outcome: Literal["ok", "skipped", "failed"]
+    started_at: IsoTimestamp | None = None
+    duration_ms: int = 0
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiagnosticsMaintenance(_Model):
+    """Maintenance outcomes surfaced into diagnostics (SPEC §70)."""
+
+    cycles: int = 0
+    last_cycle_at: IsoTimestamp | None = None
+    healthy: bool | None = None
+    running: bool = False
+    jobs: dict[str, DiagnosticsMaintenanceJob] = Field(default_factory=dict)
+
+
+class DiagnosticsRecovery(_Model):
+    """Unclean-shutdown recovery outcome (SPEC §71)."""
+
+    recovered: int = 0
+    continued: int = 0
+    points_recovered: int = 0
+    orphan_checkpoints: int = 0
+    orphan_sightings: int = 0
+    failed: int = 0
+    anomalies: int = 0
+
+
+class DiagnosticsDatabase(_Model):
+    """SPEC §67: database health, size, and row counts."""
+
+    status: DiagnosticsStatusLiteral
+    reachable: bool = True
+    quick_check: DiagnosticsQuickCheck = Field(default_factory=DiagnosticsQuickCheck)
+    storage: DiagnosticsStorage = Field(default_factory=DiagnosticsStorage)
+    row_counts: DiagnosticsRowCounts = Field(default_factory=DiagnosticsRowCounts)
+    maintenance: DiagnosticsMaintenance = Field(default_factory=DiagnosticsMaintenance)
+    recovery: DiagnosticsRecovery = Field(default_factory=DiagnosticsRecovery)
+
+
+class DiagnosticsMetadataSource(_Model):
+    """One metadata dataset's freshness (SPEC §67 "metadata database age")."""
+
+    source: str
+    status: Literal["never_run", "ok", "failed"]
+    last_attempt_at: IsoTimestamp | None = None
+    last_success_at: IsoTimestamp | None = None
+    age_s: float | None = None
+    dataset_version: str | None = None
+    row_count: int | None = None
+    last_error: str | None = None
+    running: bool = False
+
+
+class DiagnosticsMetadata(_Model):
+    """SPEC §67: metadata database age, per source and overall."""
+
+    sources: list[DiagnosticsMetadataSource] = Field(default_factory=list)
+    #: The most recent successful import across sources — "how old is my
+    #: metadata?" as one number.
+    newest_success_at: IsoTimestamp | None = None
+    age_s: float | None = None
+
+
+class DiagnosticsNotifications(_Model):
+    """SPEC §67: notification status, as far as the backend can know it.
+
+    Browser permission is a client fact no server can observe, so
+    ``permission_known_by`` is always ``"client"``: the health page joins this
+    with slice 040's notification store to show the granted permission.
+    """
+
+    configured_enabled: bool = False
+    severities: dict[str, bool] = Field(default_factory=dict)
+    permission_known_by: Literal["client"] = "client"
+
+
+class DiagnosticsEnrichment(_Model):
+    """SPEC §67: enrichment failures."""
+
+    enabled: bool = False
+    running: bool = False
+    circuit_open: bool = False
+    lookups: int = 0
+    dropped: int = 0
+    pending: int = 0
+    failures: int = 0
+
+
+class DiagnosticsWebSocket(_Model):
+    """SPEC §67: WebSocket issues."""
+
+    clients: int = 0
+    running: bool = False
+    #: Only clients the server had to shed; a clean disconnect is not counted.
+    disconnects: int = 0
+    events_dropped: int = 0
+
+
+class DiagnosticsError(_Model):
+    """One captured recent error.
+
+    Every string here has already passed the diagnostics redaction boundary
+    (``docs/SECURITY.md`` §3), so no field can carry a configured secret.
+    """
+
+    at: IsoTimestamp
+    category: Literal["ingestion", "database", "enrichment", "websocket", "other"]
+    event: str
+    level: str
+    logger: str
+    detail: str | None = None
+
+
+class DiagnosticsResponse(_Model):
+    """``GET /api/v1/diagnostics`` — every SPEC §67 item.
+
+    **Never contains secrets** (``docs/API.md`` §3.10, ``docs/SECURITY.md`` §3):
+    the payload passes through a whole-tree redaction against the configured
+    secret values before serialization, and a test asserts a sentinel key
+    cannot appear anywhere in this response.
+    """
+
+    generated_at: IsoTimestamp
+    status: DiagnosticsStatusLiteral
+    ready: bool = False
+    subsystems: dict[str, bool] = Field(default_factory=dict)
+    versions: DiagnosticsVersions
+    uptime: DiagnosticsUptime = Field(default_factory=DiagnosticsUptime)
+    decoder: DiagnosticsDecoder
+    live: DiagnosticsLive = Field(default_factory=DiagnosticsLive)
+    database: DiagnosticsDatabase
+    metadata: DiagnosticsMetadata = Field(default_factory=DiagnosticsMetadata)
+    notifications: DiagnosticsNotifications = Field(default_factory=DiagnosticsNotifications)
+    enrichment: DiagnosticsEnrichment = Field(default_factory=DiagnosticsEnrichment)
+    websocket: DiagnosticsWebSocket = Field(default_factory=DiagnosticsWebSocket)
+    counters: dict[str, int] = Field(default_factory=dict)
+    #: Keyed by category; each list is newest-first and bounded.
+    recent_errors: dict[str, list[DiagnosticsError]] = Field(default_factory=dict)
+
+
 __all__ = [
     "ActivityEventTypeLiteral",
     "ActivityEventView",
@@ -995,6 +1247,26 @@ __all__ = [
     "Classification",
     "ClosureReasonLiteral",
     "CurrentAircraftResponse",
+    "DecoderStateLiteral",
+    "DiagnosticsDatabase",
+    "DiagnosticsDecoder",
+    "DiagnosticsEnrichment",
+    "DiagnosticsError",
+    "DiagnosticsLive",
+    "DiagnosticsMaintenance",
+    "DiagnosticsMaintenanceJob",
+    "DiagnosticsMetadata",
+    "DiagnosticsMetadataSource",
+    "DiagnosticsNotifications",
+    "DiagnosticsQuickCheck",
+    "DiagnosticsRecovery",
+    "DiagnosticsResponse",
+    "DiagnosticsRowCounts",
+    "DiagnosticsStatusLiteral",
+    "DiagnosticsStorage",
+    "DiagnosticsUptime",
+    "DiagnosticsVersions",
+    "DiagnosticsWebSocket",
     "GeoPosition",
     "InterestingAircraftResponse",
     "InterestingMatch",
