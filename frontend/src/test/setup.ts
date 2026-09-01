@@ -3,8 +3,17 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+import * as echartsCoreMock from "@/test/echartsMock";
+import { resetEchartsMock } from "@/test/echartsMock";
 import { AttributionControlMock, MapLibreMockMap } from "@/test/maplibreGlMock";
 import { FakeWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
+
+/**
+ * ECharts' `CanvasRenderer` requires a real 2D canvas context, which jsdom
+ * does not provide — mocked globally for the same reason MapLibre is below
+ * (`test/echartsMock.ts` has the full rationale).
+ */
+vi.mock("echarts/core", () => echartsCoreMock);
 
 /**
  * MapLibre GL JS requires a real WebGL context, which jsdom does not
@@ -113,4 +122,5 @@ Object.defineProperty(globalThis, "Image", {
 afterEach(() => {
   cleanup();
   resetWebSocketMock();
+  resetEchartsMock();
 });
