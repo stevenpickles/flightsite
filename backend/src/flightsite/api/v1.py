@@ -29,6 +29,11 @@ async def health(request: Request) -> dict[str, Any]:
         "version": __version__,
         "uptime_s": round(uptime_s, 3),
         "counters": counters.snapshot(),
+        # True when ingestion is simulated traffic (FLIGHTSITE_DEMO=1, slice
+        # 011) rather than a real decoder — surfaced so the UI and support
+        # requests can tell "no real hardware attached" apart from "decoder
+        # is down" at a glance.
+        "demo": request.app.state.demo_enabled,
     }
 
 
