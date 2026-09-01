@@ -596,7 +596,7 @@ slices:
     title: "Settings page"
     phase: 3
     branch: "019-settings-page"
-    status: planned
+    status: merged
     depends_on: ["002", "004", "007"]
     objective: "Settings UI editing the canonical configuration model with masked secrets."
     scope:
