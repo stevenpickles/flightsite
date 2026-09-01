@@ -22,6 +22,9 @@ import type {
   LiveAircraftRecord,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
+import { DEFAULT_DISPLAY_RADIUS_NM } from "@/features/map/mapConfig";
+import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAircraftCache";
+import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
 
 /** The slice of the live store a frame is drawn from. */
 export interface AircraftFrameState {
@@ -37,15 +40,32 @@ export interface DrawFrameOptions {
    * 900 coordinates ten times a second for an unchanged line is the kind of
    * per-frame waste that shows up first on a Pi. */
   includeTrack?: boolean;
+  /** The active live filters (`features/filters`). Defaults to
+   * `DEFAULT_FILTERS` (no filtering) for callers — mostly tests — that
+   * predate filtering and never heard of the store. */
+  filters?: LiveFilters;
+  /** The display-radius default the distance cap falls back to when
+   * `filters.maxDistanceNm` is unset. Defaults to the schema default. */
+  displayRadiusNm?: number;
 }
 
-/** Rebuilds and pushes the aircraft (and optionally track) sources for `now`. */
+/** Rebuilds and pushes the aircraft (and optionally track) sources for `now`.
+ * Filtering happens here, once, through `getFilteredLiveAircraft` — the same
+ * memoized selector React components read via
+ * `useFilteredLiveAircraft` — so the map, the non-positioned panel, and the
+ * drawer's counts are always describing the same filtered set. */
 export function drawAircraftFrame(
   map: MapLibreGlMap,
   state: AircraftFrameState,
   now: number,
   options: DrawFrameOptions = {},
 ): void {
+  const filters = options.filters ?? DEFAULT_FILTERS;
+  const displayRadiusNm = options.displayRadiusNm ?? DEFAULT_DISPLAY_RADIUS_NM;
+  const filterResult = getFilteredLiveAircraft(state.aircraft, filters, {
+    displayRadiusNm,
+  });
+
   setAircraftData(
     map,
     buildAircraftFeatureCollection({
@@ -54,6 +74,8 @@ export function drawAircraftFrame(
       selectedIcao: state.selectedIcao,
       now,
       zoom: map.getZoom(),
+      visibleIcaos: filterResult.visibleIcaos,
+      dimmedIcaos: filterResult.dimmedIcaos,
     }),
   );
   if (options.includeTrack) {

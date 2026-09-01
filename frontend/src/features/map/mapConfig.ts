@@ -5,6 +5,11 @@ export const DEFAULT_RING_RADII_NM: readonly number[] = [
   50, 100, 150, 200, 250,
 ];
 
+/** Schema default for `display_radius_nm`
+ * (`backend/src/flightsite/config/models.py`) — the fallback distance cap
+ * used before the server's real config has loaded. */
+export const DEFAULT_DISPLAY_RADIUS_NM = 250;
+
 /**
  * Fallback map configuration (receiver near Seattle, WA).
  *
@@ -26,4 +31,5 @@ export const DEV_PLACEHOLDER_MAP_CONFIG: MapConfig = {
   },
   ringRadiiNm: DEFAULT_RING_RADII_NM,
   unit: "nm",
+  displayRadiusNm: DEFAULT_DISPLAY_RADIUS_NM,
 };

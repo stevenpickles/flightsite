@@ -16,6 +16,7 @@ const config: MapConfig = {
   receiver: { lat: 47.6, lon: -122.3, label: "Test Receiver" },
   ringRadiiNm: [50, 100, 250],
   unit: "nm",
+  displayRadiusNm: 250,
 };
 
 /** Lightweight fake of the subset of the MapLibre Map API these helpers

@@ -38,6 +38,13 @@ import {
  * map, which is what an observer wants to see. */
 export const STALE_OPACITY = 0.45;
 
+/** Multiplier applied on top of the normal/stale opacity when the ground
+ * traffic filter is set to "dim" (`features/filters`) — de-emphasized
+ * rather than excluded, so an aircraft that just landed does not blink off
+ * the map. Multiplicative with `STALE_OPACITY` so a stale, dimmed ground
+ * contact reads as even quieter than either alone. */
+export const GROUND_DIM_OPACITY = 0.55;
+
 /**
  * Feature properties consumed by the aircraft layers' style expressions.
  *
@@ -84,6 +91,16 @@ export interface AircraftFrameInput {
    * that do not care about label decluttering (most existing tests) do
    * not have to supply one. */
   zoom?: number;
+  /** ICAOs the live filters (`features/filters`) let through — an
+   * aircraft in `aircraft` but not this set is skipped entirely.
+   * `undefined` means "no filtering," so every existing caller that never
+   * heard of filters keeps drawing everything. Departing aircraft are
+   * never filtered (see the departing-loop comment below): a fade-out is
+   * not part of the live picture filters describe. */
+  visibleIcaos?: ReadonlySet<string>;
+  /** Subset of `visibleIcaos` that should render de-emphasized rather
+   * than at full strength — the ground-traffic filter's "dim" mode. */
+  dimmedIcaos?: ReadonlySet<string>;
 }
 
 function feature(
@@ -115,15 +132,24 @@ export function buildAircraftFeatureCollection(
     selectedIcao,
     now,
     zoom = ZOOM_LABELS_FULL,
+    visibleIcaos,
+    dimmedIcaos,
   } = input;
   const features: AircraftFeature[] = [];
-  // Cheap density signal: the live picture's own size, not a viewport
-  // query — see `labels/priority.ts`'s `deriveLabelTier` doc comment.
-  const liveCount = Object.keys(aircraft).length;
+  // Cheap density signal: the *drawn* picture's size (post-filter, when
+  // filtering is in play), not a viewport query — see `labels/priority.ts`'s
+  // `deriveLabelTier` doc comment. A filtered-down picture should tier
+  // toward fuller labels the same way a genuinely quiet sky does.
+  const liveCount = visibleIcaos
+    ? visibleIcaos.size
+    : Object.keys(aircraft).length;
 
   for (const icao in aircraft) {
     const record = aircraft[icao];
     if (!record) {
+      continue;
+    }
+    if (visibleIcaos && !visibleIcaos.has(icao)) {
       continue;
     }
     const position = displayPosition(record, now);
@@ -132,6 +158,7 @@ export function buildAircraftFeatureCollection(
     }
     const view = record.aircraft;
     const stale = view.state === "stale";
+    const dimmed = dimmedIcaos?.has(icao) ?? false;
     const selected = icao === selectedIcao;
     const interesting = view.interesting !== null;
     const tier = deriveLabelTier({
@@ -145,7 +172,8 @@ export function buildAircraftFeatureCollection(
         callsign: view.callsign,
         track: view.track_deg ?? 0,
         icon: iconImageId(resolveAircraftIcon(view).shape),
-        opacity: stale ? STALE_OPACITY : 1,
+        opacity:
+          (stale ? STALE_OPACITY : 1) * (dimmed ? GROUND_DIM_OPACITY : 1),
         stale,
         mlat: view.position_source === "mlat",
         selected,

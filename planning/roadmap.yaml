@@ -550,7 +550,7 @@ slices:
     title: "Live filters & non-positioned list"
     phase: 3
     branch: "017-live-filters"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Filter drawer, quick filters, and the non-positioned aircraft list for the live map."
     scope:

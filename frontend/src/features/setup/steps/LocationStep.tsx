@@ -56,6 +56,7 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
       // rings would just be visual noise before a display radius exists.
       ringRadiiNm: [],
       unit: "nm",
+      displayRadiusNm: DEV_PLACEHOLDER_MAP_CONFIG.displayRadiusNm,
     };
   }, [
     draft.latitude,
