@@ -87,13 +87,15 @@ decoder values.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
 from sqlalchemy.engine import RowMapping
 
 from flightsite.airports.model import AirportContext
+from flightsite.airports.overlay import TYPE_SIZE_CLASSES
+from flightsite.airports.records import AirportRecord
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
 from flightsite.db.clock import from_epoch_ms
@@ -504,6 +506,43 @@ def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
     }
 
 
+def airport_feature_collection_payload(records: Sequence[AirportRecord]) -> dict[str, Any]:
+    """``records`` as a GeoJSON ``FeatureCollection`` — ``GET /api/v1/airports``
+    (slice 028).
+
+    Each airport becomes one ``Point`` feature, ``[lon, lat]`` per RFC 7946
+    (GeoJSON's axis order is the opposite of the ``AirportRecord.lat, lon``
+    field order this codebase otherwise uses). ``type`` is rendered as the
+    friendlier :data:`~flightsite.airports.overlay.AirportSizeClass` spelling
+    (``TYPE_SIZE_CLASSES``) rather than upstream's ``*_airport`` suffix, so
+    the frontend's size-class filter and this payload's property share one
+    vocabulary. A record whose ``type`` is not one of the four imported
+    classes (never true for anything :mod:`flightsite.airports.records`
+    actually stores) is skipped rather than serialized with a size class that
+    does not exist — the same "drop rather than guess" posture the rest of
+    this codebase takes on unrecognized upstream data.
+    """
+    features: list[dict[str, Any]] = []
+    for record in records:
+        size_class = TYPE_SIZE_CLASSES.get(record.type)
+        if size_class is None:
+            continue
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [record.lon, record.lat]},
+                "properties": {
+                    "ident": record.ident,
+                    "name": record.name,
+                    "size_class": size_class,
+                    "iata": record.iata,
+                    "elevation_ft": record.elevation_ft,
+                },
+            }
+        )
+    return {"type": "FeatureCollection", "features": features}
+
+
 __all__ = [
     "BEARING_DECIMALS",
     "DISTANCE_DECIMALS",
@@ -513,6 +552,7 @@ __all__ = [
     "aircraft_detail_payload",
     "aircraft_history_row_payload",
     "aircraft_payload",
+    "airport_feature_collection_payload",
     "iso_utc",
     "lifetime_payload",
     "receiver_payload",
