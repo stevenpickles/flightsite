@@ -175,7 +175,7 @@ docker compose up -d
 Then confirm the instance came back healthy:
 
 ```bash
-curl -fsS http://localhost:8080/api/v1/ready
+curl -fsS http://localhost:8090/api/v1/ready
 ```
 
 Without Compose:

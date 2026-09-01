@@ -6,11 +6,11 @@ import { CAPTURE_BASE_URL } from "./visual/support/fixtureContract";
  * Fixture capture configuration (roadmap slice 047).
  *
  * This config exists to RECORD the fixtures the visual suite later replays,
- * not to assert anything. It runs once, against a live demo stack on
- * :8080 (brought up by `scripts/visual-capture.mjs`), and writes
- * `visual/fixtures/` — an HTTP archive of every `/api` response the five
- * target views ask for, one frozen WebSocket snapshot, and a manifest
- * recording what was captured and when.
+ * not to assert anything. It runs once, against a live demo stack on the
+ * compose stack's published port (brought up by `scripts/visual-capture.mjs`;
+ * see `stackContract.ts`), and writes `visual/fixtures/` — an HTTP archive of
+ * every `/api` response the five target views ask for, one frozen WebSocket
+ * snapshot, and a manifest recording what was captured and when.
  *
  * Kept separate from `playwright.visual.config.ts` so the two never run
  * together: capture needs a backend and a network, and the visual suite

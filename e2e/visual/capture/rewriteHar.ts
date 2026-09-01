@@ -6,13 +6,13 @@
  * exist yet while the capture test is still running, so this cannot be part
  * of the spec.
  *
- * Why it is needed: capture records against the demo stack on :8080, and the
- * visual suite replays against `vite preview` on :4173. Playwright's HAR
- * router matches on the full request URL, origin included, so without this
- * rewrite not one entry would match at replay. The failure that causes is
- * quiet rather than loud — every request aborts, every card renders "Failed
- * to fetch", and the screenshots are perfectly deterministic pictures of a
- * broken app.
+ * Why it is needed: capture records against the demo stack on the compose
+ * stack's published port, and the visual suite replays against `vite preview`
+ * on :4173. Playwright's HAR router matches on the full request URL, origin
+ * included, so without this rewrite not one entry would match at replay. The
+ * failure that causes is quiet rather than loud — every request aborts, every
+ * card renders "Failed to fetch", and the screenshots are perfectly
+ * deterministic pictures of a broken app.
  *
  * Rewriting at capture time rather than at replay time keeps the committed
  * fixture honest about what it is for: read the HAR and the origins name the
