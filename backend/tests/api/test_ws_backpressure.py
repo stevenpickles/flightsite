@@ -238,7 +238,11 @@ async def test_starting_twice_keeps_one_subscription() -> None:
         await harness.broadcaster.start()
 
         assert harness.broadcaster.running is True
-        assert harness.live.events.subscriber_count == 2  # broadcaster + persistence
+        # The consumers this harness starts against its own live store: the
+        # broadcaster, the persistence worker and — from slice 038 — the alert
+        # engine. The metadata cache, enrichment and airport context subscribe
+        # to the store ``create_app`` built, which `build_live_app` replaced.
+        assert harness.live.events.subscriber_count == 3
 
 
 async def test_broadcasting_before_start_is_a_no_op() -> None:
