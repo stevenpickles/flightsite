@@ -277,20 +277,30 @@ export function describeActivityEvent(
       };
     }
 
-    // The two phase-6 types (roadmap slice 039). No producer emits them yet,
-    // but they are in the published schema, so the feed already knows how to
-    // render one rather than showing a bare slug the day they arrive.
-    case "alert_triggered":
-      return { label: "Alert triggered", detail: airframe(payload, icao) };
+    // The two alert types. Slice 038's engine emits them; slice 039 makes
+    // them say something. `reason` is the engine's own sentence for the
+    // match ("Rule: Military aircraft", "Emergency squawk 7700 (general
+    // emergency)"), and it is the one payload field this module passes
+    // through rather than rewording: it names a rule the *user* wrote, so
+    // re-deriving a sentence here would drift from what the alert history
+    // and the interesting panel say about the very same match.
+    case "alert_triggered": {
+      const reason = str(payload, "reason") ?? str(payload, "rule_name");
+      return {
+        label: reason === null ? "Alert triggered" : `Alert: ${reason}`,
+        detail: airframe(payload, icao),
+      };
+    }
 
     case "emergency_squawk": {
       const squawk = str(payload, "squawk");
       return {
-        label: "Emergency squawk",
-        detail: join([
-          squawk === null ? null : `Squawk ${squawk}`,
-          airframe(payload, icao),
-        ]),
+        // SPEC §47 wants these prominent rather than one entry among the
+        // alerts — which is why the backend gives them a type of their own —
+        // so the code goes in the headline rather than the detail line.
+        label:
+          squawk === null ? "Emergency squawk" : `Emergency squawk ${squawk}`,
+        detail: join([str(payload, "reason"), airframe(payload, icao)]),
       };
     }
 

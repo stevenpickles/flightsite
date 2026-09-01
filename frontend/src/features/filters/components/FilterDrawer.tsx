@@ -8,10 +8,12 @@
  * actually drawing.
  *
  * Fields that target metadata the decoder does not populate until a later
- * slice (aircraft type/operator/operator group, classification, mission,
- * interesting-only — see `types.ts`'s doc comment) stay fully interactive
- * rather than disabled, but carry an inline note explaining why they will
- * not change what's on the map yet.
+ * slice (aircraft type/operator/operator group, classification, mission —
+ * see `types.ts`'s doc comment) stay fully interactive rather than disabled,
+ * but carry an inline note explaining why they will not change what's on the
+ * map yet. "Interesting only" was one of those until slice 038 started
+ * populating `interesting` and slice 039 surfaced it; its note is gone
+ * because the filter now genuinely filters.
  */
 
 import { Filter, X } from "lucide-react";
@@ -372,10 +374,6 @@ export function FilterDrawer() {
                 />
                 Interesting only
               </label>
-              <PlumbingNote>
-                &ldquo;Interesting only&rdquo; activates with alerting (slice
-                038).
-              </PlumbingNote>
             </FilterSection>
 
             <FilterSection title="Ground traffic">
