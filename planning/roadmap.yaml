@@ -508,7 +508,7 @@ slices:
     title: "Map labels & decluttering"
     phase: 3
     branch: "015-map-labels"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Add aircraft labels with priority-based decluttering."
     scope:
@@ -528,7 +528,7 @@ slices:
     title: "Aircraft detail panel"
     phase: 3
     branch: "016-aircraft-detail"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Comprehensive aircraft detail panel for the selected aircraft with provenance indicators and external links."
     scope:

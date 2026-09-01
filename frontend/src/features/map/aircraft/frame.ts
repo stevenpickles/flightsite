@@ -53,6 +53,7 @@ export function drawAircraftFrame(
       departing: state.departing,
       selectedIcao: state.selectedIcao,
       now,
+      zoom: map.getZoom(),
     }),
   );
   if (options.includeTrack) {
