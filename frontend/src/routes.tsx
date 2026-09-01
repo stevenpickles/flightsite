@@ -8,23 +8,28 @@ import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
-import { ReceiverPage } from "@/pages/ReceiverPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SightingDetailPage } from "@/pages/SightingDetailPage";
 import { SightingsPage } from "@/pages/SightingsPage";
 
 /**
- * The Analytics page pulls in ECharts (roadmap slice 032), which the Live
- * Map — the app's index route, and the one every session loads first — has
- * no use for. Route-level `lazy` keeps that chunk out of the initial bundle
- * entirely; it only downloads when a user actually navigates here.
+ * The Analytics and Receiver pages both pull in ECharts (roadmap slices 032
+ * and 034), which the Live Map — the app's index route, and the one every
+ * session loads first — has no use for. Route-level `lazy` keeps that chunk
+ * out of the initial bundle entirely; it only downloads when a user actually
+ * navigates to one of these two.
  */
 /* eslint-disable react-refresh/only-export-components -- this route config
-   module's only real export is `router`; the lazy-loaded component binding
-   has to live beside the route tree that references it. */
+   module's only real export is `router`; the lazy-loaded component bindings
+   have to live beside the route tree that references them. */
 const AnalyticsPage = lazy(() =>
   import("@/pages/AnalyticsPage").then((module) => ({
     default: module.AnalyticsPage,
+  })),
+);
+const ReceiverPage = lazy(() =>
+  import("@/pages/ReceiverPage").then((module) => ({
+    default: module.ReceiverPage,
   })),
 );
 /* eslint-enable react-refresh/only-export-components */
@@ -59,7 +64,20 @@ export const router = createBrowserRouter([
               </Suspense>
             ),
           },
-          { path: "receiver", element: <ReceiverPage /> },
+          {
+            path: "receiver",
+            element: (
+              <Suspense
+                fallback={
+                  <p className="p-8 text-sm text-muted-foreground">
+                    Loading receiver…
+                  </p>
+                }
+              >
+                <ReceiverPage />
+              </Suspense>
+            ),
+          },
           { path: "alerts", element: <AlertsPage /> },
           { path: "settings", element: <SettingsPage /> },
         ],

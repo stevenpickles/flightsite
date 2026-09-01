@@ -33,6 +33,7 @@ field that will arrive a fraction of a second later anyway.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
@@ -48,12 +49,28 @@ from flightsite.airspace.loader import load_airspace
 from flightsite.analytics.bucketing import Preset, Window, explicit_window, resolve_window
 from flightsite.analytics.queries import AnalyticsQueries
 from flightsite.api.history import AircraftHistoryRepository
+from flightsite.api.receiver_stats import (
+    DEFAULT_LOOKBACK_MS,
+    RAW_FIELD_FOR_METRIC,
+    SUMMARY_FIELD_FOR_METRIC,
+    SUMMARY_ONLY_METRICS,
+    ReceiverMetricQueryError,
+    ReceiverStatsRepository,
+    ever_ranges,
+    next_local_day,
+    signal_histogram,
+)
 from flightsite.api.serializers import (
     aircraft_detail_payload,
     aircraft_history_row_payload,
     aircraft_payload,
     analytics_window_payload,
+    receiver_lifetime_stats_payload,
+    receiver_metric_series_payload,
     receiver_payload,
+    receiver_range_by_bearing_payload,
+    receiver_scorecard_payload,
+    receiver_signal_distribution_payload,
     sighting_detail_payload,
     sighting_row_payload,
 )
@@ -62,6 +79,8 @@ from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms, to_epoch_ms, utc_now_ms
 from flightsite.live import LiveAircraft, LiveStore
 from flightsite.metadata import MetadataCache, MetadataService
+from flightsite.receiver_metrics import MetricsRepository, ReceiverMetricsService
+from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
 from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
@@ -129,6 +148,37 @@ class LiveApiContext:
         """
         service: AirportContextService = self._app.state.airports
         return service
+
+    @property
+    def metrics(self) -> MetricsRepository:
+        """The receiver-metric tables' query layer (slice 033's five tables)."""
+        database: Database = self._app.state.database
+        return MetricsRepository(database)
+
+    @property
+    def receiver_stats(self) -> ReceiverStatsRepository:
+        """The Receiver page's own query layer — see
+        :mod:`flightsite.api.receiver_stats` for what it answers that
+        :attr:`metrics` does not.
+        """
+        database: Database = self._app.state.database
+        return ReceiverStatsRepository(database)
+
+    @property
+    def receiver_metrics_service(self) -> ReceiverMetricsService:
+        """The running sampler/maintenance service — decoder uptime and
+        statistics-support state live here, not in any table (they are
+        statements about *right now*, not something a request should persist).
+        """
+        service: ReceiverMetricsService = self._app.state.receiver_metrics
+        return service
+
+    @property
+    def _receiver_timezone(self) -> ZoneInfo:
+        """The configured IANA zone, for the receiver-local day bucketing
+        every receiver-stats endpoint below uses (``docs/DATA_MODEL.md`` §10).
+        """
+        return ZoneInfo(self.settings.timezone)
 
     # -------------------------------------------------------------- payloads
 
@@ -402,6 +452,166 @@ class LiveApiContext:
             logger.warning("t0_unavailable", error=str(exc), error_type=type(exc).__name__)
             return None
         return None if t0_ms is None else from_epoch_ms(t0_ms)
+
+    # ------------------------------------------------------- receiver stats
+
+    async def receiver_scorecard(self) -> dict[str, Any]:
+        """The SPEC §61 scorecard — ``docs/API.md`` §3.8.
+
+        "Unique aircraft today"/"since T0" are read from :attr:`analytics`
+        (roadmap slice 031's rollups) rather than computed here: they are
+        exactly :meth:`~flightsite.analytics.queries.AnalyticsQueries.unique_aircraft`
+        over the ``today``/``t0`` presets, and reusing that query is what
+        keeps this figure and the Analytics page's own "unique aircraft"
+        stat tile answering from the same source rather than two independent
+        (and potentially disagreeing) counts.
+        """
+        zone = self._receiver_timezone
+        now_ms = utc_now_ms()
+        today = local_day(now_ms, zone)
+        t0_ms = await self._t0_ms()
+
+        metrics = self.metrics
+        service = self.receiver_metrics_service
+        analytics = self.analytics
+
+        latest_sample = await metrics.latest_sample()
+        today_ranges = await metrics.ranges_for_day(today)
+        max_range_today = (
+            max((record.max_range_nm for record in today_ranges.values()), default=None)
+            if today_ranges
+            else None
+        )
+        lifetime = await metrics.lifetime()
+        unique_today = await analytics.unique_aircraft(
+            resolve_window(Preset.TODAY, now_ms=now_ms, zone=zone, t0_ms=t0_ms)
+        )
+        unique_since_t0 = await analytics.unique_aircraft(
+            resolve_window(Preset.SINCE_T0, now_ms=now_ms, zone=zone, t0_ms=t0_ms)
+        )
+
+        latest_stats = service.latest_stats
+        app_start_time: float = self._app.state.start_time
+        return receiver_scorecard_payload(
+            counts=self.live.counts(),
+            latest_sample=latest_sample,
+            max_range_today_nm=max_range_today,
+            lifetime=lifetime,
+            unique_today=unique_today,
+            unique_since_t0=unique_since_t0,
+            decoder_uptime_s=None if latest_stats is None else latest_stats.uptime_s,
+            flightsite_uptime_s=time.monotonic() - app_start_time,
+            stats_supported=service.stats_supported,
+            demo_mode=self.demo_mode,
+        )
+
+    async def receiver_metric_series(
+        self,
+        *,
+        metric: str,
+        resolution: str,
+        from_ms: int | None,
+        to_ms: int | None,
+    ) -> dict[str, Any]:
+        """The §3.8 time-series payload for one SPEC §62 chart.
+
+        Raises:
+            ReceiverMetricQueryError: an unsupported ``metric``/``resolution``
+                pairing — see the exception's own docstring. The endpoint
+                catches this and answers a 400 in the §2.5 error envelope.
+        """
+        if metric == "unique_aircraft" and resolution != "daily":
+            raise ReceiverMetricQueryError("unique_aircraft is only available at resolution=daily")
+        if metric in SUMMARY_ONLY_METRICS and resolution == "high":
+            raise ReceiverMetricQueryError(
+                f"{metric} has no raw-resolution representation; use resolution=hourly or daily"
+            )
+
+        zone = self._receiver_timezone
+        now_ms = utc_now_ms()
+        end_ms = now_ms if to_ms is None else to_ms
+        start_ms = end_ms - DEFAULT_LOOKBACK_MS[resolution] if from_ms is None else from_ms
+
+        metrics = self.metrics
+        points: list[tuple[int, float | None]]
+        if metric == "unique_aircraft":
+            # Roadmap slice 031's daily rollups already answer this exactly —
+            # `daily()` returns one row per local day in the window, zero
+            # included (the same "the zero is the measurement" rule as every
+            # other analytics chart), so there is nothing left for this
+            # endpoint to compute from `sightings` itself.
+            window = explicit_window(start_ms, end_ms, zone=zone, t0_ms=await self._t0_ms())
+            rows = await self.analytics.daily(window)
+            points = [
+                (local_day_start_ms(row.day, zone), float(row.unique_aircraft)) for row in rows
+            ]
+        elif resolution == "high":
+            samples = await metrics.samples_between(start_ms, end_ms + 1)
+            field = RAW_FIELD_FOR_METRIC[metric]
+            points = [(sample.ts_ms, getattr(sample, field)) for sample in samples]
+        elif resolution == "hourly":
+            hourly_summaries = await metrics.hourly_between(start_ms, end_ms + 1)
+            field = SUMMARY_FIELD_FOR_METRIC[metric]
+            points = [
+                (hour_ms, getattr(summary, field)) for hour_ms, summary in hourly_summaries.items()
+            ]
+        else:  # daily
+            start_day = local_day(start_ms, zone)
+            end_day = next_local_day(local_day(end_ms, zone))
+            daily_summaries = await metrics.daily_between(start_day, end_day)
+            field = SUMMARY_FIELD_FOR_METRIC[metric]
+            points = [
+                (local_day_start_ms(day, zone), getattr(summary, field))
+                for day, summary in daily_summaries.items()
+            ]
+
+        points.sort(key=lambda point: point[0])
+        return receiver_metric_series_payload(metric=metric, resolution=resolution, points=points)
+
+    async def receiver_range_by_bearing(self) -> dict[str, Any]:
+        """``GET /api/v1/receiver/range-by-bearing`` — SPEC §62's polar plot."""
+        zone = self._receiver_timezone
+        today = local_day(utc_now_ms(), zone)
+        metrics = self.metrics
+        today_ranges = await metrics.ranges_for_day(today)
+        ever = ever_ranges(await metrics.ranges_all())
+        return receiver_range_by_bearing_payload(today=today_ranges, ever=ever)
+
+    async def receiver_signal_distribution(
+        self, *, from_ms: int | None, to_ms: int | None, bucket_width_db: float
+    ) -> dict[str, Any]:
+        """``GET /api/v1/receiver/signal-distribution`` — SPEC §62, from per-sighting RSSI."""
+        values = await self.receiver_stats.signal_values(from_ms=from_ms, to_ms=to_ms)
+        histogram = signal_histogram(values, bucket_width_db=bucket_width_db)
+        return receiver_signal_distribution_payload(histogram, from_ms=from_ms, to_ms=to_ms)
+
+    async def receiver_lifetime(self) -> dict[str, Any]:
+        """``GET /api/v1/receiver/lifetime`` — SPEC §63, since T0 where possible."""
+        metrics = self.metrics
+        stats = self.receiver_stats
+        lifetime = await metrics.lifetime()
+        t0 = await self._t0()
+        t0_ms = None if t0 is None else to_epoch_ms(t0)
+        unique_aircraft = await self.analytics.unique_aircraft(
+            resolve_window(
+                Preset.SINCE_T0, now_ms=utc_now_ms(), zone=self._receiver_timezone, t0_ms=t0_ms
+            )
+        )
+        total_sightings = await stats.total_sightings()
+        most_frequent = await stats.most_frequent_aircraft()
+        common_type = await stats.common_type()
+        common_model = await stats.common_model()
+        common_operator = await stats.common_operator()
+        return receiver_lifetime_stats_payload(
+            t0=t0,
+            lifetime=lifetime,
+            unique_aircraft=unique_aircraft,
+            total_sightings=total_sightings,
+            most_frequent=most_frequent,
+            common_type=common_type,
+            common_model=common_model,
+            common_operator=common_operator,
+        )
 
 
 __all__ = ["LiveApiContext"]

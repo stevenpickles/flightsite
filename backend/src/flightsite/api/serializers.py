@@ -99,12 +99,30 @@ from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
 from flightsite.analytics.bucketing import Window
 from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, RareType, Summary
+from flightsite.api.receiver_stats import CommonRecord, MostFrequentAircraft, SignalHistogram
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
 from flightsite.db.clock import from_epoch_ms
 from flightsite.ingest import Position
-from flightsite.live import LiveAircraft
+from flightsite.live import LiveAircraft, LiveCounts
 from flightsite.metadata.cache import AircraftMetadataView
+from flightsite.receiver_metrics import LifetimeValue, MetricSample
+from flightsite.receiver_metrics.model import (
+    BEARING_BUCKETS,
+    BEARING_SECTOR_DEG,
+    LIFETIME_BUSIEST_DAY,
+    LIFETIME_BUSIEST_DAY_COUNT,
+    LIFETIME_MAX_RANGE_AT_MS,
+    LIFETIME_MAX_RANGE_BEARING,
+    LIFETIME_MAX_RANGE_ICAO24,
+    LIFETIME_MAX_RANGE_NM,
+    LIFETIME_MAX_SIMULTANEOUS,
+    LIFETIME_PEAK_MSG_RATE,
+    LIFETIME_PEAK_POS_RATE,
+    LIFETIME_TOTAL_MESSAGES,
+    LIFETIME_TOTAL_POSITIONS,
+    RangeRecord,
+)
 from flightsite.sightings.state import SightingRoute
 from flightsite.sightings.tracks import TrackSample
 from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
@@ -343,6 +361,217 @@ def receiver_payload(
         "alert_radius_nm": settings.alert_radius_nm,
         "demo_mode": demo_mode,
         "t0": None if t0 is None else iso_utc(t0),
+    }
+
+
+def _lifetime_num(lifetime: Mapping[str, LifetimeValue], key: str) -> float | None:
+    value = lifetime.get(key)
+    return None if value is None else value.value_num
+
+
+def _lifetime_text(lifetime: Mapping[str, LifetimeValue], key: str) -> str | None:
+    value = lifetime.get(key)
+    return None if value is None else value.value_text
+
+
+def _receiver_health(*, demo_mode: bool, stats_supported: bool | None) -> str:
+    """The SPEC §61 health cue — see :data:`~flightsite.api.schemas.ReceiverHealthLiteral`."""
+    if demo_mode:
+        return "demo"
+    if stats_supported is None:
+        return "unknown"
+    return "ok" if stats_supported else "no_stats"
+
+
+def receiver_scorecard_payload(
+    *,
+    counts: LiveCounts,
+    latest_sample: MetricSample | None,
+    max_range_today_nm: float | None,
+    lifetime: Mapping[str, LifetimeValue],
+    unique_today: int,
+    unique_since_t0: int,
+    decoder_uptime_s: float | None,
+    flightsite_uptime_s: float,
+    stats_supported: bool | None,
+    demo_mode: bool,
+) -> dict[str, Any]:
+    """The SPEC §61 scorecard — ``docs/API.md`` §3.8.
+
+    Args:
+        counts: the live registry's current summary
+            (:meth:`~flightsite.live.store.LiveStore.counts`) — "current
+            visible"/"current positioned".
+        latest_sample: the most recent raw receiver-metric sample, or
+            ``None`` before the first one has been taken; its own rate is
+            "current" messages/sec and positions/sec, not a windowed average.
+        max_range_today_nm: the furthest range observed anywhere on the
+            compass so far today (the caller reduces
+            :meth:`~flightsite.receiver_metrics.repository.MetricsRepository.ranges_for_day`
+            across sectors), or ``None`` on a day with no positioned traffic
+            yet.
+        lifetime: every lifetime record (§6.4), for "max range ever".
+        decoder_uptime_s: the decoder's own reported uptime, or ``None`` when
+            it reports no statistics (SPEC §60).
+        stats_supported: whether the decoder serves a usable statistics
+            document — ``None`` before the first poll, ``False`` for a
+            decoder with none (a supported configuration, not a fault).
+    """
+    return {
+        "current_visible": counts.total,
+        "current_positioned": counts.positioned,
+        "messages_per_sec": None if latest_sample is None else latest_sample.messages_per_sec,
+        "positions_per_sec": None if latest_sample is None else latest_sample.positions_per_sec,
+        "max_range_today_nm": max_range_today_nm,
+        "max_range_ever_nm": _lifetime_num(lifetime, LIFETIME_MAX_RANGE_NM),
+        "unique_aircraft_today": unique_today,
+        "unique_aircraft_since_t0": unique_since_t0,
+        "decoder_uptime_s": decoder_uptime_s,
+        "flightsite_uptime_s": round(flightsite_uptime_s, 3),
+        "health": _receiver_health(demo_mode=demo_mode, stats_supported=stats_supported),
+    }
+
+
+def receiver_metric_series_payload(
+    *, metric: str, resolution: str, points: Sequence[tuple[int, float | None]]
+) -> dict[str, Any]:
+    """``GET /api/v1/receiver/metrics`` — one SPEC §62 chart's data.
+
+    ``points`` is ``(ts_ms, value)`` pairs, already selected for the requested
+    metric and resolution and ordered by time — the caller
+    (:meth:`~flightsite.api.context.LiveApiContext.receiver_metric_series`)
+    does the resolution-dependent reads; this function only formats them.
+    """
+    return {
+        "metric": metric,
+        "resolution": resolution,
+        "points": [
+            {
+                "t": iso_utc(from_epoch_ms(ts_ms)),
+                "value": None if value is None else float(value),
+            }
+            for ts_ms, value in points
+        ],
+    }
+
+
+def _bearing_sector_payload(record: RangeRecord | None, *, bearing_deg: float) -> dict[str, Any]:
+    if record is None:
+        return {"bearing_deg": bearing_deg, "max_range_nm": None, "at": None, "icao": None}
+    return {
+        "bearing_deg": bearing_deg,
+        "max_range_nm": record.max_range_nm,
+        "at": iso_utc(from_epoch_ms(record.at_ms)),
+        "icao": record.icao24,
+    }
+
+
+def receiver_range_by_bearing_payload(
+    *, today: Mapping[int, RangeRecord], ever: Mapping[int, RangeRecord]
+) -> dict[str, Any]:
+    """``GET /api/v1/receiver/range-by-bearing`` — SPEC §62's polar plot.
+
+    Always emits all :data:`~flightsite.receiver_metrics.model.BEARING_BUCKETS`
+    sectors for both series, in bucket order (0 = North, increasing clockwise
+    per ``docs/DATA_MODEL.md`` §6.3), so the frontend never has to fill gaps
+    itself — a sector nothing has been heard in is a real entry with
+    ``max_range_nm: null``, not a missing one.
+    """
+    sectors_today = []
+    sectors_ever = []
+    for bucket in range(BEARING_BUCKETS):
+        bearing_deg = bucket * BEARING_SECTOR_DEG + BEARING_SECTOR_DEG / 2
+        sectors_today.append(_bearing_sector_payload(today.get(bucket), bearing_deg=bearing_deg))
+        sectors_ever.append(_bearing_sector_payload(ever.get(bucket), bearing_deg=bearing_deg))
+    return {"sector_width_deg": BEARING_SECTOR_DEG, "today": sectors_today, "ever": sectors_ever}
+
+
+def receiver_signal_distribution_payload(
+    histogram: SignalHistogram, *, from_ms: int | None, to_ms: int | None
+) -> dict[str, Any]:
+    """``GET /api/v1/receiver/signal-distribution`` — SPEC §62.
+
+    ``histogram`` is already computed
+    (:func:`~flightsite.api.receiver_stats.signal_histogram`); this only
+    formats it alongside the window it was computed over.
+    """
+    return {
+        "from_ts": None if from_ms is None else iso_utc(from_epoch_ms(from_ms)),
+        "to_ts": None if to_ms is None else iso_utc(from_epoch_ms(to_ms)),
+        "bucket_width_db": histogram.bucket_width_db,
+        "buckets": [
+            {"min_db": bucket.min_db, "max_db": bucket.max_db, "count": bucket.count}
+            for bucket in histogram.buckets
+        ],
+        "sample_count": histogram.sample_count,
+        "min_db": histogram.min_db,
+        "max_db": histogram.max_db,
+        "avg_db": histogram.avg_db,
+    }
+
+
+def receiver_lifetime_stats_payload(
+    *,
+    t0: datetime | None,
+    lifetime: Mapping[str, LifetimeValue],
+    unique_aircraft: int,
+    total_sightings: int,
+    most_frequent: MostFrequentAircraft | None,
+    common_type: CommonRecord | None,
+    common_model: CommonRecord | None,
+    common_operator: CommonRecord | None,
+) -> dict[str, Any]:
+    """``GET /api/v1/receiver/lifetime`` — SPEC §63, since T0 where possible."""
+    max_range_nm = _lifetime_num(lifetime, LIFETIME_MAX_RANGE_NM)
+    max_range: dict[str, Any] | None = None
+    if max_range_nm is not None:
+        at_ms = _lifetime_num(lifetime, LIFETIME_MAX_RANGE_AT_MS)
+        max_range = {
+            "nm": max_range_nm,
+            "at": None if at_ms is None else iso_utc(from_epoch_ms(int(at_ms))),
+            "bearing_deg": _lifetime_num(lifetime, LIFETIME_MAX_RANGE_BEARING),
+            "icao": _lifetime_text(lifetime, LIFETIME_MAX_RANGE_ICAO24),
+        }
+
+    busiest_day_name = _lifetime_text(lifetime, LIFETIME_BUSIEST_DAY)
+    busiest_day: dict[str, Any] | None = None
+    if busiest_day_name is not None:
+        count = _lifetime_num(lifetime, LIFETIME_BUSIEST_DAY_COUNT)
+        busiest_day = {
+            "day": busiest_day_name,
+            "message_count": None if count is None else int(count),
+        }
+
+    max_simultaneous = _lifetime_num(lifetime, LIFETIME_MAX_SIMULTANEOUS)
+    total_messages = _lifetime_num(lifetime, LIFETIME_TOTAL_MESSAGES)
+    total_positions = _lifetime_num(lifetime, LIFETIME_TOTAL_POSITIONS)
+
+    def _common_payload(record: CommonRecord | None) -> dict[str, Any] | None:
+        if record is None:
+            return None
+        return {"value": record.value, "aircraft_count": record.aircraft_count}
+
+    return {
+        "since": None if t0 is None else iso_utc(t0),
+        "unique_aircraft": unique_aircraft,
+        "total_sightings": total_sightings,
+        "total_positions": None if total_positions is None else int(total_positions),
+        "total_messages": None if total_messages is None else int(total_messages),
+        "max_range": max_range,
+        "peak_message_rate_per_sec": _lifetime_num(lifetime, LIFETIME_PEAK_MSG_RATE),
+        "peak_position_rate_per_sec": _lifetime_num(lifetime, LIFETIME_PEAK_POS_RATE),
+        "max_simultaneous_aircraft": None if max_simultaneous is None else int(max_simultaneous),
+        "busiest_day": busiest_day,
+        "most_frequent_aircraft": None
+        if most_frequent is None
+        else {
+            "icao": most_frequent.icao24,
+            "registration": most_frequent.registration,
+            "sighting_count": most_frequent.sighting_count,
+        },
+        "common_type": _common_payload(common_type),
+        "common_model": _common_payload(common_model),
+        "common_operator": _common_payload(common_operator),
     }
 
 
@@ -790,7 +1019,12 @@ __all__ = [
     "analytics_window_payload",
     "iso_utc",
     "lifetime_payload",
+    "receiver_lifetime_stats_payload",
+    "receiver_metric_series_payload",
     "receiver_payload",
+    "receiver_range_by_bearing_payload",
+    "receiver_scorecard_payload",
+    "receiver_signal_distribution_payload",
     "sighting_detail_payload",
     "sighting_event_payload",
     "sighting_path_point_payload",

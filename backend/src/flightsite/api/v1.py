@@ -36,6 +36,12 @@ from flightsite.analytics.queries import (
 )
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
+from flightsite.api.receiver_stats import (
+    DEFAULT_SIGNAL_BUCKET_WIDTH_DB,
+    MAX_SIGNAL_BUCKET_WIDTH_DB,
+    MIN_SIGNAL_BUCKET_WIDTH_DB,
+    ReceiverMetricQueryError,
+)
 from flightsite.api.schemas import (
     AircraftDetail,
     AircraftHistoryListResponse,
@@ -52,6 +58,13 @@ from flightsite.api.schemas import (
     AnalyticsSummaryResponse,
     CurrentAircraftResponse,
     ReceiverInfo,
+    ReceiverLifetimeStats,
+    ReceiverMetricSeries,
+    ReceiverRangeByBearing,
+    ReceiverScorecard,
+    ReceiverSeriesMetric,
+    ReceiverSeriesResolution,
+    ReceiverSignalDistribution,
     SightingDetail,
     SightingListResponse,
     SightingSortKey,
@@ -157,6 +170,141 @@ async def receiver(request: Request) -> dict[str, Any]:
     errors.
     """
     return await _context(request).receiver()
+
+
+@router.get(
+    "/receiver/scorecard",
+    response_model=ReceiverScorecard,
+    tags=["receiver"],
+    summary="Receiver scorecard",
+)
+async def receiver_scorecard(request: Request) -> dict[str, Any]:
+    """SPEC §61's scorecard — ``docs/API.md`` §3.8: current visible/positioned,
+    messages/positions per second, max range today/ever, unique aircraft
+    today/since T0, decoder and FlightSite uptime, and a health summary.
+    """
+    return await _context(request).receiver_scorecard()
+
+
+@router.get(
+    "/receiver/metrics",
+    response_model=ReceiverMetricSeries,
+    tags=["receiver"],
+    summary="Receiver time-series metrics",
+    responses={
+        400: {"description": "Unsupported `metric`/`resolution` pairing, or `to` before `from`."}
+    },
+)
+async def receiver_metric_series(
+    request: Request,
+    metric: Annotated[ReceiverSeriesMetric, Query(description="SPEC §62's v1 chart catalog.")],
+    resolution: Annotated[
+        ReceiverSeriesResolution,
+        Query(description="Storage tier to read (``docs/DATA_MODEL.md`` §6, ADR-0009)."),
+    ] = "hourly",
+    from_: Annotated[
+        datetime | None,
+        Query(
+            alias="from",
+            description="Inclusive lower bound; default is a `resolution`-sized lookback.",
+        ),
+    ] = None,
+    to: Annotated[
+        datetime | None, Query(description="Inclusive upper bound. Defaults to now.")
+    ] = None,
+) -> dict[str, Any] | Response:
+    """One SPEC §62 chart's data — ``docs/API.md`` §3.8.
+
+    ``metric="unique_aircraft"`` only answers at ``resolution=daily`` (it has
+    no raw-sample or hourly representation); ``messages_total`` and
+    ``positions_total`` answer only at ``resolution=hourly`` or ``daily``
+    (``receiver_metrics_raw`` stores rates, not totals). Either mismatch, or
+    ``from`` after `to`, answers the §2.5 error envelope with a 400.
+    """
+    from_ms = _bound_ms(from_)
+    to_ms = _bound_ms(to)
+    if from_ms is not None and to_ms is not None and from_ms > to_ms:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "error": {
+                    "code": "invalid_range",
+                    "message": "`from` must not be after `to`",
+                    "detail": None,
+                }
+            },
+        )
+    try:
+        return await _context(request).receiver_metric_series(
+            metric=metric, resolution=resolution, from_ms=from_ms, to_ms=to_ms
+        )
+    except ReceiverMetricQueryError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": {"code": "invalid_resolution", "message": str(exc), "detail": None}},
+        )
+
+
+@router.get(
+    "/receiver/range-by-bearing",
+    response_model=ReceiverRangeByBearing,
+    tags=["receiver"],
+    summary="Maximum range by bearing (polar)",
+)
+async def receiver_range_by_bearing(request: Request) -> dict[str, Any]:
+    """SPEC §62's polar max-range-by-bearing plot — ``docs/API.md`` §3.8.
+
+    72 five-degree sectors (0° = North, increasing clockwise), for today and
+    for the receiver's whole lifetime.
+    """
+    return await _context(request).receiver_range_by_bearing()
+
+
+@router.get(
+    "/receiver/signal-distribution",
+    response_model=ReceiverSignalDistribution,
+    tags=["receiver"],
+    summary="Signal-strength distribution",
+)
+async def receiver_signal_distribution(
+    request: Request,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="Inclusive lower bound on sighting `started_at`."),
+    ] = None,
+    to: Annotated[
+        datetime | None, Query(description="Inclusive upper bound on sighting `started_at`.")
+    ] = None,
+    bucket_width_db: Annotated[
+        float,
+        Query(
+            ge=MIN_SIGNAL_BUCKET_WIDTH_DB,
+            le=MAX_SIGNAL_BUCKET_WIDTH_DB,
+            description="Histogram bucket width, dB.",
+        ),
+    ] = DEFAULT_SIGNAL_BUCKET_WIDTH_DB,
+) -> dict[str, Any]:
+    """SPEC §62's signal-strength distribution — ``docs/API.md`` §3.8.
+
+    Built from per-sighting ``rssi_avg_db`` (roadmap slice 052) over the
+    selected window, never from raw receiver-metric samples. An omitted
+    ``from``/``to`` is unbounded on that side — every sighting ever recorded,
+    by default.
+    """
+    return await _context(request).receiver_signal_distribution(
+        from_ms=_bound_ms(from_), to_ms=_bound_ms(to), bucket_width_db=bucket_width_db
+    )
+
+
+@router.get(
+    "/receiver/lifetime",
+    response_model=ReceiverLifetimeStats,
+    tags=["receiver"],
+    summary="Lifetime receiver statistics",
+)
+async def receiver_lifetime(request: Request) -> dict[str, Any]:
+    """SPEC §63's lifetime statistics block, since T0 where possible — ``docs/API.md`` §3.8."""
+    return await _context(request).receiver_lifetime()
 
 
 @router.get(

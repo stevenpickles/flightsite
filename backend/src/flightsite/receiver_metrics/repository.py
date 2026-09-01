@@ -314,6 +314,66 @@ class MetricsRepository:
         async with self.database.read_session() as session:
             return await self._lifetime(session)
 
+    async def latest_sample(self) -> MetricSample | None:
+        """The most recently retained raw sample, or ``None`` if there are none.
+
+        Slice 034's scorecard (SPEC §61) reads this for "current" messages/sec
+        and positions/sec — the most recent tick's own rate, not an average
+        over a window.
+        """
+        statement = select(ReceiverMetricRaw).order_by(ReceiverMetricRaw.ts_ms.desc()).limit(1)
+        async with self.database.read_session() as session:
+            row = (await session.scalars(statement)).first()
+        if row is None:
+            return None
+        return MetricSample(ts_ms=row.ts_ms, **{name: getattr(row, name) for name in _RAW_FIELDS})
+
+    async def daily_between(self, start_day: str, end_day: str) -> dict[str, MetricSummary]:
+        """Daily summaries with ``day`` in ``[start_day, end_day)``.
+
+        Day strings compare lexicographically in the same order as
+        chronologically for ``YYYY-MM-DD``, so this is :meth:`hourly_between`'s
+        counterpart for the daily tier — slice 034's time-series endpoint uses
+        whichever of the two matches the requested resolution.
+        """
+        statement = (
+            select(ReceiverMetricDaily)
+            .where(ReceiverMetricDaily.day >= start_day, ReceiverMetricDaily.day < end_day)
+            .order_by(ReceiverMetricDaily.day)
+        )
+        async with self.database.read_session() as session:
+            rows = (await session.scalars(statement)).all()
+        return {str(row.day): _as_summary(row) for row in rows}
+
+    async def ranges_all(self) -> tuple[tuple[str, RangeRecord], ...]:
+        """Every stored per-day range record, oldest day first.
+
+        ``range_by_bearing_daily`` is retained indefinitely (§6.3), so this is
+        the whole history in one read. Slice 034's polar plot reduces it down
+        to one all-time record per sector with
+        :func:`~flightsite.api.receiver_stats.ever_ranges`, using the same
+        :func:`~flightsite.receiver_metrics.model.better_range` comparison
+        production uses so a lifetime maximum can never be recomputed
+        differently by the two.
+        """
+        statement = select(RangeByBearingDaily).order_by(
+            RangeByBearingDaily.day, RangeByBearingDaily.bearing_bucket
+        )
+        async with self.database.read_session() as session:
+            rows = (await session.scalars(statement)).all()
+        return tuple(
+            (
+                str(row.day),
+                RangeRecord(
+                    bearing_deg=int(row.bearing_bucket) * 5.0 + 2.5,
+                    max_range_nm=float(row.max_range_nm),
+                    at_ms=int(row.at_ms),
+                    icao24=row.icao24,
+                ),
+            )
+            for row in rows
+        )
+
     # ------------------------------------------------------- the maintenance
 
     async def write_summaries(
