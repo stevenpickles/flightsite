@@ -2,6 +2,7 @@ import { vi } from "vitest";
 
 import type { ConfigResponse, FlightSiteConfig } from "@/lib/api/config";
 import type { ConnectionTestResult } from "@/lib/api/decoder";
+import type { MetadataStatusResponse } from "@/lib/api/metadata";
 
 /** A schema-default `FlightSiteConfig`, mirroring
  * `flightsite.config.models.Settings()` — used as the base every test
@@ -89,6 +90,12 @@ export interface MockConfigApiOptions {
    * of the request body for tests that need to vary the outcome. */
   decoderTestResult?:
     ConnectionTestResult | ((body: unknown) => ConnectionTestResult);
+  /** Result returned by `GET /api/internal/metadata/status`. Defaults to no
+   * registered sources — page-level tests that do not care about the
+   * Aircraft Metadata section's content just need this endpoint answered,
+   * not populated; `MetadataSection.test.tsx` covers its actual states with
+   * its own dedicated mock (`@/test/metadataApiMock`). */
+  metadataStatus?: MetadataStatusResponse;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -178,6 +185,9 @@ export function installConfigApiMock(options: MockConfigApiOptions = {}) {
             ? options.decoderTestResult(body)
             : (options.decoderTestResult ?? successConnectionTestResult());
         return jsonResponse(result);
+      }
+      if (url === "/api/internal/metadata/status" && method === "GET") {
+        return jsonResponse(options.metadataStatus ?? { sources: [] });
       }
 
       throw new Error(`Unhandled fetch in test: ${method} ${url}`);

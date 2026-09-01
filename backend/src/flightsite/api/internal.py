@@ -13,10 +13,16 @@ one implementation.
 
 Slice 007 adds the decoder connection test the same two consumers need before
 they can save a receiver endpoint (SPEC §11).
+
+Slice 025 adds the "Update Aircraft Metadata" action: ``POST
+/metadata/update`` starts (or reports the state of) a run of
+:meth:`~flightsite.metadata.MetadataService.update`, and ``GET
+/metadata/status`` reports where each registered source stands.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any
 
 import structlog
@@ -24,7 +30,10 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 from pydantic import ValidationError
 
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
+from flightsite.db import utc_now_ms
 from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, check_connection
+from flightsite.metadata import ImportRun, MetadataService
+from flightsite.metadata.registry import SourceStatus, SourceStatusRecord
 
 logger = structlog.get_logger(__name__)
 
@@ -125,3 +134,113 @@ async def test_decoder_connection(
             poll_interval_s=candidate.poll_interval_s,
         )
     )
+
+
+# ---------------------------------------------------------- metadata (slice 025)
+
+#: Durable ``SourceStatus`` values as the status endpoint's ``status`` field
+#: spells them (``docs/API.md`` §5: "ok/failed/never-run/running"). Hyphenated
+#: rather than the enum's own snake_case so the wire vocabulary reads as
+#: prose, not as a Python identifier leaking into the API.
+_DURABLE_STATUS_LABELS: dict[SourceStatus, str] = {
+    SourceStatus.NEVER_RUN: "never-run",
+    SourceStatus.OK: "ok",
+    SourceStatus.FAILED: "failed",
+}
+
+
+def _metadata_source_payload(record: SourceStatusRecord) -> dict[str, Any]:
+    """One source's status row as ``GET /metadata/status`` reports it.
+
+    ``running`` — read from the registry's in-flight state, not the durable
+    row — overrides whatever the last completed attempt recorded: a source
+    mid-import still has yesterday's ``ok`` or ``failed`` sitting in
+    ``metadata_sources`` (the durable row only changes when an attempt
+    *finishes*), but what a user watching the Settings page needs to see
+    right now is that it is working, not what it last finished as.
+    """
+    display_status = "running" if record.run.running else _DURABLE_STATUS_LABELS[record.status]
+    return {
+        "name": record.source,
+        "status": display_status,
+        "last_success_ms": record.last_success_ms,
+        "dataset_version": record.dataset_version,
+        "row_count": record.row_count,
+        "last_error": record.last_error,
+    }
+
+
+@router.get("/metadata/status")
+async def get_metadata_status(request: Request) -> dict[str, Any]:
+    """Per-source metadata status: durable outcome merged with in-flight state.
+
+    One row per registered source (``mictronics``, ``faa`` as of slices
+    022/023), each independent of the others (SPEC §27) — a source that has
+    never run reports ``never-run`` beside one that failed yesterday and one
+    that is ``ok`` right now, and none of those three facts affects how the
+    other two are read. The Settings page polls this while a run is in
+    progress and renders each source's outcome on its own, so one source
+    failing never hides another's success.
+    """
+    metadata: MetadataService = request.app.state.metadata
+    statuses = await metadata.statuses()
+    return {"sources": [_metadata_source_payload(record) for record in statuses]}
+
+
+def _log_update_task_result(task: asyncio.Task[ImportRun]) -> None:
+    """Consume a finished background run's exception, if any, into the log.
+
+    Nothing ``await``s this task directly — the HTTP request that started it
+    has already returned, which is the entire point of running it in the
+    background — so nothing else would ever retrieve an exception it raised.
+    Without this callback, a bug here would only surface as asyncio's "Task
+    exception was never retrieved" warning at the next garbage collection,
+    with no context to debug it, instead of a clean log line naming what
+    happened. This is distinct from a source failing its own import: that is
+    caught inside :meth:`~flightsite.metadata.MetadataImporter.run` and
+    reported through ``GET /metadata/status`` as a result, never raised here.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("metadata_update_task_failed", error=str(exc), error_type=type(exc).__name__)
+
+
+@router.post("/metadata/update", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_metadata_update(request: Request) -> dict[str, Any]:
+    """Start a metadata update run, or report the one already in progress.
+
+    Downloading and staging a snapshot per source is seconds to minutes of
+    network and disk I/O — nothing an HTTP client should hold a connection
+    open for — so this schedules :meth:`~flightsite.metadata.MetadataService.update`
+    as a background task and returns 202 the instant it is scheduled.
+    Progress and outcome are read back from ``GET /metadata/status``, which
+    the Settings UI polls until every source has settled.
+
+    A trigger that arrives while an earlier one is still running does not
+    start a second run: ``MetadataImporter`` imports its sources one at a
+    time, and two overlapping runs would race each other over the same
+    staging rows for whichever source is current. Instead this reports the
+    in-progress run's own ``started_ms``, which is what lets a double-clicked
+    button or a second open tab coalesce onto the run already happening
+    instead of racing it. The check-and-schedule below never ``await``s in
+    between, so two requests arriving back to back on the same event loop
+    cannot both observe "not running" and both schedule a run.
+    """
+    task: asyncio.Task[ImportRun] | None = request.app.state.metadata_update_task
+    if task is not None and not task.done():
+        return {
+            "started": False,
+            "already_running": True,
+            "started_ms": request.app.state.metadata_update_started_ms,
+        }
+
+    metadata: MetadataService = request.app.state.metadata
+    started_ms = utc_now_ms()
+    new_task = asyncio.create_task(metadata.update(), name="metadata-update")
+    new_task.add_done_callback(_log_update_task_result)
+    request.app.state.metadata_update_task = new_task
+    request.app.state.metadata_update_started_ms = started_ms
+    logger.info("metadata_update_triggered", started_ms=started_ms)
+    return {"started": True, "already_running": False, "started_ms": started_ms}

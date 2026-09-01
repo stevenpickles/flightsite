@@ -49,6 +49,7 @@ describe("SettingsPage", () => {
       "Alerts",
       "Notifications",
       "Enrichment",
+      "Aircraft Metadata",
       "Retention",
     ]) {
       expect(
