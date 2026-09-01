@@ -32,7 +32,7 @@ import structlog
 from flightsite.classification.engine import classify
 from flightsite.db import Database, utc_now_ms
 from flightsite.live.store import LiveStore
-from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
+from flightsite.metadata.cache import AircraftMetadataView, MetadataCache, OnResolvedFn
 from flightsite.metadata.importer import ClockFn, ImportRun, MetadataImporter
 from flightsite.metadata.registry import SourceRegistry, SourceStatusRecord
 from flightsite.metadata.repository import MetadataRepository
@@ -60,6 +60,9 @@ class MetadataService:
         listeners: called after a run that changed data, in order, alongside
             the cache invalidation. Slice 027 wires the airport index rebuild
             in here.
+        on_resolved: forwarded to :class:`MetadataCache` — an optional
+            observer notified whenever a cached entry's resolved view changes.
+            Slice 037 wires the watchlist matcher's index update in here.
     """
 
     __slots__ = ("_cache", "_importer", "_listeners", "_registry", "_repository")
@@ -73,13 +76,14 @@ class MetadataService:
         registry: SourceRegistry | None = None,
         clock: ClockFn = utc_now_ms,
         listeners: Sequence[ImportListener] = (),
+        on_resolved: OnResolvedFn | None = None,
     ) -> None:
         self._registry = registry if registry is not None else SourceRegistry()
         self._repository = MetadataRepository(database)
         self._importer = MetadataImporter(
             database=database, registry=self._registry, data_dir=data_dir, clock=clock
         )
-        self._cache = MetadataCache(database=database, live=live)
+        self._cache = MetadataCache(database=database, live=live, on_resolved=on_resolved)
         self._listeners = tuple(listeners)
 
     @property

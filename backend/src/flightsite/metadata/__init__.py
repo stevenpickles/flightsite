@@ -24,7 +24,7 @@ Reading order:
 
 from __future__ import annotations
 
-from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
+from flightsite.metadata.cache import AircraftMetadataView, MetadataCache, OnResolvedFn
 from flightsite.metadata.importer import (
     ImportFailure,
     ImportRun,
@@ -76,6 +76,7 @@ __all__ = [
     "MetadataRepository",
     "MetadataService",
     "NormalizedAircraftRecord",
+    "OnResolvedFn",
     "PrecedenceModel",
     "RecordError",
     "RegisteredSource",
