@@ -19,6 +19,7 @@ from flightsite.airports import (
     AirportRepository,
     OurAirportsProvider,
 )
+from flightsite.analytics import AnalyticsService
 from flightsite.api.context import LiveApiContext
 from flightsite.api.internal import router as internal_router
 from flightsite.api.v1 import router as v1_router
@@ -218,6 +219,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     enrichment: EnrichmentService = app.state.enrichment
     airports: AirportContextService = app.state.airports
     receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
+    analytics: AnalyticsService = app.state.analytics
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -252,6 +254,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # receiver page without history; nothing else notices, because nothing
         # else reads those tables.
         await receiver_metrics.start()
+        # And once more, for the same reason and with one addition: the
+        # analytics rollups are derived from `sightings`, so this start
+        # runs the backfill that repairs whatever the last process left
+        # stale before anything can read a rollup row. It is started
+        # after the persistence worker so the lifecycle seam it
+        # subscribes to is already live.
+        await analytics.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -306,6 +315,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # the persistence worker does, so the two simply serialize.
         await receiver_metrics.stop()
         await persistence.stop()
+        # After the persistence worker, deliberately: that worker's own
+        # stop force-flushes every dirty accumulator and closes nothing
+        # else, so stopping analytics afterwards means its final rebuild
+        # sees the last sightings this process wrote. It is the one
+        # subsystem that reads what the worker's shutdown produced.
+        await analytics.stop()
         await database.dispose()
         logger.info("app_shutdown")
 
@@ -366,6 +381,15 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     every route stays ``null``. When it is on, routes reach the database through
     the persistence worker's accumulator rather than a writer session of its
     own, which is why it is stopped before that worker on shutdown.
+
+    Analytics rollups (SPEC §58/§59) are constructed as ``app.state.analytics``.
+    It is the fifth low-frequency background task: it subscribes to the
+    persistence worker's sighting-lifecycle seam, marks the receiver-local days
+    a committed cycle touched, and rebuilds those days from ``sightings``
+    ground truth on its own writer transaction. Startup first runs its backfill,
+    so a day the previous process left stale is repaired before anything can
+    read a rollup row; shutdown runs after the persistence worker's final flush,
+    which is the one subsystem whose shutdown output another one reads.
 
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
@@ -447,6 +471,16 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # tasks (``docs/ARCHITECTURE.md`` §3.3's "stats poller / maintenance
     # scheduler"), writing through the same single writer as everything else.
     app.state.receiver_metrics = _build_receiver_metrics(app, settings)
+    # Analytics rollups (SPEC §58/§59, docs/DATA_MODEL.md §6.5). A fifth
+    # low-frequency background task, driven by the persistence worker's
+    # sighting-lifecycle seam and writing through the same single writer
+    # as everything else. Constructing it subscribes to nothing and opens
+    # no connection; `start()` runs the backfill and attaches the seam.
+    app.state.analytics = AnalyticsService(
+        database=app.state.database,
+        persistence=app.state.persistence,
+        timezone=settings.timezone,
+    )
     # Slice 025's update-in-progress coordinator: the background task the
     # current "Update Aircraft Metadata" run is executing in, and when it
     # started. ``None`` means no run has ever been triggered on this process.

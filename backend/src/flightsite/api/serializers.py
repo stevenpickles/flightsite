@@ -97,6 +97,8 @@ from sqlalchemy.engine import RowMapping
 from flightsite.airports.model import AirportContext
 from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
+from flightsite.analytics.bucketing import Window
+from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, RareType, Summary
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
 from flightsite.db.clock import from_epoch_ms
@@ -656,6 +658,120 @@ def sighting_detail_payload(
     }
 
 
+# --------------------------------------------------------------- analytics
+
+
+def _at(epoch_ms: int | None) -> str | None:
+    """An epoch-millisecond column as §2.2's UTC ISO-8601, or ``None``."""
+    return None if epoch_ms is None else iso_utc(from_epoch_ms(epoch_ms))
+
+
+def analytics_window_payload(
+    window: Window, *, preset: str | None, timezone: str
+) -> dict[str, Any]:
+    """The window block every ``docs/API.md`` §3.7 response carries.
+
+    Bounds *and* receiver-local day range, because a preset resolves against
+    the receiver's calendar and its own clock: a client that re-derived "today"
+    from its own browser zone would mislabel every chart.
+    """
+    return {
+        "preset": preset,
+        "from": iso_utc(from_epoch_ms(window.start_ms)),
+        "to": iso_utc(from_epoch_ms(window.end_ms)),
+        "first_day": window.first_day,
+        "last_day": window.last_day,
+        "timezone": timezone,
+    }
+
+
+def analytics_daily_row_payload(row: DailyRow) -> dict[str, Any]:
+    """One day of the §3.7 ``daily`` series, receiver activity included."""
+    return {
+        "day": row.day,
+        "unique_aircraft": row.unique_aircraft,
+        "new_aircraft": row.new_aircraft,
+        "sightings": row.sightings,
+        "interesting": row.interesting,
+        "military": row.military,
+        "government": row.government,
+        "law_enforcement": row.law_enforcement,
+        "max_range_nm": _rounded(row.max_range_nm),
+        "busiest_hour": row.busiest_hour,
+        "receiver_messages": row.messages_total,
+        "receiver_positions": row.positions_total,
+        "receiver_aircraft_max": row.aircraft_max,
+        "receiver_max_range_nm": _rounded(row.receiver_max_range_nm),
+    }
+
+
+def analytics_summary_payload(summary: Summary) -> dict[str, Any]:
+    """SPEC §59's at-a-glance block."""
+    return {
+        "unique_aircraft": summary.unique_aircraft,
+        "new_aircraft": summary.new_aircraft,
+        "sightings": summary.sightings,
+        "interesting": summary.interesting,
+        "military": summary.military,
+        "government": summary.government,
+        "law_enforcement": summary.law_enforcement,
+        "max_range_nm": _rounded(summary.max_range_nm),
+        "busiest_hour": summary.busiest_hour,
+        "busiest_hour_source": summary.busiest_hour_source,
+        "first_sighting_at": _at(summary.first_sighting_ms),
+        "last_sighting_at": _at(summary.last_sighting_ms),
+    }
+
+
+def analytics_aircraft_payload(rank: AircraftRank) -> dict[str, Any]:
+    """One airframe in a §3.7 ranking or rarity list."""
+    return {
+        "icao": rank.icao24,
+        "registration": rank.registration,
+        "type": rank.type_code,
+        "model": rank.model,
+        "operator": rank.operator_name,
+        "operator_group": rank.operator_group,
+        "classification": rank.mission_category,
+        "military": rank.military,
+        "government": rank.government,
+        "law_enforcement": rank.law_enforcement,
+        "sightings": rank.sightings,
+        "first_seen_at": iso_utc(from_epoch_ms(rank.first_seen_ms)),
+        "last_seen_at": iso_utc(from_epoch_ms(rank.last_seen_ms)),
+        "max_range_nm": _rounded(rank.max_range_nm),
+    }
+
+
+def analytics_group_payload(rank: GroupRank) -> dict[str, Any]:
+    """One type designator or operator group in a §3.7 ranking."""
+    return {
+        "key": rank.key,
+        "label": rank.label,
+        "sightings": rank.sightings,
+        "unique_aircraft": rank.unique_aircraft,
+        "days_seen": rank.days_seen,
+        "first_seen_at": _at(rank.first_seen_ms),
+        "last_seen_at": _at(rank.last_seen_ms),
+    }
+
+
+def analytics_rare_type_payload(rare: RareType) -> dict[str, Any]:
+    """One locally rare type designator."""
+    return {
+        "type": rare.type_code,
+        "unique_aircraft": rare.unique_aircraft,
+        "total_sightings": rare.total_sightings,
+        "first_seen_at": iso_utc(from_epoch_ms(rare.first_seen_ms)),
+        "last_seen_at": iso_utc(from_epoch_ms(rare.last_seen_ms)),
+    }
+
+
+def _rounded(value: float | None) -> float | None:
+    """A distance rounded to the API's documented precision, or ``None``."""
+    return None if value is None else round(value, DISTANCE_DECIMALS)
+
+
 __all__ = [
     "BEARING_DECIMALS",
     "DISTANCE_DECIMALS",
@@ -666,6 +782,12 @@ __all__ = [
     "aircraft_history_row_payload",
     "aircraft_payload",
     "airport_feature_collection_payload",
+    "analytics_aircraft_payload",
+    "analytics_daily_row_payload",
+    "analytics_group_payload",
+    "analytics_rare_type_payload",
+    "analytics_summary_payload",
+    "analytics_window_payload",
     "iso_utc",
     "lifetime_payload",
     "receiver_payload",

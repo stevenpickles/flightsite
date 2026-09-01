@@ -36,6 +36,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import FastAPI
@@ -44,18 +45,21 @@ from flightsite.airports.overlay import AirportOverlayRepository, AirportSizeCla
 from flightsite.airports.records import AirportRecord
 from flightsite.airports.service import AirportContextService
 from flightsite.airspace.loader import load_airspace
+from flightsite.analytics.bucketing import Preset, Window, explicit_window, resolve_window
+from flightsite.analytics.queries import AnalyticsQueries
 from flightsite.api.history import AircraftHistoryRepository
 from flightsite.api.serializers import (
     aircraft_detail_payload,
     aircraft_history_row_payload,
     aircraft_payload,
+    analytics_window_payload,
     receiver_payload,
     sighting_detail_payload,
     sighting_row_payload,
 )
 from flightsite.api.sightings import SightingsRepository
 from flightsite.config import Settings
-from flightsite.db import Database, MetaRepository, from_epoch_ms
+from flightsite.db import Database, MetaRepository, from_epoch_ms, to_epoch_ms, utc_now_ms
 from flightsite.live import LiveAircraft, LiveStore
 from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.sightings import PersistenceWorker
@@ -308,6 +312,63 @@ class LiveApiContext:
         events = await repository.get_events(sighting_id)
         path = await repository.get_path(sighting_id, is_open=is_open)
         return sighting_detail_payload(row, events=events, path=path)
+
+    # ------------------------------------------------------------ analytics
+
+    @property
+    def analytics(self) -> AnalyticsQueries:
+        """The §3.7 query layer, built from the running database and timezone.
+
+        Built per call rather than cached, for the same reason this context
+        reads ``app.state`` lazily everywhere else: ``PUT
+        /api/internal/config`` can replace the settings — the receiver's
+        timezone among them — on a running app, and a captured zone would
+        keep resolving "today" against the old one for the rest of the
+        process's life.
+        """
+        database: Database = self._app.state.database
+        return AnalyticsQueries(database, timezone=self.settings.timezone)
+
+    async def analytics_window(
+        self,
+        *,
+        preset: str | None,
+        from_ms: int | None,
+        to_ms: int | None,
+    ) -> Window:
+        """Resolve §3.7's ``preset`` or explicit bounds into a window.
+
+        Explicit bounds win when both are given: a client that has computed a
+        range is being specific, and silently preferring a preset over it would
+        answer a question it did not ask. A ``from`` with no ``to`` runs to now;
+        a ``to`` with no ``from`` starts at T0, which is the only lower bound
+        the receiver has.
+        """
+        zone = ZoneInfo(self.settings.timezone)
+        now_ms = utc_now_ms()
+        t0_ms = await self._t0_ms()
+        if from_ms is not None or to_ms is not None:
+            return explicit_window(
+                from_ms if from_ms is not None else (t0_ms if t0_ms is not None else now_ms),
+                to_ms if to_ms is not None else now_ms,
+                zone=zone,
+                t0_ms=t0_ms,
+            )
+        return resolve_window(
+            Preset(preset) if preset is not None else Preset.TODAY,
+            now_ms=now_ms,
+            zone=zone,
+            t0_ms=t0_ms,
+        )
+
+    def analytics_window_block(self, window: Window, *, preset: str | None) -> dict[str, Any]:
+        """The window block every §3.7 response carries."""
+        return analytics_window_payload(window, preset=preset, timezone=self.settings.timezone)
+
+    async def _t0_ms(self) -> int | None:
+        """T0 as epoch milliseconds, or ``None`` — see :meth:`_t0`."""
+        t0 = await self._t0()
+        return None if t0 is None else to_epoch_ms(t0)
 
     async def receiver(self) -> dict[str, Any]:
         """The §3.2 receiver info block, including T0.

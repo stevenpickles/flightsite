@@ -244,13 +244,26 @@ def explicit_window(
     appears in :attr:`Window.days` — the honest answer, since some of its
     sightings are inside the window — and callers reading whole-day rollups say
     so in their own documentation.
+
+    A range longer than :data:`MAX_WINDOW_DAYS` is **clamped to its most recent
+    ``MAX_WINDOW_DAYS`` days** rather than refused. Client input is the only
+    place a window can be arbitrarily long, and clamping is both bounded and
+    visible: every response carries the window it actually used, so a clamped
+    request answers with the range it covered rather than with an error the
+    client cannot act on or, worse, with a silent partial answer.
     """
     upper = max(start_ms, end_ms)
+    last_day = local_day(max(start_ms, upper - 1), zone)
+    first_day = local_day(start_ms, zone)
+    floor_day = shift_days(last_day, -(MAX_WINDOW_DAYS - 1))
+    if first_day < floor_day:
+        first_day = floor_day
+        start_ms = max(start_ms, day_start_ms(floor_day, zone))
     return Window(
         start_ms=start_ms,
-        end_ms=upper,
-        first_day=local_day(start_ms, zone),
-        last_day=local_day(max(start_ms, upper - 1), zone),
+        end_ms=max(start_ms, upper),
+        first_day=first_day,
+        last_day=last_day,
         whole_history=t0_ms is not None and start_ms <= t0_ms,
     )
 
