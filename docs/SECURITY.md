@@ -72,6 +72,20 @@ requested only after the user opts in (setup wizard or settings), never unprompt
 Notification content includes aircraft data only — never secrets or configuration.
 Denied/blocked permission degrades cleanly and is surfaced in diagnostics.
 
+Two consequences of that first rule, as implemented (slice 040):
+
+- The request is issued from the user's own click — the wizard's **Finish** when the
+  notification preference is on, or the **Allow notifications** button in Settings —
+  and never from an arriving alert, a page load, or a background task. Firefox and
+  Safari require that user activation anyway; FlightSite requires it of itself.
+- Browsers withhold the Notification API entirely outside a secure context (HTTPS, or
+  a `localhost`/`127.0.0.1` origin). Reaching FlightSite over plain HTTP on a LAN
+  address — the normal deployment of §1 — therefore means no notifications at all.
+  That is reported as its own state ("Unavailable on this address") rather than as a
+  fault, and every other alert surface (map emphasis, interesting panel, activity
+  feed) is unaffected. Alerts that could not be shown are counted and displayed
+  alongside the permission, so a silently-degraded install is visibly degraded.
+
 ## 6. Data Integrity: SQLite, Power Loss
 
 - WAL mode with recovery on startup; automatic integrity checks (`quick_check`) at

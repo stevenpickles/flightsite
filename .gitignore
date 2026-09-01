@@ -19,8 +19,13 @@ frontend/dist/
 frontend/coverage/
 *.tsbuildinfo
 
-# Playwright (e2e/playwright.config.ts suffixes these per browser project
-# in CI, e.g. test-results-chromium/ — see its outputSuffix comment)
+# Playwright run output — never baselines.
+#   e2e/playwright.config.ts suffixes these per browser project in CI
+#     (test-results-chromium/ etc. — see its outputSuffix comment)
+#   e2e/playwright.visual.config.ts uses -visual, and the capture config
+#     -capture.
+# The visual suite's committed baselines live in e2e/visual/__screenshots__/
+# and are deliberately NOT ignored: they are the expected output under review.
 test-results/
 test-results-*/
 playwright-report/
