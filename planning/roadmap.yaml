@@ -114,7 +114,7 @@ slices:
     title: "Backend skeleton"
     phase: 1
     branch: "001-backend-skeleton"
-    status: planned
+    status: merged
     depends_on: []
     objective: "Establish the Python backend package with app factory, health/readiness endpoints, structured logging, and quality tooling."
     scope:
@@ -140,7 +140,7 @@ slices:
     title: "Frontend skeleton"
     phase: 1
     branch: "002-frontend-skeleton"
-    status: planned
+    status: merged
     depends_on: []
     objective: "Establish the React/TypeScript frontend with navigation shell, theming, and quality tooling."
     scope:
@@ -164,7 +164,7 @@ slices:
     title: "CI pipeline"
     phase: 1
     branch: "003-ci-pipeline"
-    status: planned
+    status: merged
     depends_on: ["001", "002"]
     objective: "Stand up GitHub Actions quality gates and security scanning as required status checks."
     scope:
@@ -187,7 +187,7 @@ slices:
     title: "Configuration system"
     phase: 1
     branch: "004-config-system"
-    status: planned
+    status: merged
     depends_on: ["001"]
     objective: "Implement the canonical config.yaml / secrets.yaml / environment-override configuration model."
     scope:
@@ -214,7 +214,7 @@ slices:
     title: "Database foundation"
     phase: 1
     branch: "005-database-foundation"
-    status: planned
+    status: merged
     depends_on: ["001", "004"]
     objective: "Establish SQLite persistence with SQLAlchemy 2.x async, Alembic migrations, WAL configuration, and integrity checks."
     scope:
@@ -231,7 +231,7 @@ slices:
       - "migration harness upgrades an empty and a fixture DB successfully"
       - "startup integrity failure is surfaced, not silently ignored"
     required_tests: [persistence unit tests, migration tests, pragma verification]
-    expected_artifacts: [backend/src/flightsite/db/, backend/alembic/, backend/tests/db/]
+    expected_artifacts: [backend/src/flightsite/db/, backend/src/flightsite/db/migrations/, backend/alembic.ini, backend/tests/db/]
     preferred_agent: opus
     risk_level: medium
 
@@ -239,7 +239,7 @@ slices:
     title: "Docker packaging"
     phase: 1
     branch: "006-docker-packaging"
-    status: planned
+    status: merged
     depends_on: ["003", "004", "005"]
     objective: "Package FlightSite as two multi-arch containers with Compose deployment and GHCR publishing."
     scope:
@@ -263,7 +263,7 @@ slices:
     title: "Decoder ingestion adapter"
     phase: 2
     branch: "007-ingestion-adapter"
-    status: planned
+    status: merged
     depends_on: ["004"]
     objective: "Implement the DecoderAdapter abstraction and ReadsbJsonAdapter polling readsb/dump1090-fa aircraft.json into normalized state updates."
     scope:
@@ -289,7 +289,7 @@ slices:
     title: "Live aircraft state store"
     phase: 2
     branch: "008-live-state-store"
-    status: planned
+    status: merged
     depends_on: ["007"]
     objective: "Maintain the in-memory live aircraft registry with lifecycle timing, derived fields, and provenance."
     scope:
@@ -317,7 +317,7 @@ slices:
     title: "Sighting persistence core"
     phase: 2
     branch: "009-sighting-persistence-core"
-    status: planned
+    status: merged
     depends_on: ["005", "008"]
     objective: "Persist aircraft and sightings: write-behind worker, open/close lifecycle, flight context, lifetime records, and T0."
     scope:
@@ -345,7 +345,7 @@ slices:
     title: "Sighting tracks & reception stats"
     phase: 2
     branch: "052-sighting-tracks"
-    status: planned
+    status: merged
     depends_on: ["009"]
     objective: "Store sighting tracks (checkpointed while active, simplified and packed at close), reception statistics, and sighting events."
     scope:
@@ -369,7 +369,7 @@ slices:
     title: "Unclean-shutdown recovery"
     phase: 2
     branch: "053-shutdown-recovery"
-    status: planned
+    status: merged
     depends_on: ["052"]
     objective: "Recover cleanly from power loss: repair open sightings from checkpoints with bounded data loss and clear diagnostics."
     scope:
@@ -392,7 +392,7 @@ slices:
     title: "Live API & WebSocket"
     phase: 2
     branch: "010-live-api-websocket"
-    status: planned
+    status: merged
     depends_on: ["005", "008", "009"]
     objective: "Expose live aircraft state via versioned REST and a snapshot+delta WebSocket stream."
     scope:
@@ -416,7 +416,7 @@ slices:
     title: "Demo mode"
     phase: 2
     branch: "011-demo-mode"
-    status: planned
+    status: merged
     depends_on: ["007", "008"]
     objective: "Provide a deterministic demo adapter simulating rich traffic for development, tests, and visual regression."
     scope:
@@ -438,7 +438,7 @@ slices:
     title: "Capture & replay tooling"
     phase: 2
     branch: "012-capture-replay"
-    status: planned
+    status: merged
     depends_on: ["007"]
     objective: "Developer tool to capture normalized decoder snapshots into compact fixtures and replay them deterministically."
     scope:
@@ -460,7 +460,7 @@ slices:
     title: "Map foundation"
     phase: 3
     branch: "013-map-foundation"
-    status: planned
+    status: merged
     depends_on: ["002"]
     objective: "Integrate MapLibre with an abstracted basemap registry, dark aviation default style, range rings, and receiver marker."
     scope:
@@ -484,7 +484,7 @@ slices:
     title: "Live aircraft rendering"
     phase: 3
     branch: "014-live-aircraft-layer"
-    status: planned
+    status: merged
     depends_on: ["010", "013"]
     objective: "Render live aircraft on the map from the WebSocket stream with hierarchical icons, selection, and stale fading."
     scope:
@@ -508,7 +508,7 @@ slices:
     title: "Map labels & decluttering"
     phase: 3
     branch: "015-map-labels"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Add aircraft labels with priority-based decluttering."
     scope:
@@ -528,7 +528,7 @@ slices:
     title: "Aircraft detail panel"
     phase: 3
     branch: "016-aircraft-detail"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Comprehensive aircraft detail panel for the selected aircraft with provenance indicators and external links."
     scope:
@@ -550,7 +550,7 @@ slices:
     title: "Live filters & non-positioned list"
     phase: 3
     branch: "017-live-filters"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Filter drawer, quick filters, and the non-positioned aircraft list for the live map."
     scope:
@@ -575,7 +575,7 @@ slices:
     title: "First-run setup wizard"
     phase: 3
     branch: "018-setup-wizard"
-    status: planned
+    status: merged
     depends_on: ["002", "004", "007", "013"]
     objective: "Guide a new install through receiver, decoder, units, timezone, and notification/alert preferences, landing on the Live Map."
     scope:
@@ -596,7 +596,7 @@ slices:
     title: "Settings page"
     phase: 3
     branch: "019-settings-page"
-    status: planned
+    status: merged
     depends_on: ["002", "004", "007"]
     objective: "Settings UI editing the canonical configuration model with masked secrets."
     scope:
@@ -617,7 +617,7 @@ slices:
     title: "E2E foundation"
     phase: 3
     branch: "020-e2e-foundation"
-    status: planned
+    status: merged
     depends_on: ["006", "011", "014", "016", "018"]
     objective: "Stand up Playwright E2E infrastructure over demo mode and cover the first critical flows."
     scope:
@@ -638,7 +638,7 @@ slices:
     title: "Metadata framework"
     phase: 4
     branch: "021-metadata-framework"
-    status: planned
+    status: merged
     depends_on: ["005"]
     objective: "Normalized aircraft-metadata schema, provider interface, and transactional import pipeline with per-source status."
     scope:
@@ -664,7 +664,7 @@ slices:
     title: "Mictronics/tar1090 importer"
     phase: 4
     branch: "022-mictronics-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the Mictronics/tar1090 aircraft database as the primary offline metadata source."
     scope:
@@ -686,7 +686,7 @@ slices:
     title: "FAA registry importer"
     phase: 4
     branch: "023-faa-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
     scope:
@@ -706,7 +706,7 @@ slices:
     title: "Classification & operator normalization"
     phase: 4
     branch: "024-classification-engine"
-    status: planned
+    status: merged
     depends_on: ["021", "022"]
     objective: "Classify aircraft (military/government/law-enforcement, mission/use categories) and normalize operators into groups, with provenance and calibrated confidence."
     scope:

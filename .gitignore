@@ -19,9 +19,12 @@ frontend/dist/
 frontend/coverage/
 *.tsbuildinfo
 
-# Playwright
+# Playwright (e2e/playwright.config.ts suffixes these per browser project
+# in CI, e.g. test-results-chromium/ — see its outputSuffix comment)
 test-results/
+test-results-*/
 playwright-report/
+playwright-report-*/
 blob-report/
 
 # Environment / secrets
@@ -32,7 +35,7 @@ secrets.yaml
 *.secret
 
 # Local data
-data/
+/data/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm

@@ -1,0 +1,104 @@
+# FlightSite configuration — example with the built-in defaults.
+#
+# Copy to your data directory (default /opt/flightsite/data/config.yaml,
+# override with FLIGHTSITE_DATA_DIR) and edit. Every key is optional: anything
+# omitted falls back to the default shown here, so a missing config.yaml is a
+# valid first-run state rather than an error.
+#
+# Load order (later wins):
+#   1. these built-in defaults
+#   2. config.yaml            (this file — non-secret configuration)
+#   3. secrets.yaml           (secrets only; never written to config.yaml)
+#   4. FLIGHTSITE_* env vars  (nested keys use "__", e.g. FLIGHTSITE_RECEIVER__PORT=8081)
+#
+# FlightSite rewrites this file when configuration is saved from the Settings
+# UI. The output is clean and stable, but comments are not preserved.
+#
+# Units are nautical miles / feet / knots unless `units: metric` is set; that
+# setting affects display only — storage and the API stay canonical (nm/ft/kt,
+# UTC timestamps).
+
+# Backend log level: CRITICAL, ERROR, WARNING, INFO or DEBUG.
+log_level: INFO
+
+# Display unit system: "aviation" (nm/ft/kt) or "metric" (km/m/km-h).
+units: aviation
+
+# IANA timezone used to render receiver-local times in the UI.
+# Examples: Europe/London, America/New_York, Australia/Sydney.
+timezone: UTC
+
+# Live-map display radius in nautical miles. Detections beyond it are still
+# stored and still count toward range records and analytics.
+display_radius_nm: 250.0
+
+# Alert radius in nautical miles. null means unlimited: alerts fire regardless
+# of distance from the receiver.
+alert_radius_nm: null
+
+# ADS-B decoder (readsb / dump1090-fa) HTTP JSON endpoint.
+receiver:
+  host: 127.0.0.1
+  port: 8080
+  # Path to the aircraft JSON document. tar1090 installs commonly use
+  # /data/aircraft.json; some setups use /tar1090/data/aircraft.json.
+  path: /data/aircraft.json
+  # Poll period in seconds. The decoder publishes at roughly 1 Hz.
+  poll_interval_s: 1.0
+
+# Receiver location: the reference point for bearing, distance, range rings,
+# closest approach, farthest detection, coverage analytics and alert radius.
+# Set latitude and longitude together, or leave both null (the setup wizard
+# collects them on first run).
+location:
+  latitude: null
+  longitude: null
+  site_name: null
+  antenna_height_ft: null
+
+# Sighting lifecycle timing, in seconds. Must increase:
+# stale_s < remove_s < close_s.
+sighting:
+  # No update for this long: the aircraft is shown as stale.
+  stale_s: 15.0
+  # No update for this long: the aircraft is dropped from the live map.
+  remove_s: 60.0
+  # No update for this long: the current sighting is closed and persisted.
+  close_s: 600.0
+
+# Retention policy. Sightings, tracks and lifetime statistics are kept
+# indefinitely; only high-resolution receiver telemetry is pruned.
+retention:
+  # Days of high-resolution receiver metrics to keep before downsampling.
+  # Valid range: 7-30.
+  high_res_metric_days: 14
+
+map:
+  # Basemap style id from the basemap registry.
+  basemap: dark-aviation
+  range_rings_enabled: true
+  # Range ring radii in nautical miles (up to 10, unique, sorted on save).
+  range_ring_radii_nm:
+    - 50.0
+    - 100.0
+    - 150.0
+    - 200.0
+
+# Optional online route enrichment (AeroDataBox). FlightSite works fully
+# without it. The API key is a SECRET: put it in secrets.yaml or set
+# FLIGHTSITE_ENRICHMENT__AERODATABOX_API_KEY — never in this file.
+enrichment:
+  aerodatabox_enabled: false
+
+# Browser notifications, enabled per alert severity.
+notifications:
+  enabled: true
+  info: false
+  interesting: true
+  high: true
+  critical: true
+
+alerts:
+  # Ids of the shipped alert templates to instantiate. Chosen during first-run
+  # setup; empty means no alert templates are enabled.
+  enabled_templates: []

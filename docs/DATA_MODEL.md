@@ -214,7 +214,15 @@ CREATE TABLE sighting_tracks (
 ) WITHOUT ROWID;
 ```
 
-The packed encoding (delta-encoded scaled integers) costs ~16 B/point, so a typical
+Finalized in slice 052 (encoding v1): 5-byte header (`<BI` version, point_count) +
+21 B/point (`<iiiiHHB`): dt_ms int32, lat/lon int32 deltas at 1e-5° (~1 m), altitude
+int32 raw feet, ground speed uint16 at 0.1 kt, track uint16 at 0.01°, position-source
+uint8; sentinels preserve None, out-of-range values clamp. Simplification epsilon
+0.0005° (~56 m cross-track, cos-lat-scaled planar) plus a 100 ft altitude-profile
+pass, union retained; checkpoint thinning at a 10× tighter tolerance (0.00005° /
+25 ft) so it is invisible in the archive.
+
+The packed encoding (delta-encoded scaled integers) costs ~16–21 B/point, so a typical
 simplified track is ~1–1.5 KB in a single clustered row instead of dozens of b-tree
 rows. Reads are always "the whole path for sighting N" (sighting detail, future
 playback), which the pack/unpack repository interface serves as points-in/points-out —

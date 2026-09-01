@@ -1,0 +1,67 @@
+name: frontend
+
+# Frontend quality gates: eslint, prettier check, tsc, vitest with the coverage
+# gate enforced via frontend/vite.config.ts (test.coverage.thresholds >= 70%),
+# and a production build.
+#
+# Trigger note (roadmap slice 003): the `pull_request` trigger intentionally has
+# NO path filter, mirroring backend.yml. The `frontend` job below becomes a
+# required status check on dev/main branch protection, and GitHub only
+# evaluates required checks that a workflow run actually reports for a given
+# PR. A path-filtered pull_request trigger would silently skip (and therefore
+# permanently block merge of) any PR that doesn't touch frontend/** — e.g. a
+# backend-only or docs-only PR. The repo is small enough that always running
+# this workflow on every PR is cheap, so that's the simpler and safer choice
+# over a paths-filter + no-op-skip-job pattern. `push` to dev/main is not a
+# required check, so it keeps a path filter to avoid unnecessary runs there.
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier format check
+        run: npm run format:check
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Vitest (coverage gate enforced by vite.config.ts)
+        run: npm run test:coverage
+
+      - name: Production build
+        run: npm run build

@@ -1,0 +1,129 @@
+name: e2e
+
+# End-to-end tests (roadmap slice 020, docs/TEST_STRATEGY.md §1.3/§4) against
+# the composed application (compose.yaml) in demo mode — no ADS-B hardware or
+# external network required (docs/DEVELOPMENT.md).
+#
+# One job, `e2e`, the required check. Builds both images once (mirroring
+# .github/workflows/docker.yml's build step), then runs the full ordered spec
+# sequence (first-run setup -> decoder connection test -> live map ->
+# selection/detail) on Chromium, Firefox, AND WebKit (SPEC §81, docs/
+# TEST_STRATEGY.md §7), each against its own fresh compose stack (see
+# e2e/scripts/run-suite.mjs — a shared stack across projects would only let
+# the first browser see a genuine first-run state). WebKit ran stably in
+# local validation for this slice, so it is included in the required check
+# rather than split into a separate non-blocking job; if it later proves
+# flaky specifically in CI (Linux WebKit's software GL path is the most
+# likely engine-specific failure mode for a MapLibre GL canvas app), split it
+# into its own `continue-on-error` job at that point rather than weakening
+# this one. Traces/screenshots/video upload as artifacts when a run fails
+# (docs/TEST_STRATEGY.md §4: "failures produce traces and screenshots as CI
+# artifacts").
+#
+# Trigger note (mirroring backend.yml/frontend.yml/docker.yml): `pull_request`
+# has no path filter. `e2e` becomes a required status check on dev/main
+# branch protection, and GitHub only evaluates required checks a workflow run
+# actually reports for a given PR — a path-filtered trigger would silently
+# skip (and therefore permanently block merge of) any PR that doesn't touch
+# backend/**, frontend/**, e2e/**, or compose.yaml.
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/flightsite-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/flightsite-frontend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Required status check name (once wired into branch protection): e2e
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # Same build shape as docker.yml's compose smoke test: linux/amd64
+      # only, --load so the images land in the local daemon that `docker
+      # compose up` (in e2e/scripts/stack.mjs) then runs unmodified.
+      - name: Build backend image (linux/amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Build frontend image (linux/amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: frontend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.FRONTEND_IMAGE }}:latest
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install E2E dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+
+      - name: Install Playwright browsers (Chromium, Firefox, WebKit)
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Run E2E — Chromium
+        working-directory: e2e
+        run: npm run e2e
+
+      - name: Run E2E — Firefox
+        if: always()
+        working-directory: e2e
+        run: npm run e2e:firefox
+
+      - name: Run E2E — WebKit
+        if: always()
+        working-directory: e2e
+        run: npm run e2e:webkit
+
+      - name: Upload Playwright traces/report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          # Suffixed per browser project (playwright.config.ts's
+          # `outputSuffix`) so a Chromium failure's traces survive a later
+          # Firefox/WebKit run in the same job.
+          path: |
+            e2e/playwright-report-*/
+            e2e/test-results-*/
+          retention-days: 7

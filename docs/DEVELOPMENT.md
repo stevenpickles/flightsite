@@ -31,32 +31,82 @@ compose.yaml Docker Compose deployment                      — arrives in slice
 
 ## Local development quickstart
 
-> **Placeholder.** Concrete commands land with the foundation slices: backend
-> bootstrap in slice 001, frontend bootstrap in slice 002, Docker Compose in
-> slice 006. This section must be updated by those slices.
-
-Expected shape once foundations exist:
-
 ```bash
-# backend
-cd backend && uv sync && uv run pytest && uv run flightsite serve
+# backend (uv fetches Python 3.12 automatically)
+cd backend
+uv sync                        # install deps
+uv run pytest                  # tests + coverage gate (>= 80%)
+uv run ruff check . && uv run ruff format --check .
+uv run mypy                    # strict type checking
+uv run flightsite-serve        # serve on :8000 (or: python -m flightsite)
 
-# frontend
-cd frontend && npm install && npm test && npm run dev
+# frontend (Node >= 22)
+cd frontend
+npm install
+npm run test:coverage          # Vitest + RTL, coverage gate (>= 70%)
+npm run lint && npm run format:check && npm run typecheck
+npm run dev                    # Vite dev server
 
-# full stack, no hardware required
+# full stack, no hardware required (lands with slices 006 + 011)
 FLIGHTSITE_DEMO=1 docker compose up -d
 ```
+
+### Running E2E locally
+
+The `e2e/` workspace (Playwright — Chromium, Firefox, WebKit) drives the composed
+application in demo mode. It manages its own Docker Compose lifecycle rather than
+using Playwright's `webServer` option: each browser gets a **fresh** stack (its own
+temp data directory) so the first-run wizard flow means what it says on every
+browser, not just the first one to run (see `e2e/playwright.config.ts` and
+`e2e/scripts/`).
+
+```bash
+cd e2e
+npm install
+npx playwright install --with-deps    # first run only
+
+npm run e2e                            # Chromium: stack up, full suite, stack down
+npm run e2e:firefox                    # same, Firefox
+npm run e2e:webkit                     # same, WebKit
+```
+
+`npm run e2e` (etc.) always tears the stack down afterward, pass or fail. To run
+against a stack you're keeping up between runs (faster iteration on one spec):
+
+```bash
+npm run stack:up                       # FLIGHTSITE_DEMO=1, fresh data dir
+npm test                               # Chromium only, against the running stack
+npm run stack:down
+```
+
+The suite's four spec files (`e2e/tests/01-*` … `04-*`) run in that fixed order,
+serially (`workers: 1`), against one shared backend within a browser: `01` completes
+first-run setup, `02` exercises the decoder connection test against the now-configured
+install, `03` and `04` assume setup is already done. Failures produce Playwright
+traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
+(`npm run report` to view).
 
 ### Demo mode and capture/replay are the standard dev environment
 
 No ADS-B hardware is required for development. **Demo mode** (slice 011) provides a
 deterministic simulated receiver covering commercial, military, government, police,
 MLAT, non-positioned, emergency-squawk, rare, and stale/disappearing traffic. The
-**capture/replay tool** (slice 012) records normalized decoder snapshots into compact
-fixtures and replays them deterministically — the preferred way to reproduce
-real-world bugs and build regression tests. Prefer demo/replay over a live decoder for
-day-to-day work and for all automated tests.
+**capture/replay tool** (slice 012, `flightsite.devtools`) records normalized decoder
+snapshots into compact, gzip-compressed `.fsrec.gz` fixtures and replays them
+deterministically — the preferred way to reproduce real-world bugs and build
+regression tests. Prefer demo/replay over a live decoder for day-to-day work and for
+all automated tests.
+
+```bash
+# record 60s of a live decoder to a fixture
+uv run flightsite-capture --host 192.168.1.50 --port 8080 \
+    --path /data/aircraft.json --duration 60 --out session.fsrec.gz
+
+# replay it as a DecoderAdapter, e.g. from a script or test:
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=1.0)   # real-time pacing
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=4.0)   # 4x accelerated
+#   ReplayAdapter.from_path("session.fsrec.gz", speed=None)  # as fast as possible (tests)
+```
 
 ## Branch model
 
