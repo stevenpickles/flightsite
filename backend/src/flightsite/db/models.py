@@ -6,16 +6,25 @@ model here without a matching migration (or vice versa) fails the drift test in
 ``backend/tests/db/test_migrations.py``.
 
 Tables land slice by slice per ``docs/DATA_MODEL.md`` §12: :class:`Meta` in
-slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009. Track,
-reception-statistics and sighting-event tables belong to slice 052 and are
-deliberately absent here.
+slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
+:class:`SightingTrackCheckpoint`, :class:`SightingTrack` and
+:class:`SightingEvent` in slice 052.
 """
 
 from __future__ import annotations
 
 from typing import Final
 
-from sqlalchemy import REAL, CheckConstraint, ForeignKey, Index, Integer, Text, text
+from sqlalchemy import (
+    REAL,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    Text,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 #: ``meta`` key holding T0 — the moment the first observation was persisted
@@ -44,6 +53,21 @@ INFERRED_PHASE_CHECK: Final[str] = "inferred_phase IN ('arriving', 'departing')"
 #: Alert severity ladder (``docs/API.md`` §2.8); populated by slice 038.
 ALERT_SEVERITY_CHECK: Final[str] = (
     "max_alert_severity IN ('info', 'interesting', 'high', 'critical')"
+)
+
+#: The ``sighting_events.type`` vocabulary of ``docs/DATA_MODEL.md`` §2.5,
+#: spelled as the SQL ``CHECK`` predicate.
+#:
+#: All eight values are constrained from birth even though slice 052 emits only
+#: the first four: the enum is a storage contract, and widening a SQLite
+#: ``CHECK`` later means rebuilding the table. The runtime enum is
+#: :class:`flightsite.sightings.vocabulary.SightingEventType` — as with
+#: :data:`CLOSURE_REASON_CHECK` it cannot be imported here, so a test asserts
+#: the two agree rather than letting them drift silently.
+SIGHTING_EVENT_TYPE_CHECK: Final[str] = (
+    "type IN ('callsign_change', 'squawk_change', 'emergency_start', 'emergency_end', "
+    "'route_enriched', 'classification_available', 'alert_matched', "
+    "'alert_severity_upgraded')"
 )
 
 
@@ -145,8 +169,8 @@ class Sighting(Base):
       arrival/departure heuristic (027), deliberately kept distinct from
       enriched truth (SPEC §28, §41).
     * **position character** — slice 009.
-    * **reception statistics** — slice 052; the columns exist now so the
-      sighting row's shape is stable, and stay at their defaults until then.
+    * **reception statistics** — slice 052, from the live stream's per-update
+      ``rssi_db``, message counts and position reports.
     * **per-sighting extremes** — slice 009; these feed the lifetime records on
       :class:`Aircraft`.
     * ``max_alert_severity`` — slice 038's denormalized outcome for the
@@ -222,3 +246,113 @@ class Sighting(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Sighting(id={self.id!r}, aircraft_id={self.aircraft_id!r})"
+
+
+class SightingTrackCheckpoint(Base):
+    """One checkpointed track point of an *open* sighting (§2.4, ADR-0005).
+
+    This table is a crash-recovery record, not an archival one. While a
+    sighting is open its full-resolution track lives in memory; the persistence
+    worker appends lightly thinned batches here on its flush cadence so an
+    unclean shutdown loses at most one interval of path. Every row is deleted
+    in the transaction that packs the sighting's :class:`SightingTrack`, which
+    is why the table's steady-state size is bounded by concurrent traffic
+    rather than by history (``docs/DATA_MODEL.md`` §9).
+
+    ``pos_source`` is an **integer** code rather than the ``TEXT`` enum the
+    low-volume tables use: this is the highest-volume table in the schema, and
+    §Conventions puts integer codes on exactly these. The mapping is
+    :class:`flightsite.sightings.vocabulary.PositionSourceCode`.
+
+    ``WITHOUT ROWID`` with ``(sighting_id, seq)`` as the primary key clusters a
+    sighting's points together in insertion order, which is how they are always
+    read — the whole path for one sighting, never a point-level query — and is
+    the reason no separate index over ``sighting_id`` is declared.
+    """
+
+    __tablename__ = "sighting_track_checkpoints"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    sighting_id: Mapped[int] = mapped_column(Integer, ForeignKey("sightings.id"), primary_key=True)
+    #: Ordering within the sighting, dense and monotonic across batches.
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    lat: Mapped[float] = mapped_column(REAL, nullable=False)
+    lon: Mapped[float] = mapped_column(REAL, nullable=False)
+    #: ``NULL`` on the ground or where the decoder reported no altitude.
+    alt_ft: Mapped[int | None] = mapped_column(Integer)
+    gs_kt: Mapped[float | None] = mapped_column(REAL)
+    track_deg: Mapped[float | None] = mapped_column(REAL)
+    pos_source: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"SightingTrackCheckpoint(sighting_id={self.sighting_id!r}, seq={self.seq!r})"
+
+
+class SightingTrack(Base):
+    """The packed, simplified path of one *closed* sighting (§2.4, ADR-0005).
+
+    One row per sighting, holding every retained point of the Douglas-Peucker
+    simplified track as a compact binary blob — roughly 21 bytes per point
+    against the hundreds a b-tree row apiece would cost. That ratio is what
+    makes retaining tracks indefinitely (SPEC §65) fit a Pi 4's storage budget
+    at the SPEC §5 load envelope; ``docs/DATA_MODEL.md`` §9 carries the
+    arithmetic.
+
+    The blob is opaque to SQL on purpose: every read is "the whole path for
+    sighting N", served by
+    :mod:`flightsite.sightings.track_codec` as points-in/points-out. A future
+    feature needing per-point ``WHERE`` clauses would need a superseding ADR.
+
+    ``started_ms`` is the absolute base the per-point time deltas are measured
+    from, and ``encoding_version`` makes a future format change an additive
+    migration rather than a rewrite — the decoder refuses versions it does not
+    know rather than guessing at their layout.
+    """
+
+    __tablename__ = "sighting_tracks"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    sighting_id: Mapped[int] = mapped_column(Integer, ForeignKey("sightings.id"), primary_key=True)
+    encoding_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    point_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    points_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"SightingTrack(sighting_id={self.sighting_id!r}, points={self.point_count!r})"
+
+
+class SightingEvent(Base):
+    """A meaningful change within a sighting (§2.5, SPEC §52).
+
+    Deliberately *not* one row per decoder snapshot: a row appears only when
+    something a person would want to read about changed — the flight took a new
+    callsign, the squawk changed, an emergency code appeared or cleared. Slice
+    052 emits those four from the live stream; the enrichment, classification
+    and alert values in the ``CHECK`` belong to later slices and are constrained
+    from birth so the vocabulary never has to be widened in place.
+
+    The index is ``(sighting_id, ts_ms)`` because the only query is "this
+    sighting's timeline, in order" — the sighting detail view today and
+    historical playback later (``docs/DATA_MODEL.md`` §11).
+    """
+
+    __tablename__ = "sighting_events"
+    __table_args__ = (
+        CheckConstraint(SIGHTING_EVENT_TYPE_CHECK, name="ck_sighting_events_type"),
+        Index("ix_sevents_sighting", "sighting_id", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sighting_id: Mapped[int] = mapped_column(Integer, ForeignKey("sightings.id"), nullable=False)
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Pydantic-free by design: the payloads are two or three scalar fields
+    #: (``{"from": "7000", "to": "7700"}``) written and read in one module.
+    payload_json: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"SightingEvent(id={self.id!r}, sighting_id={self.sighting_id!r}, type={self.type!r})"
+        )
