@@ -162,11 +162,16 @@ class RouteCacheRepository:
         Not called on the lookup path: expiry is decided on read, and deleting
         one row per miss would turn every cache miss into a write.
         """
+        # ``RETURNING`` rather than a driver rowcount, the same choice
+        # :mod:`flightsite.db.meta` makes: it is typed and unambiguous where
+        # rowcount is neither.
+        statement = (
+            delete(RouteCache)
+            .where(RouteCache.expires_ms <= now_ms)
+            .returning(RouteCache.cache_key)
+        )
         async with self.database.writer_session() as session:
-            result = await session.execute(
-                delete(RouteCache).where(RouteCache.expires_ms <= now_ms)
-            )
-            return int(result.rowcount or 0)
+            return len((await session.scalars(statement)).all())
 
     async def size(self) -> int:
         """Rows currently held, expired or not. For tests and diagnostics."""

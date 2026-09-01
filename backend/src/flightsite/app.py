@@ -19,6 +19,8 @@ from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
+from flightsite.enrichment import EnrichmentService, RouteCacheRepository
+from flightsite.enrichment.service import build_provider
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
@@ -146,6 +148,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     persistence: PersistenceWorker = app.state.persistence
     broadcaster: LiveBroadcaster = app.state.broadcaster
     metadata: MetadataService = app.state.metadata
+    enrichment: EnrichmentService = app.state.enrichment
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -165,6 +168,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # aircraft's metadata `null` — the documented unknown state — while
         # the live picture stays completely unaffected.
         await metadata.start()
+        # Same condition again: enrichment reads and writes `route_cache`, and
+        # its whole output is optional information. A build with no API key
+        # returns from this immediately having started nothing.
+        await enrichment.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -194,7 +201,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await broadcaster.stop()
         # Before the persistence worker, so no consumer of the live stream is
         # still resolving against the database while the worker takes its final
-        # writer transactions.
+        # writer transactions. Enrichment goes first of the two: it applies
+        # routes *through* the worker, so it must have stopped before the
+        # worker's final flush, or a route could land on an accumulator nobody
+        # will write again.
+        await enrichment.stop()
         await metadata.stop()
         await persistence.stop()
         await database.dispose()
@@ -238,6 +249,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     HTTP endpoint exposes it yet — ``docs/API.md`` §5 assigns
     ``/api/internal/metadata/*`` to slice 025, which calls
     :meth:`~flightsite.metadata.MetadataService.update`.
+
+    Optional route enrichment (SPEC §28) is constructed as
+    ``app.state.enrichment``. It is a third consumer of the live event stream,
+    and it is inert unless ``enrichment.aerodatabox_enabled`` is set *and* a key
+    is configured: with no provider it starts no task, opens no socket, and
+    every route stays ``null``. When it is on, routes reach the database through
+    the persistence worker's accumulator rather than a writer session of its
+    own, which is why it is stopped before that worker on shutdown.
 
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
@@ -291,6 +310,16 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         live=app.state.live,
         data_dir=store.data_dir,
         registry=_build_metadata_registry(),
+    )
+    # Optional route enrichment (SPEC §28). `build_provider` returns None
+    # unless the flag is set *and* a key is present, and a service with no
+    # provider starts nothing and subscribes to nothing — so a stock install
+    # cannot make an external call, whatever else happens at runtime.
+    app.state.enrichment = EnrichmentService(
+        live=app.state.live,
+        persistence=app.state.persistence,
+        cache=RouteCacheRepository(app.state.database),
+        provider=build_provider(settings),
     )
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a

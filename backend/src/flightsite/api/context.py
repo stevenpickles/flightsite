@@ -15,7 +15,9 @@ process's life. Reading late also means the context can be built before the
 lifespan hook has started anything.
 
 Nothing here touches SQLite on the aircraft path — the live registry answers
-from memory and so does the metadata cache, which is the invariant
+from memory, and so do the metadata cache and the persistence worker's
+accumulators (which carry the open sighting's id and its enriched route), which
+is the invariant
 ``docs/ARCHITECTURE.md`` §3.1 states as "no live request or decoder poll ever
 waits on SQLite" and §3.3 restates as "metadata joins and rarity checks hit a
 cache, not the database". The one database read in this module is T0 for the
@@ -122,6 +124,7 @@ class LiveApiContext:
                 record,
                 sighting_id=worker.sighting_id_for(record.icao),
                 metadata=cache.get(record.icao),
+                route=worker.route_for(record.icao),
             )
             for record in records
             if _wanted(record, positioned)
@@ -150,6 +153,7 @@ class LiveApiContext:
                         record,
                         sighting_id=worker.sighting_id_for(icao),
                         metadata=cache.get(icao),
+                        route=worker.route_for(icao),
                     )
                 )
         return payloads
