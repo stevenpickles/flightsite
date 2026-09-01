@@ -1,0 +1,360 @@
+"""Alerts as one object the application wires up.
+
+Mirrors :class:`flightsite.watchlists.service.WatchlistService`'s shape: the app
+holds one :class:`AlertService`, the internal CRUD API (``docs/API.md`` §5)
+calls its methods rather than touching :mod:`flightsite.alerts.repository`
+directly, and every method that changes what a rule *means* recompiles the
+engine's rule set before returning. That ordering is what makes a rule created
+in the UI evaluate on the very next live update rather than after some later
+reconciliation — the property roadmap slice 041 will round-trip against.
+
+What "compiling" a rule does
+----------------------------
+
+Exactly one thing: it resolves a ``watchlist_id`` condition to the watchlist's
+*name*, because :meth:`flightsite.watchlists.matcher.WatchlistMatcher.matches`
+answers in names. Doing it here, once per reload, is what keeps evaluation free
+of any lookup at all — and doing it from the same read that lists the rules is
+what keeps a renamed or deleted watchlist from leaving a rule pointing at
+nothing.
+
+A rename happens through the watchlist CRUD API, not this one, so the two must
+be connected: :meth:`AlertService.reload_rules` is registered as a
+:data:`~flightsite.watchlists.service.IndexListener` on the watchlist service,
+which fires after every watchlist mutation rebuilds its match index. One seam,
+in the direction the dependency already runs (alerts consume watchlists), and
+no polling.
+
+Template instantiation
+----------------------
+
+:meth:`AlertService.start` instantiates the templates named by
+``alerts.enabled_templates`` — but only when ``alert_rules`` holds no
+template-provenance row at all. :mod:`flightsite.alerts.templates` documents why
+that guard rather than a per-key one: a user who deletes a shipped rule must not
+have it silently return on the next restart, and a user editing the wizard's
+answer later is not asking for their tuned rule set to be rewritten.
+
+The whole of it is idempotent, so a boot that instantiates nothing is the
+ordinary case from the second boot onwards, and a boot against a database whose
+migration failed does nothing at all — the app starts this service only on a
+healthy schema, exactly like every other database-dependent subsystem.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+
+import structlog
+from pydantic import ValidationError
+
+from flightsite.alerts.engine import AlertEngine
+from flightsite.alerts.errors import AlertRuleNotFoundError, AlertRuleValueError
+from flightsite.alerts.model import AlertRuleRecord, CompiledRule, RuleConditions
+from flightsite.alerts.repository import AlertRepository
+from flightsite.alerts.templates import (
+    AlertTemplate,
+    enabled_templates,
+    unknown_template_keys,
+)
+from flightsite.alerts.vocabulary import AlertSeverity
+from flightsite.db import Database, utc_now_ms
+from flightsite.live import LiveStore
+from flightsite.metadata.cache import MetadataCache
+from flightsite.sightings.worker import PersistenceWorker
+from flightsite.watchlists.repository import WatchlistRepository
+from flightsite.watchlists.service import WatchlistService
+
+logger = structlog.get_logger(__name__)
+
+#: UTC epoch-millisecond source, injected for tests.
+ClockFn = Callable[[], int]
+
+#: Reads the configured alert radius (SPEC §66) at the moment a cycle needs it.
+#: A callable rather than a value because ``PUT /api/internal/config`` replaces
+#: ``app.state.settings`` on a running app, and a captured radius would bound
+#: alerts by a setting the user has since changed.
+AlertRadiusProbe = Callable[[], float | None]
+
+
+def _normalize_name(name: str) -> str:
+    """Trim a rule name, refusing a blank one."""
+    stripped = name.strip()
+    if not stripped:
+        raise AlertRuleValueError("rule name must not be blank")
+    return stripped
+
+
+def _normalize_description(description: str | None) -> str | None:
+    """Trim a description, mapping a blank one to ``None``."""
+    if description is None:
+        return None
+    stripped = description.strip()
+    return stripped or None
+
+
+class AlertService:
+    """Rule CRUD, template instantiation, and the engine they configure.
+
+    Args:
+        database: the application database.
+        live: the live store the engine subscribes to.
+        metadata: the metadata & rarity cache the engine reads.
+        watchlists: the watchlist service, for the match index the engine reads
+            and for the reload seam a rename fires.
+        persistence: the sighting worker, for the open sighting's ids and for
+            the ``max_alert_severity`` apply seam.
+        template_keys: ``alerts.enabled_templates`` from the configuration.
+        alert_radius: reads the configured alert radius, or ``None`` for an
+            installation with no bound.
+        clock: UTC epoch-millisecond source, injected for tests.
+    """
+
+    __slots__ = (
+        "_alert_radius",
+        "_clock",
+        "_engine",
+        "_repository",
+        "_template_keys",
+        "_watchlist_repository",
+        "_watchlists",
+    )
+
+    def __init__(
+        self,
+        *,
+        database: Database,
+        live: LiveStore,
+        metadata: MetadataCache,
+        watchlists: WatchlistService,
+        persistence: PersistenceWorker,
+        template_keys: Sequence[str] = (),
+        alert_radius: AlertRadiusProbe | None = None,
+        clock: ClockFn = utc_now_ms,
+    ) -> None:
+        self._repository = AlertRepository(database)
+        self._watchlist_repository = WatchlistRepository(database)
+        self._watchlists = watchlists
+        self._template_keys = tuple(template_keys)
+        self._alert_radius = alert_radius
+        self._clock = clock
+        self._engine = AlertEngine(
+            database=database,
+            live=live,
+            metadata=metadata,
+            watchlists=watchlists.matcher,
+            persistence=persistence,
+            clock=clock,
+        )
+
+    @property
+    def engine(self) -> AlertEngine:
+        """The evaluation engine — read on the aircraft path for the §3.3 block."""
+        return self._engine
+
+    @property
+    def repository(self) -> AlertRepository:
+        """The alert tables' query layer, which the API reads history through."""
+        return self._repository
+
+    # -------------------------------------------------------------- lifecycle
+
+    async def start(self) -> None:
+        """Instantiate templates, load the rules, and start the engine.
+
+        In that order, and the order matters: a first boot must evaluate its
+        shipped rules on the very first decoder poll, not on the one after the
+        next reload. The engine subscribes *after* the rules are in place, so
+        no event is evaluated against an empty rule set that a moment later
+        would have matched.
+        """
+        created = await self._instantiate_templates()
+        await self.reload_rules()
+        self._engine.adopt_open_matches(await self._repository.open_sighting_match_keys())
+        # A watchlist rename or deletion changes what a `watchlist_id`
+        # condition resolves to without any rule changing, so the rule set has
+        # to be recompiled for it. Subscribing here rather than in the
+        # application factory keeps the dependency where it belongs: alerts
+        # consume watchlists, and watchlists know nothing about alerts.
+        self._watchlists.subscribe_index(self.reload_rules)
+        await self._engine.start()
+        logger.info(
+            "alert_service_started",
+            rules=len(self._engine.rules),
+            templates_created=created,
+        )
+
+    async def stop(self) -> None:
+        """Unsubscribe and stop the engine. Idempotent."""
+        self._watchlists.unsubscribe_index(self.reload_rules)
+        await self._engine.stop()
+
+    async def _instantiate_templates(self) -> int:
+        """Create the enabled shipped rules, once per install. Returns the count."""
+        if not self._template_keys:
+            return 0
+        unknown = unknown_template_keys(self._template_keys)
+        if unknown:
+            # Not fatal: `alerts.enabled_templates` is validated for shape by
+            # the config model, which deliberately does not know the catalogue,
+            # so a key from another build is an ordinary upgrade artefact.
+            logger.warning("alert_template_unknown", keys=list(unknown))
+        if await self._repository.has_template_rules():
+            return 0
+        wanted = [
+            template for template in enabled_templates(self._template_keys) if template.instantiable
+        ]
+        created = await self._repository.create_rules(
+            [self._template_row(template) for template in wanted], now_ms=self._clock()
+        )
+        if created:
+            logger.info(
+                "alert_templates_instantiated",
+                keys=[template.key for template in wanted],
+                rules=created,
+            )
+        return created
+
+    @staticmethod
+    def _template_row(
+        template: AlertTemplate,
+    ) -> tuple[str, str | None, AlertSeverity, RuleConditions, str]:
+        conditions = template.conditions
+        if conditions is None:  # pragma: no cover - guarded by `instantiable`
+            raise ValueError(f"template {template.key} has no conditions to instantiate")
+        return (template.name, template.description, template.severity, conditions, template.key)
+
+    # ---------------------------------------------------------- the rule set
+
+    async def reload_rules(self) -> None:
+        """Recompile the engine's rule set from the database's current contents.
+
+        Two reads, not one join, and that is fine for the reason
+        :meth:`flightsite.watchlists.service.WatchlistService.reload_index`
+        gives: rules and watchlists are both configured at human scale, so this
+        runs at startup, after a rule mutation and after a watchlist mutation —
+        never on the live path — and its cost is irrelevant next to any of
+        them.
+
+        Also registered as the watchlist service's index listener, which is why
+        it takes no arguments: a watchlist rename changes what a
+        ``watchlist_id`` condition resolves to, and the rule set has to be
+        recompiled for it even though no rule changed.
+        """
+        rules = await self._repository.list_rules()
+        names = {
+            watchlist.id: watchlist.name
+            for watchlist in await self._watchlist_repository.list_watchlists()
+        }
+        compiled = tuple(
+            CompiledRule(
+                rule=rule,
+                watchlist_name=(
+                    None
+                    if rule.conditions.watchlist_id is None
+                    else names.get(rule.conditions.watchlist_id)
+                ),
+            )
+            for rule in rules
+        )
+        self._engine.set_rules(compiled)
+        self._engine.set_alert_radius(None if self._alert_radius is None else self._alert_radius())
+        unresolved = [rule.rule.id for rule in compiled if rule.unresolved_watchlist]
+        if unresolved:
+            logger.warning("alert_rule_watchlist_missing", rule_ids=unresolved)
+        logger.info("alert_rules_reloaded", rules=len(compiled))
+
+    # ------------------------------------------------------------------ CRUD
+
+    async def list_rules(self) -> tuple[AlertRuleRecord, ...]:
+        """Every rule, by id."""
+        return await self._repository.list_rules()
+
+    async def get_rule(self, rule_id: int) -> AlertRuleRecord | None:
+        """One rule, or ``None`` if it does not exist."""
+        return await self._repository.get_rule(rule_id)
+
+    async def create_rule(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        severity: AlertSeverity,
+        conditions: RuleConditions,
+        enabled: bool = True,
+    ) -> AlertRuleRecord:
+        """Create a rule and recompile the engine's rule set.
+
+        Raises:
+            AlertRuleValueError: the name is blank.
+        """
+        record = await self._repository.create_rule(
+            name=_normalize_name(name),
+            description=_normalize_description(description),
+            severity=severity,
+            conditions=conditions,
+            enabled=enabled,
+            template_key=None,
+            now_ms=self._clock(),
+        )
+        await self.reload_rules()
+        return record
+
+    async def update_rule(
+        self,
+        rule_id: int,
+        *,
+        name: str,
+        description: str | None,
+        severity: AlertSeverity,
+        conditions: RuleConditions,
+        enabled: bool = True,
+    ) -> AlertRuleRecord:
+        """Replace a rule's definition and recompile. A full replace, not a patch.
+
+        Raises:
+            AlertRuleValueError: the name is blank.
+            AlertRuleNotFoundError: no rule has ``rule_id``.
+        """
+        record = await self._repository.update_rule(
+            rule_id,
+            name=_normalize_name(name),
+            description=_normalize_description(description),
+            severity=severity,
+            conditions=conditions,
+            enabled=enabled,
+            now_ms=self._clock(),
+        )
+        if record is None:
+            raise AlertRuleNotFoundError(f"no alert rule with id {rule_id}")
+        await self.reload_rules()
+        return record
+
+    async def delete_rule(self, rule_id: int) -> bool:
+        """Delete a rule (and the matches it produced) and recompile.
+
+        Returns ``False`` for an unknown ``rule_id`` without recompiling
+        anything — nothing changed, so there is nothing to recompute.
+        """
+        deleted = await self._repository.delete_rule(rule_id)
+        if deleted:
+            await self.reload_rules()
+        return deleted
+
+    @staticmethod
+    def parse_conditions(document: object) -> RuleConditions:
+        """Validate a condition document from an untrusted source.
+
+        Raises:
+            AlertRuleValueError: it does not validate. The Pydantic message is
+                carried through verbatim — it names the offending field and
+                bound, which is precisely what a rule builder needs to show
+                beside the input the user got wrong.
+        """
+        try:
+            return RuleConditions.model_validate(document)
+        except ValidationError as exc:
+            raise AlertRuleValueError(str(exc)) from exc
+
+
+__all__ = ["AlertRadiusProbe", "AlertService", "ClockFn"]

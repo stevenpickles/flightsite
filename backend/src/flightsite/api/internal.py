@@ -25,6 +25,13 @@ mutation goes through :class:`~flightsite.watchlists.WatchlistService`, which
 rebuilds the in-memory match index before returning — see that module's
 docstring — so a client that just changed a watchlist sees the live picture
 reflect it on its very next read, with no propagation delay to reason about.
+
+Slice 038 adds alert-rule CRUD and the template catalogue, and it adds them as
+a *mounted router* (:mod:`flightsite.api.alert_rules`) rather than as more
+handlers in this file. This module is a shared surface that several slices
+extend concurrently; keeping each new group in its own module means one
+``include_router`` line here per slice instead of competing appends to one
+file.
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ import structlog
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from pydantic import ValidationError
 
+from flightsite.api.alert_rules import router as alert_rules_router
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
@@ -59,6 +67,7 @@ from flightsite.watchlists import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+router.include_router(alert_rules_router)  # slice 038 — see the module docstring
 
 
 def _config_response(store: ConfigStore, settings: Settings) -> dict[str, Any]:

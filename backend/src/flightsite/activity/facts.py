@@ -136,6 +136,61 @@ class ImportOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class AlertMatchFact:
+    """One alert match that was actually recorded (slice 038, SPEC §55).
+
+    Handed to this service by :class:`flightsite.alerts.engine.AlertEngine`
+    after its own transaction has committed, for exactly the rows that
+    transaction *created* — the alert tables' unique indexes are what decide
+    that, so a re-proposed match produces no fact and therefore no feed event.
+    The dependency runs one way: ``alerts`` consumes this package, and nothing
+    here knows what a rule is beyond its id, its name and the severity it
+    fired at.
+
+    The identity and position fields are carried rather than re-queried
+    because SPEC §48 wants a notification to say *"callsign/tail, aircraft
+    type, classification, altitude, distance, match reason"*, and the alert
+    engine had every one of them in memory at the instant it matched. Reading
+    them back later would be a second opinion about a moment that has passed.
+    """
+
+    match_id: int
+    matched_ms: int
+    severity: str
+    reason: str
+    aircraft_id: int
+    sighting_id: int
+    icao24: str
+    #: ``None`` for a built-in match, which has no rule (SPEC §47).
+    rule_id: int | None = None
+    rule_name: str | None = None
+    #: ``None`` for a rule match; a built-in detector's key otherwise.
+    builtin_key: str | None = None
+    #: The squawk that triggered a built-in emergency match, if any.
+    squawk: str | None = None
+    callsign: str | None = None
+    registration: str | None = None
+    type_code: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    distance_nm: float | None = None
+    altitude_ft: float | None = None
+    military: bool = False
+    government: bool = False
+    law_enforcement: bool = False
+
+    @property
+    def emergency(self) -> bool:
+        """True when this match came from a built-in rather than a rule.
+
+        The two get different event types: SPEC §55 lists ``alert triggered``
+        and ``emergency squawk`` separately, and SPEC §47 wants the emergency
+        prominent rather than one entry among the alerts.
+        """
+        return self.builtin_key is not None
+
+
+@dataclass(frozen=True, slots=True)
 class HealthEpisode:
     """A decoder connection transition that has survived the debounce window.
 
@@ -158,6 +213,7 @@ class HealthEpisode:
 
 
 __all__ = [
+    "AlertMatchFact",
     "HealthEpisode",
     "ImportOutcome",
     "LongestSighting",

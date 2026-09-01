@@ -39,7 +39,7 @@ from flightsite.watchlists.schemas import (
     WatchlistEntryCreateRequest,
     WatchlistUpdateRequest,
 )
-from flightsite.watchlists.service import ClockFn, WatchlistService
+from flightsite.watchlists.service import ClockFn, IndexListener, WatchlistService
 from flightsite.watchlists.vocabulary import (
     MAX_DESCRIPTION_LENGTH,
     MAX_NAME_LENGTH,
@@ -59,6 +59,7 @@ __all__ = [
     "ClockFn",
     "DuplicateEntryError",
     "DuplicateWatchlistNameError",
+    "IndexListener",
     "WatchlistCreateRequest",
     "WatchlistEntryCreateRequest",
     "WatchlistEntryKind",

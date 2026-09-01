@@ -105,6 +105,11 @@ class OpenSightingRow:
     #: time the row flushed.
     inferred_airport_ident: str | None = None
     inferred_phase: str | None = None
+    #: Alert severity already reached on this sighting (slice 038). Comes back
+    #: with the rest for the reason the route columns do, and for one more: it
+    #: is what stops a restart mid-sighting from emitting a second
+    #: ``alert_matched`` event for an alert the previous process recorded.
+    max_alert_severity: str | None = None
     any_position: bool = False
     mlat_used: bool = False
     ground_seen: bool = False
@@ -165,6 +170,7 @@ class OpenSightingRow:
             route_source=self.route_source,
             inferred_airport_ident=self.inferred_airport_ident,
             inferred_phase=self.inferred_phase,
+            max_alert_severity=self.max_alert_severity,
             # An emergency squawk still standing at restart is not a second
             # episode: deriving this from the stored squawk is what keeps
             # `emergency_start` exactly-once across a process boundary.
@@ -201,7 +207,6 @@ class OpenSightingRow:
 
 
 #: Columns of ``sightings`` this repository maintains from the accumulator.
-#: Alert outcomes (038) own the rest and are never written here.
 #:
 #: Each name is an attribute of :class:`~flightsite.sightings.state.
 #: ActiveSighting` too — ``rssi_avg_db`` and ``pos_time_pct`` as derived
@@ -237,6 +242,13 @@ _RUNNING_COLUMNS: Final[tuple[str, ...]] = (
     # ``None`` on an install that has never imported the airport dataset.
     "inferred_airport_ident",
     "inferred_phase",
+    # Alert evaluation (slice 038). Also not part of the live stream: the alert
+    # engine sets it on the accumulator from its own task, so like the route
+    # and inference columns it rides the ordinary flush. ``alert_matches`` is
+    # the source of truth; this is the denormalized maximum the sightings list
+    # and the daily ``interesting`` rollup read. Stays ``None`` on an install
+    # with no rules and no emergency squawks.
+    "max_alert_severity",
 )
 
 
@@ -305,6 +317,7 @@ class SightingRepository:
                 route_source=sighting.route_source,
                 inferred_airport_ident=sighting.inferred_airport_ident,
                 inferred_phase=sighting.inferred_phase,
+                max_alert_severity=sighting.max_alert_severity,
                 any_position=bool(sighting.any_position),
                 mlat_used=bool(sighting.mlat_used),
                 ground_seen=bool(sighting.ground_seen),

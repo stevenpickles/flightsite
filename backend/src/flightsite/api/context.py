@@ -47,6 +47,10 @@ from flightsite.airports.overlay import AirportOverlayRepository, AirportSizeCla
 from flightsite.airports.records import AirportRecord
 from flightsite.airports.service import AirportContextService
 from flightsite.airspace.loader import load_airspace
+from flightsite.alerts.engine import AlertEngine
+from flightsite.alerts.model import InterestingState
+from flightsite.alerts.repository import AlertRepository
+from flightsite.alerts.service import AlertService
 from flightsite.analytics.bucketing import Preset, Window, explicit_window, resolve_window
 from flightsite.analytics.queries import AnalyticsQueries
 from flightsite.api.history import AircraftHistoryRepository
@@ -66,6 +70,7 @@ from flightsite.api.serializers import (
     aircraft_detail_payload,
     aircraft_history_row_payload,
     aircraft_payload,
+    alert_match_payload,
     analytics_window_payload,
     receiver_lifetime_stats_payload,
     receiver_metric_series_payload,
@@ -153,6 +158,18 @@ class LiveApiContext:
         return service.matcher
 
     @property
+    def alerts(self) -> AlertEngine:
+        """The in-memory alert engine (SPEC §43 to §48, roadmap slice 038).
+
+        Read on the aircraft path for the same reason the metadata *cache* is:
+        :meth:`~flightsite.alerts.engine.AlertEngine.interesting` is a dict
+        lookup with no ``await`` and no session, because evaluation has already
+        happened on the engine's own task by the time a frame is serialized.
+        """
+        service: AlertService = self._app.state.alerts
+        return service.engine
+
+    @property
     def airports(self) -> AirportContextService:
         """The nearest-airport context service (slice 027).
 
@@ -214,6 +231,7 @@ class LiveApiContext:
         cache = self.metadata
         airports = self.airports
         watchlists = self.watchlist_matches
+        alerts = self.alerts
         records = sorted(self.live.snapshot(), key=lambda record: record.icao)
         return [
             aircraft_payload(
@@ -223,9 +241,54 @@ class LiveApiContext:
                 route=worker.route_for(record.icao),
                 airport=airports.context_for(record.icao),
                 watchlists=watchlists.matches(record.icao),
+                interesting=alerts.interesting(record.icao),
             )
             for record in records
             if _wanted(record, positioned)
+        ]
+
+    def interesting_aircraft(self) -> list[dict[str, Any]]:
+        """The currently-matching live set — ``docs/API.md`` §3.4.
+
+        The §3.3 aircraft object, restricted to aircraft with a non-``null``
+        ``interesting`` block and ordered **severity then distance**, which is
+        the ordering §3.4 and SPEC §49 both ask for. An aircraft with no
+        distance sorts last within its severity band rather than first: no
+        distance means no position, and a panel that put the aircraft it cannot
+        place above the one overhead would be answering the wrong question.
+
+        Answered entirely from memory, like :meth:`aircraft` — the engine has
+        already evaluated, so this is a filter over a dict rather than a second
+        evaluation.
+        """
+        alerts = self.alerts
+        payloads: list[tuple[LiveAircraft, InterestingState]] = []
+        for record in self.live.snapshot():
+            interesting = alerts.interesting(record.icao)
+            if interesting is not None:
+                payloads.append((record, interesting))
+        payloads.sort(
+            key=lambda item: (
+                -item[1].severity.rank,
+                item[0].distance_nm if item[0].distance_nm is not None else float("inf"),
+                item[0].icao,
+            )
+        )
+        worker: PersistenceWorker = self._app.state.persistence
+        cache = self.metadata
+        airports = self.airports
+        watchlists = self.watchlist_matches
+        return [
+            aircraft_payload(
+                record,
+                sighting_id=worker.sighting_id_for(record.icao),
+                metadata=cache.get(record.icao),
+                route=worker.route_for(record.icao),
+                airport=airports.context_for(record.icao),
+                watchlists=watchlists.matches(record.icao),
+                interesting=interesting,
+            )
+            for record, interesting in payloads
         ]
 
     def aircraft_for(self, icaos: Iterable[str]) -> list[dict[str, Any]]:
@@ -244,6 +307,7 @@ class LiveApiContext:
         cache = self.metadata
         airports = self.airports
         watchlists = self.watchlist_matches
+        alerts = self.alerts
         payloads: list[dict[str, Any]] = []
         for icao in icaos:
             record = live.get(icao)
@@ -256,6 +320,7 @@ class LiveApiContext:
                         route=worker.route_for(icao),
                         airport=airports.context_for(icao),
                         watchlists=watchlists.matches(icao),
+                        interesting=alerts.interesting(icao),
                     )
                 )
         return payloads
@@ -502,6 +567,41 @@ class LiveApiContext:
             limit=limit, offset=offset, types=types, from_ms=from_ms, to_ms=to_ms
         )
         return [activity_event_payload(event) for event in events]
+
+    @property
+    def alert_history(self) -> AlertRepository:
+        """The alert tables' query layer, built from the running database.
+
+        A fresh repository per call, like :attr:`activity` and for the same
+        reason: this is a REST read on the request path, not a live-path
+        lookup. Deliberately *not* read through ``app.state.alerts`` — the
+        running engine holds per-sighting dedupe state a request has no
+        business touching, and the history is answered from the table it
+        wrote.
+        """
+        database: Database = self._app.state.database
+        return AlertRepository(database)
+
+    async def alert_matches(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        severity: str | None = None,
+        icao: str | None = None,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """One page of the alert-match history — ``docs/API.md`` §3.9."""
+        matches = await self.alert_history.list_matches(
+            limit=limit,
+            offset=offset,
+            severity=severity,
+            icao=icao,
+            from_ms=from_ms,
+            to_ms=to_ms,
+        )
+        return [alert_match_payload(match) for match in matches]
 
     # ------------------------------------------------------- receiver stats
 

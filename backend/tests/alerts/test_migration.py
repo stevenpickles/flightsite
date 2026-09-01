@@ -312,7 +312,10 @@ async def test_models_and_migrations_do_not_drift_at_head(db_path: Path) -> None
 
 
 async def test_the_downgrade_drops_exactly_this_slice_s_tables(db_path: Path) -> None:
-    await upgrade_empty_database(db_path)
+    """Upgraded to *this* revision rather than to head: head is 0012 today, but
+    a later slice adding a table would otherwise make this assertion about its
+    tables as well as these two."""
+    await upgrade_empty_database(db_path, REVISION)
     before = table_names(db_path)
 
     async with database_at(db_path) as database:

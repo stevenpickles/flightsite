@@ -57,7 +57,12 @@ from typing import Final, NamedTuple
 from flightsite.db.clock import to_epoch_ms
 from flightsite.live import GroundState, LiveAircraft
 from flightsite.sightings.tracks import TrackSample, from_track_point, thin_for_checkpoint
-from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS, ClosureReason, SightingEventType
+from flightsite.sightings.vocabulary import (
+    EMERGENCY_SQUAWKS,
+    ClosureReason,
+    SightingEventType,
+    outranks_severity,
+)
 
 #: Cap on un-checkpointed points held per sighting. Four hours at 1 Hz, the
 #: same bound :data:`~flightsite.live.track.DEFAULT_TRACK_CAPACITY` puts on a
@@ -192,6 +197,13 @@ class ActiveSighting:
     #: report (SPEC §28, §41).
     inferred_airport_ident: str | None = None
     inferred_phase: str | None = None
+
+    #: Highest alert severity any rule or built-in has reached on this sighting
+    #: (slice 038). Set from the alert engine's task, never by :meth:`observe`
+    #: — an alert is a conclusion about an observation, not something a decoder
+    #: transmits. ``alert_matches`` remains the source of truth; this is the
+    #: denormalized answer the sightings list and the daily rollups read.
+    max_alert_severity: str | None = None
 
     any_position: bool = False
     mlat_used: bool = False
@@ -579,6 +591,59 @@ class ActiveSighting:
             return False
         self.inferred_airport_ident = inferred.ident
         self.inferred_phase = phase
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
+    # ------------------------------------------------------ alert evaluation
+
+    def apply_alert_severity(self, severity: str, reason: str, at_ms: int) -> bool:
+        """Raise this sighting's alert severity; ``True`` if anything changed.
+
+        Called from the alert engine's task (slice 038), never from
+        :meth:`observe`, and the exact shape of :meth:`apply_route` and
+        :meth:`apply_inferred_airport`: a plain in-memory mutation plus a
+        queued event, with the transaction, the ordering and the
+        retry-on-failure all staying the worker's. So the column and its event
+        land in one commit and a failed cycle rewrites both.
+
+        **Monotone.** ``max_alert_severity`` is a maximum over the sighting, so
+        a later, lower-severity match does not lower it — the sighting really
+        did reach the higher one — and a repeat of the standing severity
+        changes nothing. That is what makes this idempotent under a replay and
+        under a restart that rehydrated the stored value.
+
+        Two ``sighting_events`` come out of it, and they are the two
+        ``docs/DATA_MODEL.md`` §2.5 reserved for this slice:
+        ``alert_matched`` the first time this sighting alerts at all, and
+        ``alert_severity_upgraded`` each time a later match raises the bar.
+        SPEC §48's "a newly matched higher-priority condition may notify again"
+        is exactly the second one, so the timeline records the distinction the
+        notification layer acts on rather than making it re-derive it.
+
+        Args:
+            severity: the matched severity, one of
+                :data:`~flightsite.sightings.vocabulary.ALERT_SEVERITIES`.
+            reason: the human-readable match reason, recorded on the event so
+                the sighting timeline says *why* without a join.
+            at_ms: when the match happened, in UTC epoch milliseconds.
+        """
+        if not outranks_severity(severity, self.max_alert_severity):
+            return False
+        previous = self.max_alert_severity
+        self.max_alert_severity = severity
+        if previous is None:
+            self._emit(
+                SightingEventType.ALERT_MATCHED,
+                at_ms,
+                {"severity": severity, "reason": reason},
+            )
+        else:
+            self._emit(
+                SightingEventType.ALERT_SEVERITY_UPGRADED,
+                at_ms,
+                {"from": previous, "to": severity, "reason": reason},
+            )
         self.dirty = True
         self.flush_immediately = True
         return True
