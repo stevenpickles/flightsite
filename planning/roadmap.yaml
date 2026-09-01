@@ -317,7 +317,7 @@ slices:
     title: "Sighting persistence core"
     phase: 2
     branch: "009-sighting-persistence-core"
-    status: planned
+    status: merged
     depends_on: ["005", "008"]
     objective: "Persist aircraft and sightings: write-behind worker, open/close lifecycle, flight context, lifetime records, and T0."
     scope:
