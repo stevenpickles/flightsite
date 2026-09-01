@@ -12,6 +12,7 @@ import {
   installConfigApiMock,
 } from "@/test/configApiMock";
 import { resetMapLibreMock } from "@/test/maplibreGlMock";
+import { installNotificationMock } from "@/test/notificationMock";
 
 function renderSetupWizardPage() {
   const queryClient = new QueryClient({
@@ -175,5 +176,102 @@ describe("SetupWizardPage", () => {
 
     // The not-yet-reached "Review" step stays disabled.
     expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
+  });
+
+  /**
+   * Walks the wizard from Welcome to the Finish click, optionally switching
+   * the notification preference off on the way past step (e).
+   */
+  async function completeWizard(
+    user: ReturnType<typeof userEvent.setup>,
+    { wantsNotifications }: { wantsNotifications: boolean },
+  ): Promise<void> {
+    await screen.findByText(/welcome to flightsite/i);
+    await user.type(screen.getByLabelText(/site name/i), "Home");
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByText(/receiver location/i);
+    await user.type(screen.getByLabelText(/latitude/i), "47.6");
+    await user.type(screen.getByLabelText(/longitude/i), "-122.3");
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByText(/decoder endpoint/i);
+    await user.click(screen.getByRole("button", { name: /skip test/i }));
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByText(/^units$/i);
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByRole("heading", { name: /browser notifications/i });
+    if (!wantsNotifications) {
+      await user.click(
+        screen.getByRole("checkbox", { name: /enable browser notifications/i }),
+      );
+    }
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByText(/metadata & enrichment/i);
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByText(/alert templates/i);
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    await screen.findByRole("heading", { name: /^review$/i });
+    await user.click(screen.getByRole("button", { name: /finish setup/i }));
+  }
+
+  describe("notification permission (slice 040)", () => {
+    it("never asks the browser while the wizard is merely open", async () => {
+      // `docs/SECURITY.md` §5: requested only after the user opts in, never
+      // unprompted — walking up to the notifications step is not an opt-in.
+      installConfigApiMock({ firstRun: true });
+      const api = installNotificationMock({ permission: "default" });
+      const user = userEvent.setup();
+      renderSetupWizardPage();
+
+      await screen.findByText(/welcome to flightsite/i);
+      await user.type(screen.getByLabelText(/site name/i), "Home");
+      await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+      expect(api.requestPermission).not.toHaveBeenCalled();
+    });
+
+    it("asks once on Finish when the user opted in", async () => {
+      installConfigApiMock({ firstRun: true });
+      const api = installNotificationMock({
+        permission: "default",
+        requestResult: "granted",
+      });
+      const user = userEvent.setup();
+      renderSetupWizardPage();
+
+      await completeWizard(user, { wantsNotifications: true });
+
+      expect(await screen.findByText("Live Map Page")).toBeInTheDocument();
+      expect(api.requestPermission).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not ask when the user turned notifications off", async () => {
+      installConfigApiMock({ firstRun: true });
+      const api = installNotificationMock({ permission: "default" });
+      const user = userEvent.setup();
+      renderSetupWizardPage();
+
+      await completeWizard(user, { wantsNotifications: false });
+
+      expect(await screen.findByText("Live Map Page")).toBeInTheDocument();
+      expect(api.requestPermission).not.toHaveBeenCalled();
+    });
+
+    it("finishes setup even where the browser has no Notification API", async () => {
+      vi.stubGlobal("Notification", undefined);
+      installConfigApiMock({ firstRun: true });
+      const user = userEvent.setup();
+      renderSetupWizardPage();
+
+      await completeWizard(user, { wantsNotifications: true });
+
+      expect(await screen.findByText("Live Map Page")).toBeInTheDocument();
+    });
   });
 });

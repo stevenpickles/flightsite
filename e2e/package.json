@@ -16,8 +16,13 @@
     "e2e": "node scripts/run-suite.mjs chromium",
     "e2e:firefox": "node scripts/run-suite.mjs firefox",
     "e2e:webkit": "node scripts/run-suite.mjs webkit",
+    "visual": "node scripts/visual-docker.mjs",
+    "visual:update": "node scripts/visual-docker.mjs --update-snapshots",
+    "visual:capture": "node scripts/visual-capture.mjs",
+    "visual:in-container": "node scripts/visual.mjs",
     "typecheck": "tsc -p . --noEmit",
-    "report": "playwright show-report"
+    "report": "playwright show-report",
+    "report:visual": "playwright show-report playwright-report-visual"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

@@ -1050,7 +1050,7 @@ slices:
     title: "Browser notifications"
     phase: 6
     branch: "040-browser-notifications"
-    status: planned
+    status: merged
     depends_on: ["038", "039"]
     objective: "Deliver alert notifications via the browser Notification API with correct permission handling and deduplication."
     scope:
@@ -1196,7 +1196,7 @@ slices:
     title: "Visual regression suite"
     phase: 8
     branch: "047-visual-regression"
-    status: planned
+    status: merged
     depends_on: ["020", "032", "034", "039", "041"]
     objective: "Deterministic screenshot regression over stable views using demo data."
     scope:
@@ -1233,7 +1233,7 @@ slices:
     title: "Performance harness & Pi gates"
     phase: 8
     branch: "049-performance-harness"
-    status: planned
+    status: merged
     depends_on: ["009", "010", "011", "012", "038", "053"]
     objective: "Performance regression harness measuring SPEC.md §85 metrics with hard gates for correctness-critical limits."
     scope:

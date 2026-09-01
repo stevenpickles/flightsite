@@ -61,6 +61,8 @@ browser, not just the first one to run (see `e2e/playwright.config.ts` and
 `e2e/scripts/`).
 
 ```bash
+docker compose build                   # FIRST — see below; not done for you
+
 cd e2e
 npm install
 npx playwright install --with-deps    # first run only
@@ -69,6 +71,16 @@ npm run e2e                            # Chromium: stack up, full suite, stack d
 npm run e2e:firefox                    # same, Firefox
 npm run e2e:webkit                     # same, WebKit
 ```
+
+**Build the images yourself, every time you change the app.** `compose.yaml` names
+both services by a published `ghcr.io/...:latest` tag, so `docker compose up` reuses
+whatever image already carries that tag in the local daemon and builds only when
+there is none. `scripts/stack.mjs` deliberately does not build (CI builds both images
+in an earlier step — `.github/workflows/e2e.yml`), so a local run started without the
+command above silently exercises whatever was last built on this machine — quite
+possibly another branch or another worktree. The failure mode is a confusing one:
+every pre-existing spec passes and only the specs covering your new UI fail, on
+elements that "should" be there.
 
 `npm run e2e` (etc.) always tears the stack down afterward, pass or fail. To run
 against a stack you're keeping up between runs (faster iteration on one spec):
@@ -79,12 +91,62 @@ npm test                               # Chromium only, against the running stac
 npm run stack:down
 ```
 
-The suite's four spec files (`e2e/tests/01-*` … `04-*`) run in that fixed order,
-serially (`workers: 1`), against one shared backend within a browser: `01` completes
+The suite's spec files (`e2e/tests/01-*` … `05-*`) run in that fixed order, serially
+(`workers: 1`), against one shared backend within a browser: `01` completes
 first-run setup, `02` exercises the decoder connection test against the now-configured
-install, `03` and `04` assume setup is already done. Failures produce Playwright
+install, and `03`–`05` assume setup is already done. Failures produce Playwright
 traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
 (`npm run report` to view).
+
+### Visual regression suite
+
+A separate Playwright suite (`e2e/visual/`) takes screenshot baselines of five
+stable views — Live Map, aircraft detail, Analytics, Receiver, Alerts — in both
+dark and light themes (SPEC §83, `docs/TEST_STRATEGY.md` §5). It is **not** part
+of `npm run e2e`: different config, different lifecycle, different CI job
+(`.github/workflows/visual.yml`).
+
+**Always run it through Docker.** Screenshot baselines depend on the font
+renderer, so the suite runs inside `mcr.microsoft.com/playwright` — the same
+image CI uses — and refuses to run anywhere else rather than silently producing
+pixels that can never match. Both commands below wrap the run in that image; a
+working Docker daemon is the only prerequisite.
+
+```bash
+cd e2e
+
+npm run visual                         # compare against the committed baselines
+npm run visual:update                  # regenerate them after an intended UI change
+npm run report:visual                  # open the HTML report from the last run
+```
+
+`npm run visual:update` is *the* baseline-regeneration command. It is expected to
+be needed whenever a change intentionally alters how these views look — a restyle,
+a spacing change, a new field on a card, or another slice's accessibility or
+contrast work. Regenerating is cheap and normal; **call baseline updates out in
+the PR description** so a reviewer knows the screenshot diff is the point rather
+than a surprise.
+
+No backend runs during a visual run. Every `/api/v1` and `/api/internal` response
+is replayed from a committed HTTP archive, the live WebSocket is replaced by one
+frozen snapshot frame, basemap tiles are blocked, `Date.now()` is frozen and CSS
+motion is disabled — so the only thing that can move a screenshot is the frontend
+itself. The MapLibre canvas is masked out of the Live Map shots: its pixels come
+from a software GL rasterizer with no cross-run guarantee, and a flaky baseline is
+worse than no baseline. The map's own behavior is covered by the flow suite and by
+unit tests.
+
+The fixtures are regenerated separately, and much less often — only when the API
+changes shape or a view starts needing an endpoint the recording does not contain:
+
+```bash
+npm run visual:capture                 # re-record e2e/visual/fixtures/ from a demo stack
+npm run visual:update                  # then re-take the baselines
+```
+
+`visual:capture` brings up its own seeded demo stack, drives all five views, writes
+`e2e/visual/fixtures/` (`api.har`, `live-snapshot.json`, `manifest.json`), and tears
+the stack down. Do not hand-edit the fixtures — re-capture instead.
 
 ### Demo mode and capture/replay are the standard dev environment
 

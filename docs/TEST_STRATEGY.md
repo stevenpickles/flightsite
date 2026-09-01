@@ -119,7 +119,7 @@ Flaky tests are treated as defects. Rules:
 | Aircraft selection | 020 |
 | Aircraft detail | 020 |
 | Interesting-aircraft alert | 046 |
-| Browser notification permission flow | 046 |
+| Browser notification permission flow | 040 (Chromium only — see below) |
 | Aircraft page | 046 |
 | Sightings page | 046 |
 | Analytics windows (all presets) | 046 |
@@ -128,6 +128,17 @@ Flaky tests are treated as defects. Rules:
 
 E2E is a required CI check from slice 020 onward. Failures produce traces and
 screenshots as CI artifacts.
+
+**Browser notifications.** The permission flow runs in Chromium only: Playwright can
+grant and clear the `notifications` permission there, cannot in Firefox or WebKit, and
+cannot drive a native permission prompt in any of the three — so the other two
+projects skip the spec, the same capability escape hatch aircraft selection uses for
+WebGL. *Delivery* (an alert becoming exactly one notification, plus the allowed
+severity-upgrade extra) is covered by unit tests against the real protocol client
+rather than E2E: a demo alert fires at a fixed phase of the scenario's 30-minute
+rotation, so waiting for one from an arbitrary start time would be a coin toss.
+Making a demo alert observable end to end belongs with the interesting-aircraft alert
+flow above.
 
 ---
 
@@ -143,6 +154,35 @@ through a reviewable diff workflow — baseline updates are called out in the PR
 Anti-goal: do not chase pixel-perfect coverage of every state; cover the stable,
 high-value views only.
 
+### 5.1 How it is realized (slice 047)
+
+`e2e/visual/`, driven by `e2e/playwright.visual.config.ts` — a separate config from
+the flow suite, Chromium-only (CI Firefox has no WebGL and WebKit's software GL
+path differs again; per-browser baselines would triple the review surface for no
+extra signal, and §7's "engine-specific exceptions must be documented in the E2E
+config" is satisfied there).
+
+Determinism comes from removing every non-frontend input rather than from timing:
+
+| Input | How it is frozen |
+|---|---|
+| API responses | replayed from a committed HTTP archive (`e2e/visual/fixtures/api.har`); no backend runs |
+| Live WebSocket | one recorded `snapshot` frame, then silence — the live picture stops advancing |
+| Clock | `page.clock.setFixedTime` at the capture instant, so relative timestamps never tick |
+| Theme | seeded into localStorage before first paint, through the app's own FOUC guard |
+| Basemap tiles | blocked, as in the flow suite (§3 rule 5); the map's documented degraded state is what is locked |
+| CSS motion | zeroed durations injected before first paint, plus `animations: "disabled"` at capture |
+| ECharts entry animation | `toHaveScreenshot`'s built-in "capture until two frames match" settling |
+| Font rendering | the whole suite runs inside `mcr.microsoft.com/playwright`, the image CI uses |
+| MapLibre canvas | masked out — software-GL raster has no cross-run guarantee |
+
+Commands (`docs/DEVELOPMENT.md`, "Visual regression suite"): `npm run visual` to
+compare, `npm run visual:update` to regenerate baselines, `npm run visual:capture`
+to re-record fixtures. All run in the pinned container; the suite refuses to run
+outside it so baselines stay single-platform. CI job: `.github/workflows/visual.yml`,
+which uploads Playwright's expected/actual/diff PNGs on failure so an intended
+restyle can be told from a regression during review.
+
 ---
 
 ## 6. Performance and Scale (SPEC §85–§86)
@@ -152,6 +192,21 @@ high-value views only.
 Reference hardware: Raspberry Pi 4. CI runs the harness on dev-class runners with
 calibrated budgets; Pi 4 qualification is a documented procedure executed for releases
 (slice 049 establishes baselines).
+
+**`docs/PERFORMANCE.md` is the canonical budget table**, rendered from
+`backend/src/flightsite/perf/budgets.py`, which is what the harness actually enforces.
+The lists below are the strategy those budgets implement; the numbers live there.
+
+How the harness runs:
+
+- **Hard gates run on every PR.** A short smoke run of the whole pipeline at 500
+  aircraft lives in `backend/tests/perf/` and executes as part of the ordinary backend
+  suite, so a regression fails the required check on the PR that causes it.
+- **The sustained run is behind the `load` marker**, which — uniquely among this repo's
+  markers — is *excluded* from the default suite (`-m 'not load'` in `addopts`). A
+  sustained run is minutes of wall clock. `.github/workflows/perf.yml` runs it on a
+  schedule and on demand, and is deliberately not a required check.
+- **`flightsite-perf`** is the same harness standalone, for qualifying real hardware.
 
 **Hard gates (fail CI/release):**
 

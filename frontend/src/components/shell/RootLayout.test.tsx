@@ -4,16 +4,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { NAV_ITEMS } from "@/components/shell/nav-items";
 import {
   defaultFlightSiteConfig,
   installConfigApiMock,
 } from "@/test/configApiMock";
+import { installNotificationMock } from "@/test/notificationMock";
 import { renderApp } from "@/test/test-utils";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   useMapConfigStore.setState({ config: DEV_PLACEHOLDER_MAP_CONFIG });
+  useNotificationStore.getState().reset();
 });
 
 describe("RootLayout", () => {
@@ -79,6 +82,45 @@ describe("RootLayout", () => {
         label: "Home Roof",
       });
     });
+  });
+
+  it("mirrors the notification preferences into the store the dispatcher reads", async () => {
+    installConfigApiMock({
+      firstRun: false,
+      config: defaultFlightSiteConfig({
+        notifications: {
+          enabled: true,
+          info: false,
+          interesting: false,
+          high: true,
+          critical: true,
+        },
+      }),
+    });
+    renderApp("/");
+
+    await waitFor(() => {
+      expect(useNotificationStore.getState().preferences).toEqual({
+        enabled: true,
+        info: false,
+        interesting: false,
+        high: true,
+        critical: true,
+      });
+    });
+  });
+
+  it("mirrors preferences without ever asking the browser for permission", async () => {
+    // `docs/SECURITY.md` §5: never unprompted. Loading the app is not a
+    // prompt, however enthusiastically the config says notifications are on.
+    const api = installNotificationMock({ permission: "default" });
+    installConfigApiMock({ firstRun: false });
+    renderApp("/");
+
+    await waitFor(() => {
+      expect(useNotificationStore.getState().preferences.enabled).toBe(true);
+    });
+    expect(api.requestPermission).not.toHaveBeenCalled();
   });
 
   it("leaves the map on its fallback config when the config fetch fails", async () => {
