@@ -44,7 +44,7 @@ shared runner under coverage instrumentation is slow and noisy, and a bound
 five times the budget still catches every structural regression (a hot-path
 await, a per-aircraft query, a superlinear scan) while never failing on a busy
 machine. In practice the measured figures sit one to two orders of magnitude
-inside the asserted bound; see §4.
+inside the asserted bound; see §5.5.
 
 Budgets that measure a *quantity* rather than a duration get no headroom at
 all. A 1 GB memory ceiling relaxed fivefold is not a gate, and the live
