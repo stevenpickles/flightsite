@@ -56,7 +56,10 @@ export const router = createBrowserRouter([
             element: (
               <Suspense
                 fallback={
-                  <p className="p-8 text-sm text-muted-foreground">
+                  <p
+                    role="status"
+                    className="p-8 text-sm text-muted-foreground"
+                  >
                     Loading analytics…
                   </p>
                 }
@@ -70,7 +73,10 @@ export const router = createBrowserRouter([
             element: (
               <Suspense
                 fallback={
-                  <p className="p-8 text-sm text-muted-foreground">
+                  <p
+                    role="status"
+                    className="p-8 text-sm text-muted-foreground"
+                  >
                     Loading receiver…
                   </p>
                 }

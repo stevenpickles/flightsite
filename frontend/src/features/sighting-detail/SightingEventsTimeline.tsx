@@ -33,7 +33,7 @@ const ICONS: Record<SightingEventType, LucideIcon> = {
 
 const EMERGENCY_TONE: Partial<Record<SightingEventType, string>> = {
   emergency_start: "text-destructive",
-  alert_matched: "text-amber-600 dark:text-amber-400",
+  alert_matched: "text-warning",
   alert_severity_upgraded: "text-destructive",
 };
 

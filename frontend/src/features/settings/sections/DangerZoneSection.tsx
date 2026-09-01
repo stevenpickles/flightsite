@@ -113,7 +113,7 @@ export function DangerZoneSection() {
       </div>
 
       {clearMutation.isSuccess && (
-        <p role="status" className="text-sm text-accent-foreground">
+        <p role="status" className="text-sm text-accent">
           Metadata cache cleared: {clearMutation.data.aircraft_metadata_rows}{" "}
           metadata row(s), {clearMutation.data.route_cache_rows} route-cache
           row(s), {clearMutation.data.airport_rows} airport row(s) removed.
@@ -128,7 +128,7 @@ export function DangerZoneSection() {
       )}
 
       {resetMutation.isSuccess && (
-        <p role="status" className="text-sm text-accent-foreground">
+        <p role="status" className="text-sm text-accent">
           {resetMutation.data.message}
         </p>
       )}

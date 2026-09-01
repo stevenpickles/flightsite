@@ -17,6 +17,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 
 export interface ConfirmDangerDialogProps {
   open: boolean;
@@ -54,7 +55,9 @@ export function ConfirmDangerDialog({
   onConfirm,
 }: ConfirmDangerDialogProps) {
   const [typed, setTyped] = useState("");
-  const panelRef = useRef<HTMLDivElement>(null);
+  // A true modal (`aria-modal="true"`): Tab is trapped inside the panel, and
+  // focus returns to the button that opened it on close.
+  const panelRef = useDialogFocus<HTMLDivElement>({ open, modal: true });
   const inputRef = useRef<HTMLInputElement>(null);
   const headingId = useId();
   const inputId = useId();

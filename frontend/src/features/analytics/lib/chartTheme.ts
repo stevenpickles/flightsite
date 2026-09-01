@@ -34,7 +34,9 @@ const FALLBACK: Record<Theme, ChartTheme> = {
     ink: "#20242d",
     mutedInk: "#6b7280",
     grid: "#dfe1e6",
-    series: ["#2a78d6", "#eb6834", "#1baf7a"],
+    // Kept in lockstep with `--chart-series-*` in index.css; series 3 was
+    // darkened in slice 048 to clear the 3:1 contrast floor on the light card.
+    series: ["#2a78d6", "#eb6834", "#149463"],
   },
   dark: {
     mode: "dark",
