@@ -896,7 +896,7 @@ slices:
     title: "Receiver metrics & retention"
     phase: 5
     branch: "033-receiver-metrics"
-    status: planned
+    status: merged
     depends_on: ["005", "007"]
     objective: "Ingest decoder-native statistics plus FlightSite metrics with high-res retention, downsampling, and pruning."
     scope:
