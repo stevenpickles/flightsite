@@ -796,7 +796,7 @@ slices:
     title: "Aviation overlays"
     phase: 4
     branch: "028-aviation-overlays"
-    status: planned
+    status: merged
     depends_on: ["013", "027"]
     objective: "Airport and airspace map overlays with documented open licensing."
     scope:
