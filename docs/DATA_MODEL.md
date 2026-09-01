@@ -779,9 +779,11 @@ Simplification epsilon is the main tuning knob and is benchmarked in slice 052.
 > only 1002 bytes inline at SQLite's default 4096-byte page size, so a packed track
 > beyond ~46 points spills a whole 4 KiB overflow page — and **54.5% of tracks do**,
 > because the retained-point distribution has a real tail (median 50, p90 110,
-> p99 211). Scenario B scales by the same factor: ~72 GB over three years as built
-> today, against the 36–42 GB predicted above, so that paragraph's sizing advice is
-> optimistic as things stand.
+> p99 211). Scenario B was measured too, at 30 days: **3,042 bytes/sighting against
+> Scenario A's 3,064**, so the cost per sighting does not depend on traffic density
+> and B inherits the overrun in full — **20.06 GB/year against the 12–14 predicted
+> above, about 60 GB over three years against 36–42**. The sizing advice in the
+> paragraph above is therefore optimistic as things stand.
 >
 > The lever is the inline limit, not retention. Giving `sighting_tracks` a rowid, or
 > raising the page size, moves the limit past the distribution; measured at a

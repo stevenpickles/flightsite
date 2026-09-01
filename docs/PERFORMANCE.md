@@ -548,8 +548,14 @@ The **multi-year** run is excluded from the default suite, behind the same
 `load` marker slice 049's sustained run uses:
 
 ```bash
-cd backend && uv run pytest -m load --no-cov
+cd backend && uv run pytest -m load tests/perf/storage --no-cov
 ```
+
+Scoping to `tests/perf/storage` is what `.github/workflows/perf.yml` does, and
+is worth copying: a bare `-m load` also selects §4.1's sustained load run,
+which is a different job with a different runtime. The span defaults to one
+year and is set by `FLIGHTSITE_STORAGE_QUAL_DAYS`; three years needs roughly
+20 GB of working space, which is why it is not the default.
 
 #### Standalone, on real hardware
 
@@ -674,15 +680,45 @@ Backup and restore of the 5.03 GB database: **create 406.9 s**, verify 26.5 s,
 compression is recovering the overflow-page slack described in §7.7). Restore
 is fourteen times faster than create, and §7.7 explains why.
 
-#### 7.6.2 What was not measured
+#### 7.6.2 Scenario B — the design envelope
 
-Scenario B at three years — ~72 GB at the growth rate measured above — was not
-generated: it needs roughly 230 GB of working space once the backup snapshot,
-archive and vacuum copy are accounted for, and several hours. Its per-sighting
-cost is the figure that would matter, and that is scale-free by construction
-(§7.3), so the Scenario A result above is the load-bearing measurement for both
-receivers. A Scenario B run remains the honest way to confirm it, and
-`--scenario envelope` exists for whoever has the disk.
+§9 says slice 050 validates *both* scenarios, and the premise of §7.3's single
+growth budget is that per-sighting cost does not depend on how dense the
+traffic is. That is a claim, so it was measured rather than assumed.
+
+**2026-09-01** · same machine · Scenario B (envelope), **30 days**, 541,980
+sightings, 1.65 GB · `flightsite-storage-qual --scenario envelope --days 30`
+
+| | Scenario A (1,095 days) | Scenario B (30 days) | Agreement |
+|---|---|---|---|
+| Sightings/day | 1,500 | 18,000 | 12x denser |
+| `sighting_tracks` | 2,868 B/row | 2,867 B/row | within 0.04% |
+| Bytes per sighting | 3,064 | 3,042 | within 0.7% |
+| Growth per year | 1.68 GB | **20.06 GB** | — |
+
+The two per-sighting figures agree to within a percent across a twelvefold
+difference in traffic density, which is the evidence §7.3's budget needs: one
+number really does judge both receivers. It also means Scenario B inherits the
+overrun exactly — **20.06 GB/year against §9's predicted 12–14**, or about
+60 GB over three years against the 36–42 GB §9 sizes for.
+
+That matters more for B than for A, because it is the scenario §9 says needs a
+"64–128 GB SD card or USB SSD": at 60 GB before any backup, three years does
+not comfortably fit the card §9 recommends. With the page size corrected as
+§7.7 describes, the same history projects to ~12.3 GB/year — 37 GB over three
+years, back inside §9's figure and back inside its sizing advice.
+
+The unindexed sorts behave as expected at this scale too: 3.8 s over 541,980
+sightings, against 8.0 s over the 1,642,500 of the Scenario A run.
+
+#### 7.6.3 What was not measured
+
+Scenario B at a full three years — ~60 GB — was not generated: it needs roughly
+200 GB of working space once the backup snapshot, archive and vacuum copy are
+counted, and several hours. The 30-day run above establishes the per-sighting
+cost, which is the figure that carries; the backup, restore and vacuum legs
+were also skipped for it, and are recorded from Scenario A instead.
+`--scenario envelope --days 1095` exists for whoever has the disk.
 
 ### 7.7 Findings for later slices
 
@@ -749,6 +785,13 @@ inside the `db_bytes_per_sighting` budget. The packed-track design is sound and
 its arithmetic is right; what is wrong is an interaction between a storage
 parameter nobody chose deliberately and a track-length distribution with a
 genuine tail.
+
+Scenario B inherits all of this unchanged — §7.6.2 measures its
+`sighting_tracks` at 2,867 B/row against Scenario A's 2,868 — so its three-year
+figure is about **60 GB as built today against §9's predicted 36–42 GB**,
+falling to ~37 GB with a 16 KiB page. That is the difference between §9's
+sizing advice ("a 64–128 GB SD card or USB SSD") being uncomfortable and being
+right.
 
 **This slice deliberately changes nothing.** `page_size` is only settable on an
 empty database or through a `VACUUM`, it applies to the whole file rather than
