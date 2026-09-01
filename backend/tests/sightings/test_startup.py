@@ -1,11 +1,16 @@
 """Restart behaviour: what a new worker does with sightings left open.
 
-Checkpoint-based unclean-shutdown recovery is slice 053's. What slice 009 owes
-is that a restart is not silently destructive: a sighting whose aircraft is
-still being heard continues in the same row, and one whose closure gap expired
-while the process was down is closed honestly with ``gap_timeout`` at the last
-moment the aircraft was actually heard — never left open forever, and never
-duplicated by a second sighting opening alongside it.
+A restart must not be silently destructive: a sighting whose aircraft is still
+being heard continues in the same row, and one whose closure gap expired while
+the process was down is closed at the last moment the aircraft was actually
+heard — never left open forever, and never duplicated by a second sighting
+opening alongside it.
+
+The closure itself is startup recovery's (slice 053): a process that came back
+never watched that gap, so the reason recorded is ``shutdown_recovery`` and the
+close happens inside :meth:`PersistenceWorker.start` rather than on the first
+cycle. The drills covering *what* is recovered live in ``test_recovery.py``;
+what this module pins is that the restart contract around it is unchanged.
 """
 
 from __future__ import annotations
@@ -121,13 +126,12 @@ async def test_a_restart_closes_a_sighting_whose_gap_expired_while_down(
     successor = restart(database, live, clock)
     await successor.start()
     try:
-        result = await successor.process_pending()
-
-        assert result.closed == 1
+        assert successor.recovery.recovered == 1
         sighting = await only_sighting(database)
-        assert sighting.closure_reason == ClosureReason.GAP_TIMEOUT.value
+        assert sighting.closure_reason == ClosureReason.SHUTDOWN_RECOVERY.value
         assert sighting.ended_ms == last_heard_ms
         assert successor.pending_count == 0
+        assert (await successor.process_pending()).wrote is False
     finally:
         await successor.stop()
 
@@ -284,7 +288,8 @@ async def test_a_removal_after_shutdown_is_still_closed_on_the_next_start(
     successor = restart(database, live, clock)
     await successor.start()
     try:
-        assert (await successor.process_pending()).closed == 1
-        assert (await only_sighting(database)).closure_reason == ClosureReason.GAP_TIMEOUT.value
+        assert successor.recovery.recovered == 1
+        sighting = await only_sighting(database)
+        assert sighting.closure_reason == ClosureReason.SHUTDOWN_RECOVERY.value
     finally:
         await successor.stop()

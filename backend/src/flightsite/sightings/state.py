@@ -57,7 +57,7 @@ from typing import Final, NamedTuple
 from flightsite.db.clock import to_epoch_ms
 from flightsite.live import GroundState, LiveAircraft
 from flightsite.sightings.tracks import TrackSample, from_track_point, thin_for_checkpoint
-from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS, SightingEventType
+from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS, ClosureReason, SightingEventType
 
 #: Cap on un-checkpointed points held per sighting. Four hours at 1 Hz, the
 #: same bound :data:`~flightsite.live.track.DEFAULT_TRACK_CAPACITY` puts on a
@@ -207,6 +207,14 @@ class ActiveSighting:
     #: heard again. Set when the aircraft leaves the live set; cleared when it
     #: comes back. ``None`` means the aircraft is currently live.
     close_deadline_ms: int | None = None
+    #: Reason to record when this sighting closes. ``gap_timeout`` for the
+    #: ordinary case — an absence the running process actually observed.
+    #: Startup recovery sets ``shutdown_recovery`` on a sighting whose repair
+    #: transaction failed, so the worker's retry records the honest reason
+    #: rather than claiming to have watched a gap nobody was there for; an
+    #: aircraft heard again before that retry resets it, because then the
+    #: sighting is alive and any later closure is an observed one.
+    closure_reason: ClosureReason = ClosureReason.GAP_TIMEOUT
 
     @property
     def duration_ms(self) -> int:
