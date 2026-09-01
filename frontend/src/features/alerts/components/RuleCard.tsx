@@ -105,7 +105,7 @@ export function RuleCard({ rule, templateName }: RuleCardProps) {
               className={
                 rule.enabled
                   ? "inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted-foreground"
-                  : "inline-flex items-center rounded-full border border-amber-500/60 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400"
+                  : "inline-flex items-center rounded-full border border-warning/60 px-2 py-0.5 text-xs font-semibold text-warning"
               }
             >
               {rule.enabled ? "Enabled" : "Disabled"}

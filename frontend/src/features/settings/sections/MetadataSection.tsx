@@ -43,7 +43,7 @@ const STATUS_META: Record<
 > = {
   ok: {
     label: "Up to date",
-    className: "text-accent-foreground",
+    className: "text-accent",
     icon: CheckCircle2,
   },
   failed: { label: "Failed", className: "text-destructive", icon: XCircle },
@@ -54,7 +54,7 @@ const STATUS_META: Record<
   },
   running: {
     label: "Running",
-    className: "text-accent-foreground",
+    className: "text-accent",
     icon: Loader2,
     spin: true,
   },
