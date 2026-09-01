@@ -160,6 +160,16 @@ def test_a_rule_can_be_deleted(client: TestClient) -> None:
     assert client.get(RULES_PATH).json() == {"rules": []}
 
 
+def test_replacing_a_rule_with_a_blank_name_is_refused(client: TestClient) -> None:
+    """The same domain rule the create path applies, on the update path — it
+    lives in the service, so it holds whichever verb reaches it."""
+    created = _create(client)
+
+    response = client.put(f"{RULES_PATH}/{created['id']}", json={**MILITARY_BODY, "name": "  "})
+
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize("method", ["put", "delete"])
 def test_operations_on_an_unknown_rule_answer_404(client: TestClient, method: str) -> None:
     call = getattr(client, method)
