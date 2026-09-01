@@ -134,6 +134,25 @@ class CurrentTrack:
         self._points.append(point)
         return True
 
+    def points_since(self, moment: datetime | None) -> tuple[TrackPoint, ...]:
+        """Points strictly newer than ``moment``, oldest first.
+
+        ``None`` returns the whole track. A reverse scan, so a consumer polling
+        for what it has not seen yet pays for the size of that tail rather than
+        the size of the track: sighting checkpointing (slice 052) asks this
+        question once per observation across the whole live set, and a copy of
+        every point each time would put an O(track) cost on a 1 Hz path.
+        """
+        if moment is None:
+            return tuple(self._points)
+        tail: list[TrackPoint] = []
+        for point in reversed(self._points):
+            if point.timestamp <= moment:
+                break
+            tail.append(point)
+        tail.reverse()
+        return tuple(tail)
+
     def points(self) -> tuple[TrackPoint, ...]:
         """An immutable, oldest-first copy of the track.
 
