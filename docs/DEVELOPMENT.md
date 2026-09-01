@@ -51,6 +51,41 @@ npm run dev                    # Vite dev server
 FLIGHTSITE_DEMO=1 docker compose up -d
 ```
 
+### Running E2E locally
+
+The `e2e/` workspace (Playwright — Chromium, Firefox, WebKit) drives the composed
+application in demo mode. It manages its own Docker Compose lifecycle rather than
+using Playwright's `webServer` option: each browser gets a **fresh** stack (its own
+temp data directory) so the first-run wizard flow means what it says on every
+browser, not just the first one to run (see `e2e/playwright.config.ts` and
+`e2e/scripts/`).
+
+```bash
+cd e2e
+npm install
+npx playwright install --with-deps    # first run only
+
+npm run e2e                            # Chromium: stack up, full suite, stack down
+npm run e2e:firefox                    # same, Firefox
+npm run e2e:webkit                     # same, WebKit
+```
+
+`npm run e2e` (etc.) always tears the stack down afterward, pass or fail. To run
+against a stack you're keeping up between runs (faster iteration on one spec):
+
+```bash
+npm run stack:up                       # FLIGHTSITE_DEMO=1, fresh data dir
+npm test                               # Chromium only, against the running stack
+npm run stack:down
+```
+
+The suite's four spec files (`e2e/tests/01-*` … `04-*`) run in that fixed order,
+serially (`workers: 1`), against one shared backend within a browser: `01` completes
+first-run setup, `02` exercises the decoder connection test against the now-configured
+install, `03` and `04` assume setup is already done. Failures produce Playwright
+traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
+(`npm run report` to view).
+
 ### Demo mode and capture/replay are the standard dev environment
 
 No ADS-B hardware is required for development. **Demo mode** (slice 011) provides a
