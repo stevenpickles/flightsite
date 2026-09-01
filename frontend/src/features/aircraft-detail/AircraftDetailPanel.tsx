@@ -28,7 +28,7 @@ import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/Exte
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
-import { ReservedSectionRow } from "@/features/aircraft-detail/components/ReservedSectionRow";
+import { NearestAirportSection } from "@/features/aircraft-detail/components/NearestAirportSection";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import {
@@ -268,9 +268,15 @@ export function AircraftDetailPanel() {
                 />
               </DetailSection>
 
-              <DetailSection title="Nearest airport">
-                <ReservedSectionRow note="Nearest-airport inference arrives with a later slice." />
-              </DetailSection>
+              {/* Local inference only (SPEC §41), and deliberately not part of
+               * the Route section above: what somebody told FlightSite and
+               * what FlightSite guessed stay apart, in the payload and on the
+               * screen. */}
+              <NearestAirportSection
+                airport={aircraft.nearest_airport}
+                provenanceSource={aircraft.provenance.nearest_airport}
+                units={units}
+              />
 
               <DetailSection title="History">
                 <p className="py-1 text-sm">

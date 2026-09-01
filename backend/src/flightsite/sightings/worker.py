@@ -138,7 +138,12 @@ from flightsite.live import (
 )
 from flightsite.sightings.recovery import RecoveryReport, ShutdownRecovery
 from flightsite.sightings.repository import ClosedTrack, SightingIds, SightingRepository
-from flightsite.sightings.state import ActiveSighting, SightingRoute, open_from
+from flightsite.sightings.state import (
+    ActiveSighting,
+    InferredAirport,
+    SightingRoute,
+    open_from,
+)
 from flightsite.sightings.vocabulary import ClosureReason
 
 logger = structlog.get_logger(__name__)
@@ -352,6 +357,50 @@ class PersistenceWorker:
             origin=route.origin_ident,
             destination=route.destination_ident,
             source=route.source,
+        )
+        return True
+
+    def inferred_airport_for(self, icao: str) -> InferredAirport | None:
+        """The local airport inference on ``icao``'s open sighting, if any.
+
+        The airport-context half of :meth:`route_for`, and read the same way
+        and for the same reason: the live API serializes the whole live set on
+        every frame, so this is an in-memory lookup on the accumulator the
+        worker already holds.
+
+        The *live* answer a client sees comes from
+        :class:`~flightsite.airports.service.AirportContextService`, which
+        holds the current context in memory; this is the persisted half, and it
+        is what a sighting keeps after the aircraft has gone.
+        """
+        active = self.sighting_for(icao)
+        return None if active is None else active.inferred_airport
+
+    def apply_inferred_airport(self, icao: str, inferred: InferredAirport, *, at_ms: int) -> bool:
+        """Attach a local airport inference to ``icao``'s open sighting.
+
+        The seam the airport context service writes through (slice 027), and
+        the exact shape of :meth:`apply_route`: a plain in-memory mutation of
+        the accumulator, with the transaction, the ordering and the
+        retry-on-failure all staying the worker's. The two are separate methods
+        rather than one because the two kinds of answer are separate columns
+        and must never be able to reach each other's (SPEC §28, §41).
+
+        Returns ``False`` when there is no open sighting for ``icao`` — the
+        aircraft left the live set, which is an ordinary outcome — and when the
+        inference is the one already recorded.
+        """
+        active = self.sighting_for(icao)
+        if active is None:
+            return False
+        if not active.apply_inferred_airport(inferred, at_ms):
+            return False
+        logger.info(
+            "sighting_airport_inferred",
+            icao=icao,
+            sighting_id=active.sighting_id,
+            ident=inferred.ident,
+            phase=active.inferred_phase,
         )
         return True
 

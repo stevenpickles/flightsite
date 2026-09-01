@@ -55,27 +55,42 @@ def _refuse_connection(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("no network in tests", request=request)
 
 
+def _refuse_network(monkeypatch: pytest.MonkeyPatch, target: str) -> None:
+    """Point a provider's client factory at a transport that always refuses.
+
+    Every registered source has to be pointed somewhere in a test that calls
+    ``update()`` with no argument — that runs *all* of them, and one left
+    unpatched would reach the internet from the test suite.
+    """
+    monkeypatch.setattr(
+        target,
+        lambda *_args, **_kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(_refuse_connection)
+        ),
+    )
+
+
 def test_the_service_is_constructed_without_touching_anything(
     isolated_data_dir: Path,
 ) -> None:
     """Building an app stays side-effect free (no connection, no directory).
 
-    Registering the ``faa`` source is itself side-effect free — it is an
-    in-memory dict entry, not I/O — so it belongs in this same assertion.
+    Registering a source is itself side-effect free — it is an in-memory dict
+    entry, not I/O — so it belongs in this same assertion.
     """
     app = create_app(isolated_data_dir)
 
     service = app.state.metadata
     assert isinstance(service, MetadataService)
     assert not service.cache.running
-    assert len(service.registry) == 2
+    assert len(service.registry) == 3
 
 
-def test_the_registry_ships_both_offline_sources(isolated_data_dir: Path) -> None:
-    """Slice 022 registers the offline primary source; slice 023 adds FAA."""
+def test_the_registry_ships_every_dataset_this_build_imports(isolated_data_dir: Path) -> None:
+    """Slice 022 registers the offline primary source, 023 adds FAA, 027 airports."""
     app = create_app(isolated_data_dir)
 
-    assert app.state.metadata.registry.names == ("faa", "mictronics")
+    assert app.state.metadata.registry.names == ("airports", "faa", "mictronics")
 
 
 def test_the_cache_runs_for_the_lifetime_of_the_app(isolated_data_dir: Path) -> None:
@@ -108,12 +123,8 @@ async def test_an_import_runs_through_the_started_app(
     registry -> importer -> repository pipeline without leaving the process.
     """
     _mock_mictronics(monkeypatch)
-    monkeypatch.setattr(
-        "flightsite.metadata.sources.faa.build_client",
-        lambda *_args, **_kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(_refuse_connection)
-        ),
-    )
+    _refuse_network(monkeypatch, "flightsite.metadata.sources.faa.build_client")
+    _refuse_network(monkeypatch, "flightsite.airports.ourairports.build_client")
     app = create_app(isolated_data_dir)
 
     with TestClient(app):
@@ -121,15 +132,16 @@ async def test_an_import_runs_through_the_started_app(
         run = await service.update()
 
         by_result = {result.source: result for result in run.results}
-        assert set(by_result) == {"mictronics", "faa"}
+        assert set(by_result) == {"mictronics", "faa", "airports"}
         assert by_result["mictronics"].ok
         assert by_result["mictronics"].rows_imported == 2
-        assert run.failed == ("faa",)
+        assert set(run.failed) == {"faa", "airports"}
 
         statuses = await service.statuses()
-        assert {status.source for status in statuses} == {"mictronics", "faa"}
+        assert {status.source for status in statuses} == {"mictronics", "faa", "airports"}
         by_source = {status.source: status for status in statuses}
         assert by_source["mictronics"].status == SourceStatus.OK
+        assert by_source["airports"].status == SourceStatus.FAILED
 
 
 @pytest.mark.parametrize("iterations", [2])

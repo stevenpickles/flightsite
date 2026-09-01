@@ -88,7 +88,7 @@ def test_registering_the_same_name_twice_is_refused(registry: SourceRegistry) ->
 
 def test_an_object_that_is_not_a_provider_is_refused(registry: SourceRegistry) -> None:
     """Caught at registration, not halfway through a run."""
-    with pytest.raises(RegistrationError, match="MetadataProvider"):
+    with pytest.raises(RegistrationError, match="DatasetProvider"):
         registry.register("faa", object())  # type: ignore[arg-type]
 
 
