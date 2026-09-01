@@ -12,6 +12,7 @@ export function defaultFlightSiteConfig(
 ): FlightSiteConfig {
   return {
     log_level: "INFO",
+    log_file_enabled: true,
     units: "aviation",
     timezone: "UTC",
     display_radius_nm: 250,

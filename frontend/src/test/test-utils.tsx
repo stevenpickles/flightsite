@@ -11,6 +11,7 @@ import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
+import { HealthPage } from "@/pages/HealthPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { ReceiverPage } from "@/pages/ReceiverPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -43,6 +44,7 @@ export function renderApp(initialPath = "/") {
               { path: "alerts", element: <AlertsPage /> },
               { path: "settings", element: <SettingsPage /> },
               { path: "activity", element: <ActivityPage /> },
+              { path: "health", element: <HealthPage /> },
             ],
           },
           { path: "/setup", element: <SetupWizardPage /> },

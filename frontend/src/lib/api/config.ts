@@ -83,6 +83,8 @@ export interface AlertConfig {
  * with secrets masked. */
 export interface FlightSiteConfig {
   log_level: "CRITICAL" | "ERROR" | "WARNING" | "INFO" | "DEBUG";
+  /** SPEC §68's rotating local logs, written under the data directory. */
+  log_file_enabled: boolean;
   units: UnitSystem;
   timezone: string;
   display_radius_nm: number;

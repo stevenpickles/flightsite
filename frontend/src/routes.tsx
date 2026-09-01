@@ -8,6 +8,7 @@ import { ActivityPage } from "@/pages/ActivityPage";
 import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
+import { HealthPage } from "@/pages/HealthPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SightingDetailPage } from "@/pages/SightingDetailPage";
@@ -92,6 +93,10 @@ export const router = createBrowserRouter([
           // fuller view is reached from the Live Map panel's "View all"
           // link, the way `sightings/:id` is reached from the log.
           { path: "activity", element: <ActivityPage /> },
+          // Same reasoning for the health area (roadmap slice 042): SPEC §67
+          // wants it reachable without SSH, not an eighth sidebar section, so
+          // the Receiver and Settings pages both link to it.
+          { path: "health", element: <HealthPage /> },
         ],
       },
       // Outside AppShell's sidebar chrome: a full-screen wizard layout
