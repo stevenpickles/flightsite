@@ -1002,7 +1002,7 @@ slices:
     title: "Alert rule engine"
     phase: 6
     branch: "038-alert-engine"
-    status: planned
+    status: merged
     depends_on: ["024", "031", "037"]
     objective: "Evaluate interesting-aircraft rules (AND-combined conditions, severities) with rarity, emergency squawk handling, templates, and per-sighting dedup."
     scope:
