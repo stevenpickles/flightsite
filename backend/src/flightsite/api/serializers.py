@@ -76,7 +76,8 @@ decoder values.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -89,6 +90,7 @@ from flightsite.ingest import Position
 from flightsite.live import LiveAircraft
 from flightsite.metadata.cache import AircraftMetadataView
 from flightsite.sightings.state import SightingRoute
+from flightsite.sightings.tracks import TrackSample
 from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
 
 #: Provenance keys from the live record that name a field this payload exposes.
@@ -456,6 +458,117 @@ def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
     }
 
 
+def sighting_row_payload(row: RowMapping) -> dict[str, Any]:
+    """One Sightings page row — ``docs/API.md`` §3.6, SPEC §57's column list.
+
+    Field names deliberately match :func:`aircraft_history_row_payload`
+    (``aircraft_type``, ``operator_group``, ``classification``,
+    ``provenance``) rather than the SQL columns' own names, for the reason
+    its docstring gives: one set of frontend field components renders both.
+    ``callsign``/``registration`` are both published so the client can
+    render SPEC §57's combined "tail/callsign" column, preferring whichever
+    is known.
+    """
+    classification, classification_source = _classification_from_row(row)
+    provenance = _resolved_provenance_from_row(row)
+    if classification_source is not None:
+        provenance["classification"] = classification_source
+    return {
+        "id": row["id"],
+        "icao": row["icao24"],
+        "callsign": row["callsign_last"],
+        "registration": row["registration"],
+        "aircraft_type": row["type_code"],
+        "model": row["model"],
+        "operator": row["operator_name"],
+        "operator_group": row["operator_group"],
+        "classification": classification,
+        "started_at": iso_utc(from_epoch_ms(row["started_ms"])),
+        "ended_at": None if row["ended_ms"] is None else iso_utc(from_epoch_ms(row["ended_ms"])),
+        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // 1000,
+        "closure_reason": row["closure_reason"],
+        "closest_approach_nm": row["closest_approach_nm"],
+        "max_range_nm": row["max_range_nm"],
+        "lowest_altitude_ft": row["lowest_alt_ft"],
+        "highest_altitude_ft": row["highest_alt_ft"],
+        "position_count": row["pos_count"],
+        "had_emergency": bool(row["had_emergency"]),
+        "max_alert_severity": row["max_alert_severity"],
+        "provenance": provenance,
+    }
+
+
+def sighting_event_payload(row: RowMapping) -> dict[str, Any]:
+    """One ``sighting_events`` row as the §3.6 event-timeline entry (SPEC §52).
+
+    ``payload_json`` is opaque storage (:mod:`flightsite.db.models`'
+    ``SightingEvent`` docstring); this is the one place it is parsed back
+    into the structured ``detail`` object the documented shape carries.
+    """
+    payload_json = row["payload_json"]
+    return {
+        "at": iso_utc(from_epoch_ms(row["ts_ms"])),
+        "type": row["type"],
+        "detail": None if payload_json is None else json.loads(payload_json),
+    }
+
+
+def sighting_path_point_payload(sample: TrackSample) -> dict[str, Any]:
+    """One decoded track sample as the §3.6 ``path`` point shape."""
+    return {
+        "t": iso_utc(from_epoch_ms(sample.ts_ms)),
+        "lat": sample.latitude,
+        "lon": sample.longitude,
+        "altitude_ft": sample.altitude_ft,
+        "source": sample.position_source,
+    }
+
+
+def sighting_detail_payload(
+    row: RowMapping,
+    *,
+    events: Sequence[RowMapping],
+    path: Sequence[TrackSample],
+) -> dict[str, Any]:
+    """One sighting's full detail — ``docs/API.md`` §3.6.
+
+    Flight context, reception stats (SPEC §51), per-sighting records, the
+    event timeline and the simplified (or, for an open sighting, checkpointed)
+    path. ``route``'s provenance follows the same "only when there is a value
+    to attribute" rule :func:`_provenance` applies to the live payload: a
+    sighting with no route enrichment publishes no ``route`` provenance
+    entry at all, not one naming a source for two nulls.
+    """
+    return {
+        "id": row["id"],
+        "icao": row["icao24"],
+        "callsign": row["callsign_last"],
+        "squawk": row["squawk_last"],
+        "started_at": iso_utc(from_epoch_ms(row["started_ms"])),
+        "ended_at": None if row["ended_ms"] is None else iso_utc(from_epoch_ms(row["ended_ms"])),
+        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // 1000,
+        "closure_reason": row["closure_reason"],
+        "route": {"origin": row["origin_ident"], "destination": row["destination_ident"]},
+        "reception": {
+            "rssi_peak_db": row["rssi_peak_db"],
+            "rssi_avg_db": row["rssi_avg_db"],
+            "rssi_min_db": row["rssi_min_db"],
+            "message_count": row["msg_count"],
+            "position_count": row["pos_count"],
+            "pct_with_position": row["pos_time_pct"],
+        },
+        "records": {
+            "closest_approach_nm": row["closest_approach_nm"],
+            "max_range_nm": row["max_range_nm"],
+            "lowest_altitude_ft": row["lowest_alt_ft"],
+            "highest_altitude_ft": row["highest_alt_ft"],
+        },
+        "events": [sighting_event_payload(event) for event in events],
+        "path": [sighting_path_point_payload(sample) for sample in path],
+        "provenance": {} if row["route_source"] is None else {"route": row["route_source"]},
+    }
+
+
 __all__ = [
     "BEARING_DECIMALS",
     "DISTANCE_DECIMALS",
@@ -467,4 +580,8 @@ __all__ = [
     "iso_utc",
     "lifetime_payload",
     "receiver_payload",
+    "sighting_detail_payload",
+    "sighting_event_payload",
+    "sighting_path_point_payload",
+    "sighting_row_payload",
 ]
