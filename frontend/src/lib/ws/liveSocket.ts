@@ -29,10 +29,12 @@
  * on mocks of this module.
  */
 
+import type { ActivityEvent } from "@/lib/api/activity";
 import type { BackoffOptions } from "@/lib/ws/backoff";
 import { backoffDelayMs, DEFAULT_BACKOFF } from "@/lib/ws/backoff";
 import type { DeltaData, SnapshotData } from "@/lib/ws/protocol";
 import {
+  asActivityEvent,
   asDeltaData,
   asSnapshotData,
   LIVE_WS_PATH,
@@ -69,6 +71,22 @@ export interface LiveSocketHandlers {
   onDelta: (data: DeltaData) => void;
   /** Connection state changed. Called only on a genuine transition. */
   onStatus: (status: ConnectionStatus) => void;
+  /**
+   * An `activity` frame: one event (§4.4, roadmap slice 035).
+   *
+   * Optional, unlike the three above, and that is the point of how slice 035
+   * touched this client at all. A caller that does not pass it gets exactly
+   * the slice-010 behaviour — the frame falls through to the same "ignore
+   * what you do not know" path §6 mandates, with no resync and no error — so
+   * the feed is opt-in per consumer rather than something every socket owner
+   * now has to handle.
+   *
+   * There is no replay: `activity` frames are not part of the snapshot/delta
+   * picture and a reconnect re-sends none of them. A consumer that needs the
+   * events it missed refetches `GET /api/v1/activity` and resumes appending,
+   * which is what `features/activity` does.
+   */
+  onActivity?: (event: ActivityEvent) => void;
 }
 
 export interface LiveSocketOptions extends Partial<LiveSocketHandlers> {
@@ -123,6 +141,10 @@ export class LiveSocket {
       onSnapshot: options.onSnapshot ?? (() => {}),
       onDelta: options.onDelta ?? (() => {}),
       onStatus: options.onStatus ?? (() => {}),
+      // Left genuinely absent rather than defaulted to a no-op: the dispatch
+      // switch reads its presence to decide whether an `activity` frame is
+      // something this consumer handles or something it ignores.
+      onActivity: options.onActivity,
     };
     this.url = options.url ?? liveSocketUrl();
     this.socketFactory = options.socketFactory ?? defaultSocketFactory;
@@ -207,14 +229,28 @@ export class LiveSocket {
         }
         return;
       }
+      case "activity": {
+        // A consumer without an `onActivity` handler falls through to exactly
+        // the ignore path below — no narrowing work, no error, no resync.
+        const handler = this.handlers.onActivity;
+        if (!handler) {
+          return;
+        }
+        const event = asActivityEvent(frame.data);
+        if (event) {
+          handler(event);
+        }
+        return;
+      }
       case "ping": {
         this.socket?.send(PONG_MESSAGE);
         return;
       }
       default:
         // §6: unknown types (and `pong`, which this client never provokes)
-        // are ignored, not errors. Slice 035's `activity` frame lands here
-        // until the activity feed consumes it.
+        // are ignored, not errors — the rule that let a slice-010 client
+        // survive slice 035 adding `activity` above, and that will let this
+        // one survive whatever comes next.
         return;
     }
   }
