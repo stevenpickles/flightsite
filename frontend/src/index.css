@@ -29,9 +29,16 @@
    * (`bg-accent text-accent-foreground`) and, far more often, as on-surface
    * text (`text-accent` links). At the previous L=0.6 it cleared neither —
    * 3.61:1 as link text on `--background` and 3.67:1 for white-on-accent,
-   * against a 4.5:1 requirement. Darkening satisfies both at once
-   * (4.94:1 and 5.02:1) because the two pull the same way. */
-  --accent: oklch(0.52 0.1 195);
+   * against a 4.5:1 requirement. Darkening satisfies both at once because
+   * the two pull the same way.
+   *
+   * L=0.46, not the 0.52 those two pairings alone would need: the sidebar's
+   * active nav item is `bg-accent/15 text-accent` — accent text on an
+   * accent-TINTED ground. A token-pair audit cannot see that case, because
+   * the background only exists once the browser composites the tint; the
+   * axe sweep caught it failing at 3.86:1 on every light-theme page. L=0.46
+   * gives 4.82:1 there and 6.29:1 as ordinary link text. */
+  --accent: oklch(0.46 0.1 195);
   --accent-foreground: oklch(0.99 0.01 195);
   /* Likewise dual-role: `text-destructive` error copy and the destructive
    * button's fill. L=0.58 left white-on-destructive at 4.48:1; L=0.55 lifts
@@ -50,7 +57,8 @@
    * control*, which is not exempt — it now clears 3:1 (3.48:1). */
   --border: oklch(0.9 0.006 240);
   --input: oklch(0.62 0.02 245);
-  --ring: oklch(0.52 0.1 195);
+  /* Tracks `--accent` so focus rings and selection read as one hue. */
+  --ring: oklch(0.46 0.1 195);
   --sidebar: oklch(0.97 0.004 240);
   --sidebar-foreground: oklch(0.2 0.03 250);
   --sidebar-border: oklch(0.9 0.006 240);
