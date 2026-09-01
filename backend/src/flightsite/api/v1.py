@@ -163,12 +163,8 @@ async def aircraft_history(
         str | None,
         Query(description="Exact `mission_category` match (SPEC §39)."),
     ] = None,
-    operator_group: Annotated[
-        str | None, Query(description="Curated operator group slug.")
-    ] = None,
-    type: Annotated[
-        str | None, Query(description="Exact ICAO type designator match.")
-    ] = None,
+    operator_group: Annotated[str | None, Query(description="Curated operator group slug.")] = None,
+    type: Annotated[str | None, Query(description="Exact ICAO type designator match.")] = None,
 ) -> dict[str, Any]:
     """Every airframe this receiver has ever sighted — ``docs/API.md`` §3.5.
 
