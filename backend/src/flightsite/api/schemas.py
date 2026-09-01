@@ -157,6 +157,9 @@ class AircraftView(_Model):
     #: :class:`NearestAirportView`.
     nearest_airport: NearestAirportView | None = None
     interesting: InterestingMatch | None = None
+    #: Watchlist names this aircraft currently matches (SPEC §42, slice 037).
+    #: Always present; ``[]`` when nothing matches — never a missing key.
+    watchlists: list[str] = Field(default_factory=list)
 
     #: §2.6. Keys name fields; values are the canonical provenance vocabulary.
     #: A field with no entry is decoder-direct.
@@ -830,7 +833,76 @@ class AnalyticsRarityResponse(_Model):
     rare_types: list[AnalyticsRareType] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------- activity
+
+
+#: ``docs/API.md`` §3.9 / SPEC §55's event vocabulary, spelled as the query and
+#: response values. Deliberately a ``Literal`` on the API surface even though
+#: ``activity_events.type`` carries no ``CHECK``: the column stays open so a
+#: later slice can add a producer without a migration, while the *published*
+#: schema names exactly what a client may receive today. Phase 6's
+#: ``alert_triggered`` and ``emergency_squawk`` appear because §3.9 lists them;
+#: no producer emits either until slice 039.
+ActivityEventTypeLiteral = Literal[
+    "alert_triggered",
+    "first_ever_aircraft",
+    "new_type",
+    "range_record",
+    "receiver_record",
+    "emergency_squawk",
+    "receiver_offline",
+    "receiver_restored",
+    "metadata_updated",
+    "milestone",
+]
+
+
+class ActivityEventView(_Model):
+    """One activity event — ``docs/API.md`` §3.9, and §4.4's frame body.
+
+    One shape over REST and over the WebSocket, built by one serializer, for
+    the same reason :class:`AircraftView` is: the feed's first page and the
+    live events appended to it must be one kind of object, or the client ends
+    up with two renderers that drift.
+
+    ``payload`` is deliberately open. Each event type carries the facts needed
+    to render *that* type — an airframe's identity, a record's value and the
+    value it beat, an import's per-source outcome — and modelling ten variants
+    as a discriminated union would publish a schema that has to change every
+    time a producer learns to say something more. What is guaranteed is the
+    envelope: every event has a ``type``, and the ``type`` says how to read the
+    ``payload``.
+    """
+
+    id: int
+    type: ActivityEventTypeLiteral
+    severity: AlertSeverityLiteral
+    at: IsoTimestamp
+    #: The airframe this event is about, or ``null`` for a receiver-wide one.
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])] | None = None
+    #: The sighting this event happened during, where there is one — the link a
+    #: feed row opens.
+    sighting_id: int | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActivityListResponse(_Model):
+    """``GET /api/v1/activity`` — the §2.4 paginated list envelope."""
+
+    items: list[ActivityEventView] = Field(default_factory=list)
+    #: Always ``null``. Like ``/sightings`` this list grows without bound over a
+    #: multi-year install (``docs/DATA_MODEL.md`` §11 retains activity events
+    #: indefinitely), so §2.4's allowance to omit an exact filtered count
+    #: applies: a client pages until a page comes back short of ``limit``.
+    total: int | None = None
+    limit: int
+    offset: int
+
+
 __all__ = [
+    "ActivityEventTypeLiteral",
+    "ActivityEventView",
+    "ActivityListResponse",
     "AircraftDetail",
     "AircraftHistoryListResponse",
     "AircraftHistoryRow",

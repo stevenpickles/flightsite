@@ -17,8 +17,8 @@ Every server-to-client frame is one JSON object (§4.1)::
 client can detect a gap; this server never leaves one, because a client it
 cannot deliver to in order is disconnected instead (see *Slow consumers*).
 ``ts`` is the server's UTC send time in the §2.2 format. ``type`` is one of
-``snapshot``, ``delta``, ``ping`` or ``pong`` in this slice; slice 035 adds
-``activity``. Per §6 a client must ignore types it does not know.
+``snapshot``, ``delta``, ``activity``, ``ping`` or ``pong``. Per §6 a client
+must ignore types it does not know.
 
 Frames
 ------
@@ -46,6 +46,25 @@ so the two agree and the order only matters for a client that applies ``stale``
 as a flag flip. A client that follows this order ends each batch holding
 exactly what ``GET /api/v1/aircraft/current`` would have returned at the moment
 the frame was built, which is roadmap slice 010's REST/WS agreement criterion.
+
+**activity** — one frame per activity event, emitted as the activity detector
+records it (§4.4, slice 035)::
+
+    {"id": 42, "type": "first_ever_aircraft", "severity": "info",
+     "at": "...", "icao": "ae1463", "sighting_id": 9021, "payload": {...}}
+
+The body is exactly the §3.9 object ``GET /api/v1/activity`` returns, built by
+the same serializer, so a client appends a live event to the page it fetched
+without a second shape to handle. One event per frame rather than a batch:
+they arrive a few a minute at most, and a client that has to unwrap a list to
+render one row is paying for a rate that does not exist.
+
+These frames are **not** part of the snapshot/delta picture and carry no
+replay: a client that reconnects fetches the feed's first page over REST
+(§3.9) and resumes appending. That is deliberate — the activity feed is
+history, it is durable in ``activity_events``, and re-sending it on every
+resync would put a database read on the connect path the snapshot is
+specifically designed to keep free of one.
 
 **ping / pong** — the server sends a ``ping`` frame every
 :data:`DEFAULT_PING_INTERVAL_S` seconds and the client **must** answer with
@@ -99,7 +118,7 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -156,10 +175,12 @@ MonotonicClock = Callable[[], float]
 
 
 class MessageType(StrEnum):
-    """Frame types this slice's protocol defines (``docs/API.md`` §4)."""
+    """Frame types the protocol defines (``docs/API.md`` §4)."""
 
     SNAPSHOT = "snapshot"
     DELTA = "delta"
+    #: §4.4, added by slice 035. Carries one §3.9 activity event.
+    ACTIVITY = "activity"
     PING = "ping"
     PONG = "pong"
 
@@ -504,6 +525,30 @@ class LiveBroadcaster:
             else:
                 self._emit_delta(events)
         self._maybe_ping()
+
+    def publish_activity(self, events: Sequence[Mapping[str, Any]]) -> None:
+        """Broadcast one ``activity`` frame per event (§4.4, slice 035).
+
+        The seam :class:`~flightsite.activity.service.ActivityService` calls
+        after each of its passes commits, with the events that pass actually
+        created — so a re-derivation that wrote nothing broadcasts nothing, and
+        the socket inherits the table's exactly-once guarantee rather than
+        needing one of its own.
+
+        Synchronous, non-awaiting and outside the broadcast tick, exactly like
+        every other delivery here: it renders each frame once and enqueues it,
+        and a client whose queue is full is dropped by the same slow-consumer
+        rule that governs deltas (§4.5). Detection therefore cannot be slowed
+        by a saturated socket, which is the same rule ingestion lives under.
+
+        With no clients connected this does nothing at all: the events are
+        already durable in ``activity_events`` and a client that connects later
+        reads them over REST.
+        """
+        if not self._clients:
+            return
+        for event in events:
+            self._deliver_all(Frame.build(MessageType.ACTIVITY, event))
 
     async def _loop(self) -> None:
         while True:

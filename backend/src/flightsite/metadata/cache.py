@@ -50,6 +50,30 @@ aircraft has metadata, which is correct: metadata is enrichment, and a live
 aircraft is fully usable without it (``docs/API.md`` §2.7 — the field is
 ``null`` until it is not).
 
+Observing resolved views
+-------------------------
+
+An optional ``on_resolved`` callback (:data:`OnResolvedFn`) fires whenever one
+cached entry's resolved view changes: installed with a fresh resolution,
+reclassified after a callsign change, or evicted (``view`` is ``None``) when
+its aircraft leaves the live set. It is the seam roadmap slice 037's watchlist
+matcher hooks into to keep an in-memory match index current — matching by
+registration, type or operator needs the *resolved* metadata this cache
+computes, which arrives asynchronously after an aircraft's appear event, so a
+consumer that only watched the live event stream would have no signal for
+"metadata just resolved". Piggy-backing on this cache's own population
+pipeline, which already visits every live aircraft exactly when its resolved
+view is known, answers that with no second subscription and no extra
+database read: the callback receives the same :class:`AircraftMetadataView`
+this module just built, entirely in memory.
+
+The callback is deliberately generic (an ``icao24``/view pair, nothing
+watchlist-specific) so this module stays ignorant of what a watchlist even
+is — the dependency runs one way, the same shape as
+:mod:`flightsite.metadata.service`'s post-import ``ImportListener``\\ s. A
+callback that raises is caught and logged: an observer's bookkeeping breaking
+must not turn a successful metadata resolution into a cache failure.
+
 Invalidation
 ------------
 
@@ -64,7 +88,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final
 
@@ -96,6 +120,11 @@ DEFAULT_QUEUE_SIZE: Final = 2048
 #: ~1,000-aircraft live set in two rounds, and below SQLite's bound-parameter
 #: limit once the repository chunks its ``IN`` clauses.
 MAX_BATCH: Final = 512
+
+#: A cache observer: called with an aircraft's address and its freshly
+#: resolved view, or ``None`` when the aircraft left the live set. See the
+#: module docstring's "Observing resolved views" section.
+OnResolvedFn = Callable[[str, "AircraftMetadataView | None"], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +194,9 @@ class MetadataCache:
         database: the application database, read off the hot path.
         live: the live store whose event stream drives population.
         queue_size: bounded subscription capacity.
+        on_resolved: optional observer notified whenever a cached entry is
+            installed, reclassified or evicted — see the module docstring's
+            "Observing resolved views" section.
     """
 
     __slots__ = (
@@ -172,6 +204,7 @@ class MetadataCache:
         "_idle",
         "_live",
         "_lock",
+        "_on_resolved",
         "_populations",
         "_queue_size",
         "_repository",
@@ -186,10 +219,12 @@ class MetadataCache:
         database: Database,
         live: LiveStore,
         queue_size: int = DEFAULT_QUEUE_SIZE,
+        on_resolved: OnResolvedFn | None = None,
     ) -> None:
         self._repository = MetadataRepository(database)
         self._live = live
         self._queue_size = queue_size
+        self._on_resolved = on_resolved
 
         self._entries: dict[str, AircraftMetadataView] = {}
         self._type_counts: dict[str, int] = {}
@@ -389,6 +424,7 @@ class MetadataCache:
             live = {aircraft.icao for aircraft in self._live.snapshot()}
             for icao in [icao for icao in self._entries if icao not in live]:
                 del self._entries[icao]
+                self._notify(icao, None)
             for icao in list(self._entries):
                 self._reclassify(icao)
             return [icao for icao in live if icao not in self._entries]
@@ -396,7 +432,9 @@ class MetadataCache:
         wanted: list[str] = []
         for event in events:
             if isinstance(event, AircraftRemoved):
-                self._entries.pop(event.icao, None)
+                removed = self._entries.pop(event.icao, None)
+                if removed is not None:
+                    self._notify(event.icao, None)
                 if event.icao in wanted:
                     wanted.remove(event.icao)
             elif isinstance(event, AircraftAppeared) and event.icao not in self._entries:
@@ -429,7 +467,7 @@ class MetadataCache:
         record = self._live.get(icao)
         evidence = lookup.evidence(icao, callsign=None if record is None else record.callsign)
         type_code = None if lookup.metadata is None else lookup.metadata.type_code
-        self._entries[icao] = AircraftMetadataView(
+        view = AircraftMetadataView(
             icao24=icao,
             metadata=lookup.metadata,
             sighting_count=lookup.sighting_count,
@@ -438,6 +476,8 @@ class MetadataCache:
             evidence=evidence,
             classification=classify(evidence),
         )
+        self._entries[icao] = view
+        self._notify(icao, view)
 
     def _reclassify(self, icao: str) -> None:
         """Recompute one held entry's classification for its current callsign.
@@ -451,7 +491,27 @@ class MetadataCache:
         if entry is None or record is None or entry.evidence.callsign == record.callsign:
             return
         evidence = replace(entry.evidence, callsign=record.callsign)
-        self._entries[icao] = replace(entry, evidence=evidence, classification=classify(evidence))
+        view = replace(entry, evidence=evidence, classification=classify(evidence))
+        self._entries[icao] = view
+        self._notify(icao, view)
+
+    def _notify(self, icao: str, view: AircraftMetadataView | None) -> None:
+        """Tell the observer, if any, that ``icao``'s resolved view changed.
+
+        Never lets an observer's own bug look like a cache failure — see the
+        module docstring's "Observing resolved views" section.
+        """
+        if self._on_resolved is None:
+            return
+        try:
+            self._on_resolved(icao, view)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "metadata_cache_observer_error",
+                icao=icao,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     async def _reload_type_counts(self) -> None:
         self._type_counts = await self._repository.load_type_counts()
@@ -462,4 +522,5 @@ __all__ = [
     "MAX_BATCH",
     "AircraftMetadataView",
     "MetadataCache",
+    "OnResolvedFn",
 ]

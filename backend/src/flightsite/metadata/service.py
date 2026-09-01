@@ -17,8 +17,17 @@ index rebuilding after the ``airports`` source imports. Rather than teaching
 this module about airports — which would invert the dependency, since
 :mod:`flightsite.airports` consumes the import pipeline and not the reverse —
 the "and then" becomes a list of :data:`ImportListener` callables the app wires
-in. They run on exactly the condition the cache invalidation runs on, in
-registration order, after the run has completed.
+in. They run in registration order once the run has completed.
+
+Listeners run on **every** completed run, not only on one that changed data.
+That is slice 035's requirement and it is the right rule: SPEC §55 puts
+*"metadata update results"* in the activity feed and SPEC §27 is explicit that
+the user must be able to see which sources worked, so a run in which every
+source failed is news rather than a non-event. Cache invalidation keeps its
+narrower condition — a cache repopulated from rows nothing replaced would be a
+repopulation for no new data — which is why the two are no longer one branch.
+A listener that only cares about fresh data still guards on ``run.succeeded``,
+exactly as the airport index rebuild does.
 """
 
 from __future__ import annotations
@@ -32,17 +41,17 @@ import structlog
 from flightsite.classification.engine import classify
 from flightsite.db import Database, utc_now_ms
 from flightsite.live.store import LiveStore
-from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
+from flightsite.metadata.cache import AircraftMetadataView, MetadataCache, OnResolvedFn
 from flightsite.metadata.importer import ClockFn, ImportRun, MetadataImporter
 from flightsite.metadata.registry import SourceRegistry, SourceStatusRecord
 from flightsite.metadata.repository import MetadataRepository
 
 logger = structlog.get_logger(__name__)
 
-#: Something to do once an import run has changed data. Receives the completed
-#: run, so a listener can decide from ``run.succeeded`` whether the source it
-#: cares about is among them. Exceptions are caught and logged: a listener that
-#: fails must not turn a successful import into a failed request.
+#: Something to do once an import run has completed, whatever it achieved.
+#: Receives the run, so a listener can decide from ``run.succeeded`` and
+#: ``run.failed`` what it cares about. Exceptions are caught and logged: a
+#: listener that fails must not turn an import into a failed request.
 ImportListener = Callable[[ImportRun], Awaitable[None]]
 
 
@@ -57,9 +66,12 @@ class MetadataService:
             ships no concrete provider, so a stock install has nothing to
             import until slices 022/023 register theirs.
         clock: UTC epoch-millisecond source, injected for tests.
-        listeners: called after a run that changed data, in order, alongside
-            the cache invalidation. Slice 027 wires the airport index rebuild
-            in here.
+        listeners: called after every completed run, in order. Slice 027 wires
+            the airport index rebuild in here and slice 035 the activity
+            feed's per-source outcome events.
+        on_resolved: forwarded to :class:`MetadataCache` — an optional
+            observer notified whenever a cached entry's resolved view changes.
+            Slice 037 wires the watchlist matcher's index update in here.
     """
 
     __slots__ = ("_cache", "_importer", "_listeners", "_registry", "_repository")
@@ -73,13 +85,14 @@ class MetadataService:
         registry: SourceRegistry | None = None,
         clock: ClockFn = utc_now_ms,
         listeners: Sequence[ImportListener] = (),
+        on_resolved: OnResolvedFn | None = None,
     ) -> None:
         self._registry = registry if registry is not None else SourceRegistry()
         self._repository = MetadataRepository(database)
         self._importer = MetadataImporter(
             database=database, registry=self._registry, data_dir=data_dir, clock=clock
         )
-        self._cache = MetadataCache(database=database, live=live)
+        self._cache = MetadataCache(database=database, live=live, on_resolved=on_resolved)
         self._listeners = tuple(listeners)
 
     @property
@@ -154,7 +167,7 @@ class MetadataService:
         run = await self._importer.run(sources)
         if run.changed_data:
             await self._cache.invalidate()
-            await self._notify(run)
+        await self._notify(run)
         return run
 
     async def _notify(self, run: ImportRun) -> None:

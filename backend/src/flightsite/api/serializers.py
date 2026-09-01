@@ -38,6 +38,14 @@ aircraft is low near a field. Everything inside it is attributed
 ``heuristic`` — SPEC §41 requires the inference to be clearly labeled, and
 §2.6's own example names exactly this provenance key.
 
+Slice 037 adds ``watchlists``: always a list, ``[]`` when nothing matches,
+never absent — the same always-present, empty-when-none shape §2.7's null
+pattern takes for a list rather than a scalar. ``docs/API.md`` §5 notes an
+``interesting``/``watchlist`` linkage arriving with slice 038's alert engine;
+this field is additive on purpose so that slice can read watchlist membership
+(:meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches`) as one of
+several conditions without this payload's shape changing under it.
+
 The metadata is passed in rather than looked up here. This function is called
 once per aircraft per WebSocket frame and must not touch SQLite
 (``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
@@ -94,6 +102,7 @@ from typing import Any, Final
 
 from sqlalchemy.engine import RowMapping
 
+from flightsite.activity.model import StoredActivityEvent
 from flightsite.airports.model import AirportContext
 from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
@@ -255,6 +264,7 @@ def aircraft_payload(
     metadata: AircraftMetadataView | None = None,
     route: SightingRoute | None = None,
     airport: AirportContext | None = None,
+    watchlists: Sequence[str] = (),
 ) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
@@ -284,6 +294,15 @@ def aircraft_payload(
             state for most of the sky: no airport dataset imported, the
             aircraft is at cruise, or it is nowhere near a field. It serializes
             as ``nearest_airport: null``, never as a missing key.
+        watchlists: the names of every watchlist (SPEC §42, roadmap slice 037)
+            this aircraft currently matches, from
+            :meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches` —
+            a pure in-memory lookup, so this never costs the aircraft path a
+            database read. Always present and ``[]`` when there is no match,
+            per §2.7's null-stable pattern extended to a list field: an empty
+            list, not a missing key, is "no watchlist matches this", and a
+            client never has to tell that apart from "watchlists is not a
+            thing this build carries".
     """
     resolved = None if metadata is None else metadata.metadata
     return {
@@ -316,6 +335,7 @@ def aircraft_payload(
         "route": _route(route),
         "nearest_airport": _nearest_airport(airport),
         "interesting": None,
+        "watchlists": list(watchlists),
         "provenance": _provenance(record, metadata, route, airport),
     }
 
@@ -996,6 +1016,29 @@ def analytics_rare_type_payload(rare: RareType) -> dict[str, Any]:
     }
 
 
+def activity_event_payload(event: StoredActivityEvent) -> dict[str, Any]:
+    """One activity event — ``docs/API.md`` §3.9, and §4.4's frame body.
+
+    The single serializer behind both surfaces, which is what makes §4.4's
+    *"activity event, §3.9 shape"* true by construction rather than by
+    inspection: the feed's first page and the events appended to it live are
+    the same kind of object.
+
+    ``payload`` is passed through as it was stored. It is the renderable half
+    of the event, its members depend on ``type``, and re-deriving anything here
+    would put a second opinion beside the one recorded when it happened.
+    """
+    return {
+        "id": event.id,
+        "type": event.type,
+        "severity": event.severity,
+        "at": iso_utc(from_epoch_ms(event.ts_ms)),
+        "icao": event.icao24,
+        "sighting_id": event.sighting_id,
+        "payload": dict(event.payload),
+    }
+
+
 def _rounded(value: float | None) -> float | None:
     """A distance rounded to the API's documented precision, or ``None``."""
     return None if value is None else round(value, DISTANCE_DECIMALS)
@@ -1007,6 +1050,7 @@ __all__ = [
     "EXPOSED_PROVENANCE_FIELDS",
     "METADATA_PROVENANCE_KEYS",
     "NEAREST_AIRPORT_PROVENANCE",
+    "activity_event_payload",
     "aircraft_detail_payload",
     "aircraft_history_row_payload",
     "aircraft_payload",

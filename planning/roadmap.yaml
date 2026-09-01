@@ -940,7 +940,7 @@ slices:
     title: "Activity feed & milestones"
     phase: 5
     branch: "035-activity-milestones"
-    status: planned
+    status: merged
     depends_on: ["009", "010", "024", "025"]
     objective: "Persistent activity event stream and receiver milestone/record detection with a feed UI."
     scope:
@@ -982,7 +982,7 @@ slices:
     title: "Watchlists"
     phase: 6
     branch: "037-watchlists"
-    status: planned
+    status: merged
     depends_on: ["009", "024"]
     objective: "User-defined watchlists with CRUD UI and live matching."
     scope:

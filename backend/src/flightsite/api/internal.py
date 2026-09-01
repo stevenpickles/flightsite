@@ -18,22 +18,43 @@ Slice 025 adds the "Update Aircraft Metadata" action: ``POST
 /metadata/update`` starts (or reports the state of) a run of
 :meth:`~flightsite.metadata.MetadataService.update`, and ``GET
 /metadata/status`` reports where each registered source stands.
+
+Slice 037 adds watchlist CRUD: ``GET``/``POST /watchlists``, ``PUT``/``DELETE
+/watchlists/{id}``, and entry CRUD under ``/watchlists/{id}/entries``. Every
+mutation goes through :class:`~flightsite.watchlists.WatchlistService`, which
+rebuilds the in-memory match index before returning — see that module's
+docstring — so a client that just changed a watchlist sees the live picture
+reflect it on its very next read, with no propagation delay to reason about.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from pydantic import ValidationError
 
+from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
-from flightsite.db import utc_now_ms
+from flightsite.db import from_epoch_ms, utc_now_ms
 from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, check_connection
 from flightsite.metadata import ImportRun, MetadataService
 from flightsite.metadata.registry import SourceStatus, SourceStatusRecord
+from flightsite.watchlists import (
+    DuplicateEntryError,
+    DuplicateWatchlistNameError,
+    WatchlistCreateRequest,
+    WatchlistEntryCreateRequest,
+    WatchlistEntryRecord,
+    WatchlistNotFoundError,
+    WatchlistRecord,
+    WatchlistService,
+    WatchlistUpdateRequest,
+    WatchlistValueError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -244,6 +265,147 @@ async def trigger_metadata_update(request: Request) -> dict[str, Any]:
     request.app.state.metadata_update_started_ms = started_ms
     logger.info("metadata_update_triggered", started_ms=started_ms)
     return {"started": True, "already_running": False, "started_ms": started_ms}
+
+
+# --------------------------------------------------------- watchlists (slice 037)
+
+
+def _watchlist_payload(
+    record: WatchlistRecord, entries: Sequence[WatchlistEntryRecord]
+) -> dict[str, Any]:
+    """One watchlist as the management UI's list/detail row.
+
+    ``entry_count`` is ``len(entries)`` rather than a second query — every
+    caller in this module already has the entries in hand, from either
+    :meth:`~flightsite.watchlists.service.WatchlistService.list_watchlists_with_entries`
+    or a fresh :meth:`~flightsite.watchlists.service.WatchlistService.list_entries`
+    call right after a mutation.
+    """
+    return {
+        "id": record.id,
+        "name": record.name,
+        "description": record.description,
+        "created_at": iso_utc(from_epoch_ms(record.created_ms)),
+        "entry_count": len(entries),
+    }
+
+
+def _entry_payload(record: WatchlistEntryRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "watchlist_id": record.watchlist_id,
+        "kind": record.kind.value,
+        "value": record.value,
+        "note": record.note,
+        "created_at": iso_utc(from_epoch_ms(record.created_ms)),
+    }
+
+
+def _watchlist_service(request: Request) -> WatchlistService:
+    service: WatchlistService = request.app.state.watchlists
+    return service
+
+
+@router.get("/watchlists")
+async def list_watchlists(request: Request) -> dict[str, Any]:
+    """Every watchlist, with its entry count (``docs/API.md`` §5)."""
+    grouped = await _watchlist_service(request).list_watchlists_with_entries()
+    return {
+        "watchlists": [_watchlist_payload(watchlist, entries) for watchlist, entries in grouped]
+    }
+
+
+@router.post("/watchlists", status_code=status.HTTP_201_CREATED)
+async def create_watchlist(
+    request: Request, body: Annotated[WatchlistCreateRequest, Body()]
+) -> dict[str, Any]:
+    """Create a watchlist. The match index is rebuilt before this returns."""
+    try:
+        record = await _watchlist_service(request).create_watchlist(
+            name=body.name, description=body.description
+        )
+    except WatchlistValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except DuplicateWatchlistNameError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _watchlist_payload(record, ())
+
+
+@router.put("/watchlists/{watchlist_id}")
+async def update_watchlist(
+    request: Request, watchlist_id: int, body: Annotated[WatchlistUpdateRequest, Body()]
+) -> dict[str, Any]:
+    """Replace a watchlist's name/description. A full replace, not a patch."""
+    service = _watchlist_service(request)
+    try:
+        record = await service.rename_watchlist(
+            watchlist_id, name=body.name, description=body.description
+        )
+    except WatchlistValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except WatchlistNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except DuplicateWatchlistNameError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    entries = await service.list_entries(watchlist_id)
+    return _watchlist_payload(record, entries)
+
+
+@router.delete("/watchlists/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_watchlist(request: Request, watchlist_id: int) -> None:
+    """Delete a watchlist and every entry on it (``ON DELETE CASCADE``, §4.1)."""
+    deleted = await _watchlist_service(request).delete_watchlist(watchlist_id)
+    if not deleted:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"no watchlist with id {watchlist_id}"
+        )
+
+
+@router.get("/watchlists/{watchlist_id}/entries")
+async def list_watchlist_entries(request: Request, watchlist_id: int) -> dict[str, Any]:
+    """One watchlist's entries."""
+    service = _watchlist_service(request)
+    watchlist = await service.get_watchlist(watchlist_id)
+    if watchlist is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"no watchlist with id {watchlist_id}"
+        )
+    entries = await service.list_entries(watchlist_id)
+    return {"entries": [_entry_payload(entry) for entry in entries]}
+
+
+@router.post("/watchlists/{watchlist_id}/entries", status_code=status.HTTP_201_CREATED)
+async def add_watchlist_entry(
+    request: Request, watchlist_id: int, body: Annotated[WatchlistEntryCreateRequest, Body()]
+) -> dict[str, Any]:
+    """Add one entry, validated per its kind. The match index is rebuilt before this returns."""
+    try:
+        record = await _watchlist_service(request).add_entry(
+            watchlist_id, kind=body.kind, value=body.value, note=body.note
+        )
+    except WatchlistValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except WatchlistNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except DuplicateEntryError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _entry_payload(record)
+
+
+@router.delete(
+    "/watchlists/{watchlist_id}/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def remove_watchlist_entry(request: Request, watchlist_id: int, entry_id: int) -> None:
+    """Remove one entry. The match index is rebuilt before this returns."""
+    try:
+        removed = await _watchlist_service(request).remove_entry(watchlist_id, entry_id)
+    except WatchlistNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"no entry with id {entry_id} on watchlist {watchlist_id}",
+        )
 
 
 # ------------------------------------------------------------- reset (slice 045)

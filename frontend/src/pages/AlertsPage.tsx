@@ -1,8 +1,92 @@
+import { useId, useState } from "react";
+
 import { requireNavItem } from "@/components/shell/nav-items";
-import { PlaceholderPage } from "@/pages/PlaceholderPage";
+import { WatchlistsSection } from "@/features/watchlists/components/WatchlistsSection";
 
 const item = requireNavItem("/alerts");
 
+interface AlertsTab {
+  id: string;
+  label: string;
+  render: () => React.ReactNode;
+}
+
+/** The first tab, kept as its own reference (rather than `TABS[0]`) so
+ * `noUncheckedIndexedAccess` does not force every read of the default tab
+ * to guard against an array TypeScript cannot know is non-empty. */
+const WATCHLISTS_TAB: AlertsTab = {
+  id: "watchlists",
+  label: "Watchlists",
+  render: () => <WatchlistsSection />,
+};
+
+/**
+ * The Alerts page's areas, in tab order. Roadmap slice 037 (watchlists)
+ * lands the first one; slice 041 (alert rules) adds a sibling entry here —
+ * nothing about this page's own composition needs to change for that, only
+ * this list.
+ */
+const TABS: AlertsTab[] = [WATCHLISTS_TAB];
+
+/**
+ * The Alerts page (SPEC §42/§43). A single "Watchlists" area for now
+ * (roadmap slice 037); rendered as a tab bar from the start so slice 041's
+ * alert-rules area joins it as a sibling tab rather than requiring a later
+ * rewrite of this page's structure. With one tab the bar itself stays
+ * hidden — there is nothing to switch between yet — but the tabpanel
+ * semantics are in place either way.
+ */
 export function AlertsPage() {
-  return <PlaceholderPage title={item.label} description={item.description} />;
+  const [activeTabId, setActiveTabId] = useState(WATCHLISTS_TAB.id);
+  const active = TABS.find((tab) => tab.id === activeTabId) ?? WATCHLISTS_TAB;
+  const tablistId = useId();
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-8">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">{item.label}</h1>
+        <p className="text-sm text-muted-foreground">{item.description}</p>
+      </div>
+
+      {TABS.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="Alerts sections"
+          id={tablistId}
+          className="flex gap-1 border-b border-border"
+        >
+          {TABS.map((tab) => {
+            const selected = tab.id === active.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`alerts-tab-${tab.id}`}
+                aria-selected={selected}
+                aria-controls={`alerts-tabpanel-${tab.id}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setActiveTabId(tab.id)}
+                className={
+                  selected
+                    ? "border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground"
+                    : "border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                }
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div
+        role="tabpanel"
+        id={`alerts-tabpanel-${active.id}`}
+        aria-labelledby={`alerts-tab-${active.id}`}
+      >
+        {active.render()}
+      </div>
+    </div>
+  );
 }

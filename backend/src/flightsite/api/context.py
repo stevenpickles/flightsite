@@ -34,7 +34,7 @@ field that will arrive a fraction of a second later anyway.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -42,6 +42,7 @@ from zoneinfo import ZoneInfo
 import structlog
 from fastapi import FastAPI
 
+from flightsite.activity.repository import ActivityRepository
 from flightsite.airports.overlay import AirportOverlayRepository, AirportSizeClass, BoundingBox
 from flightsite.airports.records import AirportRecord
 from flightsite.airports.service import AirportContextService
@@ -61,6 +62,7 @@ from flightsite.api.receiver_stats import (
     signal_histogram,
 )
 from flightsite.api.serializers import (
+    activity_event_payload,
     aircraft_detail_payload,
     aircraft_history_row_payload,
     aircraft_payload,
@@ -82,6 +84,8 @@ from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.receiver_metrics import MetricsRepository, ReceiverMetricsService
 from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
 from flightsite.sightings import PersistenceWorker
+from flightsite.watchlists import WatchlistService
+from flightsite.watchlists.matcher import WatchlistMatcher
 
 logger = structlog.get_logger(__name__)
 
@@ -136,6 +140,17 @@ class LiveApiContext:
         """
         service: MetadataService = self._app.state.metadata
         return service.cache
+
+    @property
+    def watchlist_matches(self) -> WatchlistMatcher:
+        """The in-memory watchlist match index (SPEC §42, roadmap slice 037).
+
+        Read on the aircraft path for the same reason the metadata *cache*
+        is: :meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches`
+        is a dict lookup with no ``await`` and no session.
+        """
+        service: WatchlistService = self._app.state.watchlists
+        return service.matcher
 
     @property
     def airports(self) -> AirportContextService:
@@ -198,6 +213,7 @@ class LiveApiContext:
         worker: PersistenceWorker = self._app.state.persistence
         cache = self.metadata
         airports = self.airports
+        watchlists = self.watchlist_matches
         records = sorted(self.live.snapshot(), key=lambda record: record.icao)
         return [
             aircraft_payload(
@@ -206,6 +222,7 @@ class LiveApiContext:
                 metadata=cache.get(record.icao),
                 route=worker.route_for(record.icao),
                 airport=airports.context_for(record.icao),
+                watchlists=watchlists.matches(record.icao),
             )
             for record in records
             if _wanted(record, positioned)
@@ -226,6 +243,7 @@ class LiveApiContext:
         live = self.live
         cache = self.metadata
         airports = self.airports
+        watchlists = self.watchlist_matches
         payloads: list[dict[str, Any]] = []
         for icao in icaos:
             record = live.get(icao)
@@ -237,6 +255,7 @@ class LiveApiContext:
                         metadata=cache.get(icao),
                         route=worker.route_for(icao),
                         airport=airports.context_for(icao),
+                        watchlists=watchlists.matches(icao),
                     )
                 )
         return payloads
@@ -452,6 +471,37 @@ class LiveApiContext:
             logger.warning("t0_unavailable", error=str(exc), error_type=type(exc).__name__)
             return None
         return None if t0_ms is None else from_epoch_ms(t0_ms)
+
+    # -------------------------------------------------------------- activity
+
+    @property
+    def activity(self) -> ActivityRepository:
+        """The activity feed's query layer, built from the running database.
+
+        A fresh repository per call, like :attr:`history` and :attr:`sightings`:
+        this is a REST read on the request path, not a live-path lookup, so
+        there is nothing to keep warm between calls. Deliberately *not* read
+        through ``app.state.activity`` — the running detector holds in-memory
+        baselines that a request has no business touching, and the feed is
+        answered from the table it wrote.
+        """
+        database: Database = self._app.state.database
+        return ActivityRepository(database)
+
+    async def activity_feed(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        types: Sequence[str] | None = None,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """One page of the activity feed, serialized — ``docs/API.md`` §3.9."""
+        events = await self.activity.list_events(
+            limit=limit, offset=offset, types=types, from_ms=from_ms, to_ms=to_ms
+        )
+        return [activity_event_payload(event) for event in events]
 
     # ------------------------------------------------------- receiver stats
 
