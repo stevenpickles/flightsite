@@ -22,6 +22,7 @@ from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
+from flightsite.metadata import MetadataService
 from flightsite.readiness import ReadinessRegistry
 from flightsite.sightings import PersistenceWorker
 
@@ -129,6 +130,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     live: LiveStore = app.state.live
     persistence: PersistenceWorker = app.state.persistence
     broadcaster: LiveBroadcaster = app.state.broadcaster
+    metadata: MetadataService = app.state.metadata
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -143,6 +145,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # only thing degraded, which is exactly what the readiness flag says.
     if database_ready:
         await persistence.start()
+        # Same condition, same reason: the metadata cache reads the schema the
+        # migration just failed to create. Skipping it leaves every live
+        # aircraft's metadata `null` — the documented unknown state — while
+        # the live picture stays completely unaffected.
+        await metadata.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -170,6 +177,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await service.stop()
         await live.stop()
         await broadcaster.stop()
+        # Before the persistence worker, so no consumer of the live stream is
+        # still resolving against the database while the worker takes its final
+        # writer transactions.
+        await metadata.stop()
         await persistence.stop()
         await database.dispose()
         logger.info("app_shutdown")
@@ -203,6 +214,15 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     ``app.state.persistence``. It consumes the live event stream and is the
     process's single SQLite writer (ADR-0008); startup attaches it once the
     schema is known good, and shutdown flushes it before the engines close.
+
+    The metadata subsystem is constructed as ``app.state.metadata``: the source
+    registry, the transactional import pipeline, and the metadata & rarity
+    cache that keeps SQLite off the live path (``docs/ARCHITECTURE.md`` §3.3).
+    Startup attaches the cache to the live event stream on a healthy schema,
+    and shutdown detaches it before the writer takes its last transaction. No
+    HTTP endpoint exposes it yet — ``docs/API.md`` §5 assigns
+    ``/api/internal/metadata/*`` to slice 025, which calls
+    :meth:`~flightsite.metadata.MetadataService.update`.
 
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
@@ -245,6 +265,13 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # instead of guarding every access. Constructing it starts nothing.
     app.state.live = _build_live_store(settings)
     app.state.persistence = _build_persistence_worker(app, settings)
+    # The metadata subsystem: an (empty until slices 022/023) source registry,
+    # the import orchestration behind slice 025's update action, and the
+    # in-memory metadata & rarity cache. Constructing it subscribes to nothing
+    # and opens no connection; the lifespan hook starts the cache.
+    app.state.metadata = MetadataService(
+        database=app.state.database, live=app.state.live, data_dir=store.data_dir
+    )
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
