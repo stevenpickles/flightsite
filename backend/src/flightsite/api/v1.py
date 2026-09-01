@@ -43,6 +43,8 @@ from flightsite.api.receiver_stats import (
     ReceiverMetricQueryError,
 )
 from flightsite.api.schemas import (
+    ActivityEventTypeLiteral,
+    ActivityListResponse,
     AircraftDetail,
     AircraftHistoryListResponse,
     AircraftSortKey,
@@ -583,6 +585,51 @@ async def sightings_list(
         to_ms=_bound_ms(to),
         interesting=interesting,
         open_only=open,
+    )
+    return {"items": items, "total": None, "limit": limit, "offset": offset}
+
+
+@router.get(
+    "/activity",
+    response_model=ActivityListResponse,
+    tags=["activity"],
+    summary="Paginated chronological activity feed",
+)
+async def activity_feed(
+    request: Request,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    type: Annotated[
+        list[ActivityEventTypeLiteral] | None,
+        Query(description="Restrict to these event types; repeat for several."),
+    ] = None,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="Inclusive lower bound on `at` (§2.2)."),
+    ] = None,
+    to: Annotated[
+        datetime | None, Query(description="Inclusive upper bound on `at` (§2.2).")
+    ] = None,
+) -> dict[str, Any]:
+    """The activity feed — ``docs/API.md`` §3.9, SPEC §55.
+
+    Newest first, which is the only order a feed is read in, with the event id
+    as the tie-break so paging through a burst written in one instant can
+    neither repeat nor skip a row.
+
+    ``type`` is repeatable: the feed's filter selects several kinds at once,
+    and one repeated query parameter is cheaper for both ends than a
+    comma-separated string neither can validate. ``total`` is always ``null``,
+    for the reason ``/sightings`` gives (§2.4).
+    """
+    items = await _context(request).activity_feed(
+        limit=limit,
+        offset=offset,
+        types=type,
+        from_ms=_bound_ms(from_),
+        to_ms=_bound_ms(to),
     )
     return {"items": items, "total": None, "limit": limit, "offset": offset}
 

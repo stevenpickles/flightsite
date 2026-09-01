@@ -94,6 +94,7 @@ from typing import Any, Final
 
 from sqlalchemy.engine import RowMapping
 
+from flightsite.activity.model import StoredActivityEvent
 from flightsite.airports.model import AirportContext
 from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
@@ -996,6 +997,29 @@ def analytics_rare_type_payload(rare: RareType) -> dict[str, Any]:
     }
 
 
+def activity_event_payload(event: StoredActivityEvent) -> dict[str, Any]:
+    """One activity event — ``docs/API.md`` §3.9, and §4.4's frame body.
+
+    The single serializer behind both surfaces, which is what makes §4.4's
+    *"activity event, §3.9 shape"* true by construction rather than by
+    inspection: the feed's first page and the events appended to it live are
+    the same kind of object.
+
+    ``payload`` is passed through as it was stored. It is the renderable half
+    of the event, its members depend on ``type``, and re-deriving anything here
+    would put a second opinion beside the one recorded when it happened.
+    """
+    return {
+        "id": event.id,
+        "type": event.type,
+        "severity": event.severity,
+        "at": iso_utc(from_epoch_ms(event.ts_ms)),
+        "icao": event.icao24,
+        "sighting_id": event.sighting_id,
+        "payload": dict(event.payload),
+    }
+
+
 def _rounded(value: float | None) -> float | None:
     """A distance rounded to the API's documented precision, or ``None``."""
     return None if value is None else round(value, DISTANCE_DECIMALS)
@@ -1007,6 +1031,7 @@ __all__ = [
     "EXPOSED_PROVENANCE_FIELDS",
     "METADATA_PROVENANCE_KEYS",
     "NEAREST_AIRPORT_PROVENANCE",
+    "activity_event_payload",
     "aircraft_detail_payload",
     "aircraft_history_row_payload",
     "aircraft_payload",
