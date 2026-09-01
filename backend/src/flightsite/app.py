@@ -23,7 +23,8 @@ from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
 from flightsite.metadata import MetadataService
-from flightsite.metadata.sources import FaaRegistryProvider
+from flightsite.metadata.registry import SourceRegistry
+from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.sightings import PersistenceWorker
 
@@ -59,6 +60,19 @@ def _build_live_store(settings: Settings) -> LiveStore:
         remove_s=settings.sighting.remove_s,
         receiver_location=receiver,
     )
+
+
+def _build_metadata_registry() -> SourceRegistry:
+    """The metadata sources this build ships.
+
+    Slice 022 registers ``mictronics`` (the offline primary source); slice 023
+    adds ``faa``. Constructing a provider here opens nothing — it downloads
+    only when an import actually runs (:mod:`flightsite.metadata.importer`).
+    """
+    registry = SourceRegistry()
+    registry.register("mictronics", MictronicsProvider())
+    registry.register("faa", FaaRegistryProvider())
+    return registry
 
 
 def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWorker:
@@ -266,14 +280,18 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # instead of guarding every access. Constructing it starts nothing.
     app.state.live = _build_live_store(settings)
     app.state.persistence = _build_persistence_worker(app, settings)
-    # The metadata subsystem: an (empty until slices 022/023) source registry,
-    # the import orchestration behind slice 025's update action, and the
-    # in-memory metadata & rarity cache. Constructing it subscribes to nothing
-    # and opens no connection; the lifespan hook starts the cache.
+    # The metadata subsystem: a source registry (mictronics as of slice 022;
+    # faa joins in 023), the import orchestration behind slice 025's update
+    # action, and the in-memory metadata & rarity cache. Constructing it
+    # subscribes to nothing and opens no connection; the lifespan hook starts
+    # the cache, and a registered provider only touches the network once an
+    # import actually runs.
     app.state.metadata = MetadataService(
-        database=app.state.database, live=app.state.live, data_dir=store.data_dir
+        database=app.state.database,
+        live=app.state.live,
+        data_dir=store.data_dir,
+        registry=_build_metadata_registry(),
     )
-    app.state.metadata.registry.register("faa", FaaRegistryProvider())
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
