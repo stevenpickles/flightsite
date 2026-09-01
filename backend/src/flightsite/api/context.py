@@ -40,7 +40,13 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
-from flightsite.api.serializers import aircraft_payload, receiver_payload
+from flightsite.api.history import AircraftHistoryRepository
+from flightsite.api.serializers import (
+    aircraft_detail_payload,
+    aircraft_history_row_payload,
+    aircraft_payload,
+    receiver_payload,
+)
 from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms
 from flightsite.live import LiveAircraft, LiveStore
@@ -157,6 +163,48 @@ class LiveApiContext:
                     )
                 )
         return payloads
+
+    @property
+    def history(self) -> AircraftHistoryRepository:
+        """The Aircraft page's query layer, built from the running database."""
+        database: Database = self._app.state.database
+        return AircraftHistoryRepository(database)
+
+    async def aircraft_history(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        sort: str,
+        order: str,
+        classification: str | None = None,
+        operator_group: str | None = None,
+        type_code: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """One page of the Aircraft page's list, serialized — §3.5."""
+        rows, total = await self.history.list_aircraft(
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            order=order,
+            classification=classification,
+            operator_group=operator_group,
+            type_code=type_code,
+        )
+        return [aircraft_history_row_payload(row) for row in rows], total
+
+    async def aircraft_detail(self, icao24: str) -> dict[str, Any] | None:
+        """One airframe's full detail, or ``None`` if never sighted — §3.5.
+
+        ``live`` reads the live registry at the moment of the request rather
+        than anything the history query touched: the two are different data
+        sources answering the same instant, exactly as
+        :meth:`aircraft` and the WebSocket snapshot do.
+        """
+        row = await self.history.get_aircraft(icao24)
+        if row is None:
+            return None
+        return aircraft_detail_payload(row, live=self.live.get(icao24) is not None)
 
     async def receiver(self) -> dict[str, Any]:
         """The §3.2 receiver info block, including T0.

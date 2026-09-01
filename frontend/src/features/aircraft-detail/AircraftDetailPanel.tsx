@@ -20,11 +20,13 @@
 
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
 import { EmergencySquawkBadge } from "@/features/aircraft-detail/components/EmergencySquawkBadge";
 import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/ExternalTrackerLinks";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
+import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
 import { ReservedSectionRow } from "@/features/aircraft-detail/components/ReservedSectionRow";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
@@ -45,7 +47,6 @@ import {
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { LiveAircraft } from "@/lib/api/live";
 import { cn } from "@/lib/utils";
 
 /** Vertical-rate direction glyph. Text/symbol-first (▲/▼/—), not a bare
@@ -55,20 +56,6 @@ const TREND_GLYPH: Record<"climb" | "descend" | "level", string> = {
   descend: "▼",
   level: "—",
 };
-
-function classificationSummary(
-  classification: LiveAircraft["classification"],
-): string | null {
-  if (classification === null) {
-    return null;
-  }
-  const flags: string[] = [];
-  if (classification.military) flags.push("Military");
-  if (classification.government) flags.push("Government");
-  if (classification.law_enforcement) flags.push("Law enforcement");
-  const base = flags.length > 0 ? flags.join(", ") : "Civilian";
-  return classification.mission ? `${base} · ${classification.mission}` : base;
-}
 
 export function AircraftDetailPanel() {
   const selectedIcao = useLiveAircraftStore((state) => state.selectedIcao);
@@ -261,46 +248,7 @@ export function AircraftDetailPanel() {
                 />
               </DetailSection>
 
-              <DetailSection title="Identity & metadata">
-                <FieldRow
-                  label="Registration"
-                  value={aircraft.registration}
-                  provenanceSource={
-                    aircraft.provenance.registration ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Type"
-                  value={aircraft.aircraft_type}
-                  provenanceSource={
-                    aircraft.provenance.aircraft_type ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Model"
-                  value={aircraft.model}
-                  provenanceSource={aircraft.provenance.model ?? "decoder"}
-                />
-                <FieldRow
-                  label="Operator"
-                  value={aircraft.operator}
-                  provenanceSource={aircraft.provenance.operator ?? "decoder"}
-                />
-                <FieldRow
-                  label="Operator group"
-                  value={aircraft.operator_group}
-                  provenanceSource={
-                    aircraft.provenance.operator_group ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Classification"
-                  value={classificationSummary(aircraft.classification)}
-                  provenanceSource={
-                    aircraft.provenance.classification ?? "decoder"
-                  }
-                />
-              </DetailSection>
+              <IdentityMetadataSection aircraft={aircraft} />
 
               {/* External route only (§2.6). Both rows always render: a
                * route the provider has not answered for is `Unknown`, which
@@ -325,7 +273,14 @@ export function AircraftDetailPanel() {
               </DetailSection>
 
               <DetailSection title="History">
-                <ReservedSectionRow note="Lifetime sighting records arrive once history is stored (a later slice)." />
+                <p className="py-1 text-sm">
+                  <Link
+                    to={`/aircraft/${selectedIcao}`}
+                    className="font-medium text-accent hover:underline"
+                  >
+                    View lifetime records &amp; full metadata
+                  </Link>
+                </p>
               </DetailSection>
 
               <DetailSection title="External trackers">

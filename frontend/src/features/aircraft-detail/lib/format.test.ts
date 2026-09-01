@@ -9,6 +9,7 @@ import {
   formatFlightLevel,
   formatMessageCount,
   formatOnGround,
+  formatReceiverLocalDateTime,
   formatReceiverLocalTime,
   formatRelativeAge,
   formatRssi,
@@ -212,6 +213,30 @@ describe("formatReceiverLocalTime", () => {
 
   it("falls back to the ISO string for an unparseable instant", () => {
     expect(formatReceiverLocalTime("not-a-date", "UTC")).toBe("not-a-date");
+  });
+});
+
+describe("formatReceiverLocalDateTime", () => {
+  it("formats an instant with both date and time in the given IANA timezone", () => {
+    const result = formatReceiverLocalDateTime(
+      "2026-04-02T18:11:09Z",
+      "America/Los_Angeles",
+    );
+    // PDT is UTC-7 in April.
+    expect(result).toBe("2026-04-02 11:11");
+  });
+
+  it("crosses a day boundary correctly for a timezone behind UTC", () => {
+    const result = formatReceiverLocalDateTime(
+      "2026-01-01T02:00:00Z",
+      "America/Los_Angeles",
+    );
+    // PST is UTC-8 in January.
+    expect(result).toBe("2025-12-31 18:00");
+  });
+
+  it("falls back to the ISO string for an unparseable instant", () => {
+    expect(formatReceiverLocalDateTime("not-a-date", "UTC")).toBe("not-a-date");
   });
 });
 

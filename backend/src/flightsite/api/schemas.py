@@ -143,6 +143,99 @@ class CurrentAircraftResponse(_Model):
     total: int
 
 
+#: §3.5's documented sort keys for ``GET /api/v1/aircraft``.
+AircraftSortKey = Literal[
+    "registration",
+    "icao",
+    "type",
+    "operator",
+    "classification",
+    "first_seen",
+    "last_seen",
+    "sighting_count",
+    "closest_approach_nm",
+    "max_range_nm",
+]
+
+#: §2.4's sort direction.
+SortOrder = Literal["asc", "desc"]
+
+
+class LifetimeRecord(_Model):
+    """Receiver-relative lifetime records — SPEC §53, ``docs/API.md`` §3.5."""
+
+    first_seen: IsoTimestamp
+    last_seen: IsoTimestamp
+    sighting_count: int
+    cumulative_duration_s: int
+    closest_approach_nm: float | None = None
+    max_range_nm: float | None = None
+    lowest_altitude_ft: int | None = None
+    highest_altitude_ft: int | None = None
+
+
+class AircraftHistoryRow(_Model):
+    """One row of the Aircraft page — ``docs/API.md`` §3.5, SPEC §56.
+
+    Field names mirror :class:`AircraftView` where the same fact appears, so
+    a live aircraft and a historical row render through the same frontend
+    field components.
+    """
+
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    registration: str | None = None
+    aircraft_type: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    operator_group: str | None = None
+    classification: Classification | None = None
+    first_seen: IsoTimestamp
+    last_seen: IsoTimestamp
+    sighting_count: int
+    closest_approach_nm: float | None = None
+    max_range_nm: float | None = None
+
+    #: §2.6. See :class:`AircraftView`'s field of the same name.
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
+class AircraftHistoryListResponse(_Model):
+    """``GET /api/v1/aircraft`` — the §2.4 paginated list envelope."""
+
+    items: list[AircraftHistoryRow] = Field(default_factory=list)
+    #: Exact count of matching rows. See :mod:`flightsite.api.history` for
+    #: why this endpoint computes it rather than exercising §2.4's
+    #: allowance to omit or approximate it.
+    total: int | None = None
+    limit: int
+    offset: int
+
+
+class AircraftDetail(_Model):
+    """``GET /api/v1/aircraft/{icao}`` — ``docs/API.md`` §3.5.
+
+    Identity, metadata with provenance, classification and the SPEC §53
+    lifetime block for one airframe, whether or not it is currently live.
+    """
+
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    registration: str | None = None
+    aircraft_type: str | None = None
+    model: str | None = None
+    manufacture_year: int | None = None
+    operator: str | None = None
+    operator_group: str | None = None
+    owner: str | None = None
+    classification: Classification | None = None
+    #: True when this airframe is in the live picture right now — the
+    #: frontend's cue to offer a jump to its Live Map selection.
+    live: bool
+    lifetime: LifetimeRecord
+
+    #: §2.6. See :class:`AircraftView`'s field of the same name.
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
 class ReceiverInfo(_Model):
     """Non-secret receiver identity and configuration — ``docs/API.md`` §3.2."""
 
@@ -161,13 +254,19 @@ class ReceiverInfo(_Model):
 
 
 __all__ = [
+    "AircraftDetail",
+    "AircraftHistoryListResponse",
+    "AircraftHistoryRow",
+    "AircraftSortKey",
     "AircraftView",
     "Classification",
     "CurrentAircraftResponse",
     "GeoPosition",
     "InterestingMatch",
     "IsoTimestamp",
+    "LifetimeRecord",
     "PositionSourceLiteral",
     "ReceiverInfo",
     "RouteView",
+    "SortOrder",
 ]
