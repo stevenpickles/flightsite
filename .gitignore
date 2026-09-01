@@ -19,9 +19,12 @@ frontend/dist/
 frontend/coverage/
 *.tsbuildinfo
 
-# Playwright
+# Playwright (e2e/playwright.config.ts suffixes these per browser project
+# in CI, e.g. test-results-chromium/ — see its outputSuffix comment)
 test-results/
+test-results-*/
 playwright-report/
+playwright-report-*/
 blob-report/
 
 # Environment / secrets

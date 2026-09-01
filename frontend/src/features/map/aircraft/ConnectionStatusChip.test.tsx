@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { ConnectionStatusChip } from "@/features/map/aircraft/ConnectionStatusChip";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { makeAircraft } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
   useLiveAircraftStore.getState().reset();
@@ -44,5 +45,33 @@ describe("ConnectionStatusChip", () => {
   it("announces changes politely rather than interrupting", () => {
     render(<ConnectionStatusChip />);
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("shows a live aircraft count once the socket is live", () => {
+    render(<ConnectionStatusChip />);
+    expect(screen.queryByTestId("live-aircraft-count")).not.toBeInTheDocument();
+
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("live");
+      useLiveAircraftStore
+        .getState()
+        .applySnapshot({ aircraft: [makeAircraft()], receiver: null });
+    });
+
+    expect(screen.getByTestId("live-aircraft-count")).toHaveTextContent(
+      "1 aircraft",
+    );
+  });
+
+  it("hides the count again once the socket drops", () => {
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("live");
+      useLiveAircraftStore
+        .getState()
+        .applySnapshot({ aircraft: [makeAircraft()], receiver: null });
+      useLiveAircraftStore.getState().setConnection("reconnecting");
+    });
+    expect(screen.queryByTestId("live-aircraft-count")).not.toBeInTheDocument();
   });
 });

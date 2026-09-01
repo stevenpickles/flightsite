@@ -78,26 +78,31 @@ const EMPTY: FeatureCollection<Geometry> = {
   features: [],
 };
 
-/** Icon scale by zoom. Small enough at wide zooms that a busy 250 nm picture
- * does not become a solid mat of silhouettes, close to life size once the view
- * is down to terminal-area scale. */
-const ICON_SIZE_BY_ZOOM: ExpressionSpecification = [
+/**
+ * Icon scale by zoom, with the selected aircraft drawn a quarter larger at
+ * every stop — a size cue that survives the halo being hidden under a dense
+ * cluster. Small enough at wide zooms that a busy 250 nm picture does not
+ * become a solid mat of silhouettes, close to life size once the view is
+ * down to terminal-area scale.
+ *
+ * The style spec requires a `["zoom"]` expression to be the *direct* input
+ * of a top-level `interpolate`/`step` — it cannot be nested inside another
+ * expression (e.g. multiplying a separate zoom-`interpolate` by a
+ * selection factor, which is invalid and fails style validation silently:
+ * MapLibre fires an `error` event rather than throwing, so the layer is
+ * simply never added and no aircraft render). Folding the selection
+ * multiplier into each stop's *output* instead keeps `interpolate`/`zoom`
+ * at the top level while still varying by both zoom and selection.
+ */
+const ICON_SIZE: ExpressionSpecification = [
   "interpolate",
   ["linear"],
   ["zoom"],
   3,
-  0.6,
+  ["case", ["get", "selected"], 0.75, 0.6],
   7,
-  0.8,
+  ["case", ["get", "selected"], 1.0, 0.8],
   11,
-  1,
-];
-
-/** The selected aircraft is drawn a quarter larger — a size cue that survives
- * the halo being hidden under a dense cluster. */
-const ICON_SIZE: ExpressionSpecification = [
-  "*",
-  ICON_SIZE_BY_ZOOM,
   ["case", ["get", "selected"], 1.25, 1],
 ];
 

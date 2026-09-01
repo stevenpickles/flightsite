@@ -50,8 +50,18 @@ export class MapLibreMockMap {
   setStyle = vi.fn(() => {
     this.styleLoaded = false;
   });
+  jumpTo = vi.fn();
+
+  /** When true, the next construction throws — simulating a browser with
+   * no WebGL context (MapLibre throws from its constructor there). Reset by
+   * `resetMapLibreMock`. */
+  static throwOnNextConstruct = false;
 
   constructor(options: Record<string, unknown>) {
+    if (MapLibreMockMap.throwOnNextConstruct) {
+      MapLibreMockMap.throwOnNextConstruct = false;
+      throw new Error("Failed to initialize WebGL");
+    }
     this.options = options;
     MapLibreMockMap.instances.push(this);
   }
@@ -145,6 +155,7 @@ export class AttributionControlMock {
 /** Resets captured instances between tests. */
 export function resetMapLibreMock(): void {
   MapLibreMockMap.instances = [];
+  MapLibreMockMap.throwOnNextConstruct = false;
 }
 
 /** Returns the most recently constructed mock map instance. Throws if none

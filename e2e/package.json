@@ -1,0 +1,27 @@
+{
+  "name": "flightsite-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "stack:up": "node scripts/stack.mjs up",
+    "stack:down": "node scripts/stack.mjs down",
+    "test": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:all": "playwright test",
+    "e2e": "node scripts/run-suite.mjs chromium",
+    "e2e:firefox": "node scripts/run-suite.mjs firefox",
+    "e2e:webkit": "node scripts/run-suite.mjs webkit",
+    "typecheck": "tsc -p . --noEmit",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "^24.13.3",
+    "typescript": "~6.0.3"
+  }
+}

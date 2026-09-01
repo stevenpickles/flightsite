@@ -16,6 +16,10 @@ import { FakeWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 vi.mock("maplibre-gl", () => ({
   Map: MapLibreMockMap,
   AttributionControl: AttributionControlMock,
+  // MapLibreMap.tsx calls this once at module scope (see its own comment) —
+  // a no-op stand-in is enough under jsdom, which never spins up the real
+  // worker this configures the URL for.
+  setWorkerUrl: vi.fn(),
 }));
 
 /**

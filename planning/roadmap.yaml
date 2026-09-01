@@ -617,7 +617,7 @@ slices:
     title: "E2E foundation"
     phase: 3
     branch: "020-e2e-foundation"
-    status: planned
+    status: merged
     depends_on: ["006", "011", "014", "016", "018"]
     objective: "Stand up Playwright E2E infrastructure over demo mode and cover the first critical flows."
     scope:

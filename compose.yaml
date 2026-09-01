@@ -34,6 +34,16 @@ services:
       context: ./backend
     container_name: flightsite-backend
     restart: unless-stopped
+    # Passed through from the host shell/`.env` so `FLIGHTSITE_DEMO=1 docker
+    # compose up -d` (docs/DEVELOPMENT.md, roadmap slice 011) actually
+    # reaches the backend process: compose does not forward arbitrary host
+    # variables into a container without an explicit `environment:` entry
+    # naming them, and `flightsite.demo.env.demo_enabled()` only ever reads
+    # the container's own environment. Unset/empty is the safe default —
+    # `demo_enabled()` treats a blank value as falsy, so demo mode stays off
+    # unless the host explicitly opts in.
+    environment:
+      FLIGHTSITE_DEMO: ${FLIGHTSITE_DEMO:-}
     # Network alias "backend" is what frontend/nginx.conf proxies /api/ to.
     networks:
       default:

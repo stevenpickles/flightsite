@@ -27,6 +27,11 @@ const DOT_CLASSES: Record<ConnectionStatus, string> = {
 
 export function ConnectionStatusChip() {
   const status = useLiveAircraftStore((state) => state.connection);
+  // Only read while live: a count next to "Connecting"/"Reconnecting" would
+  // imply a picture the socket has not actually delivered yet.
+  const aircraftCount = useLiveAircraftStore((state) =>
+    status === "live" ? Object.keys(state.aircraft).length : 0,
+  );
 
   return (
     <div
@@ -44,6 +49,15 @@ export function ConnectionStatusChip() {
         className={cn("size-1.5 rounded-full", DOT_CLASSES[status])}
       />
       {LABELS[status]}
+      {status === "live" && (
+        // A quiet, user-visible confirmation that the live picture is
+        // non-empty — not just that the socket connected. Also gives the
+        // E2E live-map flow (roadmap slice 020) a stable, accessible signal
+        // for "aircraft have actually arrived" beyond the connection state.
+        <span data-testid="live-aircraft-count">
+          · {aircraftCount} aircraft
+        </span>
+      )}
     </div>
   );
 }
