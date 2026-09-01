@@ -484,7 +484,7 @@ slices:
     title: "Live aircraft rendering"
     phase: 3
     branch: "014-live-aircraft-layer"
-    status: planned
+    status: merged
     depends_on: ["010", "013"]
     objective: "Render live aircraft on the map from the WebSocket stream with hierarchical icons, selection, and stale fading."
     scope:

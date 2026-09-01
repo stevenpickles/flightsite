@@ -14,6 +14,15 @@ export type MockEventHandler = (event?: unknown) => void;
 
 interface MockSource {
   setData: ReturnType<typeof vi.fn>;
+  /** Most recent data the source was given — whatever `addSource` was called
+   * with, then whatever the last `setData` passed. Lets tests assert on the
+   * GeoJSON a layer actually pushed. */
+  data: unknown;
+}
+
+/** Minimal stand-in for a queried rendered feature. */
+export interface MockRenderedFeature {
+  properties: Record<string, unknown>;
 }
 
 export class MapLibreMockMap {
@@ -22,7 +31,11 @@ export class MapLibreMockMap {
   options: Record<string, unknown>;
   handlers = new Map<string, Set<MockEventHandler>>();
   sources = new Map<string, MockSource>();
-  layers = new Set<string>();
+  layers = new Map<string, Record<string, unknown>>();
+  images = new Map<string, unknown>();
+  /** Features `queryRenderedFeatures` returns; tests set this to simulate a
+   * click landing on an aircraft. */
+  renderedFeatures: MockRenderedFeature[] = [];
   removed = false;
   // Mirrors real MapLibre: false immediately after construction (or after
   // setStyle swaps the style) until a `load`/`style.load` event fires.
@@ -69,21 +82,39 @@ export class MapLibreMockMap {
     }
   }
 
-  addSource(id: string): void {
-    this.sources.set(id, { setData: vi.fn() });
+  addSource(id: string, source?: { data?: unknown }): void {
+    const entry: MockSource = {
+      data: source?.data,
+      setData: vi.fn((data: unknown) => {
+        entry.data = data;
+      }),
+    };
+    this.sources.set(id, entry);
   }
 
   getSource(id: string): MockSource | undefined {
     return this.sources.get(id);
   }
 
-  addLayer(layer: { id: string }): this {
-    this.layers.add(layer.id);
+  addLayer(layer: { id: string } & Record<string, unknown>): this {
+    this.layers.set(layer.id, layer);
     return this;
   }
 
-  getLayer(id: string): object | undefined {
-    return this.layers.has(id) ? {} : undefined;
+  getLayer(id: string): Record<string, unknown> | undefined {
+    return this.layers.get(id);
+  }
+
+  hasImage(id: string): boolean {
+    return this.images.has(id);
+  }
+
+  addImage(id: string, image: unknown): void {
+    this.images.set(id, image);
+  }
+
+  queryRenderedFeatures(): MockRenderedFeature[] {
+    return this.renderedFeatures;
   }
 
   isStyleLoaded(): boolean {
