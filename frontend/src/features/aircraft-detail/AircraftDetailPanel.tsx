@@ -29,7 +29,6 @@ import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
 import { NearestAirportSection } from "@/features/aircraft-detail/components/NearestAirportSection";
-import { ReservedSectionRow } from "@/features/aircraft-detail/components/ReservedSectionRow";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import {
