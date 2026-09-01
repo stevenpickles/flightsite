@@ -19,7 +19,7 @@ from flightsite.db.engine import (
     sqlite_url,
 )
 from flightsite.db.meta import MetaError, MetaRepository
-from flightsite.db.models import META_KEY_T0, Base, Meta
+from flightsite.db.models import META_KEY_T0, Aircraft, Base, Meta, Sighting
 from flightsite.db.startup import DATABASE_SUBSYSTEM, initialize_database
 
 __all__ = [
@@ -28,11 +28,13 @@ __all__ = [
     "DB_FILENAME",
     "META_KEY_T0",
     "QUICK_CHECK_OK",
+    "Aircraft",
     "Base",
     "Database",
     "Meta",
     "MetaError",
     "MetaRepository",
+    "Sighting",
     "create_sqlite_engine",
     "database_path",
     "from_epoch_ms",

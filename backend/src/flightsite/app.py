@@ -21,6 +21,7 @@ from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
 from flightsite.readiness import ReadinessRegistry
+from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
 
@@ -53,6 +54,20 @@ def _build_live_store(settings: Settings) -> LiveStore:
         stale_s=settings.sighting.stale_s,
         remove_s=settings.sighting.remove_s,
         receiver_location=receiver,
+    )
+
+
+def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWorker:
+    """Construct the write-behind persistence worker (ADR-0008).
+
+    Constructing it subscribes to nothing and opens no connection; ``start()``
+    in the lifespan hook attaches it to the live event stream. It is the sole
+    user of :meth:`~flightsite.db.engine.Database.writer_session`.
+    """
+    return PersistenceWorker(
+        database=app.state.database,
+        live=app.state.live,
+        close_s=settings.sighting.close_s,
     )
 
 
@@ -110,12 +125,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     readiness: ReadinessRegistry = app.state.readiness
     database: Database = app.state.database
     live: LiveStore = app.state.live
+    persistence: PersistenceWorker = app.state.persistence
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
     # subsystem not-ready (so /api/v1/ready answers 503) while the process
     # stays reachable for diagnosis — see flightsite.db.startup.
-    await initialize_database(database, readiness)
+    database_ready = await initialize_database(database, readiness)
+
+    # The persistence worker starts only on a healthy schema: against a
+    # database that failed to migrate every cycle would fail identically, and
+    # a warning per second would bury the one error that explains it. The live
+    # picture, ingestion and the API stay fully available — persistence is the
+    # only thing degraded, which is exactly what the readiness flag says.
+    if database_ready:
+        await persistence.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -127,12 +151,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # Ingestion first: no new batches should arrive after the live store
-        # stops sweeping.
+        # Shut down along the direction of data flow, so each stage has
+        # already stopped producing before its consumer stops: ingestion, then
+        # the live store's sweep, then the persistence worker — which drains
+        # what those two last emitted and flushes every open sighting before
+        # the engines close.
         service: IngestionService | None = app.state.ingestion
         if service is not None:
             await service.stop()
         await live.stop()
+        await persistence.stop()
         await database.dispose()
         logger.info("app_shutdown")
 
@@ -161,6 +189,11 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     stops both. A decoder that is unreachable does not hold up readiness — the
     app is fully usable without one.
 
+    The write-behind persistence worker is constructed alongside it as
+    ``app.state.persistence``. It consumes the live event stream and is the
+    process's single SQLite writer (ADR-0008); startup attaches it once the
+    schema is known good, and shutdown flushes it before the engines close.
+
     Args:
         data_dir: overrides data-directory resolution (``FLIGHTSITE_DATA_DIR``,
             then ``/opt/flightsite/data``). Used by tests.
@@ -183,6 +216,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # decoder: request handlers can then read `app.state.live` unconditionally
     # instead of guarding every access. Constructing it starts nothing.
     app.state.live = _build_live_store(settings)
+    app.state.persistence = _build_persistence_worker(app, settings)
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
