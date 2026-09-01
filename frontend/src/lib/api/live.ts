@@ -118,6 +118,11 @@ export interface LiveAircraft {
   /** `null` whenever there is nothing to say — see {@link NearestAirportInfo}. */
   nearest_airport: NearestAirportInfo | null;
   interesting: InterestingMatch | null;
+  /** Watchlist names this aircraft currently matches (SPEC §42, slice 037).
+   * Always an array, `[]` when nothing matches — never absent, the same
+   * always-present/empty-when-none shape §2.7's null pattern takes for a
+   * list rather than a scalar field. */
+  watchlists: string[];
 
   /** §2.6: keys name fields, values name the source. A field with no entry is
    * decoder-direct. */

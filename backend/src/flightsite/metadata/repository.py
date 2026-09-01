@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -55,11 +55,13 @@ from flightsite.classification.store import (
 from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
+    AircraftClassification,
     AircraftMetadata,
     AircraftMetadataResolved,
     AircraftMetadataStaging,
     MetadataSource,
     Operator,
+    OperatorGroup,
 )
 from flightsite.metadata.precedence import (
     PrecedenceModel,
@@ -140,6 +142,19 @@ class AircraftLookup:
             registration=None if metadata is None else metadata.registration,
             callsign=callsign,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataClearCounts:
+    """Rows removed by :meth:`MetadataRepository.clear_all` (SPEC §73)."""
+
+    aircraft_metadata_rows: int
+    staging_rows: int
+    resolved_rows: int
+    classification_rows: int
+    operator_rows: int
+    operator_group_rows: int
+    sources_reset: int
 
 
 class MetadataRepository:
@@ -558,6 +573,83 @@ class MetadataRepository:
             ).all()
             return {str(type_code): int(count) for type_code, count in rows}
 
+    # ------------------------------------------------------------- reset
+
+    async def clear_all(self) -> MetadataClearCounts:
+        """Delete every imported and derived metadata row (SPEC §73, slice 045).
+
+        Behind Settings' "Clear Metadata Cache" action. Everything deleted
+        here is either a per-source import product (``aircraft_metadata``, its
+        staging table) or something :meth:`rebuild_resolved` recreates
+        wholesale on the next successful import (``aircraft_metadata_resolved``,
+        ``aircraft_classification``, ``operators``, ``operator_groups``) — so
+        clearing it loses nothing an "Update Aircraft Metadata" run would not
+        already replace.
+
+        Per-source status rows are *reset*, not deleted:
+        ``aircraft_metadata.source`` is a foreign key into
+        ``metadata_sources.source`` (and, for the ``airports`` source,
+        :meth:`flightsite.airports.repository.AirportRepository.clear_all`
+        depends on the row surviving too), and leaving a stale ``ok`` status
+        beside a dataset that no longer exists would misreport what
+        :meth:`~flightsite.metadata.service.MetadataService.statuses` shows a
+        user. ``last_attempt_ms`` is left alone — it is a historical fact
+        about when a run last happened, not a claim about what is installed.
+
+        ``aircraft``, ``sightings`` and everything derived from sighting
+        history are untouched: nothing in this table set holds a foreign key
+        into them, and nothing here reads or writes
+        ``aircraft.sighting_count``.
+
+        One writer transaction. A failure partway must not leave one table
+        cleared and another still describing the old dataset.
+        """
+        async with self._database.writer_session() as session:
+            aircraft_metadata_rows = await _table_count(session, AircraftMetadata)
+            staging_rows = await _table_count(session, AircraftMetadataStaging)
+            resolved_rows = await _table_count(session, AircraftMetadataResolved)
+            classification_rows = await _table_count(session, AircraftClassification)
+            operator_rows = await _table_count(session, Operator)
+            operator_group_rows = await _table_count(session, OperatorGroup)
+
+            # Same order rebuild_resolved uses on the way out (foreign_keys=ON,
+            # ADR-0001): resolved rows reference operator_groups, so they are
+            # cleared before the curated group rows go.
+            await session.execute(delete(AircraftMetadataResolved))
+            await clear_classifications(session)
+            await session.execute(delete(Operator))
+            await session.execute(delete(OperatorGroup))
+            await session.execute(delete(AircraftMetadataStaging))
+            await session.execute(delete(AircraftMetadata))
+            reset = await session.execute(
+                update(MetadataSource)
+                .values(
+                    status=SourceStatus.NEVER_RUN.value,
+                    last_success_ms=None,
+                    dataset_version=None,
+                    row_count=None,
+                    last_error=None,
+                )
+                .returning(MetadataSource.source)
+            )
+            sources_reset = len(reset.scalars().all())
+
+        return MetadataClearCounts(
+            aircraft_metadata_rows=aircraft_metadata_rows,
+            staging_rows=staging_rows,
+            resolved_rows=resolved_rows,
+            classification_rows=classification_rows,
+            operator_rows=operator_rows,
+            operator_group_rows=operator_group_rows,
+            sources_reset=sources_reset,
+        )
+
+
+async def _table_count(session: AsyncSession, model: type[Any]) -> int:
+    """Row count of ``model``'s table, read on the caller's own session."""
+    total = await session.scalar(select(func.count()).select_from(model))
+    return int(total or 0)
+
 
 #: The cache's single read (see :meth:`MetadataRepository.load_live_view`).
 #: ``{values}`` is filled with one ``(:param)`` per requested address.
@@ -692,5 +784,6 @@ __all__ = [
     "REBUILD_PAGE_ROWS",
     "STAGE_BATCH_ROWS",
     "AircraftLookup",
+    "MetadataClearCounts",
     "MetadataRepository",
 ]

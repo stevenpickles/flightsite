@@ -42,7 +42,9 @@ from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
+from flightsite.reset import apply_pending_reset
 from flightsite.sightings import PersistenceWorker
+from flightsite.watchlists import WatchlistService
 
 logger = structlog.get_logger(__name__)
 
@@ -274,6 +276,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     airports: AirportContextService = app.state.airports
     receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
     analytics: AnalyticsService = app.state.analytics
+    watchlists: WatchlistService = app.state.watchlists
     activity: ActivityService = app.state.activity
     maintenance: MaintenanceService = app.state.maintenance
 
@@ -290,6 +293,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # only thing degraded, which is exactly what the readiness flag says.
     if database_ready:
         await persistence.start()
+        # Same condition, same reason: the watchlist match index is loaded
+        # from tables the failed migration may not have created. It starts
+        # before the metadata cache, deliberately: the cache's own start()
+        # synchronously visits the current live set and notifies the matcher
+        # for each one, so the matcher needs real entries loaded before that
+        # happens — otherwise the first population round would compute every
+        # aircraft's matches against an empty index. Skipping this leaves
+        # `watchlists: []` on every aircraft, which is the same honest empty
+        # answer an install with no watchlists configured shows.
+        await watchlists.start()
         # Same condition, same reason: the metadata cache reads the schema the
         # migration just failed to create. Skipping it leaves every live
         # aircraft's metadata `null` — the documented unknown state — while
@@ -421,11 +434,20 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     registry and uptime clock, constructs the database, and mounts the
     routers.
 
+    Before any of that, a pending ``Reset FlightSite Data`` marker (SPEC §73,
+    slice 045) is applied: :func:`~flightsite.reset.apply_pending_reset`
+    deletes ``flightsite.sqlite3`` and its WAL sidecars if
+    ``POST /api/internal/reset/data`` left one behind on a previous run, and
+    is a no-op otherwise. See :mod:`flightsite.reset.marker` for why this is a
+    mark-and-restart action rather than a live tear-down.
+
     The ``database`` subsystem is registered here, not in the lifespan hook,
     so it reads as not-ready from the very first request; the lifespan hook
     migrates the database and marks it ready. Constructing
     :class:`~flightsite.db.Database` opens nothing and creates no directory —
-    building an app is still side-effect free.
+    building an app is still side-effect free, and by this point any pending
+    reset has already made sure there is nothing left to migrate but a fresh
+    schema.
 
     The in-memory live aircraft registry is constructed here and exposed as
     ``app.state.live``; startup starts its lifecycle sweep and, when a
@@ -448,6 +470,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     task tracked as ``app.state.metadata_update_task``, so a run outlives the
     request that started it; shutdown cancels one still in flight before the
     cache and the writer stop underneath it.
+
+    User-defined watchlists (SPEC §42) are constructed as
+    ``app.state.watchlists``. Startup loads its in-memory match index from the
+    database before the metadata cache's own startup visits the live set, and
+    every CRUD mutation (``docs/API.md`` §5's ``/api/internal/watchlists*``)
+    rebuilds that index before answering — so "matching updates without
+    restart" is true of the surface, not merely eventually consistent with
+    it. It holds no background task of its own and needs no shutdown step.
 
     Nearest-airport context (SPEC §41) is constructed as ``app.state.airports``
     — a fourth consumer of the live event stream. Startup loads the whole
@@ -513,6 +543,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # it here keeps the env override winning (SPEC §30).
     configure_logging(level=settings.log_level)
 
+    # SPEC §73's "Reset FlightSite Data" is mark-and-restart (slice 045,
+    # flightsite.reset.marker): POST /api/internal/reset/data only writes a
+    # marker file and asks the operator to restart. A pending marker is
+    # applied here — before Database is even constructed below — so the
+    # migration that follows always creates a brand new database rather than
+    # migrating one this same call is about to delete out from under it.
+    reset_applied = apply_pending_reset(store.data_dir)
+
     # docs/API.md §2.10 places the published schema and its interactive docs
     # under the versioned prefix, not at the server root: the OpenAPI document
     # describes /api/v1 and nothing else, so it belongs beside what it
@@ -527,6 +565,9 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     )
     app.state.config_store = store
     app.state.settings = settings
+    # True exactly on the first create_app() call after a reset marker was
+    # written; tests and startup logging read it, nothing else depends on it.
+    app.state.data_reset_applied = reset_applied
     app.state.readiness = ReadinessRegistry()
     app.state.readiness.register(DATABASE_SUBSYSTEM)
     app.state.database = Database(database_path(store.data_dir))
@@ -551,6 +592,13 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         persistence=app.state.persistence,
         repository=airport_repository,
     )
+    # Watchlists (SPEC §42, roadmap slice 037): CRUD plus the in-memory match
+    # index. Constructed before the metadata service because that service's
+    # cache takes the index's `on_resolved` observer — see the metadata
+    # cache's own docstring ("Observing resolved views") for why matching by
+    # registration/type/operator/category piggy-backs on the cache's
+    # population pipeline instead of a second live-event subscription.
+    app.state.watchlists = WatchlistService(database=app.state.database)
     app.state.metadata = MetadataService(
         database=app.state.database,
         live=app.state.live,
@@ -560,6 +608,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         # over an object, so registering them here — before the services they
         # reach for even exist — is safe and keeps the wiring in one place.
         listeners=(_rebuild_airport_index(app), _record_activity(app)),
+        on_resolved=app.state.watchlists.matcher.on_resolved,
     )
     # Optional route enrichment (SPEC §28). `build_provider` returns None
     # unless the flag is set *and* a key is present, and a service with no

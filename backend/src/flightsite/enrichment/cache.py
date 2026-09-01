@@ -178,6 +178,18 @@ class RouteCacheRepository:
         async with self.database.read_session() as session:
             return int(await session.scalar(select(func.count()).select_from(RouteCache)) or 0)
 
+    async def clear_all(self) -> int:
+        """Delete every row, expired or not (SPEC §73's Clear Metadata Cache).
+
+        Unlike :meth:`prune`, this is not bounded to expired rows: the whole
+        cache is being emptied outright, on the same "delete what an import
+        would recreate" logic ``flightsite.reset.service`` applies to the
+        metadata tables — the next lookup simply asks the provider again.
+        """
+        statement = delete(RouteCache).returning(RouteCache.cache_key)
+        async with self.database.writer_session() as session:
+            return len((await session.scalars(statement)).all())
+
     async def _write(
         self,
         cache_key: str,
