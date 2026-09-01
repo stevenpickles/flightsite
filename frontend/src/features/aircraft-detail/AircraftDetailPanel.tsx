@@ -26,6 +26,7 @@ import { EmergencySquawkBadge } from "@/features/aircraft-detail/components/Emer
 import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/ExternalTrackerLinks";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
+import { NearestAirportSection } from "@/features/aircraft-detail/components/NearestAirportSection";
 import { ReservedSectionRow } from "@/features/aircraft-detail/components/ReservedSectionRow";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
@@ -320,9 +321,15 @@ export function AircraftDetailPanel() {
                 />
               </DetailSection>
 
-              <DetailSection title="Nearest airport">
-                <ReservedSectionRow note="Nearest-airport inference arrives with a later slice." />
-              </DetailSection>
+              {/* Local inference only (SPEC §41), and deliberately not part of
+               * the Route section above: what somebody told FlightSite and
+               * what FlightSite guessed stay apart, in the payload and on the
+               * screen. */}
+              <NearestAirportSection
+                airport={aircraft.nearest_airport}
+                provenanceSource={aircraft.provenance.nearest_airport}
+                units={units}
+              />
 
               <DetailSection title="History">
                 <ReservedSectionRow note="Lifetime sighting records arrive once history is stored (a later slice)." />

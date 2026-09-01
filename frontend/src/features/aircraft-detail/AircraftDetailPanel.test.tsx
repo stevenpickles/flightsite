@@ -185,6 +185,60 @@ describe("AircraftDetailPanel", () => {
     );
   });
 
+  it("keeps the inferred airport in its own section, apart from the route", () => {
+    // The slice's acceptance criterion: inference and external route data are
+    // visually and semantically distinct (SPEC §41). Two sections, and neither
+    // one's values appear in the other.
+    render(<AircraftDetailPanel />);
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "KATL", destination: "KSLC" },
+        nearest_airport: {
+          ident: "KBFI",
+          name: "Boeing Field",
+          distance_nm: 3.4,
+          phase: "arriving",
+        },
+        provenance: { route: "aerodatabox", nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const route = screen.getByText("Route").closest("section") as HTMLElement;
+    const airport = screen
+      .getByText("Nearest airport")
+      .closest("section") as HTMLElement;
+    expect(route).not.toBe(airport);
+
+    expect(within(route).getByText("KATL")).toBeInTheDocument();
+    expect(within(route).queryByText(/KBFI/)).not.toBeInTheDocument();
+    expect(within(route).queryByText(/inferred/i)).not.toBeInTheDocument();
+
+    expect(
+      within(airport).getByText("KBFI — Boeing Field"),
+    ).toBeInTheDocument();
+    expect(
+      within(airport).getByText("Likely arriving · inferred"),
+    ).toBeInTheDocument();
+    expect(within(airport).queryByText("KATL")).not.toBeInTheDocument();
+  });
+
+  it("renders the nearest-airport section as Unknown when nothing is known", () => {
+    render(<AircraftDetailPanel />);
+    seedSnapshot([makeAircraft({ icao: "aaaaaa", nearest_airport: null })]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const airport = screen
+      .getByText("Nearest airport")
+      .closest("section") as HTMLElement;
+    expect(within(airport).getAllByText("Unknown").length).toBe(3);
+  });
+
   it("shows an emergency squawk badge for 7700 even without the emergency field set", () => {
     render(<AircraftDetailPanel />);
     seedSnapshot([

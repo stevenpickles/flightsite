@@ -37,6 +37,7 @@ const BASE: LiveAircraft = {
   operator_group: null,
   classification: null,
   route: { origin: null, destination: null },
+  nearest_airport: null,
   interesting: null,
   provenance: {},
 };
