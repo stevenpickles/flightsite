@@ -7,18 +7,31 @@
  * 500-aircraft target unreachable; `setData` on an existing source is the one
  * cheap update path MapLibre offers.
  *
- * Four layers, bottom to top:
+ * Six layers, bottom to top:
  *
  * 1. the selected aircraft's track polyline;
  * 2. the selection halo — a ring under the selected icon (SPEC §36 "strong
  *    selection highlight");
  * 3. the MLAT ring — a *dashed* ring under multilaterated positions, so the
  *    position source is distinguishable without relying on colour (SPEC §36);
- * 4. the aircraft symbols themselves, rotated to `track_deg`.
+ * 4. the aircraft symbols themselves, rotated to `track_deg`;
+ * 5. non-selected aircraft labels — `text-allow-overlap: false`, so
+ *    MapLibre's own collision system hides whichever labels lose the
+ *    `symbol-sort-key` contest (roadmap slice 015: "MapLibre's own collision
+ *    system plus zoom/density-driven tiering");
+ * 6. the selected aircraft's label — its own layer because
+ *    `text-allow-overlap`/`text-ignore-placement` are layer-level, not
+ *    data-driven, and the selected label must never be the one collision
+ *    hides (roadmap slice 015 acceptance criterion: "selected aircraft
+ *    always fully labeled").
  *
  * Every style decision reads a feature property that
  * `@/features/map/aircraft/geojson` computed, so the expressions stay trivial
- * and the logic stays testable without a renderer.
+ * and the logic stays testable without a renderer. That includes *which*
+ * lines a label shows: `geojson.ts` already tiers the text by zoom and
+ * density (`@/features/map/labels`) before it ever reaches these layers, so
+ * the layers themselves only ever decide *whether a placed label survives a
+ * collision*, never how much text it carries.
  */
 
 import type { FeatureCollection, Geometry } from "geojson";
@@ -30,6 +43,10 @@ import type {
 } from "maplibre-gl";
 
 import { MLAT_RING_IMAGE_ID } from "@/features/map/aircraft/icons/silhouettes";
+import {
+  SORT_KEY_DEFAULT,
+  SORT_KEY_INTERESTING,
+} from "@/features/map/labels/priority";
 
 export const AIRCRAFT_SOURCE_ID = "flightsite-aircraft";
 export const AIRCRAFT_TRACK_SOURCE_ID = "flightsite-aircraft-track";
@@ -37,11 +54,24 @@ export const AIRCRAFT_TRACK_LAYER_ID = "flightsite-aircraft-track-line";
 export const AIRCRAFT_SELECTION_LAYER_ID = "flightsite-aircraft-selection";
 export const AIRCRAFT_MLAT_RING_LAYER_ID = "flightsite-aircraft-mlat-ring";
 export const AIRCRAFT_SYMBOL_LAYER_ID = "flightsite-aircraft-symbols";
+export const AIRCRAFT_LABEL_LAYER_ID = "flightsite-aircraft-labels";
+export const AIRCRAFT_SELECTED_LABEL_LAYER_ID =
+  "flightsite-aircraft-labels-selected";
 
 /** Selection accent. Fixed rather than theme-driven, for the same reason the
  * range rings are: it has to read identically on every basemap. Deliberately
  * distinct from the ring teal and the receiver red already on the map. */
 const SELECTION_COLOR = "#8ab4ff";
+
+/** Label text fill and halo. Deliberately the same values as the aircraft
+ * icon palette (`icons/silhouettes.ts`'s `BODY`/`INK`) rather than importing
+ * them — that module stays free of a label-layer dependency — but the design
+ * decision is identical: a light fill with a dark halo reads on the dark
+ * aviation basemap, the light one, and OSM raster imagery alike, so labels
+ * do not need a theme of their own. */
+const LABEL_TEXT_COLOR = "#f2f6ff";
+const LABEL_HALO_COLOR = "#0b1220";
+const LABEL_HALO_WIDTH = 1.2;
 
 const EMPTY: FeatureCollection<Geometry> = {
   type: "FeatureCollection",
@@ -165,6 +195,80 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
         "symbol-sort-key": ["case", ["get", "selected"], 1, 0],
       },
       paint: { "icon-opacity": ["get", "opacity"] },
+    });
+  }
+
+  if (!map.getLayer(AIRCRAFT_LABEL_LAYER_ID)) {
+    map.addLayer({
+      id: AIRCRAFT_LABEL_LAYER_ID,
+      type: "symbol",
+      source: AIRCRAFT_SOURCE_ID,
+      // Only a feature with something to say, and not the selected aircraft
+      // — that one gets its own always-visible layer below. An empty
+      // `label` is filtered out here rather than left to MapLibre so a tier
+      // of "none" (`@/features/map/labels`) never occupies a collision slot
+      // another aircraft's label could have used.
+      filter: [
+        "all",
+        ["!=", ["get", "label"], ""],
+        ["==", ["get", "selected"], false],
+      ],
+      layout: {
+        "text-field": ["get", "label"],
+        "text-size": 11,
+        "text-anchor": "top",
+        "text-offset": [0, 1],
+        "text-line-height": 1.15,
+        // MapLibre's own collision system: a label that loses the
+        // placement contest is hidden rather than drawn over its neighbour.
+        "text-allow-overlap": false,
+        "text-optional": true,
+        // Interesting aircraft win a collision against an ordinary one;
+        // selected is excluded by the filter above. Mirrors
+        // `labels/priority.ts`'s `deriveLabelSortKey`.
+        "symbol-sort-key": [
+          "case",
+          ["get", "interesting"],
+          SORT_KEY_INTERESTING,
+          SORT_KEY_DEFAULT,
+        ],
+      },
+      paint: {
+        "text-color": LABEL_TEXT_COLOR,
+        "text-halo-color": LABEL_HALO_COLOR,
+        "text-halo-width": LABEL_HALO_WIDTH,
+        "text-opacity": ["get", "opacity"],
+      },
+    });
+  }
+
+  if (!map.getLayer(AIRCRAFT_SELECTED_LABEL_LAYER_ID)) {
+    map.addLayer({
+      id: AIRCRAFT_SELECTED_LABEL_LAYER_ID,
+      type: "symbol",
+      source: AIRCRAFT_SOURCE_ID,
+      filter: ["==", ["get", "selected"], true],
+      layout: {
+        "text-field": ["get", "label"],
+        "text-size": 12,
+        "text-anchor": "top",
+        "text-offset": [0, 1],
+        "text-line-height": 1.15,
+        // The selected aircraft's label is never allowed to collide away —
+        // roadmap slice 015's "selected aircraft always fully labeled"
+        // acceptance criterion — so both overlap and placement collision
+        // are off. `text-allow-overlap`/`text-ignore-placement` are
+        // layer-level rather than data-driven, which is why this cannot
+        // just be a `case` expression on the shared label layer above.
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+      },
+      paint: {
+        "text-color": LABEL_TEXT_COLOR,
+        "text-halo-color": LABEL_HALO_COLOR,
+        "text-halo-width": LABEL_HALO_WIDTH,
+        "text-opacity": ["get", "opacity"],
+      },
     });
   }
 }

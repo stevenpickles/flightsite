@@ -508,7 +508,7 @@ slices:
     title: "Map labels & decluttering"
     phase: 3
     branch: "015-map-labels"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Add aircraft labels with priority-based decluttering."
     scope:
@@ -528,7 +528,7 @@ slices:
     title: "Aircraft detail panel"
     phase: 3
     branch: "016-aircraft-detail"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Comprehensive aircraft detail panel for the selected aircraft with provenance indicators and external links."
     scope:
@@ -686,7 +686,7 @@ slices:
     title: "FAA registry importer"
     phase: 4
     branch: "023-faa-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
     scope:

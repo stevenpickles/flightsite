@@ -24,7 +24,7 @@ from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
 from flightsite.metadata import MetadataService
 from flightsite.metadata.registry import SourceRegistry
-from flightsite.metadata.sources import MictronicsProvider
+from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.sightings import PersistenceWorker
 
@@ -71,6 +71,7 @@ def _build_metadata_registry() -> SourceRegistry:
     """
     registry = SourceRegistry()
     registry.register("mictronics", MictronicsProvider())
+    registry.register("faa", FaaRegistryProvider())
     return registry
 
 

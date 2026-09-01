@@ -1,8 +1,10 @@
 import type { Map as MapLibreGlMap } from "maplibre-gl";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AIRCRAFT_LABEL_LAYER_ID,
   AIRCRAFT_MLAT_RING_LAYER_ID,
+  AIRCRAFT_SELECTED_LABEL_LAYER_ID,
   AIRCRAFT_SELECTION_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
   AIRCRAFT_SYMBOL_LAYER_ID,
@@ -15,6 +17,10 @@ import {
 } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { MLAT_RING_IMAGE_ID } from "@/features/map/aircraft/icons/silhouettes";
+import {
+  SORT_KEY_DEFAULT,
+  SORT_KEY_INTERESTING,
+} from "@/features/map/labels/priority";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import { MapLibreMockMap } from "@/test/maplibreGlMock";
 
@@ -34,7 +40,7 @@ beforeEach(() => {
 });
 
 describe("ensureAircraftLayers", () => {
-  it("adds both sources and all four layers", () => {
+  it("adds both sources and all six layers", () => {
     ensureAircraftLayers(map);
     expect([...mock.sources.keys()].sort()).toEqual(
       [AIRCRAFT_SOURCE_ID, AIRCRAFT_TRACK_SOURCE_ID].sort(),
@@ -44,12 +50,15 @@ describe("ensureAircraftLayers", () => {
       AIRCRAFT_SELECTION_LAYER_ID,
       AIRCRAFT_MLAT_RING_LAYER_ID,
       AIRCRAFT_SYMBOL_LAYER_ID,
+      AIRCRAFT_LABEL_LAYER_ID,
+      AIRCRAFT_SELECTED_LABEL_LAYER_ID,
     ]);
   });
 
-  it("draws the track under the icons and the rings under the symbols", () => {
+  it("draws the track under the icons, the rings under the symbols, and the labels above everything", () => {
     // Layer order is paint order: the selection halo and the MLAT ring are
-    // decoration behind the silhouette, not on top of it.
+    // decoration behind the silhouette, not on top of it, and labels must
+    // paint over the silhouettes they annotate.
     ensureAircraftLayers(map);
     const order = [...mock.layers.keys()];
     expect(order.indexOf(AIRCRAFT_TRACK_LAYER_ID)).toBeLessThan(
@@ -58,14 +67,102 @@ describe("ensureAircraftLayers", () => {
     expect(order.indexOf(AIRCRAFT_MLAT_RING_LAYER_ID)).toBeLessThan(
       order.indexOf(AIRCRAFT_SYMBOL_LAYER_ID),
     );
+    expect(order.indexOf(AIRCRAFT_SYMBOL_LAYER_ID)).toBeLessThan(
+      order.indexOf(AIRCRAFT_LABEL_LAYER_ID),
+    );
+    expect(order.indexOf(AIRCRAFT_LABEL_LAYER_ID)).toBeLessThan(
+      order.indexOf(AIRCRAFT_SELECTED_LABEL_LAYER_ID),
+    );
   });
 
   it("is idempotent and never re-adds a layer", () => {
     ensureAircraftLayers(map);
     const first = mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID);
     ensureAircraftLayers(map);
-    expect(mock.layers.size).toBe(4);
+    expect(mock.layers.size).toBe(6);
     expect(mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(first);
+  });
+
+  it("never introduces a clustered GeoJSON source", () => {
+    // Roadmap slice 015 explicitly rules out marker clustering as a
+    // decluttering mechanism — this guards against one creeping in later.
+    const addSource = vi.spyOn(mock, "addSource");
+    ensureAircraftLayers(map);
+    expect(addSource).toHaveBeenCalled();
+    for (const call of addSource.mock.calls) {
+      const options = call[1] as Record<string, unknown> | undefined;
+      expect(options?.cluster).toBeUndefined();
+    }
+  });
+
+  it("filters the non-selected label layer to non-empty, non-selected labels", () => {
+    ensureAircraftLayers(map);
+    expect(mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.filter).toEqual([
+      "all",
+      ["!=", ["get", "label"], ""],
+      ["==", ["get", "selected"], false],
+    ]);
+  });
+
+  it("filters the selected label layer to the selected feature", () => {
+    ensureAircraftLayers(map);
+    expect(mock.layers.get(AIRCRAFT_SELECTED_LABEL_LAYER_ID)?.filter).toEqual([
+      "==",
+      ["get", "selected"],
+      true,
+    ]);
+  });
+
+  it("disables collision overlap for ordinary labels but not for the selected one", () => {
+    // The whole point of the split: MapLibre's collision system can hide an
+    // ordinary label, but the selected aircraft's label must never be the
+    // one that loses that contest.
+    ensureAircraftLayers(map);
+    const ordinary = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
+      string,
+      unknown
+    >;
+    const selected = mock.layers.get(AIRCRAFT_SELECTED_LABEL_LAYER_ID)
+      ?.layout as Record<string, unknown>;
+    expect(ordinary["text-allow-overlap"]).toBe(false);
+    expect(selected["text-allow-overlap"]).toBe(true);
+    expect(selected["text-ignore-placement"]).toBe(true);
+  });
+
+  it("prioritizes interesting aircraft over ordinary ones in the label collision order", () => {
+    ensureAircraftLayers(map);
+    const layout = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
+      string,
+      unknown
+    >;
+    expect(layout["symbol-sort-key"]).toEqual([
+      "case",
+      ["get", "interesting"],
+      SORT_KEY_INTERESTING,
+      SORT_KEY_DEFAULT,
+    ]);
+  });
+
+  it("reads label text from the precomputed feature property, never composing it in the style", () => {
+    ensureAircraftLayers(map);
+    for (const id of [
+      AIRCRAFT_LABEL_LAYER_ID,
+      AIRCRAFT_SELECTED_LABEL_LAYER_ID,
+    ]) {
+      const layout = mock.layers.get(id)?.layout as Record<string, unknown>;
+      expect(layout["text-field"]).toEqual(["get", "label"]);
+    }
+  });
+
+  it("fades label opacity with the same staleness signal as the icon", () => {
+    ensureAircraftLayers(map);
+    for (const id of [
+      AIRCRAFT_LABEL_LAYER_ID,
+      AIRCRAFT_SELECTED_LABEL_LAYER_ID,
+    ]) {
+      const paint = mock.layers.get(id)?.paint as Record<string, unknown>;
+      expect(paint["text-opacity"]).toEqual(["get", "opacity"]);
+    }
   });
 
   it("updates an existing source in place rather than replacing it", () => {
@@ -184,6 +281,17 @@ describe("drawAircraftFrame", () => {
       icao: "aaaaaa",
       selected: true,
     });
+  });
+
+  it("fully labels the selected aircraft at the mock map's default zoom", () => {
+    // The mock defaults `getZoom()` into the full-label band precisely so a
+    // test like this one exercises the real `frame.ts` -> `geojson.ts` path
+    // end to end instead of stubbing zoom away.
+    drawAircraftFrame(map, state, NOW);
+    const data = mock.getSource(AIRCRAFT_SOURCE_ID)?.data as {
+      features: { properties: { label: string } }[];
+    };
+    expect(data.features[0]?.properties.label).toBe("RCH471\nFL310");
   });
 
   it("leaves the track alone on an interpolation frame", () => {

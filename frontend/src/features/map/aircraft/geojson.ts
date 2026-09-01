@@ -24,6 +24,14 @@ import type {
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
+import {
+  buildAircraftLabelLines,
+  renderLabelText,
+} from "@/features/map/labels/labelContent";
+import {
+  deriveLabelTier,
+  ZOOM_LABELS_FULL,
+} from "@/features/map/labels/priority";
 
 /** Opacity of a stale aircraft. SPEC §36 asks for staleness to read visually;
  * fading rather than hiding keeps a Mode S contact that has gone quiet on the
@@ -51,6 +59,16 @@ export interface AircraftFeatureProperties {
   mlat: boolean;
   selected: boolean;
   onGround: boolean;
+  /** True when the aircraft carries an active alert match (slice 038).
+   * Always `false` today — `interesting` is `null` on every live payload
+   * this slice can receive — but the label priority tiering and the
+   * indicator glyph are both wired to it now. */
+  interesting: boolean;
+  /** Newline-delimited label text, already tiered for the current
+   * zoom/density (`@/features/map/labels`) and empty when nothing should
+   * render — the style layers filter on that rather than testing for an
+   * empty text-field themselves. */
+  label: string;
 }
 
 export type AircraftFeature = Feature<Point, AircraftFeatureProperties>;
@@ -61,6 +79,11 @@ export interface AircraftFrameInput {
   selectedIcao: string | null;
   /** UTC milliseconds this frame is being drawn for. */
   now: number;
+  /** Current map zoom (`map.getZoom()`), driving the label tier's
+   * zoom band. Defaults to a zoom inside the full-label band so callers
+   * that do not care about label decluttering (most existing tests) do
+   * not have to supply one. */
+  zoom?: number;
 }
 
 function feature(
@@ -86,8 +109,17 @@ function feature(
 export function buildAircraftFeatureCollection(
   input: AircraftFrameInput,
 ): FeatureCollection<Point, AircraftFeatureProperties> {
-  const { aircraft, departing, selectedIcao, now } = input;
+  const {
+    aircraft,
+    departing,
+    selectedIcao,
+    now,
+    zoom = ZOOM_LABELS_FULL,
+  } = input;
   const features: AircraftFeature[] = [];
+  // Cheap density signal: the live picture's own size, not a viewport
+  // query — see `labels/priority.ts`'s `deriveLabelTier` doc comment.
+  const liveCount = Object.keys(aircraft).length;
 
   for (const icao in aircraft) {
     const record = aircraft[icao];
@@ -100,6 +132,13 @@ export function buildAircraftFeatureCollection(
     }
     const view = record.aircraft;
     const stale = view.state === "stale";
+    const selected = icao === selectedIcao;
+    const interesting = view.interesting !== null;
+    const tier = deriveLabelTier({
+      zoom,
+      liveCount,
+      priority: selected || interesting,
+    });
     features.push(
       feature(position.lon, position.lat, {
         icao,
@@ -109,8 +148,10 @@ export function buildAircraftFeatureCollection(
         opacity: stale ? STALE_OPACITY : 1,
         stale,
         mlat: view.position_source === "mlat",
-        selected: icao === selectedIcao,
+        selected,
         onGround: view.on_ground === true,
+        interesting,
+        label: renderLabelText(buildAircraftLabelLines(view), tier),
       }),
     );
   }
@@ -139,6 +180,11 @@ export function buildAircraftFeatureCollection(
         mlat: view.position_source === "mlat",
         selected: false,
         onGround: view.on_ground === true,
+        // Fading out rather than a live part of the picture: a departing
+        // aircraft never carries a label, selected or not (it cannot be
+        // selected — `selectAircraft` only ever targets `aircraft`).
+        interesting: false,
+        label: "",
       }),
     );
   }
