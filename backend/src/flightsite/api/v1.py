@@ -19,24 +19,36 @@ response is validated against the shape that was published.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from flightsite import __version__
+from flightsite.airports.overlay import BboxError, parse_bbox
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
 from flightsite.api.schemas import (
     AircraftDetail,
     AircraftHistoryListResponse,
     AircraftSortKey,
+    AirportFeatureCollection,
+    AirportSizeClassLiteral,
+    AirspaceFeatureCollection,
     CurrentAircraftResponse,
     ReceiverInfo,
+    SightingDetail,
+    SightingListResponse,
+    SightingSortKey,
     SortOrder,
 )
+from flightsite.api.serializers import airport_feature_collection_payload
+from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
+from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
+from flightsite.db import to_epoch_ms
 from flightsite.readiness import ReadinessRegistry
 
 #: §2.9's ``{icao}`` path parameter validator: lowercase 6-hex-char ICAO
@@ -57,6 +69,20 @@ def _context(request: Request) -> LiveApiContext:
     """The app's live API context, built once in the application factory."""
     context: LiveApiContext = request.app.state.api_context
     return context
+
+
+def _bound_ms(moment: datetime | None) -> int | None:
+    """A ``from``/``to`` query bound as epoch ms, or ``None`` if unset.
+
+    A bound with no offset is assumed UTC rather than rejected: §2.2 says the
+    API never returns a naive instant, but a client typing a plain
+    ``2026-08-30`` date into a query string is a normal case this endpoint
+    should not 500 on.
+    """
+    if moment is None:
+        return None
+    aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return to_epoch_ms(aware)
 
 
 @router.get("/health", tags=["service"])
@@ -217,6 +243,201 @@ async def aircraft_detail(
                 "error": {
                     "code": "not_found",
                     "message": f"No aircraft with ICAO {icao}",
+                    "detail": None,
+                }
+            },
+        )
+    return detail
+
+
+@router.get(
+    "/airports",
+    response_model=AirportFeatureCollection,
+    tags=["overlays"],
+    summary="Airport markers for the map overlay",
+)
+async def airports_overlay(
+    request: Request,
+    bbox: Annotated[
+        str | None,
+        Query(
+            description=(
+                "`west,south,east,north` in decimal degrees (WGS-84), matching "
+                "the current map viewport. Omitted queries the whole dataset."
+            ),
+            examples=["-123.5,47.0,-121.5,48.0"],
+        ),
+    ] = None,
+    min_size: Annotated[
+        AirportSizeClassLiteral | None,
+        Query(
+            description=(
+                "Smallest size class to include (`large` > `medium` > `small` > "
+                "`heliport`). Omitted includes every imported size class."
+            )
+        ),
+    ] = None,
+) -> dict[str, Any] | Response:
+    """Airport markers for the Live Map overlay (roadmap slice 028).
+
+    Reads the same ``airports`` table the nearest-airport context (slice 027)
+    already populates — no new fetch, no new dataset, just a new view over
+    data `docs/LICENSES.md` already pins (OurAirports, public domain). Rows
+    are ordered largest-first and capped
+    (:data:`flightsite.airports.overlay.MAX_AIRPORTS_RESPONSE`) so a
+    continent-wide viewport degrades to "the biggest fields in view" rather
+    than an unbounded response.
+
+    A malformed ``bbox`` answers the §2.5 error envelope with a 400 rather
+    than either raising or silently ignoring it.
+    """
+    try:
+        parsed_bbox = parse_bbox(bbox) if bbox is not None else None
+    except BboxError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": {"code": "invalid_bbox", "message": str(exc), "detail": None}},
+        )
+    records = await _context(request).airport_overlay_features(bbox=parsed_bbox, min_size=min_size)
+    return airport_feature_collection_payload(records)
+
+
+@router.get(
+    "/airspace",
+    response_model=AirspaceFeatureCollection,
+    tags=["overlays"],
+    summary="User-supplied airspace overlay",
+)
+async def airspace_overlay(request: Request) -> dict[str, Any]:
+    """The user-supplied airspace overlay (roadmap slice 028).
+
+    FlightSite ships no default airspace dataset — see
+    ``docs/adr/0012-airspace-data-source.md``. A user who places a valid
+    GeoJSON ``FeatureCollection`` at ``<data_dir>/airspace.geojson`` sees it
+    here in full; an install with no file, or one whose file failed
+    validation, sees the same empty ``FeatureCollection`` either way (never a
+    404 or a 500) — the map degrades to "no airspace layer" silently rather
+    than surfacing UI noise for a feature that ships no default.
+    """
+    return _context(request).airspace_feature_collection()
+
+
+@router.get(
+    "/aircraft/{icao}/sightings",
+    response_model=SightingListResponse,
+    tags=["history"],
+    summary="Paginated sightings for one aircraft",
+)
+async def aircraft_sightings(
+    request: Request,
+    icao: Annotated[
+        str,
+        Path(pattern=ICAO_PATTERN, description="Lowercase 6-hex-char ICAO 24-bit address."),
+    ],
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    sort: Annotated[
+        SightingSortKey, Query(description="§3.6's documented sort keys.")
+    ] = SIGHTINGS_DEFAULT_SORT,
+    order: Annotated[SortOrder, Query()] = SIGHTINGS_DEFAULT_ORDER,
+) -> dict[str, Any]:
+    """One airframe's sighting log — ``docs/API.md`` §3.5's deferred third row.
+
+    The same row shape and sort keys as ``GET /api/v1/sightings``, filtered to
+    one ICAO address. An address this receiver has never sighted answers with
+    an empty list rather than a 404 — this is a list endpoint, and "never
+    sighted" and "no sightings" are the same fact from a query's point of
+    view; ``GET /api/v1/aircraft/{icao}`` is where "does this address exist"
+    is answered.
+    """
+    items = await _context(request).sighting_list(
+        limit=limit, offset=offset, sort=sort, order=order, icao=icao
+    )
+    return {"items": items, "total": None, "limit": limit, "offset": offset}
+
+
+@router.get(
+    "/sightings",
+    response_model=SightingListResponse,
+    tags=["history"],
+    summary="Paginated chronological sightings log",
+)
+async def sightings_list(
+    request: Request,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    sort: Annotated[
+        SightingSortKey, Query(description="§3.6's documented sort keys.")
+    ] = SIGHTINGS_DEFAULT_SORT,
+    order: Annotated[SortOrder, Query()] = SIGHTINGS_DEFAULT_ORDER,
+    icao: Annotated[
+        str | None,
+        Query(pattern=ICAO_PATTERN, description="Exact lowercase ICAO address match."),
+    ] = None,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="Inclusive lower bound on `started_at` (§2.2)."),
+    ] = None,
+    to: Annotated[
+        datetime | None,
+        Query(description="Inclusive upper bound on `started_at` (§2.2)."),
+    ] = None,
+    interesting: Annotated[
+        bool | None,
+        Query(description="Restrict to sightings with a non-null `max_alert_severity`."),
+    ] = None,
+    open: Annotated[
+        bool | None,
+        Query(description="Restrict to sightings still open (`ended_at` is null)."),
+    ] = None,
+) -> dict[str, Any]:
+    """The chronological sightings log — ``docs/API.md`` §3.6, SPEC §57.
+
+    Sortable and filterable per §3.6; ``total`` is always ``null`` (see
+    :mod:`flightsite.api.sightings` for why this endpoint does not exercise
+    §2.4's exact-count path the way ``/aircraft`` does).
+    """
+    items = await _context(request).sighting_list(
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        order=order,
+        icao=icao,
+        from_ms=_bound_ms(from_),
+        to_ms=_bound_ms(to),
+        interesting=interesting,
+        open_only=open,
+    )
+    return {"items": items, "total": None, "limit": limit, "offset": offset}
+
+
+@router.get(
+    "/sightings/{sighting_id}",
+    response_model=SightingDetail,
+    tags=["history"],
+    summary="Full sighting detail",
+    responses={404: {"description": "No sighting exists with this id."}},
+)
+async def sighting_detail(
+    request: Request,
+    sighting_id: Annotated[int, Path(ge=1, description="The sighting's numeric id.")],
+) -> dict[str, Any] | Response:
+    """One sighting's flight context, reception stats, events and path — §3.6.
+
+    404s — in the §2.5 error envelope — for an id that does not exist.
+    """
+    detail = await _context(request).sighting_detail(sighting_id)
+    if detail is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": {
+                    "code": "not_found",
+                    "message": f"No sighting with id {sighting_id}",
                     "detail": None,
                 }
             },

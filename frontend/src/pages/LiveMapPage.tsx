@@ -9,6 +9,8 @@ import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
+import { LayersControl } from "@/features/map/overlays/LayersControl";
+import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 
@@ -42,9 +44,11 @@ export function LiveMapPage() {
        * section for screen-reader navigation. */}
       <h1 className="sr-only">{item.label}</h1>
       <MapLibreMap config={config} basemap={basemap} className="h-full w-full">
+        <OverlaysLayer />
         <AircraftLayer />
       </MapLibreMap>
       <BasemapSwitcher />
+      <LayersControl />
       <QuickFilterChips />
       <FilterDrawer />
       <NonPositionedPanel />

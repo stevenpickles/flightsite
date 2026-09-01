@@ -311,7 +311,9 @@ Lifetime record block (SPEC §53):
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`. Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/airports` | Airport overlay rows for a map viewport. Query: `bbox=minLat,minLon,maxLat,maxLon`, `min_size` (size class); capped count, largest-first. |
+| `GET /api/v1/airspace` | The user-supplied airspace overlay (`airspace.geojson` in the data dir) as a validated FeatureCollection; empty when absent (ADR-0012). |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to` (UTC calendar days), `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 Sighting detail sketch:

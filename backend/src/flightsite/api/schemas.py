@@ -20,7 +20,7 @@ remove them, so a client can rely on the key set being stable.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -269,6 +269,148 @@ class AircraftDetail(_Model):
     provenance: dict[str, str] = Field(default_factory=dict)
 
 
+#: ``docs/API.md`` §3.6's documented sort keys for ``GET /api/v1/sightings``.
+SightingSortKey = Literal["started_at", "duration_s", "closest_approach_nm", "max_range_nm"]
+
+#: §2.8's ``closure_reason`` vocabulary.
+ClosureReasonLiteral = Literal["gap_timeout", "shutdown_recovery", "data_reset"]
+
+#: §2.8's alert severity ladder — carried by ``max_alert_severity`` ahead of
+#: slice 038, which is the first to ever write a non-``null`` value.
+AlertSeverityLiteral = Literal["info", "interesting", "high", "critical"]
+
+#: ``docs/DATA_MODEL.md`` §2.5's ``sighting_events.type`` vocabulary.
+SightingEventTypeLiteral = Literal[
+    "callsign_change",
+    "squawk_change",
+    "emergency_start",
+    "emergency_end",
+    "route_enriched",
+    "classification_available",
+    "alert_matched",
+    "alert_severity_upgraded",
+]
+
+
+class SightingRow(_Model):
+    """One row of the Sightings page — ``docs/API.md`` §3.6, SPEC §57.
+
+    Field names mirror :class:`AircraftHistoryRow` where the same fact
+    appears, for the same reason: one set of frontend field components
+    renders both a historical aircraft row and a sighting row.
+    """
+
+    id: int
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    callsign: str | None = None
+    registration: str | None = None
+    aircraft_type: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    operator_group: str | None = None
+    classification: Classification | None = None
+    started_at: IsoTimestamp
+    #: ``null`` while the sighting is open (§3.6).
+    ended_at: IsoTimestamp | None = None
+    #: ``null`` while the sighting is open — duration is only meaningful once
+    #: it has actually ended.
+    duration_s: int | None = None
+    closure_reason: ClosureReasonLiteral | None = None
+    closest_approach_nm: float | None = None
+    max_range_nm: float | None = None
+    lowest_altitude_ft: int | None = None
+    highest_altitude_ft: int | None = None
+    position_count: int
+    had_emergency: bool
+    max_alert_severity: AlertSeverityLiteral | None = None
+
+    #: §2.6. See :class:`AircraftView`'s field of the same name.
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
+class SightingListResponse(_Model):
+    """``GET /api/v1/sightings`` and ``GET /api/v1/aircraft/{icao}/sightings``
+    — the §2.4 paginated list envelope.
+    """
+
+    items: list[SightingRow] = Field(default_factory=list)
+    #: Always ``null``: §2.4 names ``/sightings`` the canonical case for
+    #: omitting an exact filtered count at multi-year scale. See
+    #: :mod:`flightsite.api.sightings` for why this endpoint never computes
+    #: it, unlike ``/aircraft``.
+    total: int | None = None
+    limit: int
+    offset: int
+
+
+class ReceptionStats(_Model):
+    """Reception statistics for one sighting — ``docs/API.md`` §3.6, SPEC §51."""
+
+    rssi_peak_db: float | None = None
+    rssi_avg_db: float | None = None
+    rssi_min_db: float | None = None
+    message_count: int
+    position_count: int
+    #: Percentage of the sighting spent with a valid position.
+    pct_with_position: float | None = None
+
+
+class SightingRecords(_Model):
+    """Per-sighting extremes — ``docs/API.md`` §3.6."""
+
+    closest_approach_nm: float | None = None
+    max_range_nm: float | None = None
+    lowest_altitude_ft: int | None = None
+    highest_altitude_ft: int | None = None
+
+
+class SightingEventView(_Model):
+    """One entry of a sighting's event timeline — SPEC §52."""
+
+    at: IsoTimestamp
+    type: SightingEventTypeLiteral
+    detail: dict[str, str | None] | None = None
+
+
+class SightingPathPoint(_Model):
+    """One point of a sighting's simplified path — SPEC §19."""
+
+    t: IsoTimestamp
+    lat: float
+    lon: float
+    altitude_ft: int | None = None
+    source: PositionSourceLiteral
+
+
+class SightingDetail(_Model):
+    """``GET /api/v1/sightings/{id}`` — ``docs/API.md`` §3.6.
+
+    Flight context, reception stats, per-sighting records, the event
+    timeline and the simplified path. ``path`` is the Douglas-Peucker
+    simplified, timestamp-ordered track for a closed sighting; an open
+    sighting (``ended_at: null``) reports its checkpointed track so far
+    instead (see :mod:`flightsite.api.sightings`).
+    """
+
+    id: int
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    callsign: str | None = None
+    squawk: str | None = None
+    started_at: IsoTimestamp
+    ended_at: IsoTimestamp | None = None
+    duration_s: int | None = None
+    closure_reason: ClosureReasonLiteral | None = None
+    #: Never ``null`` as a whole — see :class:`RouteView`.
+    route: RouteView = Field(default_factory=RouteView)
+    reception: ReceptionStats
+    records: SightingRecords
+    events: list[SightingEventView] = Field(default_factory=list)
+    path: list[SightingPathPoint] = Field(default_factory=list)
+
+    #: §2.6. See :class:`AircraftView`'s field of the same name.
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
 class ReceiverInfo(_Model):
     """Non-secret receiver identity and configuration — ``docs/API.md`` §3.2."""
 
@@ -286,13 +428,84 @@ class ReceiverInfo(_Model):
     t0: IsoTimestamp | None = None
 
 
+#: The overlay's size-class vocabulary — mirrors
+#: :data:`flightsite.airports.overlay.AirportSizeClass` exactly; duplicated
+#: rather than imported so this module (the published-schema boundary) never
+#: has to import the query layer to describe its own response shape.
+AirportSizeClassLiteral = Literal["large", "medium", "small", "heliport"]
+
+
+class AirportPointGeometry(_Model):
+    """A GeoJSON ``Point`` geometry: ``[lon, lat]`` in that order (RFC 7946)."""
+
+    type: Literal["Point"] = "Point"
+    coordinates: tuple[float, float]
+
+
+class AirportProperties(_Model):
+    """One airport marker's properties — ``GET /api/v1/airports`` (slice 028)."""
+
+    ident: str
+    name: str
+    size_class: AirportSizeClassLiteral
+    iata: str | None = None
+    elevation_ft: int | None = None
+
+
+class AirportFeature(_Model):
+    """One airport as a GeoJSON ``Feature`` with a ``Point`` geometry."""
+
+    type: Literal["Feature"] = "Feature"
+    geometry: AirportPointGeometry
+    properties: AirportProperties
+
+
+class AirportFeatureCollection(_Model):
+    """``GET /api/v1/airports`` — airport markers for the map overlay (slice 028).
+
+    A plain GeoJSON ``FeatureCollection`` rather than the §2.4 ``items``/
+    ``total`` envelope: the response is meant to be handed to a map layer as-is,
+    and every other overlay this codebase serves (range rings, receiver marker)
+    is GeoJSON the frontend consumes the same way.
+    """
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[AirportFeature] = Field(default_factory=list)
+
+
+class AirspaceFeatureCollection(_Model):
+    """``GET /api/v1/airspace`` — the user-supplied airspace overlay (slice 028,
+    ``docs/adr/0012-airspace-data-source.md``).
+
+    ``features`` stays loosely typed (plain dicts) rather than a modeled
+    ``AirspaceFeature``: FlightSite ships no default airspace data, so the only
+    content ever behind this key is whatever GeoJSON a user supplied — geometry
+    type and property keys (a ``class`` the frontend styles by, if present, or
+    none) are entirely theirs to define.
+    :func:`flightsite.airspace.loader.load_airspace` is what constrains the
+    *shape* (a validated ``FeatureCollection``, never a half-parsed file); this
+    model does not re-impose structure the loader deliberately left open.
+    """
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[dict[str, Any]] = Field(default_factory=list)
+
+
 __all__ = [
     "AircraftDetail",
     "AircraftHistoryListResponse",
     "AircraftHistoryRow",
     "AircraftSortKey",
     "AircraftView",
+    "AirportFeature",
+    "AirportFeatureCollection",
+    "AirportPointGeometry",
+    "AirportProperties",
+    "AirportSizeClassLiteral",
+    "AirspaceFeatureCollection",
+    "AlertSeverityLiteral",
     "Classification",
+    "ClosureReasonLiteral",
     "CurrentAircraftResponse",
     "GeoPosition",
     "InterestingMatch",
@@ -301,6 +514,15 @@ __all__ = [
     "NearestAirportView",
     "PositionSourceLiteral",
     "ReceiverInfo",
+    "ReceptionStats",
     "RouteView",
+    "SightingDetail",
+    "SightingEventTypeLiteral",
+    "SightingEventView",
+    "SightingListResponse",
+    "SightingPathPoint",
+    "SightingRecords",
+    "SightingRow",
+    "SightingSortKey",
     "SortOrder",
 ]

@@ -40,14 +40,20 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
+from flightsite.airports.overlay import AirportOverlayRepository, AirportSizeClass, BoundingBox
+from flightsite.airports.records import AirportRecord
 from flightsite.airports.service import AirportContextService
+from flightsite.airspace.loader import load_airspace
 from flightsite.api.history import AircraftHistoryRepository
 from flightsite.api.serializers import (
     aircraft_detail_payload,
     aircraft_history_row_payload,
     aircraft_payload,
     receiver_payload,
+    sighting_detail_payload,
+    sighting_row_payload,
 )
+from flightsite.api.sightings import SightingsRepository
 from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms
 from flightsite.live import LiveAircraft, LiveStore
@@ -222,6 +228,86 @@ class LiveApiContext:
         if row is None:
             return None
         return aircraft_detail_payload(row, live=self.live.get(icao24) is not None)
+
+    # ---------------------------------------------------------------- overlays
+
+    @property
+    def airport_overlay(self) -> AirportOverlayRepository:
+        """The map overlay's query layer over the ``airports`` table (slice 028).
+
+        A fresh repository per call, exactly like :attr:`history` above — this
+        is a REST read on the request path (a viewport bbox query, fired once
+        per debounced map move), not a per-observation live-path lookup, so
+        there is no in-memory index to keep warm between calls the way
+        :attr:`airports` (the *nearest-airport* service) has.
+        """
+        database: Database = self._app.state.database
+        return AirportOverlayRepository(database)
+
+    async def airport_overlay_features(
+        self, *, bbox: BoundingBox | None, min_size: AirportSizeClass | None
+    ) -> list[AirportRecord]:
+        """Airports for the map overlay — ``GET /api/v1/airports`` (slice 028)."""
+        return await self.airport_overlay.query(bbox=bbox, min_size=min_size)
+
+    def airspace_feature_collection(self) -> dict[str, Any]:
+        """The validated user-supplied airspace overlay, or an empty one.
+
+        ``GET /api/v1/airspace`` (slice 028, ``docs/adr/0012-airspace-data-
+        source.md``). A plain file read and JSON validation, not a database
+        call — nothing here can block on SQLite or on anything else this
+        context's other methods wait on.
+        """
+        return load_airspace(self.settings.data_dir)
+
+    @property
+    def sightings(self) -> SightingsRepository:
+        """The Sightings page's query layer, built from the running database."""
+        database: Database = self._app.state.database
+        return SightingsRepository(database)
+
+    async def sighting_list(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        sort: str,
+        order: str,
+        icao: str | None = None,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+        interesting: bool | None = None,
+        open_only: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """One page of the sightings log, serialized — §3.6.
+
+        Shared by ``GET /api/v1/sightings`` and
+        ``GET /api/v1/aircraft/{icao}/sightings`` (the per-aircraft log),
+        which is that same query with ``icao`` fixed to one address.
+        """
+        rows = await self.sightings.list_sightings(
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            order=order,
+            icao=icao,
+            from_ms=from_ms,
+            to_ms=to_ms,
+            interesting=interesting,
+            open_only=open_only,
+        )
+        return [sighting_row_payload(row) for row in rows]
+
+    async def sighting_detail(self, sighting_id: int) -> dict[str, Any] | None:
+        """One sighting's full detail, or ``None`` if it doesn't exist — §3.6."""
+        repository = self.sightings
+        row = await repository.get_sighting(sighting_id)
+        if row is None:
+            return None
+        is_open = row["ended_ms"] is None
+        events = await repository.get_events(sighting_id)
+        path = await repository.get_path(sighting_id, is_open=is_open)
+        return sighting_detail_payload(row, events=events, path=path)
 
     async def receiver(self) -> dict[str, Any]:
         """The §3.2 receiver info block, including T0.
