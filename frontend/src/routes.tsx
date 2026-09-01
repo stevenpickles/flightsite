@@ -4,6 +4,7 @@ import { createBrowserRouter } from "react-router-dom";
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
+import { ActivityPage } from "@/pages/ActivityPage";
 import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
@@ -80,6 +81,11 @@ export const router = createBrowserRouter([
           },
           { path: "alerts", element: <AlertsPage /> },
           { path: "settings", element: <SettingsPage /> },
+          // Inside the shell but deliberately not in `NAV_ITEMS`: SPEC §10
+          // fixes the sidebar at seven sections, so the activity feed's
+          // fuller view is reached from the Live Map panel's "View all"
+          // link, the way `sightings/:id` is reached from the log.
+          { path: "activity", element: <ActivityPage /> },
         ],
       },
       // Outside AppShell's sidebar chrome: a full-screen wizard layout

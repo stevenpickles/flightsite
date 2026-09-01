@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ActivityEvent } from "@/lib/api/activity";
 import { DEFAULT_BACKOFF } from "@/lib/ws/backoff";
 import type { ConnectionStatus, LiveSocketLike } from "@/lib/ws/liveSocket";
 import { LiveSocket, liveSocketUrl } from "@/lib/ws/liveSocket";
@@ -126,7 +127,7 @@ describe("LiveSocket", () => {
     socket.start();
     const ws = getLastWebSocket();
     ws.emitFrame(snapshotFrame(1));
-    ws.emitFrame({ type: "activity", seq: 2, data: { kind: "alert" } });
+    ws.emitFrame({ type: "maintenance_issue", seq: 2, data: { kind: "disk" } });
     ws.emitFrame({
       type: "delta",
       seq: 3,
@@ -135,6 +136,94 @@ describe("LiveSocket", () => {
 
     expect(ws.closed).toBe(false);
     expect(deltas).toHaveLength(1);
+    socket.stop();
+  });
+
+  it("ignores an activity frame when the consumer does not handle them", () => {
+    // Slice 035 added `activity` to this socket, and `onActivity` is optional
+    // precisely so a consumer that predates it — or simply does not want the
+    // feed — keeps the slice-010 behaviour: the frame falls through to §6's
+    // ignore path, the sequence still advances, and nothing resyncs.
+    const { socket, deltas } = harness();
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    ws.emitFrame({
+      type: "activity",
+      seq: 2,
+      data: { id: 4021, type: "milestone" },
+    });
+    ws.emitFrame({
+      type: "delta",
+      seq: 3,
+      data: { updated: [], stale: [], removed: [] },
+    });
+
+    expect(ws.closed).toBe(false);
+    expect(deltas).toHaveLength(1);
+    socket.stop();
+  });
+
+  it("hands an activity frame to a consumer that does handle them", () => {
+    const events: ActivityEvent[] = [];
+    const socket = new LiveSocket({
+      url: "ws://test/api/v1/ws/live",
+      socketFactory: (url) =>
+        new FakeWebSocket(url) as unknown as LiveSocketLike,
+      random: () => 0,
+      onActivity: (event) => events.push(event),
+    });
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    ws.emitFrame({
+      type: "activity",
+      seq: 2,
+      data: {
+        id: 4021,
+        type: "range_record",
+        severity: "interesting",
+        at: "2026-08-31T14:03:22.418Z",
+        icao: "ae1463",
+        sighting_id: 88213,
+        payload: { range_nm: 412.75 },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.id).toBe(4021);
+    expect(events[0]?.type).toBe("range_record");
+    expect(events[0]?.payload).toEqual({ range_nm: 412.75 });
+    expect(ws.closed).toBe(false);
+    socket.stop();
+  });
+
+  it("drops an unreadable activity frame without breaking the stream", () => {
+    const events: ActivityEvent[] = [];
+    const deltas: DeltaData[] = [];
+    const socket = new LiveSocket({
+      url: "ws://test/api/v1/ws/live",
+      socketFactory: (url) =>
+        new FakeWebSocket(url) as unknown as LiveSocketLike,
+      random: () => 0,
+      onActivity: (event) => events.push(event),
+      onDelta: (data) => deltas.push(data),
+    });
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    // No `id`: nothing the feed could dedupe on or render. The frame is
+    // dropped, but its `seq` was still consumed, so the next delta applies.
+    ws.emitFrame({ type: "activity", seq: 2, data: { type: "milestone" } });
+    ws.emitFrame({
+      type: "delta",
+      seq: 3,
+      data: { updated: [], stale: [], removed: [] },
+    });
+
+    expect(events).toEqual([]);
+    expect(deltas).toHaveLength(1);
+    expect(ws.closed).toBe(false);
     socket.stop();
   });
 

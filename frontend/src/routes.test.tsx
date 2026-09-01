@@ -39,4 +39,18 @@ describe("routing", () => {
       }
     }
   });
+
+  it("renders the activity feed at /activity, outside the seven nav sections", () => {
+    // Slice 035's standalone view. SPEC §10 fixes the primary navigation at
+    // seven sections, so this route is deliberately absent from `NAV_ITEMS` —
+    // the sweep above would otherwise demand a sidebar link for it — and is
+    // reached from the Live Map panel's "View all" link instead, the same
+    // shape as `/sightings/:id`.
+    renderApp("/activity");
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Activity" }),
+    ).toBeInTheDocument();
+    expect(NAV_ITEMS.some((item) => item.to === "/activity")).toBe(false);
+  });
 });

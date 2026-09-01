@@ -14,11 +14,13 @@
  *   server-to-client frame carries one, `ping` included, so the gap check runs
  *   over all of them and not just the data frames.
  * - **Unknown `type`s must be ignored** (§6), not treated as errors. Slice 035
- *   adds `activity` to this same socket; a client written today has to survive
- *   that without reconnecting, so parsing keeps the envelope and lets the
- *   caller decide it has nothing to do with the payload.
+ *   added `activity` to this same socket, and a client built against slice
+ *   010 had to survive that without reconnecting — so parsing keeps the
+ *   envelope and lets the caller decide it has nothing to do with the payload.
+ *   The rule still governs whatever a later slice adds next.
  */
 
+import type { ActivityEvent } from "@/lib/api/activity";
 import type { LiveAircraft, ReceiverInfo } from "@/lib/api/live";
 
 /** Path of the live socket, relative to the origin the app is served from —
@@ -27,7 +29,8 @@ import type { LiveAircraft, ReceiverInfo } from "@/lib/api/live";
 export const LIVE_WS_PATH = "/api/v1/ws/live";
 
 /** Frame types this client understands. Anything else is ignored per §6. */
-export type ServerFrameType = "snapshot" | "delta" | "ping" | "pong";
+export type ServerFrameType =
+  "snapshot" | "delta" | "activity" | "ping" | "pong";
 
 /** `docs/API.md` §4.2: the complete live picture, replacing whatever the
  * client held. Sent on connect and again whenever the server resyncs. */
@@ -128,4 +131,44 @@ export function asDeltaData(data: unknown): DeltaData | null {
 
 function isIcao(value: unknown): value is string {
   return typeof value === "string";
+}
+
+/**
+ * Narrows a frame body to one §3.9 activity event (§4.4).
+ *
+ * Stricter than the two above, and deliberately so. A snapshot or a delta with
+ * a missing list is still a usable picture, but an activity event with no `id`
+ * or no `type` is not an event at all: `id` is what the feed dedupes the live
+ * stream against the REST page by, and `type` is what decides how the row is
+ * rendered. Either missing means the row could only be blank, so the frame is
+ * dropped instead — which §6 already allows, since ignoring is always a legal
+ * response to a frame this client cannot use.
+ *
+ * Everything else is tolerated: `severity` falls back to `info`, `icao` and
+ * `sighting_id` to `null` (a receiver-wide event genuinely has neither), and a
+ * non-object `payload` to `{}`, because `describeActivityEvent` is written to
+ * render something sensible from an empty one.
+ */
+export function asActivityEvent(data: unknown): ActivityEvent | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+  const { id, type, severity, at, icao, sighting_id, payload } = data;
+  if (typeof id !== "number" || typeof type !== "string") {
+    return null;
+  }
+  return {
+    id,
+    type: type as ActivityEvent["type"],
+    severity:
+      severity === "interesting" ||
+      severity === "high" ||
+      severity === "critical"
+        ? severity
+        : "info",
+    at: typeof at === "string" ? at : "",
+    icao: typeof icao === "string" ? icao : null,
+    sighting_id: typeof sighting_id === "number" ? sighting_id : null,
+    payload: isRecord(payload) ? payload : {},
+  };
 }
