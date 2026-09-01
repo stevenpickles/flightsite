@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -55,23 +56,35 @@ def _write_garbage(path: Path) -> None:
 
 
 def _smash_data_pages(path: Path) -> None:
-    """Overwrite the back half of an existing database file.
+    """Overwrite every page past the schema of an existing database file.
 
-    The schema and the ``alembic_version`` row live in the file's first pages
-    and stay readable, so the migration step still succeeds and it is the
-    integrity check that catches the damage — the failure mode this slice
-    exists to surface.
+    The schema and the ``alembic_version`` row must stay readable, so that the
+    migration step still succeeds and it is the integrity check that catches
+    the damage — the failure mode this slice exists to surface.
 
-    The boundary is a *fraction* of the file rather than a fixed page number so
-    that it keeps clearing the schema as slices add tables. A hardcoded
-    page-2 boundary stopped clearing it once slice 052's three tables landed,
-    which broke the migration instead and left the test asserting the wrong
-    failure mode. The filler rows are what make the back half worth corrupting.
+    The boundary is read from ``sqlite_master`` rather than guessed. Two
+    guesses have already been wrong: a hardcoded page-2 boundary stopped
+    clearing the schema when slice 052's three tables landed, and the fraction
+    that replaced it stopped clearing it when slice 024's table and its four
+    indexes pushed the last root page past the file's midpoint. Asking the
+    database where its schema ends cannot go stale, and the filler rows are
+    what guarantee there are data pages beyond it worth corrupting.
     """
+    connection = sqlite3.connect(path)
+    try:
+        highest = connection.execute("SELECT MAX(rootpage) FROM sqlite_master").fetchone()[0]
+    finally:
+        connection.close()
+
     raw = bytearray(path.read_bytes())
     pages = len(raw) // SQLITE_PAGE_SIZE
-    assert pages >= 8, f"fixture database is {pages} pages, too small to corrupt safely"
-    for offset in range(SQLITE_PAGE_SIZE * (pages // 2), len(raw)):
+    # ``rootpage`` is 1-based, so page N occupies bytes [(N-1) * size, N * size).
+    start = SQLITE_PAGE_SIZE * int(highest)
+    assert pages - int(highest) >= 4, (
+        f"fixture database has {pages} pages and a schema reaching page {highest}: "
+        "too few data pages left to corrupt safely"
+    )
+    for offset in range(start, len(raw)):
         raw[offset] = CORRUPTION_BYTE
     path.write_bytes(bytes(raw))
 
