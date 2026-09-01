@@ -41,12 +41,21 @@ The sustained window
 :func:`flightsite.demo.scenario.batch_at` is a pure function of
 ``(roster, tick_index)`` with a 30-minute period, and the population inside that
 period is a bell: it climbs from nothing, plateaus, and thins out again as
-profiles reach the end of their active spans. At ``population=500`` the plateau
-runs from roughly tick 500 to tick 1200 — see
-:data:`SUSTAINED_FIRST_TICK` — so that is the window the harness draws from, and
-it wraps back to the start when a run is longer than the window. Wrapping makes
-a large slice of the live set disappear and reappear at once, which is a harder
-tick than any inside the window rather than an easier one.
+profiles reach the end of their active spans. At ``population=500`` the batch
+first exceeds 520 aircraft at tick 560 and stays there until about tick 1170,
+so :data:`SUSTAINED_FIRST_TICK` and :data:`SUSTAINED_TICKS` draw from inside
+that band rather than from its shoulders.
+
+The margin above 500 is deliberate. The live-population floor is a hard gate
+read off the *minimum* sample, so a window that merely touched 500 would fail
+on its own first tick — the harness would be reporting the scenario's shape
+rather than the pipeline's health. Starting where the scenario carries a
+comfortable surplus means a dip below 500 is a real finding about the live
+store, which is what the gate is for.
+
+Runs longer than the window wrap back to its start. Wrapping makes a large
+slice of the live set disappear and reappear at once, which is a harder tick
+than any inside the window rather than an easier one.
 """
 
 from __future__ import annotations
@@ -76,12 +85,14 @@ from flightsite.sightings import PersistenceWorker
 #: says so. Borrowed from ``tests/api/conftest.py``'s ``NEVER_S``.
 NEVER_S: Final = 3_600.0
 
-#: First tick of the demo scenario's sustained plateau at ``population=500``
-#: (see the module docstring). Before this the population is still climbing.
-SUSTAINED_FIRST_TICK: Final = 500
+#: First tick of the demo scenario's sustained plateau at ``population=500``:
+#: the batch first carries more than 520 aircraft here. Before this the
+#: population is still climbing (see the module docstring).
+SUSTAINED_FIRST_TICK: Final = 560
 
-#: Ticks available before the plateau decays below the target population.
-SUSTAINED_TICKS: Final = 700
+#: Ticks drawn from the plateau before wrapping. The batch holds above 520
+#: aircraft until roughly tick 1170, so this stops short of the decay.
+SUSTAINED_TICKS: Final = 600
 
 #: Default simulated WebSocket clients attached to the broadcaster. A home
 #: install is a handful of browser tabs, not a fleet; ``docs/API.md`` §4.3

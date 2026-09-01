@@ -42,6 +42,12 @@ from flightsite.sightings import PersistenceWorker
 #: that the probes do not become the dominant load themselves.
 DEFAULT_PROBE_EVERY: Final = 2
 
+#: Ticks of traffic built up before the recovery measurement abandons the
+#: database. Enough that a few hundred sightings are open and carrying track
+#: checkpoints, which is the state slice 053's repair path exists for; a
+#: handful would measure an empty recovery.
+DEFAULT_RECOVERY_TICKS: Final = 20
+
 #: Endpoints probed under load, and the metric each answers.
 PROBES: Final[tuple[tuple[str, str], ...]] = (
     ("api_live_ms", "/api/v1/aircraft/current"),
@@ -346,7 +352,9 @@ async def measure_startup(*, data_dir: Path | None = None, runs: int = 1) -> Mea
     )
 
 
-async def measure_recovery(*, data_dir: Path | None = None, ticks: int = 20) -> Measurement:
+async def measure_recovery(
+    *, data_dir: Path | None = None, ticks: int = DEFAULT_RECOVERY_TICKS
+) -> Measurement:
     """Time the repair of sightings left open by an unclean stop.
 
     A workload is run and its worker stopped, which by design leaves every
@@ -389,6 +397,7 @@ async def run_harness(
     probe_every: int = DEFAULT_PROBE_EVERY,
     include_startup: bool = True,
     include_recovery: bool = True,
+    recovery_ticks: int = DEFAULT_RECOVERY_TICKS,
 ) -> HarnessReport:
     """Run every scenario and return the judged report.
 
@@ -401,6 +410,10 @@ async def run_harness(
     down an entire application, which is seconds a fast in-suite smoke should
     not spend. Skipping one leaves its budget marked *not measured* rather than
     silently passed — :attr:`Verdict.measured` carries the difference.
+    ``recovery_ticks`` trades the recovery figure's realism for run time the
+    same way: fewer ticks means fewer open sightings to repair, so an in-suite
+    smoke measures a smaller recovery than a qualification run does, and the
+    measurement's note records how many sightings the number covers.
     """
     config = config if config is not None else WorkloadConfig()
     started = time.perf_counter()
@@ -409,7 +422,7 @@ async def run_harness(
         measurements.append(await measure_startup(data_dir=data_dir))
     measurements.extend(await run_load(config, data_dir=data_dir, probe_every=probe_every))
     if include_recovery:
-        measurements.append(await measure_recovery(data_dir=data_dir))
+        measurements.append(await measure_recovery(data_dir=data_dir, ticks=recovery_ticks))
     return HarnessReport(
         measurements=tuple(measurements),
         environment=Environment.capture(),
