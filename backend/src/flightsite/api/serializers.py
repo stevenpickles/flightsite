@@ -91,8 +91,12 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from sqlalchemy.engine import RowMapping
+
 from flightsite.airports.model import AirportContext
+from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
+from flightsite.db.clock import from_epoch_ms
 from flightsite.ingest import Position
 from flightsite.live import LiveAircraft
 from flightsite.metadata.cache import AircraftMetadataView
@@ -336,13 +340,180 @@ def receiver_payload(
     }
 
 
+def _classification_from_row(row: RowMapping) -> tuple[dict[str, Any] | None, str | None]:
+    """The §3.3 ``classification`` object from a joined history row, plus its source.
+
+    Mirrors :class:`flightsite.classification.model.Classification` field by
+    field — ``is_unknown``, ``primary_claim`` and ``payload()`` — but reads
+    the already-computed ``aircraft_classification`` columns a history query
+    joined in rather than reconstructing ``Claim`` objects, which the
+    Aircraft page's row shape has no use for. A row with no matching
+    ``aircraft_classification`` (the LEFT JOIN found nothing) reads as every
+    flag ``False`` and both category columns ``None``, which resolves to
+    "unknown" exactly as an unclassified airframe should.
+
+    The claim precedence — military, then law enforcement, then government,
+    then mission — is the same order :attr:`Classification.primary_claim`
+    uses, so the ``confidence`` and provenance source this returns is the
+    same one the live payload would show for the same airframe.
+    """
+    military = bool(row["military"])
+    government = bool(row["government"])
+    law_enforcement = bool(row["law_enforcement"])
+    mission = row["mission_category"] or MissionCategory.UNKNOWN.value
+    icon_category = row["icon_category"] or IconCategory.UNKNOWN.value
+    mission_known = mission != MissionCategory.UNKNOWN.value
+
+    if not (
+        military
+        or government
+        or law_enforcement
+        or mission_known
+        or icon_category != IconCategory.UNKNOWN.value
+    ):
+        return None, None
+
+    if military:
+        score, source = row["military_conf"], row["military_src"]
+    elif law_enforcement:
+        score, source = row["law_enforcement_conf"], row["law_enforcement_src"]
+    elif government:
+        score, source = row["government_conf"], row["government_src"]
+    elif mission_known:
+        score, source = row["mission_conf"], row["mission_src"]
+    else:
+        score, source = None, None
+
+    payload = {
+        "military": military,
+        "government": government,
+        "law_enforcement": law_enforcement,
+        "mission": mission,
+        "icon_category": icon_category,
+        "confidence": None if score is None else Confidence.from_score(score).value,
+    }
+    return payload, source
+
+
+def _resolved_provenance_from_row(row: RowMapping) -> dict[str, str]:
+    """The resolved-metadata half of a history row's §2.6 provenance map.
+
+    Only the fields the Aircraft page's row and detail payloads actually
+    publish get an entry — the same "only published fields" rule
+    :func:`_provenance` follows for the live payload.
+    """
+    found: dict[str, str] = {}
+    if row["registration"] is not None and row["registration_src"] is not None:
+        found["registration"] = row["registration_src"]
+    if row["type_code"] is not None and row["type_code_src"] is not None:
+        found["aircraft_type"] = row["type_code_src"]
+    if row["model"] is not None and row["model_src"] is not None:
+        found["model"] = row["model_src"]
+    if row["operator_name"] is not None and row["operator_src"] is not None:
+        found["operator"] = row["operator_src"]
+    if row["operator_group"] is not None:
+        found["operator_group"] = "derived"
+    return found
+
+
+def lifetime_payload(row: RowMapping) -> dict[str, Any]:
+    """The SPEC §53 lifetime record block from a joined history row.
+
+    ``docs/API.md`` §3.5's documented shape, verbatim: every field here is a
+    denormalized column on :class:`~flightsite.db.models.Aircraft`
+    (``docs/DATA_MODEL.md`` §2.2), so this is a rename-and-convert, not a
+    computation — the persistence worker is what keeps the source columns
+    correct.
+    """
+    return {
+        "first_seen": iso_utc(from_epoch_ms(row["first_seen_ms"])),
+        "last_seen": iso_utc(from_epoch_ms(row["last_seen_ms"])),
+        "sighting_count": row["sighting_count"],
+        "cumulative_duration_s": row["total_observed_ms"] // 1000,
+        "closest_approach_nm": row["closest_approach_nm"],
+        "max_range_nm": row["max_range_nm"],
+        "lowest_altitude_ft": row["lowest_alt_ft"],
+        "highest_altitude_ft": row["highest_alt_ft"],
+    }
+
+
+def aircraft_history_row_payload(row: RowMapping) -> dict[str, Any]:
+    """One Aircraft page row — ``docs/API.md`` §3.5, SPEC §56's column list.
+
+    Field names deliberately match the live §3.3 object where the same fact
+    appears (``aircraft_type``, ``operator_group``, ``classification``,
+    ``provenance``) rather than the SQL columns' own names, so a client — and
+    the frontend's shared field components — can render a live aircraft and a
+    historical row through the same code.
+    """
+    classification, classification_source = _classification_from_row(row)
+    provenance = _resolved_provenance_from_row(row)
+    if classification_source is not None:
+        provenance["classification"] = classification_source
+    return {
+        "icao": row["icao24"],
+        "registration": row["registration"],
+        "aircraft_type": row["type_code"],
+        "model": row["model"],
+        "operator": row["operator_name"],
+        "operator_group": row["operator_group"],
+        "classification": classification,
+        "first_seen": iso_utc(from_epoch_ms(row["first_seen_ms"])),
+        "last_seen": iso_utc(from_epoch_ms(row["last_seen_ms"])),
+        "sighting_count": row["sighting_count"],
+        "closest_approach_nm": row["closest_approach_nm"],
+        "max_range_nm": row["max_range_nm"],
+        "provenance": provenance,
+    }
+
+
+def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
+    """One aircraft's full detail — ``docs/API.md`` §3.5: identity, metadata
+    with provenance, classification, and the SPEC §53 lifetime block.
+
+    Args:
+        row: the joined row :meth:`~flightsite.api.history.AircraftHistoryRepository.get_aircraft`
+            returned for a known ``icao24`` — callers 404 before this is
+            called for an unknown one.
+        live: whether this airframe is in the live picture right now
+            (:attr:`~flightsite.live.store.LiveStore` at read time), so the
+            frontend can offer a jump to its Live Map selection instead of
+            showing a live section it has no data for.
+    """
+    classification, classification_source = _classification_from_row(row)
+    provenance = _resolved_provenance_from_row(row)
+    if row["manufacture_year"] is not None and row["year_src"] is not None:
+        provenance["manufacture_year"] = row["year_src"]
+    if row["owner"] is not None and row["owner_src"] is not None:
+        provenance["owner"] = row["owner_src"]
+    if classification_source is not None:
+        provenance["classification"] = classification_source
+    return {
+        "icao": row["icao24"],
+        "registration": row["registration"],
+        "aircraft_type": row["type_code"],
+        "model": row["model"],
+        "manufacture_year": row["manufacture_year"],
+        "operator": row["operator_name"],
+        "operator_group": row["operator_group"],
+        "owner": row["owner"],
+        "classification": classification,
+        "live": live,
+        "lifetime": lifetime_payload(row),
+        "provenance": provenance,
+    }
+
+
 __all__ = [
     "BEARING_DECIMALS",
     "DISTANCE_DECIMALS",
     "EXPOSED_PROVENANCE_FIELDS",
     "METADATA_PROVENANCE_KEYS",
     "NEAREST_AIRPORT_PROVENANCE",
+    "aircraft_detail_payload",
+    "aircraft_history_row_payload",
     "aircraft_payload",
     "iso_utc",
+    "lifetime_payload",
     "receiver_payload",
 ]

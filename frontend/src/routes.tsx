@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router-dom";
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
+import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <LiveMapPage /> },
           { path: "aircraft", element: <AircraftPage /> },
+          { path: "aircraft/:icao", element: <AircraftDetailPage /> },
           { path: "sightings", element: <SightingsPage /> },
           { path: "analytics", element: <AnalyticsPage /> },
           { path: "receiver", element: <ReceiverPage /> },

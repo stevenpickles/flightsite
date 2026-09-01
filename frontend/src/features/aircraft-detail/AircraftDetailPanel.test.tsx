@@ -1,5 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
@@ -14,6 +15,17 @@ afterEach(() => {
   useLiveAircraftStore.getState().reset();
 });
 
+/** The panel's History section links to `/aircraft/:icao` (roadmap slice
+ * 029), so every render needs a router context the same way the app always
+ * provides one. */
+function renderPanel() {
+  return render(
+    <MemoryRouter>
+      <AircraftDetailPanel />
+    </MemoryRouter>,
+  );
+}
+
 function seedSnapshot(aircraftList: ReturnType<typeof makeAircraft>[]) {
   act(() => {
     useLiveAircraftStore.getState().applySnapshot({
@@ -25,14 +37,14 @@ function seedSnapshot(aircraftList: ReturnType<typeof makeAircraft>[]) {
 
 describe("AircraftDetailPanel", () => {
   it("renders nothing when no aircraft is selected", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     expect(
       screen.queryByTestId("aircraft-detail-panel"),
     ).not.toBeInTheDocument();
   });
 
   it("opens when the store's selection changes", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", callsign: "RCH471" })]);
 
     act(() => {
@@ -43,8 +55,21 @@ describe("AircraftDetailPanel", () => {
     expect(screen.getByRole("heading", { name: "RCH471" })).toBeInTheDocument();
   });
 
+  it("links the History section to the full aircraft detail route", () => {
+    renderPanel();
+    seedSnapshot([makeAircraft({ icao: "aaaaaa" })]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const link = screen.getByRole("link", {
+      name: /view lifetime records/i,
+    });
+    expect(link).toHaveAttribute("href", "/aircraft/aaaaaa");
+  });
+
   it("falls back to the ICAO hex as the heading when no callsign exists", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", callsign: null })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -55,7 +80,7 @@ describe("AircraftDetailPanel", () => {
 
   it("closes and deselects when the close button is clicked", async () => {
     const user = userEvent.setup();
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa" })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -74,7 +99,7 @@ describe("AircraftDetailPanel", () => {
 
   it("closes and deselects on Escape", async () => {
     const user = userEvent.setup();
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa" })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -90,7 +115,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("renders Unknown for every currently-null metadata field", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -114,7 +139,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows the enriched route with its provenance", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -142,7 +167,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("renders Unknown for a route nobody has answered for", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -164,7 +189,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("renders half a route as half a route, not as nothing", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -189,7 +214,7 @@ describe("AircraftDetailPanel", () => {
     // The slice's acceptance criterion: inference and external route data are
     // visually and semantically distinct (SPEC §41). Two sections, and neither
     // one's values appear in the other.
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -227,7 +252,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("renders the nearest-airport section as Unknown when nothing is known", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", nearest_airport: null })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -240,7 +265,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows an emergency squawk badge for 7700 even without the emergency field set", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({ icao: "aaaaaa", squawk: "7700", emergency: null }),
     ]);
@@ -253,7 +278,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows no emergency badge for an ordinary squawk", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", squawk: "1200" })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -263,7 +288,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("exposes provenance information via accessible labels on the indicator buttons", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -289,7 +314,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("builds external tracker links using the best available identifier", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "ae1463",
@@ -318,7 +343,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("still shows the ADS-B Exchange link (icao-keyed) with no reg/callsign", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({ icao: "ae1463", callsign: null, registration: null }),
     ]);
@@ -338,7 +363,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("live-updates displayed values as the store changes without remounting", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", altitude_ft: 10000 })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -358,7 +383,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows current-track mini stats once positions have accumulated", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({ icao: "aaaaaa", position: { lat: 47, lon: -122 } }),
     ]);
@@ -385,7 +410,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("applies aviation vs. metric formatting from the store's receiver info", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     act(() => {
       useLiveAircraftStore.getState().applySnapshot({
         aircraft: [makeAircraft({ icao: "aaaaaa", altitude_ft: 10000 })],
@@ -409,7 +434,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows a no-live-data fallback when the selection names an unknown aircraft", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("ffffff");
     });
@@ -421,7 +446,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("summarizes a populated classification once phase 4 fills it in", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([
       makeAircraft({
         icao: "aaaaaa",
@@ -439,11 +464,11 @@ describe("AircraftDetailPanel", () => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
-    expect(screen.getByText("Military · military")).toBeInTheDocument();
+    expect(screen.getByText("Military · Military")).toBeInTheDocument();
   });
 
   it("shows a climb glyph for a positive vertical rate", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", vertical_rate_fpm: 640 })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -452,7 +477,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("shows a descend glyph for a negative vertical rate", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", vertical_rate_fpm: -640 })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
@@ -461,7 +486,7 @@ describe("AircraftDetailPanel", () => {
   });
 
   it("renders on_ground as Yes/No", () => {
-    render(<AircraftDetailPanel />);
+    renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa", on_ground: true })]);
     act(() => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");

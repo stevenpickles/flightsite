@@ -256,6 +256,37 @@ export function formatReceiverLocalTime(iso: string, timezone: string): string {
   }
 }
 
+/** The receiver-local calendar date and wall-clock time for an ISO instant —
+ * e.g. `"2026-04-02 18:11"` — for contexts where the instant may be months
+ * or years old (the Aircraft page and the detail page's lifetime records,
+ * roadmap slice 029) and a bare time-of-day would be ambiguous. Falls back
+ * to the ISO string the same way {@link formatReceiverLocalTime} does. */
+export function formatReceiverLocalDateTime(
+  iso: string,
+  timezone: string,
+): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(when);
+    const get = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+  } catch {
+    return when.toISOString();
+  }
+}
+
 /** `"3m 12s"` for a track-duration span; used by the current-track mini
  * stats (accumulated points since selection, not a stored duration). */
 export function formatDurationShort(ms: number): string {

@@ -19,16 +19,35 @@ response is validated against the shape that was published.
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, Path, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from flightsite import __version__
 from flightsite.api.context import LiveApiContext
-from flightsite.api.schemas import CurrentAircraftResponse, ReceiverInfo
+from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
+from flightsite.api.schemas import (
+    AircraftDetail,
+    AircraftHistoryListResponse,
+    AircraftSortKey,
+    CurrentAircraftResponse,
+    ReceiverInfo,
+    SortOrder,
+)
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
 from flightsite.readiness import ReadinessRegistry
+
+#: §2.9's ``{icao}`` path parameter validator: lowercase 6-hex-char ICAO
+#: 24-bit address. ``current`` and ``interesting`` (§3.3/§3.4) can never
+#: match it, so those literal routes and this parameterized one never
+#: collide regardless of declaration order.
+ICAO_PATTERN = r"^[0-9a-f]{6}$"
+
+#: §2.4 pagination bounds.
+DEFAULT_LIMIT: Final = 50
+MAX_LIMIT: Final = 500
 
 router = APIRouter()
 router.include_router(ws_router)
@@ -122,3 +141,84 @@ async def current_aircraft(
     """
     items = _context(request).aircraft(positioned=positioned)
     return {"items": items, "total": len(items)}
+
+
+@router.get(
+    "/aircraft",
+    response_model=AircraftHistoryListResponse,
+    tags=["history"],
+    summary="Paginated historical aircraft list",
+)
+async def aircraft_history(
+    request: Request,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    sort: Annotated[
+        AircraftSortKey, Query(description="§3.5's documented sort keys.")
+    ] = DEFAULT_SORT,
+    order: Annotated[SortOrder, Query()] = DEFAULT_ORDER,
+    classification: Annotated[
+        str | None,
+        Query(description="Exact `mission_category` match (SPEC §39)."),
+    ] = None,
+    operator_group: Annotated[str | None, Query(description="Curated operator group slug.")] = None,
+    type: Annotated[str | None, Query(description="Exact ICAO type designator match.")] = None,
+) -> dict[str, Any]:
+    """Every airframe this receiver has ever sighted — ``docs/API.md`` §3.5.
+
+    Sortable and filterable per §3.5; SPEC §56's columns. ``total`` is the
+    exact count of rows matching the filters (see
+    :mod:`flightsite.api.history` for why this endpoint does not exercise
+    §2.4's allowance to omit or approximate it).
+    """
+    items, total = await _context(request).aircraft_history(
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        order=order,
+        classification=classification,
+        operator_group=operator_group,
+        type_code=type,
+    )
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get(
+    "/aircraft/{icao}",
+    response_model=AircraftDetail,
+    tags=["history"],
+    summary="Full aircraft detail",
+    responses={404: {"description": "No aircraft has ever been sighted at this ICAO address."}},
+)
+async def aircraft_detail(
+    request: Request,
+    icao: Annotated[
+        str,
+        Path(pattern=ICAO_PATTERN, description="Lowercase 6-hex-char ICAO 24-bit address."),
+    ],
+) -> dict[str, Any] | Response:
+    """One airframe's identity, metadata, classification and lifetime records.
+
+    ``docs/API.md`` §3.5: identity, metadata with provenance, classification,
+    lifetime records (SPEC §53), and whether the airframe is in the live
+    picture right now. 404s — in the §2.5 error envelope — for an address
+    this receiver has never sighted. ``response_model`` validates only the
+    success path: returning a raw :class:`~fastapi.responses.JSONResponse`
+    for the 404 bypasses it, which is what lets the error body take a
+    different documented shape than ``AircraftDetail``.
+    """
+    detail = await _context(request).aircraft_detail(icao)
+    if detail is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": {
+                    "code": "not_found",
+                    "message": f"No aircraft with ICAO {icao}",
+                    "detail": None,
+                }
+            },
+        )
+    return detail
