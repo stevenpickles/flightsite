@@ -508,7 +508,7 @@ slices:
     title: "Map labels & decluttering"
     phase: 3
     branch: "015-map-labels"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Add aircraft labels with priority-based decluttering."
     scope:
