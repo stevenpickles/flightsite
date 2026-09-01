@@ -65,9 +65,15 @@ export function RuleBuilderForm({
   serverError,
   submitLabel,
 }: RuleBuilderFormProps) {
-  const initial = rule
-    ? documentToConditions(rule.conditions)
-    : { drafts: [] as ConditionDraft[], appliesOnGround: false };
+  // Parsed once, on mount: this is the *initial* state of an edit, and
+  // re-deriving it from the prop on every render would quietly discard what
+  // the user has typed since. A caller re-keys the form to edit a different
+  // rule, which is what makes mount-time the right and only time.
+  const [initial] = useState(() =>
+    rule
+      ? documentToConditions(rule.conditions)
+      : { drafts: [] as ConditionDraft[], appliesOnGround: false },
+  );
 
   const [name, setName] = useState(rule?.name ?? "");
   const [description, setDescription] = useState(rule?.description ?? "");

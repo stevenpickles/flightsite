@@ -217,6 +217,149 @@ def test_an_instantiated_rule_is_in_force_for_the_next_live_read(
     assert client.get(INTERESTING_PATH).status_code == 200
 
 
+# ------------------------------------------------------- rule-builder round trip
+
+
+#: The condition documents slice 041's visual rule builder composes, one per
+#: kind it offers, exactly as ``conditionsToDocument`` emits them —
+#: ``frontend/src/features/alerts/lib/conditions.ts``, whose own tests pin the
+#: same shapes from the other side. Together the two halves are the contract
+#: the roadmap states as "rules created in the UI evaluate identically to
+#: API-created rules": the builder sends only these, and this file is where
+#: they are proved to be documents the engine accepts unchanged.
+BUILDER_CONDITION_BODIES: list[dict[str, Any]] = [
+    {
+        "version": 1,
+        "classification": {"military": True, "government": False, "law_enforcement": False},
+    },
+    {
+        "version": 1,
+        "classification": {
+            "military": False,
+            "government": False,
+            "law_enforcement": True,
+            "mission": "medical",
+        },
+    },
+    {"version": 1, "type_code": "C17"},
+    {"version": 1, "model": "Globemaster"},
+    {"version": 1, "watchlist_id": 1},
+    {"version": 1, "watchlist_any": True},
+    {"version": 1, "rare_aircraft": {"max_sightings": 2}},
+    {"version": 1, "rare_type": {"max_sightings": 4}},
+    {"version": 1, "min_distance_nm": 5, "max_distance_nm": 40},
+    {"version": 1, "max_distance_nm": 40},
+    {"version": 1, "min_alt_ft": 500, "max_alt_ft": 10000},
+    {"version": 1, "max_alt_ft": 5000, "applies_on_ground": True},
+    {
+        "version": 1,
+        "classification": {"military": True, "government": False, "law_enforcement": False},
+        "max_alt_ft": 5000,
+        "max_distance_nm": 40,
+        "applies_on_ground": True,
+    },
+]
+
+
+@pytest.mark.parametrize("conditions", BUILDER_CONDITION_BODIES)
+def test_a_document_the_rule_builder_composes_is_accepted_unchanged(
+    client: TestClient, conditions: dict[str, Any]
+) -> None:
+    """Every condition the builder can emit survives the round trip intact.
+
+    Not merely "is accepted": each key the builder sent must come back
+    carrying the value it sent, because a document quietly normalized on the
+    way in would be a rule that does something other than what the user built.
+    """
+    created = _create(
+        client,
+        {
+            "name": "Built in the UI",
+            "description": None,
+            "severity": "interesting",
+            "conditions": conditions,
+        },
+    )
+
+    echoed = created["conditions"]
+    for key, value in conditions.items():
+        assert echoed[key] == value, key
+    assert created["describes"] != []
+
+
+@pytest.mark.parametrize("conditions", BUILDER_CONDITION_BODIES)
+def test_replaying_what_the_api_echoed_changes_nothing(
+    client: TestClient, conditions: dict[str, Any]
+) -> None:
+    """Editing one field of a rule cannot silently reword the others.
+
+    The builder loads a rule by parsing the *echoed* document back into its
+    drafts and sends whatever those drafts compose. So the echo has to be a
+    fixed point: send it back unchanged and the stored rule, and the prose it
+    describes itself with, must be identical.
+    """
+    created = _create(
+        client,
+        {
+            "name": "Built in the UI",
+            "description": None,
+            "severity": "interesting",
+            "conditions": conditions,
+        },
+    )
+
+    response = client.put(
+        f"{RULES_PATH}/{created['id']}",
+        json={
+            "name": "Built in the UI",
+            "description": None,
+            "severity": "interesting",
+            "conditions": created["conditions"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["conditions"] == created["conditions"]
+    assert response.json()["describes"] == created["describes"]
+
+
+def test_the_builder_cannot_compose_a_rule_the_api_refuses(client: TestClient) -> None:
+    """The two validators agree on the cases the builder guards locally.
+
+    Each of these is a rule that could never match anything, which the
+    builder refuses to submit — this pins that the backend refuses it too, so
+    the local check is a saved round trip rather than the only thing standing
+    between a user and a rule that silently does nothing.
+    """
+    never_matching: list[dict[str, Any]] = [
+        {"version": 1},
+        {"version": 1, "applies_on_ground": True},
+        {"version": 1, "min_distance_nm": 40, "max_distance_nm": 10},
+        {"version": 1, "min_alt_ft": 10000, "max_alt_ft": 500},
+        {"version": 1, "rare_aircraft": {"max_sightings": 0}},
+        {
+            "version": 1,
+            "classification": {
+                "military": False,
+                "government": False,
+                "law_enforcement": False,
+            },
+        },
+    ]
+
+    for conditions in never_matching:
+        response = client.post(
+            RULES_PATH,
+            json={
+                "name": "Never matches",
+                "description": None,
+                "severity": "info",
+                "conditions": conditions,
+            },
+        )
+        assert response.status_code == 422, conditions
+
+
 # ------------------------------------------------------------------ rule CRUD
 
 
