@@ -1114,7 +1114,7 @@ slices:
     title: "Backup & restore"
     phase: 7
     branch: "043-backup-restore"
-    status: planned
+    status: merged
     depends_on: ["004", "005", "021"]
     objective: "Version-aware, checksum-validated backup and restore commands safe for live SQLite."
     scope:
