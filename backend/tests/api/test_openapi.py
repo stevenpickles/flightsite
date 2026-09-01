@@ -43,6 +43,40 @@ def test_the_live_endpoints_are_documented() -> None:
     assert "/api/v1/ready" in paths
 
 
+def test_the_history_endpoints_are_documented() -> None:
+    paths = schema()["paths"]
+
+    assert "/api/v1/aircraft" in paths
+    assert "/api/v1/aircraft/{icao}" in paths
+
+
+def test_the_history_row_and_detail_objects_are_described_by_components() -> None:
+    components = schema()["components"]["schemas"]
+
+    assert "AircraftHistoryRow" in components
+    assert "AircraftDetail" in components
+    assert "lifetime" in components["AircraftDetail"]["properties"]
+
+
+def test_the_history_sort_keys_are_published() -> None:
+    # §3.5's documented sort keys, in the schema rather than only in prose.
+    operation = schema()["paths"]["/api/v1/aircraft"]["get"]
+    sort_param = next(param for param in operation["parameters"] if param["name"] == "sort")
+
+    assert set(sort_param["schema"]["enum"]) == {
+        "registration",
+        "icao",
+        "type",
+        "operator",
+        "classification",
+        "first_seen",
+        "last_seen",
+        "sighting_count",
+        "closest_approach_nm",
+        "max_range_nm",
+    }
+
+
 def test_the_internal_surface_is_absent() -> None:
     paths = schema()["paths"]
 
