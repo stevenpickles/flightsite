@@ -13,7 +13,10 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
 :class:`OperatorGroup`, :class:`Operator`) in slice 021,
 :class:`AircraftClassification` in slice 024, :class:`RouteCache` in slice 026,
-and :class:`Airport` in slice 027.
+:class:`Airport` in slice 027, and the receiver-metric group
+(:class:`ReceiverMetricRaw`, :class:`ReceiverMetricHourly`,
+:class:`ReceiverMetricDaily`, :class:`RangeByBearingDaily`,
+:class:`LifetimeStat`) in slice 033.
 """
 
 from __future__ import annotations
@@ -775,3 +778,153 @@ class Airport(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Airport(ident={self.ident!r}, name={self.name!r})"
+
+
+class ReceiverMetricRaw(Base):
+    """One high-resolution receiver sample (``docs/DATA_MODEL.md`` §6.1).
+
+    A wide row per ~15 s sample: whatever the decoder's own statistics
+    endpoint supplied, normalized, plus what FlightSite computed from the live
+    set. Every measurement column is nullable because a decoder that does not
+    report a metric must leave it *absent* rather than zero (SPEC §60) — zero
+    is a measurement, and FlightSite does not invent measurements (SPEC §39).
+
+    ``WITHOUT ROWID`` keyed on ``ts_ms``: every read is a time range and every
+    write is an append at the high end, so the clustered b-tree is exactly the
+    access order and there is no second copy of the key to maintain. This is
+    the only prunable table in the group — ADR-0009's rolling window — and the
+    clustering also makes the prune a contiguous head-of-table delete.
+    """
+
+    __tablename__ = "receiver_metrics_raw"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    ts_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+    messages_per_sec: Mapped[float | None] = mapped_column(REAL)
+    positions_per_sec: Mapped[float | None] = mapped_column(REAL)
+    aircraft_visible: Mapped[int | None] = mapped_column(Integer)
+    aircraft_with_pos: Mapped[int | None] = mapped_column(Integer)
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    rssi_avg_db: Mapped[float | None] = mapped_column(REAL)
+    rssi_peak_db: Mapped[float | None] = mapped_column(REAL)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricRaw(ts_ms={self.ts_ms!r})"
+
+
+class _ReceiverMetricSummaryColumns:
+    """The summary column set shared by the hourly and daily tables.
+
+    ``docs/DATA_MODEL.md`` §6.2 states the daily table as *"identical shape
+    keyed by local calendar day"*, so the two are one declaration and a
+    different primary key rather than two copies that could drift. The
+    aggregation code folds raw samples into this shape once and writes the
+    result to whichever table the bucket belongs to.
+
+    ``sample_count`` is the only non-nullable column: how many raw samples a
+    bucket was built from is always known, even when every metric in it was
+    absent.
+    """
+
+    messages_total: Mapped[int | None] = mapped_column(Integer)
+    positions_total: Mapped[int | None] = mapped_column(Integer)
+    msgs_per_sec_avg: Mapped[float | None] = mapped_column(REAL)
+    msgs_per_sec_max: Mapped[float | None] = mapped_column(REAL)
+    pos_per_sec_avg: Mapped[float | None] = mapped_column(REAL)
+    pos_per_sec_max: Mapped[float | None] = mapped_column(REAL)
+    aircraft_avg: Mapped[float | None] = mapped_column(REAL)
+    aircraft_max: Mapped[int | None] = mapped_column(Integer)
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    rssi_avg_db: Mapped[float | None] = mapped_column(REAL)
+    rssi_peak_db: Mapped[float | None] = mapped_column(REAL)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ReceiverMetricHourly(_ReceiverMetricSummaryColumns, Base):
+    """Hourly receiver summaries (``docs/DATA_MODEL.md`` §6.2).
+
+    Keyed by the UTC hour the bucket starts at. Retained **indefinitely** —
+    ADR-0009 is explicit that hourly and daily rows are permanent, because
+    ~8.8k rows a year is nothing next to the detail they preserve once the
+    high-resolution window has rolled past.
+    """
+
+    __tablename__ = "receiver_metrics_hourly"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    hour_start_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricHourly(hour_start_ms={self.hour_start_ms!r})"
+
+
+class ReceiverMetricDaily(_ReceiverMetricSummaryColumns, Base):
+    """Daily receiver summaries (``docs/DATA_MODEL.md`` §6.2).
+
+    Keyed by the **receiver-local** calendar date (``docs/DATA_MODEL.md``
+    §10), so a DST day rolls up as the 23 or 25 hours it actually was.
+    Retained indefinitely, like the hourly table.
+    """
+
+    __tablename__ = "receiver_metrics_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    #: ``YYYY-MM-DD`` in the configured IANA timezone at write time.
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ReceiverMetricDaily(day={self.day!r})"
+
+
+class RangeByBearingDaily(Base):
+    """Per-day maximum range in each 5° bearing sector (§6.3).
+
+    72 buckets of 5°, which is what the polar plot (SPEC §62) draws and what
+    the coverage records are read from. One row per (day, sector) that had any
+    positioned aircraft in it, kept indefinitely: 72 x 365 rows a year is
+    trivial, and this is the only record of where the receiver could actually
+    hear.
+
+    ``icao24`` records *which* aircraft set the record. It is deliberately not
+    a foreign key to ``aircraft``: this row must outlive any conceivable
+    aircraft-row cleanup, and its purpose is a fact about the moment, not a
+    join.
+    """
+
+    __tablename__ = "range_by_bearing_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: ``0..71``; sector ``n`` covers bearings ``[5n, 5n + 5)`` degrees true.
+    bearing_bucket: Mapped[int] = mapped_column(Integer, primary_key=True)
+    max_range_nm: Mapped[float] = mapped_column(REAL, nullable=False)
+    at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    icao24: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RangeByBearingDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r})"
+
+
+class LifetimeStat(Base):
+    """Since-T0 receiver aggregates and records (§6.4, SPEC §63).
+
+    A narrow key/value table rather than a wide row, because the set of
+    records grows slice by slice (035 adds milestones over the same facts) and
+    a new record should be a new key, not a migration.
+
+    These rows are the half of ADR-0009 that pruning may never touch: totals
+    are accumulated from the *increments* observed as each sample is recorded,
+    never re-derived from ``receiver_metrics_raw``, so a record survives every
+    downsample-and-prune cycle by construction rather than by luck.
+    """
+
+    __tablename__ = "lifetime_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value_num: Mapped[float | None] = mapped_column(REAL)
+    value_text: Mapped[str | None] = mapped_column(Text)
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"LifetimeStat(key={self.key!r}, value_num={self.value_num!r})"

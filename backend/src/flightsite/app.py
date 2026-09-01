@@ -36,6 +36,7 @@ from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
+from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
@@ -118,13 +119,42 @@ def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWo
     """Construct the write-behind persistence worker (ADR-0008).
 
     Constructing it subscribes to nothing and opens no connection; ``start()``
-    in the lifespan hook attaches it to the live event stream. It is the sole
-    user of :meth:`~flightsite.db.engine.Database.writer_session`.
+    in the lifespan hook attaches it to the live event stream. It is the only
+    writer of ``aircraft`` and ``sightings``, and it reaches them through
+    :meth:`~flightsite.db.engine.Database.writer_session` — the process's one
+    serialized writer, which the metadata import, the airport dataset and the
+    receiver metrics share.
     """
     return PersistenceWorker(
         database=app.state.database,
         live=app.state.live,
         close_s=settings.sighting.close_s,
+    )
+
+
+def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetricsService:
+    """Construct the receiver-metric service (SPEC §60/§64, ADR-0009).
+
+    The ``stats.json`` poller is built only when there is a decoder to poll:
+    a first-run install has no configured receiver, and demo mode has no
+    decoder at all. In both cases the service still runs and still records
+    every FlightSite-computed metric — simultaneous aircraft, message and
+    position rates from the live set, and range by bearing — with the
+    decoder-supplied columns left ``NULL``. That is the same graceful absence
+    SPEC §60 asks for when a decoder serves no statistics document.
+
+    Constructing it opens nothing: no HTTP client, no session, no task.
+    """
+    store: ConfigStore = app.state.config_store
+    poller = (
+        None if store.first_run or demo_enabled() else StatsJsonPoller(_decoder_endpoint(settings))
+    )
+    return ReceiverMetricsService(
+        database=app.state.database,
+        live=app.state.live,
+        poller=poller,
+        timezone=settings.timezone,
+        high_res_days=settings.retention.high_res_metric_days,
     )
 
 
@@ -187,6 +217,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     metadata: MetadataService = app.state.metadata
     enrichment: EnrichmentService = app.state.enrichment
     airports: AirportContextService = app.state.airports
+    receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -215,6 +246,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # dataset that read finds nothing, the index stays empty, and every
         # `nearest_airport` is null — the documented unknown state.
         await airports.start()
+        # Same condition once more: receiver metrics write five tables the
+        # failed migration may not have created, and every one of their reads
+        # is of a table they wrote themselves. Skipping them leaves the
+        # receiver page without history; nothing else notices, because nothing
+        # else reads those tables.
+        await receiver_metrics.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -263,6 +300,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await enrichment.stop()
         await airports.stop()
         await metadata.stop()
+        # Stopped before the engines close because its final flush is a real
+        # write: an interval of samples, and the lifetime increments they
+        # carry, are in memory at this point. It takes the same writer lock
+        # the persistence worker does, so the two simply serialize.
+        await receiver_metrics.stop()
         await persistence.stop()
         await database.dispose()
         logger.info("app_shutdown")
@@ -399,6 +441,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         cache=RouteCacheRepository(app.state.database),
         provider=build_provider(settings),
     )
+    # Receiver metrics (SPEC §60/§64, ADR-0009): the decoder's own statistics
+    # plus FlightSite's, on a rolling high-resolution window with permanent
+    # hourly/daily summaries and lifetime records. Its own two low-frequency
+    # tasks (``docs/ARCHITECTURE.md`` §3.3's "stats poller / maintenance
+    # scheduler"), writing through the same single writer as everything else.
+    app.state.receiver_metrics = _build_receiver_metrics(app, settings)
     # Slice 025's update-in-progress coordinator: the background task the
     # current "Update Aircraft Metadata" run is executing in, and when it
     # started. ``None`` means no run has ever been triggered on this process.

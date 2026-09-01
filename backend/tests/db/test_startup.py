@@ -55,38 +55,74 @@ def _write_garbage(path: Path) -> None:
     path.write_bytes(b"this is not a sqlite database" * 200)
 
 
+def _schema_survives(path: Path) -> bool:
+    """True if the schema and the Alembic stamp are still readable.
+
+    Exactly the two things the migration step touches on an already-current
+    database. If both answer, ``upgrade head`` succeeds and the damage is left
+    for ``quick_check`` to find — which is the failure path under test.
+    """
+    try:
+        connection = sqlite3.connect(path)
+    except sqlite3.DatabaseError:  # pragma: no cover - defensive
+        return False
+    try:
+        connection.execute("SELECT name, rootpage FROM sqlite_master").fetchall()
+        connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        connection.close()
+    return True
+
+
 def _smash_data_pages(path: Path) -> None:
-    """Overwrite every page past the schema of an existing database file.
+    """Overwrite the tail of an existing database file, sparing its schema.
 
     The schema and the ``alembic_version`` row must stay readable, so that the
     migration step still succeeds and it is the integrity check that catches
     the damage — the failure mode this slice exists to surface.
 
-    The boundary is read from ``sqlite_master`` rather than guessed. Two
-    guesses have already been wrong: a hardcoded page-2 boundary stopped
-    clearing the schema when slice 052's three tables landed, and the fraction
-    that replaced it stopped clearing it when slice 024's table and its four
-    indexes pushed the last root page past the file's midpoint. Asking the
-    database where its schema ends cannot go stale, and the filler rows are
-    what guarantee there are data pages beyond it worth corrupting.
+    Where the schema ends is not guessed, and it is not *computed* either.
+    Three computed boundaries have already gone stale: a hardcoded page 2 when
+    slice 052's three tables landed; a fraction of the file when slice 024's
+    table and four indexes pushed the last root page past the midpoint; and
+    ``MAX(rootpage)`` itself when slice 033's five tables grew ``sqlite_master``
+    past one page, putting its own overflow *above* every root page it lists.
+
+    So the boundary is *found* instead: start at the first page past the last
+    root page and walk forward until the file corrupts without taking the
+    schema with it. That cannot go stale, because the property being searched
+    for is the property the test needs. The filler rows are what guarantee
+    there are data pages beyond the schema worth corrupting at all.
     """
+    pristine = path.read_bytes()
+    pages = len(pristine) // SQLITE_PAGE_SIZE
+
     connection = sqlite3.connect(path)
     try:
-        highest = connection.execute("SELECT MAX(rootpage) FROM sqlite_master").fetchone()[0]
+        highest = int(connection.execute("SELECT MAX(rootpage) FROM sqlite_master").fetchone()[0])
     finally:
         connection.close()
 
-    raw = bytearray(path.read_bytes())
-    pages = len(raw) // SQLITE_PAGE_SIZE
-    # ``rootpage`` is 1-based, so page N occupies bytes [(N-1) * size, N * size).
-    start = SQLITE_PAGE_SIZE * int(highest)
-    assert pages - int(highest) >= 4, (
-        f"fixture database has {pages} pages and a schema reaching page {highest}: "
-        "too few data pages left to corrupt safely"
+    # ``rootpage`` is 1-based, so page N occupies bytes [(N-1) * size, N * size)
+    # and corrupting "from page N + 1 onward" starts at byte N * size.
+    for first_smashed in range(highest, pages):
+        raw = bytearray(pristine)
+        for offset in range(SQLITE_PAGE_SIZE * first_smashed, len(raw)):
+            raw[offset] = CORRUPTION_BYTE
+        path.write_bytes(bytes(raw))
+        if _schema_survives(path):
+            assert pages - first_smashed >= 4, (
+                f"fixture database has {pages} pages and a schema reaching page "
+                f"{first_smashed}: too few data pages left to corrupt meaningfully"
+            )
+            return
+
+    raise AssertionError(
+        f"no boundary in a {pages}-page fixture leaves the schema readable; "
+        "the fixture needs more filler rows"
     )
-    for offset in range(start, len(raw)):
-        raw[offset] = CORRUPTION_BYTE
-    path.write_bytes(bytes(raw))
 
 
 async def _build_then_corrupt(path: Path) -> None:
