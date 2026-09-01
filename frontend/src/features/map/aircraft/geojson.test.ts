@@ -12,6 +12,11 @@ import type {
   LiveAircraftRecord,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import {
+  DENSITY_CALLSIGN_THRESHOLD,
+  ZOOM_LABELS_FULL,
+  ZOOM_LABELS_MIN,
+} from "@/features/map/labels/priority";
 import type { LiveAircraft } from "@/lib/api/live";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
@@ -237,6 +242,160 @@ describe("buildAircraftFeatureCollection", () => {
         }),
       );
       expect(collection.features).toHaveLength(0);
+    });
+  });
+
+  describe("labels", () => {
+    it("carries an interesting flag from the aircraft's active alert match", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records(
+            { icao: "aaaaaa", interesting: null },
+            {
+              icao: "bbbbbb",
+              interesting: { severity: "high", reasons: ["test"] },
+            },
+          ),
+          zoom: ZOOM_LABELS_FULL,
+        }),
+      );
+      const properties = propertiesByIcao(collection);
+      expect(properties.aaaaaa?.interesting).toBe(false);
+      expect(properties.bbbbbb?.interesting).toBe(true);
+    });
+
+    it("shows no label below the minimum labeling zoom", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({ icao: "aaaaaa", callsign: "BAW123" }),
+          zoom: ZOOM_LABELS_MIN - 1,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("");
+    });
+
+    it("shows callsign only between the minimum and full labeling zoom", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            altitude_ft: 35000,
+          }),
+          zoom: ZOOM_LABELS_MIN,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("BAW123");
+    });
+
+    it("shows the full stack at and above the full labeling zoom", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            altitude_ft: 35000,
+          }),
+          zoom: ZOOM_LABELS_FULL,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("BAW123\nFL350");
+    });
+
+    it("drops a non-priority label to callsign-only when the live picture is dense, even at high zoom", () => {
+      const dense = records(
+        ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD + 1 }, (_, i) => ({
+          icao: i.toString(16).padStart(6, "0"),
+          callsign: `AA${i}`,
+          altitude_ft: 35000,
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: dense, zoom: ZOOM_LABELS_FULL }),
+      );
+      for (const feature of collection.features) {
+        expect(feature.properties.label).toBe(feature.properties.callsign);
+      }
+    });
+
+    it("always fully labels the selected aircraft, even below the minimum zoom", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            altitude_ft: 35000,
+          }),
+          selectedIcao: "aaaaaa",
+          zoom: ZOOM_LABELS_MIN - 1,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("BAW123\nFL350");
+    });
+
+    it("always fully labels an interesting aircraft, even when the picture is dense", () => {
+      const dense = records(
+        {
+          icao: "aaaaaa",
+          callsign: "BAW123",
+          altitude_ft: 35000,
+          interesting: { severity: "high", reasons: ["test"] },
+        },
+        ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD }, (_, i) => ({
+          icao: (i + 1).toString(16).padStart(6, "0"),
+          callsign: `AA${i}`,
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: dense, zoom: ZOOM_LABELS_FULL }),
+      );
+      const properties = propertiesByIcao(collection);
+      // Full stack, indicator-prefixed — the interesting flag both forces
+      // the tier and prefixes line 1 (`labelContent.ts`).
+      expect(properties.aaaaaa?.label).toBe("★ BAW123\nFL350");
+    });
+
+    it("falls back through registration and then ICAO for line 1", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "abcdef",
+            callsign: null,
+            registration: "N12345",
+          }),
+          zoom: ZOOM_LABELS_MIN,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("N12345");
+    });
+
+    it("defaults zoom to the full-label band when omitted", () => {
+      // `input()` never sets `zoom` unless a test overrides it — this pins
+      // the default `buildAircraftFeatureCollection` itself falls back to.
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: records({ icao: "aaaaaa", callsign: "BAW123" }) }),
+      );
+      expect(collection.features[0]?.properties.label).toContain("BAW123");
+    });
+
+    it("never labels a departing (fading) aircraft", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          departing: {
+            aaaaaa: {
+              aircraft: makeAircraft({
+                icao: "aaaaaa",
+                position: { lat: 1, lon: 2 },
+                callsign: "BAW123",
+              }),
+              removedAt: NOW - 100,
+            },
+          },
+          zoom: ZOOM_LABELS_FULL,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("");
+      expect(collection.features[0]?.properties.interesting).toBe(false);
     });
   });
 });
