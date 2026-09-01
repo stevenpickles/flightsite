@@ -403,7 +403,7 @@ OPERATOR_GROUPS: Final[tuple[OperatorGroupSpec, ...]] = (
         name="Turkish Airlines",
         kind=GroupKind.PASSENGER,
         mission=_PASSENGER,
-        operators=("Turkish Airlines", "Türk Hava Yolları"),
+        operators=("Turkish Airlines", "Türk Hava Yolları"),  # noqa: RUF001 — real Turkish orthography
         callsigns=("THY",),
     ),
     # --------------------------------------------------- passenger, long-haul
