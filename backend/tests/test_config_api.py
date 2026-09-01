@@ -201,6 +201,95 @@ def test_internal_api_is_excluded_from_the_openapi_schema(client: TestClient) ->
     assert not any(path.startswith("/api/internal") for path in schema["paths"])
 
 
+def test_saving_enabled_templates_creates_the_alert_rules(client: TestClient) -> None:
+    """Issue #110, from the wizard's end of the wire.
+
+    The install this simulates is the one that broke: the app started with no
+    configuration, so ``AlertService.start`` instantiated nothing, and the user
+    then chose their templates. Before slice 055 this assertion failed with an
+    empty list — the rules appeared only after a backend restart.
+    """
+    assert client.get("/api/internal/alert-rules").json()["rules"] == []
+
+    response = client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["military", "police"]}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["config"]["alerts"]["enabled_templates"] == ["military", "police"]
+    rules = client.get("/api/internal/alert-rules").json()["rules"]
+    assert [rule["template_key"] for rule in rules] == ["military", "police"]
+
+
+def test_a_save_that_does_not_mention_alerts_creates_no_rules(client: TestClient) -> None:
+    """The apply step must be inert for the settings it is not about."""
+    client.put("/api/internal/config", json={"units": "metric"})
+
+    assert client.get("/api/internal/alert-rules").json()["rules"] == []
+
+
+def test_a_deleted_shipped_rule_survives_a_later_config_save(client: TestClient) -> None:
+    """The property the startup guard exists for, held across the new edge: a
+    save that enables something else does not bring back what the user
+    deleted."""
+    client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["military", "watchlist"]}},
+    )
+    rules = client.get("/api/internal/alert-rules").json()["rules"]
+    military = next(rule for rule in rules if rule["template_key"] == "military")
+    assert client.delete(f"/api/internal/alert-rules/{military['id']}").status_code == 204
+
+    client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["military", "watchlist", "government"]}},
+    )
+
+    remaining = client.get("/api/internal/alert-rules").json()["rules"]
+    assert [rule["template_key"] for rule in remaining] == ["watchlist", "government"]
+
+
+def test_saving_the_law_enforcement_alias_creates_the_police_rule(client: TestClient) -> None:
+    """The upgrade path for an install whose ``config.yaml`` already carries the
+    spelling the wizard used to send (issue #111)."""
+    client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["law_enforcement"]}},
+    )
+
+    rules = client.get("/api/internal/alert-rules").json()["rules"]
+    assert [rule["template_key"] for rule in rules] == ["police"]
+
+
+def test_the_alias_is_stored_as_written_and_not_rewritten(
+    client: TestClient, isolated_data_dir: Path
+) -> None:
+    """The alias is a read-time mapping, not a migration: nothing edits the
+    user's file behind their back, and the corrected wizard fixes the spelling
+    on the next save the user makes themselves."""
+    client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["law_enforcement"]}},
+    )
+
+    on_disk = yaml.safe_load((isolated_data_dir / "config.yaml").read_text(encoding="utf-8"))
+    assert on_disk["alerts"]["enabled_templates"] == ["law_enforcement"]
+
+
+def test_an_unknown_template_key_does_not_fail_the_save(client: TestClient) -> None:
+    """The rest of the configuration is already written and already live, so a
+    key from another build cannot be allowed to turn the save into a 500."""
+    response = client.put(
+        "/api/internal/config",
+        json={"alerts": {"enabled_templates": ["military", "no_such_template"]}},
+    )
+
+    assert response.status_code == 200
+    rules = client.get("/api/internal/alert-rules").json()["rules"]
+    assert [rule["template_key"] for rule in rules] == ["military"]
+
+
 def test_app_state_carries_the_settings_and_store(isolated_data_dir: Path) -> None:
     app = create_app(isolated_data_dir)
 

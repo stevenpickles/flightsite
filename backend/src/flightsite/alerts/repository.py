@@ -132,6 +132,27 @@ class AlertRepository:
         async with self.database.read_session() as session:
             return await session.scalar(statement) is not None
 
+    async def template_keys_present(self) -> frozenset[str]:
+        """Every ``template_key`` some rule currently carries.
+
+        The per-key counterpart to :meth:`has_template_rules`, read by
+        :meth:`flightsite.alerts.service.AlertService.apply_enabled_templates`
+        so a save cannot create a second rule for a template that already has
+        one — whether the first was instantiated at startup, from the gallery,
+        or by an earlier save.
+
+        Read straight from the column rather than through :meth:`list_rules`,
+        and that is not a micro-optimisation: ``list_rules`` skips a row whose
+        ``conditions_json`` does not parse, so a shipped rule someone corrupted
+        by hand would be invisible to it and the save would helpfully create a
+        duplicate. Provenance is a fact about the row, readable whether or not
+        its document is.
+        """
+        statement = select(AlertRule.template_key).where(AlertRule.template_key.is_not(None))
+        async with self.database.read_session() as session:
+            rows = (await session.scalars(statement)).all()
+        return frozenset(str(key) for key in rows)
+
     async def create_rule(
         self,
         *,

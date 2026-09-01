@@ -32,6 +32,12 @@ handlers in this file. This module is a shared surface that several slices
 extend concurrently; keeping each new group in its own module means one
 ``include_router`` line here per slice instead of competing appends to one
 file.
+
+Slice 055 gives ``PUT /config`` an apply step (:func:`_apply_live_settings`).
+Writing the file and swapping ``app.state.settings`` is not always the whole of
+saving a setting: ``alerts.enabled_templates`` names alert rules to create, and
+until this existed a fresh install that chose its templates in the setup wizard
+had no alert rules until the backend was restarted (issue #110).
 """
 
 from __future__ import annotations
@@ -41,9 +47,10 @@ from collections.abc import Sequence
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from pydantic import ValidationError
 
+from flightsite.alerts import AlertService
 from flightsite.api.alert_rules import router as alert_rules_router
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
@@ -135,7 +142,48 @@ async def put_config(
     # Log the changed key paths only — never the values, which may include a
     # secret the caller just set (SPEC §29).
     logger.info("config_updated", fields=sorted(patch))
+    await _apply_live_settings(request.app, settings)
     return _config_response(store, settings)
+
+
+async def _apply_live_settings(app: FastAPI, settings: Settings) -> None:
+    """Push the saved configuration at the services that can take it now.
+
+    Most settings need no push at all, and that is the pattern to keep rather
+    than replace: a value that can change under a running app is read *late*,
+    through a probe closed over ``app`` (``flightsite.app._alert_radius`` is the
+    model), so swapping ``app.state.settings`` above is the whole of applying
+    it. Anything a subsystem captured at construction is restart-required, and
+    the Settings UI says so.
+
+    ``alerts.enabled_templates`` is neither. It is not read late — it names
+    rows to create, so re-reading it on every cycle would mean re-deciding
+    whether to create them on every cycle — and it must not be
+    restart-required, because the setup wizard writes it on a fresh install
+    that has not got any alert rules yet and telling that user to restart the
+    backend is issue #110. So it is *applied*: handed to the service that owns
+    those rows, which decides what the change means (see
+    :meth:`~flightsite.alerts.AlertService.apply_enabled_templates`).
+
+    This is the seam for that third kind of setting, and it stays a short
+    explicit list rather than a registry until there is more than one entry.
+    Failures are logged and swallowed, exactly as
+    :meth:`flightsite.watchlists.WatchlistService._notify_index` swallows a
+    listener's: the configuration is already validated, written and live, so an
+    exception here could only turn a save that succeeded into a 500 about it.
+    """
+    alerts: AlertService | None = getattr(app.state, "alerts", None)
+    if alerts is None:  # pragma: no cover - the app always builds the service
+        return
+    try:
+        await alerts.apply_enabled_templates(settings.alerts.enabled_templates)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "config_apply_failed",
+            setting="alerts.enabled_templates",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
 
 
 @router.post("/decoder/test")

@@ -39,6 +39,23 @@ The whole of it is idempotent, so a boot that instantiates nothing is the
 ordinary case from the second boot onwards, and a boot against a database whose
 migration failed does nothing at all — the app starts this service only on a
 healthy schema, exactly like every other database-dependent subsystem.
+
+Startup alone is not enough (issue #110)
+-----------------------------------------
+
+On a *fresh* install the ordering defeats it. The app starts, this service reads
+an ``alerts.enabled_templates`` that is still empty because nothing has been
+configured yet, and only then does the user run the setup wizard and choose
+their templates. ``PUT /api/internal/config`` wrote the answer and swapped
+``app.state.settings``, but nothing re-read it here — so the install had no
+alert rules at all until someone restarted the backend, which is precisely the
+one thing a setup wizard is supposed to save you from.
+
+:meth:`AlertService.apply_enabled_templates` is the second edge, called from the
+config apply path with the list as it now stands. It is deliberately *not* a
+second copy of startup's logic, because startup's guard cannot serve a running
+app: "no template row at all" would refuse the wizard's very first save on an
+install that already has one gallery-created rule.
 """
 
 from __future__ import annotations
@@ -57,9 +74,12 @@ from flightsite.alerts.errors import (
 from flightsite.alerts.model import AlertRuleRecord, CompiledRule, RuleConditions
 from flightsite.alerts.repository import AlertRepository
 from flightsite.alerts.templates import (
+    TEMPLATE_KEY_ALIASES,
     TEMPLATES_BY_KEY,
     AlertTemplate,
+    aliased_template_keys,
     enabled_templates,
+    normalize_template_keys,
     unknown_template_keys,
 )
 from flightsite.alerts.vocabulary import AlertSeverity
@@ -120,6 +140,7 @@ class AlertService:
         "_clock",
         "_engine",
         "_repository",
+        "_started",
         "_template_keys",
         "_watchlist_repository",
         "_watchlists",
@@ -143,6 +164,7 @@ class AlertService:
         self._template_keys = tuple(template_keys)
         self._alert_radius = alert_radius
         self._clock = clock
+        self._started = False
         self._engine = AlertEngine(
             database=database,
             live=live,
@@ -178,6 +200,7 @@ class AlertService:
         # consume watchlists, and watchlists know nothing about alerts.
         self._watchlists.subscribe_index(self.reload_rules)
         await self._engine.start()
+        self._started = True
         logger.info(
             "alert_service_started",
             rules=len(self._engine.rules),
@@ -186,19 +209,124 @@ class AlertService:
 
     async def stop(self) -> None:
         """Unsubscribe and stop the engine. Idempotent."""
+        self._started = False
         self._watchlists.unsubscribe_index(self.reload_rules)
         await self._engine.stop()
 
-    async def _instantiate_templates(self) -> int:
-        """Create the enabled shipped rules, once per install. Returns the count."""
-        if not self._template_keys:
+    async def apply_enabled_templates(self, keys: Sequence[str]) -> int:
+        """Instantiate the templates a configuration save just enabled.
+
+        Called from the ``PUT /api/internal/config`` apply path with
+        ``alerts.enabled_templates`` as it now stands. Returns how many rules
+        were created.
+
+        The exact semantics, because they are the whole point
+        --------------------------------------------------------
+
+        A template here is instantiated when **both** of these hold:
+
+        1. **This save added it.** The key is in the new list and was not in the
+           list this service was last configured with. A save that leaves the
+           list alone — which is every save about the receiver, the map, or the
+           units — instantiates nothing at all.
+        2. **No rule already carries its provenance.** Whether that rule was
+           created at startup, from the template gallery, or by an earlier
+           save, the template already has its row and a second one would be a
+           duplicate rather than a fix.
+
+        Condition 1 is what preserves the startup guard's *purpose*. That guard
+        exists so a shipped rule the user deleted stays deleted, and it cannot
+        be reused verbatim here — "no template row at all" would refuse the
+        wizard's first save on an install that already has one gallery-created
+        rule, which is the fresh-install case this method exists for. Nor can
+        condition 2 carry the property on its own: rule deletion is a hard
+        delete (``docs/DATA_MODEL.md`` §4.2 has no ``deleted_at`` and
+        :meth:`flightsite.alerts.repository.AlertRepository.delete_rule`
+        removes the row), so after a deletion "no rule carries this provenance"
+        is indistinguishable from "never instantiated". The *delta* is what
+        distinguishes them: the deleted template is still enabled in the
+        configuration, so it is not something this save added, so it is not
+        recreated — on this save or on any later one.
+
+        What that deliberately still does
+        ---------------------------------
+
+        A user who deletes a shipped rule, then unticks that template, then
+        ticks it again gets the rule back. That is not the guard failing; it is
+        the user asking twice, in the one vocabulary the settings page has for
+        asking. The property being protected is "a deletion is not *silently*
+        undone by an unrelated save", and it holds.
+
+        Not instantiating is never an error. A key from another build is
+        warned about and skipped for the reason
+        :func:`flightsite.alerts.templates.enabled_templates` gives, and a
+        service that has not started — the app builds this object even when a
+        failed migration stopped it from starting it — records the new list and
+        touches no database.
+        """
+        previous = normalize_template_keys(self._template_keys)
+        current = normalize_template_keys(keys)
+        # Recorded whatever happens next, so this service's idea of the
+        # configured list never lags the file: the *next* save's delta has to
+        # be measured against what the user has actually saved, not against
+        # whatever was on disk when the process booted.
+        self._template_keys = tuple(keys)
+        self._warn_about_key_spellings(keys)
+        if not self._started:
+            logger.debug("alert_templates_not_applied", reason="service not started")
             return 0
-        unknown = unknown_template_keys(self._template_keys)
+        added = [key for key in current if key not in previous]
+        if not added:
+            return 0
+        existing = await self._repository.template_keys_present()
+        wanted = [
+            template
+            for template in enabled_templates(added)
+            if template.instantiable and template.key not in existing
+        ]
+        if not wanted:
+            return 0
+        created = await self._repository.create_rules(
+            [self._template_row(template) for template in wanted], now_ms=self._clock()
+        )
+        await self.reload_rules()
+        logger.info(
+            "alert_templates_instantiated_on_save",
+            keys=[template.key for template in wanted],
+            rules=created,
+        )
+        return created
+
+    @staticmethod
+    def _warn_about_key_spellings(keys: Sequence[str]) -> None:
+        """Say what in ``alerts.enabled_templates`` did not name a template.
+
+        Silence here is what let issue #111 ship: the setup wizard sent
+        ``law_enforcement``, no such template existed, the key was skipped, and
+        the only evidence was the rule the user never got. A skipped key is
+        still not fatal — see
+        :func:`flightsite.alerts.templates.enabled_templates` — but it is now
+        loud enough to find in the logs.
+        """
+        aliased = aliased_template_keys(keys)
+        if aliased:
+            logger.warning(
+                "alert_template_key_deprecated",
+                keys=list(aliased),
+                resolved_to=[TEMPLATE_KEY_ALIASES[key] for key in aliased],
+            )
+        unknown = unknown_template_keys(keys)
         if unknown:
             # Not fatal: `alerts.enabled_templates` is validated for shape by
             # the config model, which deliberately does not know the catalogue,
             # so a key from another build is an ordinary upgrade artefact.
             logger.warning("alert_template_unknown", keys=list(unknown))
+
+    async def _instantiate_templates(self) -> int:
+        """Create the enabled shipped rules, once per install. Returns the count."""
+        self._warn_about_key_spellings(self._template_keys)
+        if not self._template_keys:
+            return 0
         if await self._repository.has_template_rules():
             return 0
         wanted = [
