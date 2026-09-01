@@ -66,11 +66,22 @@ export interface AircraftFeatureProperties {
   mlat: boolean;
   selected: boolean;
   onGround: boolean;
-  /** True when the aircraft carries an active alert match (slice 038).
-   * Always `false` today — `interesting` is `null` on every live payload
-   * this slice can receive — but the label priority tiering and the
-   * indicator glyph are both wired to it now. */
+  /** True when the aircraft carries an active alert match (slice 038,
+   * populated on the wire since that slice landed). Drives the label
+   * priority tiering and the indicator glyph. */
   interesting: boolean;
+  /** The active match's severity (`docs/API.md` §2.8), or `""` when nothing
+   * is matching — the attention ring's style expressions read this.
+   *
+   * A string rather than a rank number because the layer expressions
+   * `match` on it and read far better for it, and `""` rather than `null`
+   * because MapLibre feature properties are compared, not narrowed: the
+   * ring layer's filter is `["!=", ["get", "severity"], ""]`, and a `null`
+   * property would have to be tested with `has`/`!has` instead. Severity
+   * *ordering* is never asked of a style expression — that is
+   * `features/interesting/lib/ordering.ts`'s job, in TypeScript, where the
+   * ladder is a table rather than a string comparison. */
+  severity: string;
   /** Newline-delimited label text, already tiered for the current
    * zoom/density (`@/features/map/labels`) and empty when nothing should
    * render — the style layers filter on that rather than testing for an
@@ -179,6 +190,7 @@ export function buildAircraftFeatureCollection(
         selected,
         onGround: view.on_ground === true,
         interesting,
+        severity: view.interesting?.severity ?? "",
         label: renderLabelText(buildAircraftLabelLines(view), tier),
       }),
     );
@@ -210,8 +222,12 @@ export function buildAircraftFeatureCollection(
         onGround: view.on_ground === true,
         // Fading out rather than a live part of the picture: a departing
         // aircraft never carries a label, selected or not (it cannot be
-        // selected — `selectAircraft` only ever targets `aircraft`).
+        // selected — `selectAircraft` only ever targets `aircraft`), and it
+        // never carries the attention ring either. "Interesting" is a
+        // statement about what is matching *now*, and an aircraft the server
+        // has said is gone is not matching anything.
         interesting: false,
+        severity: "",
         label: "",
       }),
     );

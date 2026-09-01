@@ -1,6 +1,9 @@
 import { useId, useState } from "react";
 
 import { requireNavItem } from "@/components/shell/nav-items";
+import { AlertHistorySection } from "@/features/alerts/components/AlertHistorySection";
+import { AlertRulesSection } from "@/features/alerts/components/AlertRulesSection";
+import { TemplateGallery } from "@/features/alerts/components/TemplateGallery";
 import { WatchlistsSection } from "@/features/watchlists/components/WatchlistsSection";
 
 const item = requireNavItem("/alerts");
@@ -21,20 +24,25 @@ const WATCHLISTS_TAB: AlertsTab = {
 };
 
 /**
- * The Alerts page's areas, in tab order. Roadmap slice 037 (watchlists)
- * lands the first one; slice 041 (alert rules) adds a sibling entry here —
- * nothing about this page's own composition needs to change for that, only
- * this list.
+ * The Alerts page's areas, in tab order. Roadmap slice 037 landed
+ * watchlists; slice 041 adds the other three as siblings, which is exactly
+ * the change this page was built to absorb — the list grew, the composition
+ * did not.
+ *
+ * The order is the order the work is done in: what you are watching, then
+ * the rules over it, then the ready-made rules you can start from, then
+ * what has actually fired.
  */
-const TABS: AlertsTab[] = [WATCHLISTS_TAB];
+const TABS: AlertsTab[] = [
+  WATCHLISTS_TAB,
+  { id: "rules", label: "Rules", render: () => <AlertRulesSection /> },
+  { id: "templates", label: "Templates", render: () => <TemplateGallery /> },
+  { id: "history", label: "History", render: () => <AlertHistorySection /> },
+];
 
 /**
- * The Alerts page (SPEC §42/§43). A single "Watchlists" area for now
- * (roadmap slice 037); rendered as a tab bar from the start so slice 041's
- * alert-rules area joins it as a sibling tab rather than requiring a later
- * rewrite of this page's structure. With one tab the bar itself stays
- * hidden — there is nothing to switch between yet — but the tabpanel
- * semantics are in place either way.
+ * The Alerts page (SPEC §42 to §48): watchlists, the rule builder, the
+ * shipped-template gallery, and the history of every alert that has fired.
  */
 export function AlertsPage() {
   const [activeTabId, setActiveTabId] = useState(WATCHLISTS_TAB.id);

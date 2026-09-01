@@ -1030,7 +1030,7 @@ slices:
     title: "Interesting aircraft surfaces"
     phase: 6
     branch: "039-interesting-panel"
-    status: planned
+    status: merged
     depends_on: ["038", "014", "035"]
     objective: "Surface interesting aircraft: panel, map emphasis, label indicator, and feed integration."
     scope:
@@ -1071,7 +1071,7 @@ slices:
     title: "Alerts page & rule builder"
     phase: 6
     branch: "041-alerts-page"
-    status: planned
+    status: merged
     depends_on: ["038", "037"]
     objective: "Visual rule builder, template management, and alert history on the Alerts page."
     scope:

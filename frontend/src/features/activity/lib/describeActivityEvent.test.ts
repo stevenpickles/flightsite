@@ -199,15 +199,67 @@ describe("describeActivityEvent", () => {
   });
 
   it.each<ActivityEventType>(["alert_triggered", "emergency_squawk"])(
-    "already renders the phase-6 type %s",
+    "renders the alert type %s without a blank or undefined label",
     (type) => {
-      // Roadmap slice 039 starts emitting these; the published schema lists
-      // them today, so a released client must not show a blank row.
       const { label } = describeActivityEvent(event(type, {}));
       expect(label).not.toBe("");
       expect(label).not.toContain("undefined");
     },
   );
+
+  it("headlines an alert with the engine's own match reason", () => {
+    // `reason` names a rule the *user* wrote. Passing it through rather than
+    // re-deriving a sentence keeps the feed, the alert history and the
+    // interesting panel saying the same thing about one match.
+    const { label, detail } = describeActivityEvent(
+      event(
+        "alert_triggered",
+        {
+          reason: "Rule: Military aircraft",
+          rule_name: "Military aircraft",
+          registration: "05-8153",
+          model: "Boeing C-17A Globemaster III",
+        },
+        { icao: "ae1463" },
+      ),
+    );
+    expect(label).toBe("Alert: Rule: Military aircraft");
+    expect(detail).toContain("05-8153");
+  });
+
+  it("falls back to the rule name when an alert carries no reason", () => {
+    const { label } = describeActivityEvent(
+      event("alert_triggered", { rule_name: "Watchlist — Tankers" }),
+    );
+    expect(label).toBe("Alert: Watchlist — Tankers");
+  });
+
+  it("falls back again when an alert names neither", () => {
+    const { label } = describeActivityEvent(event("alert_triggered", {}));
+    expect(label).toBe("Alert triggered");
+  });
+
+  it("puts the squawk code in an emergency's headline", () => {
+    // SPEC §47 wants these prominent rather than one entry among the alerts,
+    // which is why they get a type of their own.
+    const { label, detail } = describeActivityEvent(
+      event(
+        "emergency_squawk",
+        {
+          squawk: "7700",
+          reason: "Emergency squawk 7700 (general emergency)",
+        },
+        { icao: "a1b2c3" },
+      ),
+    );
+    expect(label).toBe("Emergency squawk 7700");
+    expect(detail).toContain("Emergency squawk 7700 (general emergency)");
+  });
+
+  it("still names an emergency whose squawk did not survive the payload", () => {
+    const { label } = describeActivityEvent(event("emergency_squawk", {}));
+    expect(label).toBe("Emergency squawk");
+  });
 
   it("renders a humanized slug for a type this build predates", () => {
     // §6: the vocabulary may grow. A backend ahead of this client must not

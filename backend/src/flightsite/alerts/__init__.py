@@ -47,6 +47,8 @@ from flightsite.alerts.errors import (
     AlertError,
     AlertRuleNotFoundError,
     AlertRuleValueError,
+    AlertTemplateConflictError,
+    AlertTemplateNotFoundError,
 )
 from flightsite.alerts.evaluator import evaluate, matches
 from flightsite.alerts.model import (
@@ -100,6 +102,8 @@ __all__ = [
     "AlertSeverity",
     "AlertSubject",
     "AlertTemplate",
+    "AlertTemplateConflictError",
+    "AlertTemplateNotFoundError",
     "ClassificationCondition",
     "CompiledRule",
     "CycleResult",

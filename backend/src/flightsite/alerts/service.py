@@ -48,10 +48,16 @@ from collections.abc import Callable, Sequence
 import structlog
 
 from flightsite.alerts.engine import AlertEngine
-from flightsite.alerts.errors import AlertRuleNotFoundError, AlertRuleValueError
+from flightsite.alerts.errors import (
+    AlertRuleNotFoundError,
+    AlertRuleValueError,
+    AlertTemplateConflictError,
+    AlertTemplateNotFoundError,
+)
 from flightsite.alerts.model import AlertRuleRecord, CompiledRule, RuleConditions
 from flightsite.alerts.repository import AlertRepository
 from flightsite.alerts.templates import (
+    TEMPLATES_BY_KEY,
     AlertTemplate,
     enabled_templates,
     unknown_template_keys,
@@ -288,6 +294,56 @@ class AlertService:
             now_ms=self._clock(),
         )
         await self.reload_rules()
+        return record
+
+    async def instantiate_template(self, key: str) -> AlertRuleRecord:
+        """Create the rule a shipped template describes, keeping its provenance.
+
+        The gallery's counterpart to start-up instantiation, and the reason it
+        is a separate method rather than a ``template_key`` argument on
+        :meth:`create_rule`: provenance is a statement about where a rule came
+        from, so it is set by the operation that *is* "instantiate this
+        template" and can never be asserted by a client posting an arbitrary
+        body. :func:`update_alert_rule` already refuses to replace it for the
+        same reason.
+
+        The conditions and severity come from the catalogue rather than from
+        the caller. A user who wants different thresholds edits the rule
+        afterwards — which is SPEC §45's "enable, then customize", and it keeps
+        the rule honest about having started as the shipped template.
+
+        Refusing a second instantiation is what lets the gallery show one
+        truthful state per template. Start-up instantiation's "no template row
+        at all" guard cannot serve here: it exists so a *deleted* shipped rule
+        stays deleted across restarts, and applying it to an explicit per-key
+        request would refuse every template the moment any one of them existed.
+
+        Raises:
+            AlertTemplateNotFoundError: this build ships no such template.
+            AlertTemplateConflictError: the template is built in, or a rule
+                already carries its provenance.
+        """
+        template = TEMPLATES_BY_KEY.get(key)
+        if template is None:
+            raise AlertTemplateNotFoundError(f"no alert template with key {key!r}")
+        conditions = template.conditions
+        if not template.instantiable or conditions is None:
+            raise AlertTemplateConflictError(
+                f"template {key!r} is built in and always on: it has no rule to create"
+            )
+        if any(rule.template_key == key for rule in await self._repository.list_rules()):
+            raise AlertTemplateConflictError(f"template {key!r} already has a rule")
+        record = await self._repository.create_rule(
+            name=template.name,
+            description=template.description,
+            severity=template.severity,
+            conditions=conditions,
+            enabled=True,
+            template_key=key,
+            now_ms=self._clock(),
+        )
+        await self.reload_rules()
+        logger.info("alert_template_instantiated", key=key, rule_id=record.id)
         return record
 
     async def update_rule(

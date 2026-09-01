@@ -265,6 +265,30 @@ describe("buildAircraftFeatureCollection", () => {
       expect(properties.bbbbbb?.interesting).toBe(true);
     });
 
+    it("carries the match severity for the attention ring, empty when nothing matches", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records(
+            { icao: "aaaaaa", interesting: null },
+            {
+              icao: "bbbbbb",
+              interesting: {
+                severity: "critical",
+                reasons: ["Emergency squawk 7700 (general emergency)"],
+              },
+            },
+          ),
+          zoom: ZOOM_LABELS_FULL,
+        }),
+      );
+      const properties = propertiesByIcao(collection);
+      // `""` rather than null: the ring layer filters on `!= ""`, and a
+      // primitive keeps the style expression a comparison rather than a
+      // presence test.
+      expect(properties.aaaaaa?.severity).toBe("");
+      expect(properties.bbbbbb?.severity).toBe("critical");
+    });
+
     it("shows no label below the minimum labeling zoom", () => {
       const collection = buildAircraftFeatureCollection(
         input({
@@ -388,6 +412,7 @@ describe("buildAircraftFeatureCollection", () => {
                 icao: "aaaaaa",
                 position: { lat: 1, lon: 2 },
                 callsign: "BAW123",
+                interesting: { severity: "critical", reasons: ["test"] },
               }),
               removedAt: NOW - 100,
             },
@@ -396,7 +421,11 @@ describe("buildAircraftFeatureCollection", () => {
         }),
       );
       expect(collection.features[0]?.properties.label).toBe("");
+      // Neither the label indicator nor the attention ring survives
+      // departure: "interesting" is a claim about what is matching *now*,
+      // and the server has said this aircraft is gone.
       expect(collection.features[0]?.properties.interesting).toBe(false);
+      expect(collection.features[0]?.properties.severity).toBe("");
     });
   });
 });
