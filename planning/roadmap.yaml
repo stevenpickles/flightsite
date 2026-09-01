@@ -1273,7 +1273,7 @@ slices:
     title: "Documentation & install polish"
     phase: 8
     branch: "051-docs-polish"
-    status: planned
+    status: merged
     depends_on: ["042", "045", "046"]
     objective: "Complete user-facing documentation so a fresh install succeeds from docs alone."
     scope:
