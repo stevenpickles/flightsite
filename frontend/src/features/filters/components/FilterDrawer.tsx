@@ -148,7 +148,9 @@ export function FilterDrawer() {
       <button
         type="button"
         aria-expanded={isOpen}
-        aria-controls={headingId}
+        // Only while the panel is actually mounted: `aria-controls` pointing
+        // at an id that is not in the document is an invalid reference.
+        aria-controls={isOpen ? headingId : undefined}
         onClick={() => setIsOpen((open) => !open)}
         className={cn(
           // Below `BasemapSwitcher` (right-3 top-3, up to three rows tall)

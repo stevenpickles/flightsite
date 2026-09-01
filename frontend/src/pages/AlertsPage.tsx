@@ -80,7 +80,11 @@ export function AlertsPage() {
                 role="tab"
                 id={`alerts-tab-${tab.id}`}
                 aria-selected={selected}
-                aria-controls={`alerts-tabpanel-${tab.id}`}
+                // Only the selected tab's panel is mounted, so only that tab
+                // can carry a valid `aria-controls` reference.
+                aria-controls={
+                  selected ? `alerts-tabpanel-${tab.id}` : undefined
+                }
                 tabIndex={selected ? 0 : -1}
                 onClick={() => setActiveTabId(tab.id)}
                 className={
