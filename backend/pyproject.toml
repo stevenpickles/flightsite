@@ -24,6 +24,7 @@ flightsite-serve = "flightsite.__main__:main"
 flightsite-capture = "flightsite.devtools.capture:main"
 flightsite-backup = "flightsite.backup.cli:main"
 flightsite-perf = "flightsite.perf.cli:main"
+flightsite-storage-qual = "flightsite.perf.storage_qualification.cli:main"
 
 [build-system]
 requires = ["hatchling"]

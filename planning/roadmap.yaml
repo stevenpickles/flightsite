@@ -1254,7 +1254,7 @@ slices:
     title: "Multi-year storage qualification"
     phase: 8
     branch: "050-storage-qualification"
-    status: planned
+    status: merged
     depends_on: ["031", "043", "044", "049"]
     objective: "Generate a realistic synthetic multi-year dataset and qualify growth, queries, retention, and backup/restore at scale."
     scope:
