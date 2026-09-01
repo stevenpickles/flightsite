@@ -40,6 +40,33 @@ describe("NotificationPermissionStatus", () => {
     ).toBeVisible();
   });
 
+  it("shows the ask in flight, and does not ask twice while it is", async () => {
+    // Headless Firefox does exactly this: it reports `default`, accepts the
+    // request, and never settles it, because settling it is the prompt's job
+    // and there is no prompt. A real user can also simply leave the prompt
+    // sitting on screen. Either way the button must say so and refuse to
+    // stack a second request behind the first.
+    const api = installNotificationMock({ permission: "default" });
+    api.requestPermission = vi.fn(
+      () => new Promise<NotificationPermission>(() => {}),
+    ) as unknown as typeof api.requestPermission;
+    const user = userEvent.setup();
+    render(<NotificationPermissionStatus enabled />);
+
+    const ask = screen.getByRole("button", { name: /allow notifications/i });
+    await user.click(ask);
+
+    const pending = screen.getByRole("button", { name: /asking/i });
+    expect(pending).toBeDisabled();
+    expect(
+      screen.getByText(/browser permission: not requested/i),
+    ).toBeVisible();
+
+    await user.click(pending);
+
+    expect(api.requestPermission).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a denial the user just gave, and stops offering the button", async () => {
     installNotificationMock({ permission: "default", requestResult: "denied" });
     const user = userEvent.setup();

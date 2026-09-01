@@ -4,31 +4,38 @@
  * Settings page is reachable and the notification preferences it shows are
  * the ones the wizard wrote.
  *
- * **What a headless browser will and will not do.** An automated engine does
- * not present the interactive permission model a person sees: headless
- * Chromium has no notification centre to deliver to, so it reports a standing
- * `denied` and a CDP grant does not move it, and Playwright cannot drive a
- * native permission prompt in any of the three engines. An earlier version of
- * this spec assumed the not-yet-asked state existed and every assertion in it
- * failed on CI for that one reason. So nothing here assumes a state: each test
- * asks the page what the browser actually reports and then asserts against
- * *that*, skipping with a reason where a state is unreachable — the same
- * capability escape hatch spec 04 uses for WebGL.
+ * **What a headless browser will and will not do**, learned the hard way from
+ * two CI rounds. No automated engine presents the interactive permission model
+ * a person sees, and no two of them decline in the same way: headless Chromium
+ * has no notification centre to deliver to, so it reports a standing `denied`
+ * that a CDP grant does not move, while headless Firefox reports `default` and
+ * then never settles `requestPermission()` at all, because settling it is the
+ * prompt's job and there is no prompt. An engine's native permission behaviour
+ * is therefore not something a cross-browser spec can assert against — and
+ * both rounds of failures came from trying.
  *
- * That leaves two assertions that hold in every engine and are the two worth
- * having:
+ * So the split here is between what the *browser* decides and what *FlightSite*
+ * decides, and each is tested where it is deterministic:
  *
- * - **Loading FlightSite never asks.** `docs/SECURITY.md` §5 allows the
- *   permission to be requested only after the user opts in. This is checked by
+ * - **Loading FlightSite never asks** (test 1). `docs/SECURITY.md` §5 allows
+ *   the permission to be requested only after the user opts in. Checked by
  *   counting real calls to `Notification.requestPermission` rather than by
- *   inspecting the resulting permission — which is both stronger and immune to
- *   whatever standing answer the engine happens to give.
- * - **The status the user sees is the status the browser reports.** Whichever
- *   of the five states this engine is in, Settings names that one, offers the
- *   ask only where asking could still work, and — in the `denied` state CI
- *   actually runs in — shows the remedy. That is the slice's "denied
- *   permission degrades cleanly with status surfaced" criterion, exercised in
- *   a real browser.
+ *   inspecting the resulting permission — stronger, and immune to whatever
+ *   standing answer the engine gives.
+ * - **The status the user sees is the status the browser reports** (test 2).
+ *   Whichever of the five states this engine is in, Settings names that one,
+ *   offers the ask only where asking could still work, and — in the `denied`
+ *   state Chromium runs in — shows the remedy. That is the slice's "denied
+ *   permission degrades cleanly with status surfaced" criterion, in a real
+ *   browser.
+ * - **Answering the prompt updates the UI** (test 3). The engine's prompt is
+ *   stubbed at the `Notification` boundary, because that boundary is the only
+ *   part of this flow no headless engine implements. What is under test is
+ *   FlightSite's half — ask offered, ask made exactly once, answer reflected,
+ *   ask withdrawn — and stubbing makes it the same assertion everywhere
+ *   instead of three engine-specific ones.
+ * - **A real grant, where an engine honours one** (test 4), which keeps one
+ *   unstubbed path over the genuine permission machinery.
  *
  * Delivery itself (an alert becoming exactly one notification) is not here.
  * A demo alert fires at a fixed phase of the scenario's 30-minute rotation
@@ -108,6 +115,75 @@ async function watchForAsks(page: Page): Promise<void> {
       // Left unpatched; the test asserts `patched` and will say so.
     }
   }, PROBE);
+}
+
+/** Where the prompt stub records what it did, on `window`. */
+const STUB = "__flightsiteNotificationStub";
+
+interface StubProbe {
+  /** Whether the boundary was successfully replaced. */
+  installed: boolean;
+  /** How many times FlightSite asked. */
+  calls: number;
+}
+
+/**
+ * Replaces the engine's permission prompt with one that answers immediately.
+ *
+ * The only part of the flow no headless engine implements: Chromium refuses
+ * before asking, Firefox never settles the promise because settling it is the
+ * prompt's job. Both the request *and* the `permission` getter are replaced, so
+ * the page is internally consistent afterwards — a component that re-reads the
+ * standing permission (on a visibility change, say) must not see `default`
+ * moments after being told `granted`.
+ *
+ * Starts at `default` regardless of what the engine would have said, so the
+ * not-yet-asked state — the one Chromium never offers — is reachable and the
+ * whole ask-and-answer flow can be driven in every engine.
+ */
+async function stubPermissionPrompt(page: Page): Promise<void> {
+  await page.addInitScript((key: string) => {
+    const store: { installed: boolean; calls: number } = {
+      installed: false,
+      calls: 0,
+    };
+    (window as unknown as Record<string, unknown>)[key] = store;
+    if (typeof Notification === "undefined") {
+      return;
+    }
+    let answer: NotificationPermission = "default";
+    try {
+      Object.defineProperty(Notification, "permission", {
+        configurable: true,
+        get: () => answer,
+      });
+      Notification.requestPermission = ((
+        callback?: (permission: NotificationPermission) => void,
+      ) => {
+        store.calls += 1;
+        answer = "granted";
+        // Answer both ways the API can be consumed: the modern promise and
+        // the legacy callback older Safari only supports. Resolving a
+        // promise twice is a no-op, so serving both is safe.
+        callback?.("granted");
+        return Promise.resolve<NotificationPermission>("granted");
+      }) as typeof Notification.requestPermission;
+      store.installed = true;
+    } catch {
+      // Left uninstalled; the test asserts `installed` and will say so.
+    }
+  }, STUB);
+}
+
+async function stubProbe(page: Page): Promise<StubProbe> {
+  return page.evaluate(
+    (key: string) =>
+      ((window as unknown as Record<string, unknown>)[key] as StubProbe) ?? {
+        installed: false,
+        calls: 0,
+      },
+    STUB,
+  ) as Promise<StubProbe>;
 }
 
 async function askProbe(page: Page): Promise<AskProbe> {
@@ -215,26 +291,45 @@ test.describe("browser notification permission", () => {
     }
   });
 
-  test("asking the browser moves the status off 'not requested'", async ({
+  test("asking, and being told yes, turns the status to allowed", async ({
     page,
-    context,
   }) => {
-    await context.clearPermissions();
+    // The prompt is stubbed (see `stubPermissionPrompt`): what is under test
+    // is FlightSite's half of the exchange, which is identical in every
+    // engine, rather than three engines' incompatible ways of declining to
+    // show a prompt.
+    await stubPermissionPrompt(page);
     await page.goto("/settings");
+
+    const status = page.getByTestId(STATUS);
+    await expect(status).toBeVisible();
 
     const state = await capability(page);
     test.skip(
-      !state.api || state.permission !== "default",
-      `this engine reports "${state.permission ?? "no Notification API"}" rather than an askable state, and no automation can drive a native permission prompt`,
+      !state.api,
+      "this engine exposes no Notification API to stub, so there is no ask to drive",
     );
+    expect(
+      (await stubProbe(page)).installed,
+      "the permission prompt could not be stubbed, so this test drove nothing",
+    ).toBe(true);
 
-    const status = page.getByTestId(STATUS);
-    await status.getByRole("button", { name: /allow notifications/i }).click();
+    // The not-yet-asked state, now reachable everywhere.
+    await expect(status).toHaveAttribute("data-permission", "default");
+    const ask = status.getByRole("button", { name: /allow notifications/i });
+    await expect(ask).toBeVisible();
 
-    // Which way the browser answers is its business; that FlightSite asked
-    // and then reported the real answer is not.
-    await expect(status).not.toContainText(/not requested/i);
-    await expect(status).toContainText(/browser permission: (allowed|blocked)/i);
+    await ask.click();
+
+    await expect(status).toHaveAttribute("data-permission", "granted");
+    await expect(status).toContainText(/browser permission: allowed/i);
+    // The ask is withdrawn once answered — there is nothing left to ask.
+    await expect(ask).toHaveCount(0);
+
+    expect(
+      (await stubProbe(page)).calls,
+      "one click on the ask should ask the browser exactly once",
+    ).toBe(1);
   });
 
   test("reports a granted permission, and stops offering to ask", async ({
