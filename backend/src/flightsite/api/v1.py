@@ -26,12 +26,16 @@ from fastapi import APIRouter, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from flightsite import __version__
+from flightsite.airports.overlay import BboxError, parse_bbox
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
 from flightsite.api.schemas import (
     AircraftDetail,
     AircraftHistoryListResponse,
     AircraftSortKey,
+    AirportFeatureCollection,
+    AirportSizeClassLiteral,
+    AirspaceFeatureCollection,
     CurrentAircraftResponse,
     ReceiverInfo,
     SightingDetail,
@@ -39,6 +43,7 @@ from flightsite.api.schemas import (
     SightingSortKey,
     SortOrder,
 )
+from flightsite.api.serializers import airport_feature_collection_payload
 from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
 from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
@@ -243,6 +248,78 @@ async def aircraft_detail(
             },
         )
     return detail
+
+
+@router.get(
+    "/airports",
+    response_model=AirportFeatureCollection,
+    tags=["overlays"],
+    summary="Airport markers for the map overlay",
+)
+async def airports_overlay(
+    request: Request,
+    bbox: Annotated[
+        str | None,
+        Query(
+            description=(
+                "`west,south,east,north` in decimal degrees (WGS-84), matching "
+                "the current map viewport. Omitted queries the whole dataset."
+            ),
+            examples=["-123.5,47.0,-121.5,48.0"],
+        ),
+    ] = None,
+    min_size: Annotated[
+        AirportSizeClassLiteral | None,
+        Query(
+            description=(
+                "Smallest size class to include (`large` > `medium` > `small` > "
+                "`heliport`). Omitted includes every imported size class."
+            )
+        ),
+    ] = None,
+) -> dict[str, Any] | Response:
+    """Airport markers for the Live Map overlay (roadmap slice 028).
+
+    Reads the same ``airports`` table the nearest-airport context (slice 027)
+    already populates — no new fetch, no new dataset, just a new view over
+    data `docs/LICENSES.md` already pins (OurAirports, public domain). Rows
+    are ordered largest-first and capped
+    (:data:`flightsite.airports.overlay.MAX_AIRPORTS_RESPONSE`) so a
+    continent-wide viewport degrades to "the biggest fields in view" rather
+    than an unbounded response.
+
+    A malformed ``bbox`` answers the §2.5 error envelope with a 400 rather
+    than either raising or silently ignoring it.
+    """
+    try:
+        parsed_bbox = parse_bbox(bbox) if bbox is not None else None
+    except BboxError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": {"code": "invalid_bbox", "message": str(exc), "detail": None}},
+        )
+    records = await _context(request).airport_overlay_features(bbox=parsed_bbox, min_size=min_size)
+    return airport_feature_collection_payload(records)
+
+
+@router.get(
+    "/airspace",
+    response_model=AirspaceFeatureCollection,
+    tags=["overlays"],
+    summary="User-supplied airspace overlay",
+)
+async def airspace_overlay(request: Request) -> dict[str, Any]:
+    """The user-supplied airspace overlay (roadmap slice 028).
+
+    FlightSite ships no default airspace dataset — see
+    ``docs/adr/0012-airspace-data-source.md``. A user who places a valid
+    GeoJSON ``FeatureCollection`` at ``<data_dir>/airspace.geojson`` sees it
+    here in full; an install with no file, or one whose file failed
+    validation, sees the same empty ``FeatureCollection`` either way (never a
+    404 or a 500) — the map degrades to "no airspace layer" silently rather
+    than surfacing UI noise for a feature that ships no default.
+    """
+    return _context(request).airspace_feature_collection()
 
 
 @router.get(

@@ -41,6 +41,13 @@ export class MapLibreMockMap {
    * does not care about zoom-driven decluttering sees the full picture;
    * tests that do care set this directly. */
   zoom = 10;
+  /** `getBounds()`'s return value — `west`/`south`/`east`/`north` in decimal
+   * degrees. Defaults to a small box around the Seattle area (arbitrary but
+   * plausible) so the airport overlay's viewport-driven fetch
+   * (`features/map/overlays/useMapViewport.ts`) has something to read
+   * without every test needing to set it; tests that care set this
+   * directly. */
+  bounds = { west: -123.0, south: 47.0, east: -121.9, north: 47.8 };
   removed = false;
   // Mirrors real MapLibre: false immediately after construction (or after
   // setStyle swaps the style) until a `load`/`style.load` event fires.
@@ -119,6 +126,36 @@ export class MapLibreMockMap {
 
   getLayer(id: string): Record<string, unknown> | undefined {
     return this.layers.get(id);
+  }
+
+  /** Updates a layer's `layout` object in place, mirroring real MapLibre's
+   * `setLayoutProperty` — used by the overlay toggles
+   * (`setAirportLayersVisible`/`setAirspaceLayersVisible`) to flip
+   * `visibility` without a refetch. No-ops for an unknown layer id, the
+   * same as the real map. */
+  setLayoutProperty(layerId: string, prop: string, value: unknown): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) {
+      return;
+    }
+    const layout = { ...((layer.layout as Record<string, unknown>) ?? {}) };
+    layout[prop] = value;
+    layer.layout = layout;
+  }
+
+  getBounds(): {
+    getWest: () => number;
+    getSouth: () => number;
+    getEast: () => number;
+    getNorth: () => number;
+  } {
+    const { west, south, east, north } = this.bounds;
+    return {
+      getWest: () => west,
+      getSouth: () => south,
+      getEast: () => east,
+      getNorth: () => north,
+    };
   }
 
   hasImage(id: string): boolean {

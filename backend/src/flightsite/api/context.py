@@ -40,7 +40,10 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
+from flightsite.airports.overlay import AirportOverlayRepository, AirportSizeClass, BoundingBox
+from flightsite.airports.records import AirportRecord
 from flightsite.airports.service import AirportContextService
+from flightsite.airspace.loader import load_airspace
 from flightsite.api.history import AircraftHistoryRepository
 from flightsite.api.serializers import (
     aircraft_detail_payload,
@@ -225,6 +228,37 @@ class LiveApiContext:
         if row is None:
             return None
         return aircraft_detail_payload(row, live=self.live.get(icao24) is not None)
+
+    # ---------------------------------------------------------------- overlays
+
+    @property
+    def airport_overlay(self) -> AirportOverlayRepository:
+        """The map overlay's query layer over the ``airports`` table (slice 028).
+
+        A fresh repository per call, exactly like :attr:`history` above — this
+        is a REST read on the request path (a viewport bbox query, fired once
+        per debounced map move), not a per-observation live-path lookup, so
+        there is no in-memory index to keep warm between calls the way
+        :attr:`airports` (the *nearest-airport* service) has.
+        """
+        database: Database = self._app.state.database
+        return AirportOverlayRepository(database)
+
+    async def airport_overlay_features(
+        self, *, bbox: BoundingBox | None, min_size: AirportSizeClass | None
+    ) -> list[AirportRecord]:
+        """Airports for the map overlay — ``GET /api/v1/airports`` (slice 028)."""
+        return await self.airport_overlay.query(bbox=bbox, min_size=min_size)
+
+    def airspace_feature_collection(self) -> dict[str, Any]:
+        """The validated user-supplied airspace overlay, or an empty one.
+
+        ``GET /api/v1/airspace`` (slice 028, ``docs/adr/0012-airspace-data-
+        source.md``). A plain file read and JSON validation, not a database
+        call — nothing here can block on SQLite or on anything else this
+        context's other methods wait on.
+        """
+        return load_airspace(self.settings.data_dir)
 
     @property
     def sightings(self) -> SightingsRepository:

@@ -20,7 +20,7 @@ remove them, so a client can rely on the key set being stable.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -428,12 +428,81 @@ class ReceiverInfo(_Model):
     t0: IsoTimestamp | None = None
 
 
+#: The overlay's size-class vocabulary — mirrors
+#: :data:`flightsite.airports.overlay.AirportSizeClass` exactly; duplicated
+#: rather than imported so this module (the published-schema boundary) never
+#: has to import the query layer to describe its own response shape.
+AirportSizeClassLiteral = Literal["large", "medium", "small", "heliport"]
+
+
+class AirportPointGeometry(_Model):
+    """A GeoJSON ``Point`` geometry: ``[lon, lat]`` in that order (RFC 7946)."""
+
+    type: Literal["Point"] = "Point"
+    coordinates: tuple[float, float]
+
+
+class AirportProperties(_Model):
+    """One airport marker's properties — ``GET /api/v1/airports`` (slice 028)."""
+
+    ident: str
+    name: str
+    size_class: AirportSizeClassLiteral
+    iata: str | None = None
+    elevation_ft: int | None = None
+
+
+class AirportFeature(_Model):
+    """One airport as a GeoJSON ``Feature`` with a ``Point`` geometry."""
+
+    type: Literal["Feature"] = "Feature"
+    geometry: AirportPointGeometry
+    properties: AirportProperties
+
+
+class AirportFeatureCollection(_Model):
+    """``GET /api/v1/airports`` — airport markers for the map overlay (slice 028).
+
+    A plain GeoJSON ``FeatureCollection`` rather than the §2.4 ``items``/
+    ``total`` envelope: the response is meant to be handed to a map layer as-is,
+    and every other overlay this codebase serves (range rings, receiver marker)
+    is GeoJSON the frontend consumes the same way.
+    """
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[AirportFeature] = Field(default_factory=list)
+
+
+class AirspaceFeatureCollection(_Model):
+    """``GET /api/v1/airspace`` — the user-supplied airspace overlay (slice 028,
+    ``docs/adr/0012-airspace-data-source.md``).
+
+    ``features`` stays loosely typed (plain dicts) rather than a modeled
+    ``AirspaceFeature``: FlightSite ships no default airspace data, so the only
+    content ever behind this key is whatever GeoJSON a user supplied — geometry
+    type and property keys (a ``class`` the frontend styles by, if present, or
+    none) are entirely theirs to define.
+    :func:`flightsite.airspace.loader.load_airspace` is what constrains the
+    *shape* (a validated ``FeatureCollection``, never a half-parsed file); this
+    model does not re-impose structure the loader deliberately left open.
+    """
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[dict[str, Any]] = Field(default_factory=list)
+
+
 __all__ = [
     "AircraftDetail",
     "AircraftHistoryListResponse",
     "AircraftHistoryRow",
     "AircraftSortKey",
     "AircraftView",
+    "AirportFeature",
+    "AirportFeatureCollection",
+    "AirportPointGeometry",
+    "AirportProperties",
+    "AirportSizeClassLiteral",
+    "AirspaceFeatureCollection",
     "AlertSeverityLiteral",
     "Classification",
     "ClosureReasonLiteral",
