@@ -109,3 +109,50 @@ def test_an_empty_track_has_no_latest_point() -> None:
 def test_a_zero_capacity_track_is_rejected() -> None:
     with pytest.raises(ValueError, match="at least 1 point"):
         CurrentTrack(capacity=0)
+
+
+def test_points_since_returns_only_what_is_newer() -> None:
+    # The tail query sighting checkpointing polls once per observation across
+    # the whole live set: it must answer "what have I not seen" and nothing more.
+    track = CurrentTrack()
+    for index in range(5):
+        track.append(point(index, 47.0 + index))
+
+    tail = track.points_since(BASE_TIME + timedelta(seconds=2))
+
+    assert [p.latitude for p in tail] == [50.0, 51.0]
+
+
+def test_points_since_none_returns_the_whole_track() -> None:
+    # The first harvest of a sighting has no high-water mark yet.
+    track = CurrentTrack()
+    track.append(point(0, 47.0))
+    track.append(point(1, 48.0))
+
+    assert len(track.points_since(None)) == 2
+
+
+def test_points_since_the_newest_point_returns_nothing() -> None:
+    # Strictly newer: the boundary point has already been taken.
+    track = CurrentTrack()
+    track.append(point(0, 47.0))
+
+    assert track.points_since(BASE_TIME) == ()
+
+
+def test_points_since_an_instant_after_the_track_returns_nothing() -> None:
+    track = CurrentTrack()
+    track.append(point(0, 47.0))
+
+    assert track.points_since(BASE_TIME + timedelta(hours=1)) == ()
+
+
+def test_points_since_is_oldest_first_like_every_other_view() -> None:
+    track = CurrentTrack()
+    for index in range(4):
+        track.append(point(index, 47.0 + index))
+
+    tail = track.points_since(BASE_TIME - timedelta(seconds=1))
+
+    assert [p.timestamp for p in tail] == sorted(p.timestamp for p in tail)
+    assert tail == track.points()

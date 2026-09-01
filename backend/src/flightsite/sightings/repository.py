@@ -119,7 +119,12 @@ class OpenSightingRow:
         records, and the merge replaces a record only on a *strictly* better
         value — so re-merging an equal one cannot blank the moment it carries.
 
-        Two reception statistics need more care than a copy. ``rssi_avg_db``
+        Three reception statistics need more care than a copy. ``msg_count``
+        is a sum of deltas of the decoder's cumulative counter, and the
+        counter's last value has no column either — so it comes back as the
+        count itself, which is exactly right for the ordinary case where the
+        decoder's trackfile began with the sighting, and never worse than the
+        alternative of treating the next reading as a first one. ``rssi_avg_db``
         is a mean whose sample count no column carries, so it comes back as a
         prior weighted by ``pos_count`` — the closest stored proxy for how many
         observations went into it, and enough to stop the handful of
@@ -155,12 +160,20 @@ class OpenSightingRow:
             lowest_alt_ft=self.lowest_alt_ft,
             highest_alt_ft=self.highest_alt_ft,
             msg_count=self.msg_count,
+            # Zero means "the decoder reports no counts": leaving the baseline
+            # unset then makes the next reading the first one, which is right.
+            messages_seen=self.msg_count or None,
             pos_count=self.pos_count,
             rssi_peak_db=self.rssi_peak_db,
             rssi_min_db=self.rssi_min_db,
             rssi_total_db=(self.rssi_avg_db or 0.0) * rssi_samples,
             rssi_samples=rssi_samples,
             positioned_ms=round((self.pos_time_pct or 0.0) * elapsed_ms / 100.0),
+            # The row already accounts for every observation up to this
+            # instant, so statistics resume from it: an interval that straddles
+            # the restart is measured, and a re-delivered observation from
+            # before it is not counted a second time.
+            stats_ms=self.last_known_ms,
             checkpoint_seq=self.checkpoint_seq,
             # The live clock's high-water mark is gone with the old process, so
             # the first harvest after a restart re-reads the live track whole
