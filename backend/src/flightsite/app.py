@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -22,7 +23,7 @@ from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
-from flightsite.metadata import MetadataService
+from flightsite.metadata import ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
@@ -192,6 +193,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await service.stop()
         await live.stop()
         await broadcaster.stop()
+        # A slice-025 update run outlives the request that triggered it
+        # (that is the whole point of running it in the background), so one
+        # can still be in flight at shutdown. Cancelling it here rather than
+        # abandoning it means the writer session it holds rolls back
+        # cleanly (``Database.writer_session`` catches ``BaseException``)
+        # instead of racing the engines disposing under it.
+        update_task: asyncio.Task[ImportRun] | None = app.state.metadata_update_task
+        if update_task is not None and not update_task.done():
+            update_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await update_task
         # Before the persistence worker, so no consumer of the live stream is
         # still resolving against the database while the worker takes its final
         # writer transactions.
@@ -234,10 +246,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     registry, the transactional import pipeline, and the metadata & rarity
     cache that keeps SQLite off the live path (``docs/ARCHITECTURE.md`` §3.3).
     Startup attaches the cache to the live event stream on a healthy schema,
-    and shutdown detaches it before the writer takes its last transaction. No
-    HTTP endpoint exposes it yet — ``docs/API.md`` §5 assigns
-    ``/api/internal/metadata/*`` to slice 025, which calls
-    :meth:`~flightsite.metadata.MetadataService.update`.
+    and shutdown detaches it before the writer takes its last transaction.
+    ``docs/API.md`` §5's ``/api/internal/metadata/*`` (slice 025) calls
+    :meth:`~flightsite.metadata.MetadataService.update` from a background
+    task tracked as ``app.state.metadata_update_task``, so a run outlives the
+    request that started it; shutdown cancels one still in flight before the
+    cache and the writer stop underneath it.
 
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
@@ -292,6 +306,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         data_dir=store.data_dir,
         registry=_build_metadata_registry(),
     )
+    # Slice 025's update-in-progress coordinator: the background task the
+    # current "Update Aircraft Metadata" run is executing in, and when it
+    # started. ``None`` means no run has ever been triggered on this process.
+    # Read and written only from ``POST /api/internal/metadata/update``
+    # handlers, which never ``await`` between checking and replacing it, so
+    # two overlapping requests on the same event loop cannot both start a run.
+    app.state.metadata_update_task = None
+    app.state.metadata_update_started_ms = None
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
