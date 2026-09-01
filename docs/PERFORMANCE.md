@@ -312,11 +312,83 @@ hardware, and a figure here says nothing about a Pi 4 beyond ruling out gross
 regressions. It is included because the ratio between these numbers and a
 future Pi 4 row is itself useful.
 
-<!-- BASELINE:dev -->
+**2026-09-01** · Windows 11 (AMD64), Python 3.12.10 · 500 aircraft, 600 ticks,
+4 WebSocket clients, 59 s wall · `flightsite-perf --ticks 600`
+
+| Metric | median | p95 | max | Gated statistic | Bound | Result |
+|---|---|---|---|---|---|---|
+| `live_population` | 706 | 788 | 791 (min 526) | min 526 | ≥ 500 | pass |
+| `ingest_apply_ms` | 14.2 | 17.3 | 314 | p95 17.3 | ≤ 500 | pass |
+| `ingest_duty_cycle` | 0.038 | 0.058 | 1.86 | p95 0.058 | ≤ 0.5 | pass |
+| `live_sweep_ms` | 0.242 | 0.395 | 0.656 | max 0.656 | ≤ 500 | pass |
+| `api_live_ms` | 20.0 | 27.0 | 328 | p95 27.0 | ≤ 1250 | pass |
+| `memory_rss_mib` | 183 | 221 | 223 | max 223 | ≤ 1024 | pass |
+| `ws_fanout_ms` | 12.7 | 15.8 | 366 | p95 15.8 | ≤ 500 | pass |
+| `db_write_cycle_ms` | 5.58 | 15.8 | 1840 | p95 15.8 | ≤ 1250 | pass |
+| `db_read_ms` | 4.81 | 6.17 | 61.9 | p95 6.17 | ≤ 2500 | pass |
+| `analytics_query_ms` | 8.92 | 10.9 | 57.5 | p95 10.9 | ≤ 2500 | pass |
+| `startup_s` | 0.146 | — | — | max 0.146 | ≤ 30 | pass |
+| `recovery_s` | 2.33 (539 open sightings) | — | — | max 2.33 | ≤ 30 | pass |
+
+Every gated statistic sits one to two orders of magnitude inside its bound.
+Three features of this run are worth reading rather than skipping:
+
+**The live set is larger than the batch.** The scenario delivers ~520–600
+aircraft per tick, but an aircraft stays in the live store for 60 s after it
+stops transmitting, so the resident population settles around 700. That is
+correct and is the number the memory and apply figures are actually against.
+
+**`db_write_cycle_ms` spikes to 1.84 s, and the duty cycle with it.** The
+persistence worker rewrites running values every `flush_interval_s` (30 s), so
+one cycle in thirty commits several hundred sightings instead of a handful.
+This is why `ingest_duty_cycle` has a maximum of 1.86 against a p95 of 0.058 —
+one tick in thirty does a great deal more work than the others.
+
+It is also why that budget is gated on the p95 and not the maximum. The duty
+cycle sums the stages because *this harness* drives them serially; in the
+running product the write-behind worker is a separate task and cannot block
+`live.apply` (ADR-0008, `docs/ARCHITECTURE.md` §3.1). A flush that takes longer
+than a poll therefore delays the next *write*, not the next *observation* — the
+live path is memory-only and does not wait for it. The aggregate is kept
+because it is the honest worst case, and the p95 is gated because the maximum
+measures a bounded periodic flush rather than a stall.
+
+**16 resync reconnects.** On a new database every one of 500 aircraft is a
+first-ever sighting, and the activity service publishes one WebSocket frame per
+event with no await between them. Each of its 5-second passes therefore emits a
+burst larger than a client's 32-frame queue, and the broadcaster sheds every
+client with close code 1013 — the documented slow-consumer rule
+(`docs/API.md` §4.5), doing exactly what it should. The simulated clients
+reconnect as a browser would. This is first-run behaviour that decays as
+aircraft stop being novel, but it is worth knowing that a fresh install with a
+busy receiver will resync its clients every few seconds for a while; see §6.
 
 ---
 
-## 6. Long-term storage qualification
+## 6. Observations for later slices
+
+Findings the harness surfaced that are outside slice 049's scope. Recorded here
+rather than acted on, because measuring is this slice's job and changing what
+it measures is not.
+
+**Activity bursts overflow WebSocket client queues on a fresh install.** The
+activity service publishes one frame per event, synchronously, with no await
+between them (`LiveBroadcaster.publish_activity`). A pass that detects more
+events than a client's outbound queue holds — 32 by default — evicts every
+connected client in a single call. On a new database at 500 aircraft this
+happens on essentially every 5-second pass, because every aircraft is a
+first-ever sighting.
+
+The behaviour is correct in the sense that it is the documented slow-consumer
+rule and the client is told to resync rather than left stalled. Whether it is
+*desirable* on a first run is a product question: a browser reconnecting every
+five seconds for the first hours of an install is not a good first impression,
+and coalescing a pass's events into fewer frames, or capping the burst, would
+avoid it. Worth a roadmap entry against the activity or WebSocket slice.
+
+---
+
+## 7. Long-term storage qualification
 
 Multi-year database behavior — growth, index behavior, downsampling, retention
 pruning, backup size and duration, restore, Pi storage I/O, and analytics at

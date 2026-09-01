@@ -180,7 +180,11 @@ BUDGETS: Final[tuple[Budget, ...]] = (
             "measured against one 1 Hz poll. Above 1.0 the pipeline is losing ground; the "
             "budget is half a poll so a Pi 4 at several times dev-machine cost still keeps up. "
             "No headroom: this is already expressed as a ratio to the poll, so a slow machine "
-            "is the thing being measured, not noise to be forgiven."
+            "is the thing being measured, not noise to be forgiven. Gated on the p95 rather "
+            "than the maximum because the sum assumes the stages run serially, as this harness "
+            "drives them: in the product the write-behind worker is a separate task and cannot "
+            "block live.apply (ADR-0008), so the periodic 30 s flush spike delays the next "
+            "write rather than the next observation."
         ),
     ),
     Budget(
