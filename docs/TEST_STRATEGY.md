@@ -143,6 +143,35 @@ through a reviewable diff workflow — baseline updates are called out in the PR
 Anti-goal: do not chase pixel-perfect coverage of every state; cover the stable,
 high-value views only.
 
+### 5.1 How it is realized (slice 047)
+
+`e2e/visual/`, driven by `e2e/playwright.visual.config.ts` — a separate config from
+the flow suite, Chromium-only (CI Firefox has no WebGL and WebKit's software GL
+path differs again; per-browser baselines would triple the review surface for no
+extra signal, and §7's "engine-specific exceptions must be documented in the E2E
+config" is satisfied there).
+
+Determinism comes from removing every non-frontend input rather than from timing:
+
+| Input | How it is frozen |
+|---|---|
+| API responses | replayed from a committed HTTP archive (`e2e/visual/fixtures/api.har`); no backend runs |
+| Live WebSocket | one recorded `snapshot` frame, then silence — the live picture stops advancing |
+| Clock | `page.clock.setFixedTime` at the capture instant, so relative timestamps never tick |
+| Theme | seeded into localStorage before first paint, through the app's own FOUC guard |
+| Basemap tiles | blocked, as in the flow suite (§3 rule 5); the map's documented degraded state is what is locked |
+| CSS motion | zeroed durations injected before first paint, plus `animations: "disabled"` at capture |
+| ECharts entry animation | `toHaveScreenshot`'s built-in "capture until two frames match" settling |
+| Font rendering | the whole suite runs inside `mcr.microsoft.com/playwright`, the image CI uses |
+| MapLibre canvas | masked out — software-GL raster has no cross-run guarantee |
+
+Commands (`docs/DEVELOPMENT.md`, "Visual regression suite"): `npm run visual` to
+compare, `npm run visual:update` to regenerate baselines, `npm run visual:capture`
+to re-record fixtures. All run in the pinned container; the suite refuses to run
+outside it so baselines stay single-platform. CI job: `.github/workflows/visual.yml`,
+which uploads Playwright's expected/actual/diff PNGs on failure so an intended
+restyle can be told from a regression during review.
+
 ---
 
 ## 6. Performance and Scale (SPEC §85–§86)

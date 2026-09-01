@@ -86,6 +86,56 @@ install, `03` and `04` assume setup is already done. Failures produce Playwright
 traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
 (`npm run report` to view).
 
+### Visual regression suite
+
+A separate Playwright suite (`e2e/visual/`) takes screenshot baselines of five
+stable views — Live Map, aircraft detail, Analytics, Receiver, Alerts — in both
+dark and light themes (SPEC §83, `docs/TEST_STRATEGY.md` §5). It is **not** part
+of `npm run e2e`: different config, different lifecycle, different CI job
+(`.github/workflows/visual.yml`).
+
+**Always run it through Docker.** Screenshot baselines depend on the font
+renderer, so the suite runs inside `mcr.microsoft.com/playwright` — the same
+image CI uses — and refuses to run anywhere else rather than silently producing
+pixels that can never match. Both commands below wrap the run in that image; a
+working Docker daemon is the only prerequisite.
+
+```bash
+cd e2e
+
+npm run visual                         # compare against the committed baselines
+npm run visual:update                  # regenerate them after an intended UI change
+npm run report:visual                  # open the HTML report from the last run
+```
+
+`npm run visual:update` is *the* baseline-regeneration command. It is expected to
+be needed whenever a change intentionally alters how these views look — a restyle,
+a spacing change, a new field on a card, or another slice's accessibility or
+contrast work. Regenerating is cheap and normal; **call baseline updates out in
+the PR description** so a reviewer knows the screenshot diff is the point rather
+than a surprise.
+
+No backend runs during a visual run. Every `/api/v1` and `/api/internal` response
+is replayed from a committed HTTP archive, the live WebSocket is replaced by one
+frozen snapshot frame, basemap tiles are blocked, `Date.now()` is frozen and CSS
+motion is disabled — so the only thing that can move a screenshot is the frontend
+itself. The MapLibre canvas is masked out of the Live Map shots: its pixels come
+from a software GL rasterizer with no cross-run guarantee, and a flaky baseline is
+worse than no baseline. The map's own behavior is covered by the flow suite and by
+unit tests.
+
+The fixtures are regenerated separately, and much less often — only when the API
+changes shape or a view starts needing an endpoint the recording does not contain:
+
+```bash
+npm run visual:capture                 # re-record e2e/visual/fixtures/ from a demo stack
+npm run visual:update                  # then re-take the baselines
+```
+
+`visual:capture` brings up its own seeded demo stack, drives all five views, writes
+`e2e/visual/fixtures/` (`api.har`, `live-snapshot.json`, `manifest.json`), and tears
+the stack down. Do not hand-edit the fixtures — re-capture instead.
+
 ### Demo mode and capture/replay are the standard dev environment
 
 No ADS-B hardware is required for development. **Demo mode** (slice 011) provides a
