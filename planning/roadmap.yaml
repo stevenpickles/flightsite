@@ -1157,7 +1157,7 @@ slices:
     title: "Data reset actions"
     phase: 7
     branch: "045-data-reset"
-    status: planned
+    status: merged
     depends_on: ["019", "043"]
     objective: "Deliberate, confirmed Reset FlightSite Data and Clear Metadata Cache actions."
     scope:
