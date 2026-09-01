@@ -137,6 +137,7 @@ class MetadataCache:
         "_entries",
         "_idle",
         "_live",
+        "_lock",
         "_populations",
         "_queue_size",
         "_repository",
@@ -161,6 +162,13 @@ class MetadataCache:
         self._subscription: EventSubscription | None = None
         self._task: asyncio.Task[None] | None = None
         self._populations = 0
+        # Serializes the population task against an import's invalidation.
+        # Both mutate the entry map across an await and they run on
+        # different tasks: without this, a population that had already read
+        # the pre-import rows could install them after invalidation cleared
+        # the map, leaving one aircraft describing the previous dataset
+        # until it next appeared. Uncontended in the normal case.
+        self._lock = asyncio.Lock()
         # Set while the population task has nothing left to do. Tests await it
         # instead of sleeping, and it is what makes the latency measurement a
         # measurement of the cache rather than of a poll loop.
@@ -238,8 +246,9 @@ class MetadataCache:
         # Subscribe before the first read so appears during warm-up queue up
         # rather than being missed.
         self._subscription = self._live.subscribe("metadata-cache", maxsize=self._queue_size)
-        await self._reload_type_counts()
-        await self._populate([aircraft.icao for aircraft in self._live.snapshot()])
+        async with self._lock:
+            await self._reload_type_counts()
+            await self._populate([aircraft.icao for aircraft in self._live.snapshot()])
         self._task = asyncio.create_task(self._loop(), name="flightsite-metadata-cache")
         logger.info(
             "metadata_cache_started",
@@ -282,10 +291,16 @@ class MetadataCache:
         changed, and the cache has no way to tell which, so re-resolving the
         live set is both the correct and the cheapest answer — the live set is
         the only part of the metadata database this cache ever held.
+
+        Runs on the importing caller's task rather than the population one,
+        so it takes the same lock: a population already in flight has read
+        the *old* resolved rows, and letting it install them after this
+        clear would leave one aircraft describing the previous dataset.
         """
-        self._entries.clear()
-        await self._reload_type_counts()
-        await self._populate([aircraft.icao for aircraft in self._live.snapshot()])
+        async with self._lock:
+            self._entries.clear()
+            await self._reload_type_counts()
+            await self._populate([aircraft.icao for aircraft in self._live.snapshot()])
         logger.info(
             "metadata_cache_invalidated",
             aircraft=len(self._entries),
@@ -302,7 +317,10 @@ class MetadataCache:
             event = await subscription.get()
             self._idle.clear()
             try:
-                await self._populate(self._collect(event, subscription))
+                # Held across collect and populate together: see the lock's
+                # construction for what an interleaved invalidation costs.
+                async with self._lock:
+                    await self._populate(self._collect(event, subscription))
             except Exception as exc:  # pragma: no cover - defensive
                 # A failed population is a cache miss, not an outage: the live
                 # picture is unaffected and the next import or appear retries.
