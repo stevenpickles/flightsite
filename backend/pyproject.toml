@@ -23,6 +23,7 @@ dependencies = [
 flightsite-serve = "flightsite.__main__:main"
 flightsite-capture = "flightsite.devtools.capture:main"
 flightsite-backup = "flightsite.backup.cli:main"
+flightsite-perf = "flightsite.perf.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -82,7 +83,7 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=flightsite --cov-report=term-missing --cov-fail-under=80"
+addopts = "-m 'not load' --cov=flightsite --cov-report=term-missing --cov-fail-under=80"
 markers = [
     # Informal performance sanity checks. They run in the normal suite — a
     # regression should fail an ordinary test run — but the marker lets CI or a
@@ -94,6 +95,15 @@ markers = [
     # they cost seconds rather than milliseconds, so `-m 'not drill'` skips
     # them during a tight edit loop.
     "drill: unclean-shutdown drills that spawn and kill a real process",
+    # Sustained-load runs of the slice-049 performance harness. Unlike `perf`
+    # and `drill` these are EXCLUDED from the normal suite (see the `-m 'not
+    # load'` in addopts above): a sustained 500-aircraft run is minutes of wall
+    # clock, and `--realtime` is deliberately bounded by the clock rather than
+    # by the CPU. The short smoke version in tests/perf/ runs every time and
+    # enforces the same hard gates, so a regression still fails an ordinary
+    # run; `-m load` opts into the long version, and `flightsite-perf` is the
+    # standalone entry point for real hardware (docs/PERFORMANCE.md).
+    "load: sustained-load harness runs, excluded from the default suite",
 ]
 
 [tool.coverage.run]
