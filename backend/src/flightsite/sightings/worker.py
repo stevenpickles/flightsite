@@ -99,16 +99,15 @@ consecutive timestamps rather than as an invented straight line.
 Startup
 -------
 
-Slice 053 owns checkpoint-based unclean-shutdown recovery. Until it lands this
-worker still has to behave sanely when it finds sightings open from a previous
-process, and it does so with the machinery it already has: every open sighting
-is rehydrated as a *pending closure* whose deadline is the airframe's last
-known observation plus ``close_s``. Aircraft still being heard therefore
-continue their sighting across a restart, and everything older is closed on the
-first cycle with ``gap_timeout``, which is what actually happened — the aircraft
-was absent for longer than the gap. Nothing here writes
-``closure_reason='shutdown_recovery'``; that value, and repair from track
-checkpoints, arrive with slice 053.
+Every start runs :class:`~flightsite.sightings.recovery.ShutdownRecovery` before
+the first cycle, because a start is the only moment the process can tell what a
+previous one left behind. It sorts the open sightings into the two things they
+can be — an aircraft that may still be overhead, handed back here as a pending
+closure with the deadline it would have had, and an aircraft long gone, closed
+from its checkpoint rows with ``shutdown_recovery`` — and cleans up any state
+that should not exist. Its reasoning, and why a recovered closure is not a
+``gap_timeout``, is in that module; what this one owes is to hold the pending
+closures it returns and to keep its report available for diagnostics.
 """
 
 from __future__ import annotations
@@ -137,6 +136,7 @@ from flightsite.live import (
     LiveEvent,
     LiveStore,
 )
+from flightsite.sightings.recovery import RecoveryReport, ShutdownRecovery
 from flightsite.sightings.repository import ClosedTrack, SightingIds, SightingRepository
 from flightsite.sightings.state import ActiveSighting, open_from
 from flightsite.sightings.vocabulary import ClosureReason
@@ -215,6 +215,7 @@ class PersistenceWorker:
         "_meta",
         "_pending",
         "_queue_size",
+        "_recovery",
         "_repository",
         "_subscription",
         "_t0_established",
@@ -257,6 +258,7 @@ class PersistenceWorker:
         self._subscription: EventSubscription | None = None
         self._task: asyncio.Task[None] | None = None
         self._t0_established = False
+        self._recovery = RecoveryReport()
 
     # ------------------------------------------------------------ inspection
 
@@ -279,6 +281,17 @@ class PersistenceWorker:
     def t0_established(self) -> bool:
         """True once T0 is known to be recorded (SPEC §16)."""
         return self._t0_established
+
+    @property
+    def recovery(self) -> RecoveryReport:
+        """What unclean-shutdown recovery did at this worker's last start.
+
+        All-zero before :meth:`start` and after a boot that found nothing to
+        repair, which is the ordinary case. Kept here so the diagnostics
+        surface (slice 042) can report the last boot's recovery without
+        re-deriving it from a database that no longer holds the evidence.
+        """
+        return self._recovery
 
     def sighting_for(self, icao: str) -> ActiveSighting | None:
         """The accumulator tracking ``icao``, live or pending, if any."""
@@ -312,7 +325,7 @@ class PersistenceWorker:
         self._subscription = self._live.subscribe("persistence", maxsize=self._queue_size)
 
         self._t0_established = await self._meta.get_t0() is not None
-        await self._adopt_open_sightings()
+        await self._recover_open_sightings()
 
         self._task = asyncio.create_task(self._loop(), name="flightsite-persistence")
         logger.info(
@@ -320,6 +333,7 @@ class PersistenceWorker:
             close_s=self._close_ms / MS_PER_SECOND,
             flush_interval_s=self._flush_interval_ms / MS_PER_SECOND,
             adopted=len(self._pending),
+            recovered=self._recovery.recovered,
             t0_established=self._t0_established,
         )
 
@@ -417,6 +431,9 @@ class PersistenceWorker:
         resumed = self._pending.pop(icao, None)
         if resumed is not None:
             resumed.close_deadline_ms = None
+            # An aircraft that came back is not a crash casualty any more: a
+            # closure from here on is one this process watched happen.
+            resumed.closure_reason = ClosureReason.GAP_TIMEOUT
             resumed.observe(record)
             self._active[icao] = resumed
             logger.debug("sighting_continued", icao=icao, sighting_id=resumed.sighting_id)
@@ -556,7 +573,7 @@ class PersistenceWorker:
                             session,
                             self._resolved(active, opened_ids),
                             active,
-                            reason=ClosureReason.GAP_TIMEOUT,
+                            reason=active.closure_reason,
                         )
                     )
         except Exception as exc:
@@ -591,7 +608,7 @@ class PersistenceWorker:
                 icao=active.icao,
                 sighting_id=active.sighting_id,
                 duration_ms=active.duration_ms,
-                closure_reason=ClosureReason.GAP_TIMEOUT.value,
+                closure_reason=active.closure_reason.value,
                 track_points=track.point_count,
                 track_bytes=track.byte_count,
             )
@@ -640,24 +657,25 @@ class PersistenceWorker:
 
     # ---------------------------------------------------------------- startup
 
-    async def _adopt_open_sightings(self) -> None:
-        """Rehydrate sightings a previous process left open.
+    async def _recover_open_sightings(self) -> None:
+        """Repair what a previous process left open, and adopt the rest.
 
-        Each becomes a pending closure with the deadline it would have had:
-        the airframe's last known observation plus ``close_s``. Aircraft still
-        being heard resume their sighting on the next event; the rest close on
-        the first cycle with ``gap_timeout``, since an absence longer than the
-        gap is precisely what happened. Interim behaviour — slice 053 replaces
-        it with checkpoint-based repair and ``shutdown_recovery``.
+        The judgement — closed here and now with ``shutdown_recovery``, or
+        handed back as a pending closure that an aircraft still overhead can
+        resume — belongs to :mod:`flightsite.sightings.recovery`. What is left
+        for the worker is to hold the accumulators it returns, already carrying
+        their deadlines, and to keep its report for diagnostics.
         """
-        rows = await self._repository.load_open_sightings()
-        if not rows:
-            return
-        for row in rows:
-            adopted = row.to_accumulator()
-            adopted.close_deadline_ms = adopted.last_seen_ms + self._close_ms
+        outcome = await ShutdownRecovery(
+            database=self._database,
+            repository=self._repository,
+            close_ms=self._close_ms,
+            clock=self._clock,
+            counters=self._counters,
+        ).run()
+        self._recovery = outcome.report
+        for adopted in outcome.pending:
             self._pending[adopted.icao] = adopted
-        logger.info("open_sightings_adopted", count=len(rows))
 
 
 __all__ = [
