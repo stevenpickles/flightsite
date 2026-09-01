@@ -305,13 +305,17 @@ class AirportContextService:
             on_ground=record.on_ground,
             ts_ms=ts_ms,
         )
+        # The trail is read *before* this observation joins it: the inference
+        # treats the current range as the end of the trend, not as a member of
+        # it, so appending first would compare the observation to itself.
+        trail = self._trail(record.icao)
         self._remember_sample(record.icao, nearest.airport.ident, nearest.distance_nm, ts_ms)
 
         if not in_context(nearest, kinematics):
             self._answers.pop(record.icao, None)
             return
 
-        phase = infer_phase(nearest, kinematics, self._trail(record.icao))
+        phase = infer_phase(nearest, kinematics, trail)
         phase = self._latched(record.icao, nearest.airport.ident, phase)
         context = AirportContext(
             ident=nearest.airport.ident,

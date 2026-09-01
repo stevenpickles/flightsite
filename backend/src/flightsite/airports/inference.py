@@ -46,8 +46,9 @@ FlightSite has anything to say at all.
    because a departure is a fact about where an aircraft *was*, and the further
    it has flown the weaker that gets.
 9. **A trend, over the same field.** At least :data:`MIN_TREND_SAMPLES`
-   observations inside :data:`TREND_WINDOW_MS`, all with the same nearest
-   airport, moving at least :data:`MIN_TREND_DELTA_NM` in the right direction:
+   observations inside :data:`TREND_WINDOW_MS` — *counting the current one* —
+   all with the same nearest airport, moving at least
+   :data:`MIN_TREND_DELTA_NM` in the right direction:
    *closing* for an arrival, *opening* for a departure. This is the gate that
    separates an aircraft approaching a field from one descending past it, and
    it is why a single observation never produces a phase however suggestive its
@@ -120,9 +121,10 @@ DEPARTURE_MAX_DISTANCE_NM: Final = 10.0
 #: neighbouring one.
 ON_GROUND_MAX_DISTANCE_NM: Final = 3.0
 
-#: Observations required before a trend counts, and how far back they may
-#: reach. Two is the minimum that can have a direction at all; the window keeps
-#: a stale sample from an earlier pass over the same field out of the answer.
+#: Observations required before a trend counts, *including the current one*,
+#: and how far back the rest may reach. Two is the minimum that can have a
+#: direction at all; the window keeps a stale sample from an earlier pass over
+#: the same field out of the answer.
 MIN_TREND_SAMPLES: Final = 2
 TREND_WINDOW_MS: Final = 120_000
 
@@ -195,9 +197,11 @@ def infer_phase(
         nearest: the field this inference is about, and the current range to it.
         kinematics: the current observation's altitude, vertical rate and
             ground state.
-        trail: this aircraft's recent range samples, oldest first. The caller
-            owns the trail; this function only reads it, and reads only the
-            part of it inside :data:`TREND_WINDOW_MS`.
+        trail: this aircraft's range samples from observations *before* this
+            one, oldest first. The current observation is not in it — its range
+            is ``nearest.distance_nm``, which is where the trend ends. The
+            caller owns the trail; this function only reads it, and reads only
+            the part inside :data:`TREND_WINDOW_MS`.
 
     Returns ``None`` for every ambiguous case, which is most of them.
     """
@@ -237,6 +241,10 @@ def _closing_delta(
     window, or samples taken against a *different* field, which happens when an
     aircraft crosses from one field's neighbourhood into another's and means the
     two ends of the trend are not measuring the same thing.
+
+    The current observation is the *end* of the trend, not a member of the
+    trail, so the count needed here is one fewer than
+    :data:`MIN_TREND_SAMPLES`.
     """
     ident = nearest.airport.ident
     window = [
@@ -244,7 +252,7 @@ def _closing_delta(
         for sample in trail
         if sample.ident == ident and now_ms - sample.ts_ms <= TREND_WINDOW_MS
     ]
-    if len(window) < MIN_TREND_SAMPLES:
+    if len(window) < MIN_TREND_SAMPLES - 1:
         return None
     # A sample whose ident differs anywhere inside the window disqualifies the
     # trend rather than merely being skipped: the aircraft was nearer something
