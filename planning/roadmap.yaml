@@ -1071,7 +1071,7 @@ slices:
     title: "Alerts page & rule builder"
     phase: 6
     branch: "041-alerts-page"
-    status: planned
+    status: merged
     depends_on: ["038", "037"]
     objective: "Visual rule builder, template management, and alert history on the Alerts page."
     scope:
