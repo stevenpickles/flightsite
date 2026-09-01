@@ -61,6 +61,8 @@ browser, not just the first one to run (see `e2e/playwright.config.ts` and
 `e2e/scripts/`).
 
 ```bash
+docker compose build                   # FIRST — see below; not done for you
+
 cd e2e
 npm install
 npx playwright install --with-deps    # first run only
@@ -69,6 +71,16 @@ npm run e2e                            # Chromium: stack up, full suite, stack d
 npm run e2e:firefox                    # same, Firefox
 npm run e2e:webkit                     # same, WebKit
 ```
+
+**Build the images yourself, every time you change the app.** `compose.yaml` names
+both services by a published `ghcr.io/...:latest` tag, so `docker compose up` reuses
+whatever image already carries that tag in the local daemon and builds only when
+there is none. `scripts/stack.mjs` deliberately does not build (CI builds both images
+in an earlier step — `.github/workflows/e2e.yml`), so a local run started without the
+command above silently exercises whatever was last built on this machine — quite
+possibly another branch or another worktree. The failure mode is a confusing one:
+every pre-existing spec passes and only the specs covering your new UI fail, on
+elements that "should" be there.
 
 `npm run e2e` (etc.) always tears the stack down afterward, pass or fail. To run
 against a stack you're keeping up between runs (faster iteration on one spec):
@@ -79,10 +91,10 @@ npm test                               # Chromium only, against the running stac
 npm run stack:down
 ```
 
-The suite's four spec files (`e2e/tests/01-*` … `04-*`) run in that fixed order,
-serially (`workers: 1`), against one shared backend within a browser: `01` completes
+The suite's spec files (`e2e/tests/01-*` … `05-*`) run in that fixed order, serially
+(`workers: 1`), against one shared backend within a browser: `01` completes
 first-run setup, `02` exercises the decoder connection test against the now-configured
-install, `03` and `04` assume setup is already done. Failures produce Playwright
+install, and `03`–`05` assume setup is already done. Failures produce Playwright
 traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
 (`npm run report` to view).
 
