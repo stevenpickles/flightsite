@@ -392,7 +392,7 @@ slices:
     title: "Live API & WebSocket"
     phase: 2
     branch: "010-live-api-websocket"
-    status: planned
+    status: merged
     depends_on: ["005", "008", "009"]
     objective: "Expose live aircraft state via versioned REST and a snapshot+delta WebSocket stream."
     scope:
@@ -596,7 +596,7 @@ slices:
     title: "Settings page"
     phase: 3
     branch: "019-settings-page"
-    status: planned
+    status: merged
     depends_on: ["002", "004", "007"]
     objective: "Settings UI editing the canonical configuration model with masked secrets."
     scope:

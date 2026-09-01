@@ -10,6 +10,16 @@ uv run pytest
 uv run flightsite-serve
 ```
 
+## API
+
+The documented read-only surface is `/api/v1` and its OpenAPI document is
+served beside it: schema at `/api/v1/openapi.json`, interactive docs at
+`/api/v1/docs`. `/api/internal` is the frontend's unsupported mutation surface
+and is excluded from that schema.
+
+The live WebSocket, `/api/v1/ws/live`, cannot be described in OpenAPI; its
+protocol reference is the `flightsite.api.ws` module docstring.
+
 ## Database
 
 SQLite (WAL) at `<data dir>/flightsite.sqlite3`, reached through

@@ -284,6 +284,20 @@ class PersistenceWorker:
         """The accumulator tracking ``icao``, live or pending, if any."""
         return self._active.get(icao) or self._pending.get(icao)
 
+    def sighting_id_for(self, icao: str) -> int | None:
+        """The id of ``icao``'s open sighting row, or ``None`` if there is none.
+
+        ``None`` covers three real states and is the honest answer to all of
+        them (``docs/API.md`` §2.7): no sighting is open, one is open but its
+        ``INSERT`` has not committed yet (the first second or so of a new
+        aircraft), or persistence is degraded and no row exists at all. The
+        live API reads this per aircraft when it serializes the live set, so it
+        is a plain in-memory lookup — asking the database here would put SQLite
+        on the live path, which ``docs/ARCHITECTURE.md`` §3.1 forbids.
+        """
+        active = self.sighting_for(icao)
+        return None if active is None else active.sighting_id
+
     # -------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
