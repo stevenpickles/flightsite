@@ -919,7 +919,7 @@ slices:
     title: "Receiver page"
     phase: 5
     branch: "034-receiver-page"
-    status: planned
+    status: merged
     depends_on: ["031", "033", "052"]
     objective: "Receiver scorecard and charts including the range-by-bearing polar plot."
     scope:
