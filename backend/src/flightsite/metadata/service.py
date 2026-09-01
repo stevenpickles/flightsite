@@ -23,7 +23,7 @@ import structlog
 
 from flightsite.db import Database, utc_now_ms
 from flightsite.live.store import LiveStore
-from flightsite.metadata.cache import MetadataCache
+from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
 from flightsite.metadata.importer import ClockFn, ImportRun, MetadataImporter
 from flightsite.metadata.registry import SourceRegistry, SourceStatusRecord
 from flightsite.metadata.repository import MetadataRepository
@@ -79,6 +79,41 @@ class MetadataService:
     async def stop(self) -> None:
         """Stop the cache. Idempotent, and safe before start."""
         await self._cache.stop()
+
+    async def lookup(self, icao24: str) -> AircraftMetadataView | None:
+        """Resolved metadata and rarity for any airframe, live or historical.
+
+        The lookup that spans both halves of the roadmap's *"joining live and
+        persisted aircraft to metadata with provenance"*: a live aircraft is
+        answered from the cache with no I/O at all, and one that is not live —
+        an aircraft page for something last seen in March — costs one read.
+
+        ``None`` means the address is unknown to FlightSite entirely: no
+        metadata source describes it and it has never been observed. An
+        airframe that has been seen but that nobody has metadata for comes back
+        as a view with ``known`` false, which is the different (and honest)
+        answer.
+
+        **Not for the live path.** It is ``async`` and it can touch SQLite;
+        anything on the per-update path reads
+        :meth:`~flightsite.metadata.cache.MetadataCache.get` instead
+        (``docs/ARCHITECTURE.md`` §3.1).
+        """
+        cached = self._cache.get(icao24)
+        if cached is not None:
+            return cached
+
+        found = await self._repository.load_live_view([icao24])
+        metadata, sighting_count = found.get(icao24, (None, None))
+        if metadata is None and sighting_count is None:
+            return None
+        type_code = None if metadata is None else metadata.type_code
+        return AircraftMetadataView(
+            icao24=icao24,
+            metadata=metadata,
+            sighting_count=sighting_count,
+            type_count=None if type_code is None else self._cache.type_count(type_code),
+        )
 
     async def update(self, sources: Sequence[str] | None = None) -> ImportRun:
         """Run an import over ``sources`` and refresh the cache if it changed.

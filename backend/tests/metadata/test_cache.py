@@ -373,6 +373,63 @@ async def test_start_and_stop_are_idempotent(cache: MetadataCache) -> None:
     assert not cache.running
 
 
+# ------------------------------------------------------------ lookup service
+
+
+async def test_a_live_aircraft_is_looked_up_from_memory(
+    database: Database, live: LiveStore, registry: SourceRegistry, service: MetadataService
+) -> None:
+    """No I/O at all for the live set: the cache already holds the answer."""
+    registry.register("mictronics", InMemoryMetadataProvider(FLEET))
+    await service.update()
+    await seed_aircraft(database, {"a00001": 42})
+    appear(live, "a00001")
+    await settle(service.cache)
+
+    view = await service.lookup("a00001")
+
+    assert view is service.cache.get("a00001")
+    assert view is not None
+    assert view.type_code == "B738"
+
+
+async def test_an_aircraft_that_is_not_live_is_looked_up_from_the_database(
+    database: Database, registry: SourceRegistry, service: MetadataService
+) -> None:
+    """The historical half: an aircraft page for something last seen in March."""
+    await seed_aircraft(database, {"a00003": 7})
+    registry.register("mictronics", InMemoryMetadataProvider(FLEET))
+    await service.update()
+
+    view = await service.lookup("a00003")
+
+    assert service.cache.get("a00003") is None
+    assert view is not None
+    assert view.type_code == "A320"
+    assert view.sighting_count == 7
+    assert view.type_count == 1
+    assert view.provenance()["registration"] == "mictronics"
+
+
+async def test_an_observed_aircraft_nobody_has_metadata_for_is_still_found(
+    database: Database, service: MetadataService
+) -> None:
+    """Seen but undescribed is a different answer from never heard of."""
+    await seed_aircraft(database, {"beef01": 3})
+
+    view = await service.lookup("beef01")
+
+    assert view is not None
+    assert not view.known
+    assert view.sighting_count == 3
+
+
+async def test_an_address_flightsite_knows_nothing_about_looks_up_as_none(
+    service: MetadataService,
+) -> None:
+    assert await service.lookup("beef99") is None
+
+
 async def test_the_service_exposes_merged_status(
     registry: SourceRegistry, service: MetadataService
 ) -> None:
