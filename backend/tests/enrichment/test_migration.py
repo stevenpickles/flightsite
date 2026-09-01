@@ -44,12 +44,16 @@ EXPECTED_COLUMNS = {
 
 
 def test_this_revision_sits_directly_on_the_previous_head() -> None:
-    """The linear-head rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations"."""
+    """The linear-history rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations".
+
+    That there is exactly *one* head is asserted globally in
+    ``tests/db/test_migrations.py``, not here: later slices add revisions on top
+    of this one, and a per-slice test that pinned itself as the head would have
+    to be edited by every slice that followed.
+    """
     script = migrate.script_directory().get_revision(REVISION)
 
     assert script.down_revision == PREVIOUS
-    assert migrate.heads() == (REVISION,)
-    assert migrate.head_revision() == REVISION
 
 
 async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Path) -> None:
@@ -60,9 +64,14 @@ async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Pat
 
     async with database_at(db_path, REVISION) as database:
         assert await database.current_revision() == REVISION
-        assert await autogenerate_diffs(database) == []
 
     assert TABLE in table_names(db_path)
+
+
+async def test_the_schema_at_head_matches_the_models(db_path: Path) -> None:
+    """Drift is checked at head, where the models describe the whole schema."""
+    async with database_at(db_path) as database:
+        assert await autogenerate_diffs(database) == []
 
 
 async def test_the_table_matches_the_data_model(db_path: Path) -> None:

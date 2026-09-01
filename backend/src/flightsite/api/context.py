@@ -15,9 +15,9 @@ process's life. Reading late also means the context can be built before the
 lifespan hook has started anything.
 
 Nothing here touches SQLite on the aircraft path — the live registry answers
-from memory, and so do the metadata cache and the persistence worker's
-accumulators (which carry the open sighting's id and its enriched route), which
-is the invariant
+from memory, and so do the metadata cache, the airport context service's
+in-memory index, and the persistence worker's accumulators (which carry the
+open sighting's id and its enriched route), which is the invariant
 ``docs/ARCHITECTURE.md`` §3.1 states as "no live request or decoder poll ever
 waits on SQLite" and §3.3 restates as "metadata joins and rarity checks hit a
 cache, not the database". The one database read in this module is T0 for the
@@ -40,6 +40,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
+from flightsite.airports.service import AirportContextService
 from flightsite.api.serializers import aircraft_payload, receiver_payload
 from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms
@@ -101,6 +102,18 @@ class LiveApiContext:
         service: MetadataService = self._app.state.metadata
         return service.cache
 
+    @property
+    def airports(self) -> AirportContextService:
+        """The nearest-airport context service (slice 027).
+
+        Read on the aircraft path for the same reason the metadata *cache* is:
+        :meth:`~flightsite.airports.service.AirportContextService.context_for`
+        is a dict lookup with no ``await`` and no session, because the whole
+        airport dataset is held in memory as a grid index.
+        """
+        service: AirportContextService = self._app.state.airports
+        return service
+
     # -------------------------------------------------------------- payloads
 
     def aircraft(self, *, positioned: bool | None = None) -> list[dict[str, Any]]:
@@ -118,6 +131,7 @@ class LiveApiContext:
         """
         worker: PersistenceWorker = self._app.state.persistence
         cache = self.metadata
+        airports = self.airports
         records = sorted(self.live.snapshot(), key=lambda record: record.icao)
         return [
             aircraft_payload(
@@ -125,6 +139,7 @@ class LiveApiContext:
                 sighting_id=worker.sighting_id_for(record.icao),
                 metadata=cache.get(record.icao),
                 route=worker.route_for(record.icao),
+                airport=airports.context_for(record.icao),
             )
             for record in records
             if _wanted(record, positioned)
@@ -144,6 +159,7 @@ class LiveApiContext:
         worker: PersistenceWorker = self._app.state.persistence
         live = self.live
         cache = self.metadata
+        airports = self.airports
         payloads: list[dict[str, Any]] = []
         for icao in icaos:
             record = live.get(icao)
@@ -154,6 +170,7 @@ class LiveApiContext:
                         sighting_id=worker.sighting_id_for(icao),
                         metadata=cache.get(icao),
                         route=worker.route_for(icao),
+                        airport=airports.context_for(icao),
                     )
                 )
         return payloads

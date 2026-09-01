@@ -58,7 +58,7 @@ from flightsite.metadata.registry import (
     SourceStatusRecord,
 )
 from flightsite.metadata.repository import MetadataRepository
-from flightsite.metadata.service import MetadataService
+from flightsite.metadata.service import ImportListener, MetadataService
 
 __all__ = [
     "DEFAULT_FIELD_PRIORITIES",
@@ -66,6 +66,7 @@ __all__ = [
     "AircraftMetadataView",
     "FieldPriority",
     "ImportFailure",
+    "ImportListener",
     "ImportPhase",
     "ImportRun",
     "MetadataCache",

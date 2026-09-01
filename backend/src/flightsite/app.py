@@ -12,6 +12,13 @@ import structlog
 from fastapi import FastAPI
 
 from flightsite import __version__
+from flightsite.airports import (
+    AIRPORTS_SOURCE,
+    AirportContextService,
+    AirportImportSink,
+    AirportRepository,
+    OurAirportsProvider,
+)
 from flightsite.api.context import LiveApiContext
 from flightsite.api.internal import router as internal_router
 from flightsite.api.v1 import router as v1_router
@@ -25,7 +32,7 @@ from flightsite.enrichment.service import build_provider
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
-from flightsite.metadata import ImportRun, MetadataService
+from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
@@ -65,17 +72,46 @@ def _build_live_store(settings: Settings) -> LiveStore:
     )
 
 
-def _build_metadata_registry() -> SourceRegistry:
-    """The metadata sources this build ships.
+def _build_metadata_registry(airports: AirportRepository) -> SourceRegistry:
+    """The datasets this build ships.
 
     Slice 022 registers ``mictronics`` (the offline primary source); slice 023
-    adds ``faa``. Constructing a provider here opens nothing — it downloads
-    only when an import actually runs (:mod:`flightsite.metadata.importer`).
+    adds ``faa``; slice 027 adds ``airports``, which is not aircraft metadata
+    at all — it supplies its own :class:`~flightsite.metadata.sink.ImportSink`
+    and shares everything else, so slice 025's update action imports it and
+    reports its status independently (SPEC §27).
+
+    Constructing a provider here opens nothing — it downloads only when an
+    import actually runs (:mod:`flightsite.metadata.importer`).
     """
     registry = SourceRegistry()
     registry.register("mictronics", MictronicsProvider())
     registry.register("faa", FaaRegistryProvider())
+    registry.register(AIRPORTS_SOURCE, OurAirportsProvider(), sink=AirportImportSink(airports))
     return registry
+
+
+def _rebuild_airport_index(app: FastAPI) -> ImportListener:
+    """A post-import listener that rebuilds the airport index when it changed.
+
+    The airport equivalent of the metadata cache's invalidation, and wired the
+    same way and on the same edge — but as a listener rather than a hard-coded
+    step, so :mod:`flightsite.metadata` never has to know that
+    :mod:`flightsite.airports` exists. The dependency runs one way: airports
+    consumes the import pipeline.
+
+    Guarded on the source actually having succeeded. A run in which only
+    ``faa`` imported changed no airport, and rebuilding a 70k-row index for
+    that would be work for nothing.
+    """
+
+    async def rebuild(run: ImportRun) -> None:
+        if AIRPORTS_SOURCE not in run.succeeded:
+            return
+        service: AirportContextService = app.state.airports
+        await service.reload()
+
+    return rebuild
 
 
 def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWorker:
@@ -150,6 +186,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     broadcaster: LiveBroadcaster = app.state.broadcaster
     metadata: MetadataService = app.state.metadata
     enrichment: EnrichmentService = app.state.enrichment
+    airports: AirportContextService = app.state.airports
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -173,6 +210,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # its whole output is optional information. A build with no API key
         # returns from this immediately having started nothing.
         await enrichment.start()
+        # And again: the airport context service reads `airports` once, to
+        # build its in-memory index. On an install that has never imported the
+        # dataset that read finds nothing, the index stays empty, and every
+        # `nearest_airport` is null — the documented unknown state.
+        await airports.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -216,8 +258,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # writer transactions. Enrichment goes first of the two: it applies
         # routes *through* the worker, so it must have stopped before the
         # worker's final flush, or a route could land on an accumulator nobody
-        # will write again.
+        # will write again. Airport context stops for exactly the same reason:
+        # it applies inferences through the worker too.
         await enrichment.stop()
+        await airports.stop()
         await metadata.stop()
         await persistence.stop()
         await database.dispose()
@@ -263,6 +307,15 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     task tracked as ``app.state.metadata_update_task``, so a run outlives the
     request that started it; shutdown cancels one still in flight before the
     cache and the writer stop underneath it.
+
+    Nearest-airport context (SPEC §41) is constructed as ``app.state.airports``
+    — a fourth consumer of the live event stream. Startup loads the whole
+    ``airports`` table into an in-memory grid index so no live request ever
+    queries it; an install that has never imported the dataset gets an empty
+    index and a ``null`` ``nearest_airport`` on every aircraft. The dataset is
+    registered in the same source registry as the aircraft metadata sources, so
+    slice 025's update action imports and reports it independently, and a
+    post-import listener rebuilds the index when it lands.
 
     Optional route enrichment (SPEC §28) is constructed as
     ``app.state.enrichment``. It is a third consumer of the live event stream,
@@ -319,11 +372,22 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # subscribes to nothing and opens no connection; the lifespan hook starts
     # the cache, and a registered provider only touches the network once an
     # import actually runs.
+    # Nearest-airport context (SPEC §41). Constructed before the metadata
+    # service because that service holds the registry the airport dataset
+    # registers with, and the post-import listener that rebuilds this
+    # service's index.
+    airport_repository = AirportRepository(app.state.database)
+    app.state.airports = AirportContextService(
+        live=app.state.live,
+        persistence=app.state.persistence,
+        repository=airport_repository,
+    )
     app.state.metadata = MetadataService(
         database=app.state.database,
         live=app.state.live,
         data_dir=store.data_dir,
-        registry=_build_metadata_registry(),
+        registry=_build_metadata_registry(airport_repository),
+        listeners=(_rebuild_airport_index(app),),
     )
     # Optional route enrichment (SPEC §28). `build_provider` returns None
     # unless the flag is set *and* a key is present, and a service with no
