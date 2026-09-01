@@ -369,7 +369,7 @@ slices:
     title: "Unclean-shutdown recovery"
     phase: 2
     branch: "053-shutdown-recovery"
-    status: planned
+    status: merged
     depends_on: ["052"]
     objective: "Recover cleanly from power loss: repair open sightings from checkpoints with bounded data loss and clear diagnostics."
     scope:

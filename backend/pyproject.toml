@@ -87,6 +87,12 @@ markers = [
     # regression should fail an ordinary test run — but the marker lets CI or a
     # developer select (`-m perf`) or exclude (`-m 'not perf'`) them.
     "perf: performance sanity checks with a wall-clock budget",
+    # Crash drills that spawn a real application subprocess and kill it. They
+    # run in the normal suite — unclean-shutdown recovery is a SPEC §84
+    # critical-coverage area and a regression must fail an ordinary run — but
+    # they cost seconds rather than milliseconds, so `-m 'not drill'` skips
+    # them during a tight edit loop.
+    "drill: unclean-shutdown drills that spawn and kill a real process",
 ]
 
 [tool.coverage.run]
