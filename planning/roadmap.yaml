@@ -962,7 +962,7 @@ slices:
     title: "Today at a glance"
     phase: 5
     branch: "036-today-glance"
-    status: planned
+    status: merged
     depends_on: ["031", "033", "035"]
     objective: "Compact daily summary surfaced on the Live Map experience."
     scope:
