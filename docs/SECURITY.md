@@ -72,6 +72,20 @@ requested only after the user opts in (setup wizard or settings), never unprompt
 Notification content includes aircraft data only — never secrets or configuration.
 Denied/blocked permission degrades cleanly and is surfaced in diagnostics.
 
+Two consequences of that first rule, as implemented (slice 040):
+
+- The request is issued from the user's own click — the wizard's **Finish** when the
+  notification preference is on, or the **Allow notifications** button in Settings —
+  and never from an arriving alert, a page load, or a background task. Firefox and
+  Safari require that user activation anyway; FlightSite requires it of itself.
+- Browsers withhold the Notification API entirely outside a secure context (HTTPS, or
+  a `localhost`/`127.0.0.1` origin). Reaching FlightSite over plain HTTP on a LAN
+  address — the normal deployment of §1 — therefore means no notifications at all.
+  That is reported as its own state ("Unavailable on this address") rather than as a
+  fault, and every other alert surface (map emphasis, interesting panel, activity
+  feed) is unaffected. Alerts that could not be shown are counted and displayed
+  alongside the permission, so a silently-degraded install is visibly degraded.
+
 ## 6. Data Integrity: SQLite, Power Loss
 
 - WAL mode with recovery on startup; automatic integrity checks (`quick_check`) at
@@ -120,9 +134,25 @@ FlightSite is local-first. The complete list of optional outbound traffic:
 
 | Traffic | When | What is sent |
 |---|---|---|
-| AeroDataBox route enrichment | Only if an API key is configured | Flight identifiers (callsign/registration/ICAO) needed for route lookup, plus your API key, to the AeroDataBox API |
+| AeroDataBox route enrichment | Only when `enrichment.aerodatabox_enabled` is on **and** an API key is set; then at most once per airline callsign per UTC day, capped at 10 requests/minute | One `GET https://api.aerodatabox.com/flights/callsign/{callsign}` per lookup: the transmitted callsign in the URL path and your API key in the `X-Api-Key` header. No request body, no query parameters. |
 | Basemap tiles | When using internet basemaps (default) | Standard tile HTTP requests, which reveal the viewed map area (and therefore approximately your receiver's region) to the tile provider |
 | Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, and airport-data sources; nothing about your receiver is uploaded |
+
+### What route enrichment does *not* send
+
+Only callsigns in the ICAO airline-flight form (a three-letter designator plus a flight
+number, e.g. `DAL1234`) are ever looked up. Blank callsigns, registrations flown as
+callsigns (`N738AB`) and tactical callsigns are never sent. Nothing else about the
+aircraft or the receiver leaves your network — not its ICAO 24-bit address, its
+registration, its position, altitude or squawk, and not your receiver's location, site
+name or identity. The request carries no body and no query string, so the callsign and
+the key are the entire payload; the response is read and discarded except for the two
+airport identifiers and the flight number, which are cached locally.
+
+Answers are cached in the local `route_cache` table keyed by callsign and UTC date,
+including "no route found", so one flight costs at most one request a day however many
+times it is seen. Turning the feature off, or removing the key, stops every request: the
+provider is not constructed at all, so no socket is opened.
 
 Everything else — aircraft observations, sightings, analytics, alerts, configuration —
 stays on your host. FlightSite has no telemetry, no phone-home, and no account system.

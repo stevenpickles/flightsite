@@ -52,7 +52,17 @@ export interface AlertTemplateDefinition {
 
 /** The v1 alert template catalogue, in the order shown to the wizard
  * (SPEC §45: "user chooses which to enable during setup — nothing
- * silently enabled"). */
+ * silently enabled").
+ *
+ * Every `id` here MUST be a key in the backend's own catalogue
+ * (`backend/src/flightsite/alerts/templates.py`), because an id that is not
+ * one selects nothing: the backend skips a key it does not recognize rather
+ * than failing the save, so a wrong id costs the user a rule they asked for
+ * and tells no one. That is exactly what happened with issue #111 — this list
+ * said `law_enforcement`, the catalogue says `police`, and ticking "Police /
+ * law enforcement aircraft" did nothing at all. The backend now warns about an
+ * unrecognized key, and `tests/alerts/test_frontend_contract.py` asserts this
+ * list against the catalogue so the two cannot drift apart again. */
 export const ALERT_TEMPLATES: readonly AlertTemplateDefinition[] = [
   {
     id: "military",
@@ -65,7 +75,7 @@ export const ALERT_TEMPLATES: readonly AlertTemplateDefinition[] = [
     description: "Aircraft classified as government-operated.",
   },
   {
-    id: "law_enforcement",
+    id: "police",
     label: "Police / law enforcement aircraft",
     description: "Aircraft classified as police or other law enforcement.",
   },
@@ -82,9 +92,19 @@ export const ALERT_TEMPLATES: readonly AlertTemplateDefinition[] = [
   },
   {
     id: "locally_rare",
-    label: "Locally rare aircraft or type",
-    description:
-      "An aircraft or type seen fewer than a threshold number of times.",
+    label: "Locally rare aircraft",
+    description: "An airframe seen here only a handful of times.",
+  },
+  {
+    // SPEC §45 writes rarity as one entry, "locally rare aircraft/type", but a
+    // v1 rule combines conditions with AND only — so one rule carrying both
+    // halves would mean "a rare airframe OF a rare type", far narrower than
+    // either. The backend therefore ships them as two templates, and this list
+    // has to offer both: it previously offered one box labelled "aircraft or
+    // type" that sent only `locally_rare`, promising a rule it never created.
+    id: "locally_rare_type",
+    label: "Locally rare type",
+    description: "A type seen here on only a handful of airframes.",
   },
   {
     id: "watchlist",

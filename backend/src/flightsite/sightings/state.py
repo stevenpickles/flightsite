@@ -57,7 +57,12 @@ from typing import Final, NamedTuple
 from flightsite.db.clock import to_epoch_ms
 from flightsite.live import GroundState, LiveAircraft
 from flightsite.sightings.tracks import TrackSample, from_track_point, thin_for_checkpoint
-from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS, ClosureReason, SightingEventType
+from flightsite.sightings.vocabulary import (
+    EMERGENCY_SQUAWKS,
+    ClosureReason,
+    SightingEventType,
+    outranks_severity,
+)
 
 #: Cap on un-checkpointed points held per sighting. Four hours at 1 Hz, the
 #: same bound :data:`~flightsite.live.track.DEFAULT_TRACK_CAPACITY` puts on a
@@ -87,6 +92,43 @@ class PendingEvent(NamedTuple):
     def payload_json(self) -> str:
         """The payload as the compact JSON the column stores."""
         return json.dumps(self.payload, separators=(",", ":"), sort_keys=True)
+
+
+class SightingRoute(NamedTuple):
+    """An externally reported origin/destination pair, with its provenance.
+
+    Kept here rather than in :mod:`flightsite.enrichment` because the columns
+    are the sighting's (``docs/DATA_MODEL.md`` §2.3) and the dependency runs one
+    way: enrichment consumes the sighting lifecycle, nothing in this package
+    imports enrichment. It is also what the live API reads to publish a route
+    for the aircraft's *current* sighting without touching SQLite.
+
+    ``source`` is the ``route_source`` vocabulary — ``aerodatabox`` is the only
+    value v1 ships — and is deliberately distinct from the ``inferred_*``
+    columns beside it, which hold local heuristics (SPEC §28, §41).
+    """
+
+    origin_ident: str | None
+    destination_ident: str | None
+    source: str
+
+
+class InferredAirport(NamedTuple):
+    """A locally inferred airport context, with its phase if one was inferred.
+
+    Kept here beside :class:`SightingRoute` and for the same reason — the
+    columns are the sighting's (``docs/DATA_MODEL.md`` §2.3) and the dependency
+    runs one way — but deliberately a *different* type, because SPEC §28 and
+    §41 make the distinction between what somebody told FlightSite and what
+    FlightSite guessed a structural one rather than a matter of presentation.
+
+    ``phase`` is the ``inferred_phase`` vocabulary (``arriving``/``departing``)
+    or ``None``: an aircraft can be confidently *at* a field without its
+    intentions being readable, which is what an aircraft on the ground is.
+    """
+
+    ident: str
+    phase: str | None
 
 
 class CheckpointBatch(NamedTuple):
@@ -141,6 +183,27 @@ class ActiveSighting:
     #: is what makes ``emergency_start`` fire once per episode rather than once
     #: per observation.
     emergency_active: bool = False
+
+    #: Externally reported route (slice 026). Never written by
+    #: :meth:`observe` — no decoder transmits a route — and never guessed:
+    #: these stay ``None`` unless a provider actually named an airport.
+    origin_ident: str | None = None
+    destination_ident: str | None = None
+    route_source: str | None = None
+
+    #: Locally inferred airport context (slice 027). Set from the airport
+    #: context service's task, never by :meth:`observe`, and kept in different
+    #: columns from the route above so history can never confuse a guess with a
+    #: report (SPEC §28, §41).
+    inferred_airport_ident: str | None = None
+    inferred_phase: str | None = None
+
+    #: Highest alert severity any rule or built-in has reached on this sighting
+    #: (slice 038). Set from the alert engine's task, never by :meth:`observe`
+    #: — an alert is a conclusion about an observation, not something a decoder
+    #: transmits. ``alert_matches`` remains the source of truth; this is the
+    #: denormalized answer the sightings list and the daily rollups read.
+    max_alert_severity: str | None = None
 
     any_position: bool = False
     mlat_used: bool = False
@@ -427,6 +490,164 @@ class ActiveSighting:
     def _emit(self, event: SightingEventType, at_ms: int, payload: dict[str, str | None]) -> None:
         self.pending_events.append(PendingEvent(type=event, ts_ms=at_ms, payload=payload))
 
+    # ------------------------------------------------------- route enrichment
+
+    @property
+    def route(self) -> SightingRoute | None:
+        """The route enrichment has established, or ``None`` if it has not.
+
+        ``None`` is the honest answer to all of "enrichment is switched off",
+        "the callsign is not an airline flight", "nobody has a route for it"
+        and "the answer has not arrived yet" — and the API renders every one of
+        them the same way (``docs/API.md`` §2.7).
+        """
+        if self.route_source is None:
+            return None
+        return SightingRoute(
+            origin_ident=self.origin_ident,
+            destination_ident=self.destination_ident,
+            source=self.route_source,
+        )
+
+    def apply_route(self, route: SightingRoute, at_ms: int) -> bool:
+        """Record an externally reported route; ``True`` if anything changed.
+
+        Called from the enrichment consumer's task, never from
+        :meth:`observe` — a route is not something a decoder transmits. The
+        write itself still rides the worker's cycle: this only sets the running
+        values and queues the ``route_enriched`` event, exactly as a callsign
+        change does, so the row and its event land in one transaction and a
+        failed cycle retries both (SPEC §52).
+
+        Idempotent by comparison. A cached answer re-applied after a resync, or
+        the same route arriving for a second sighting of the same flight,
+        changes nothing and emits nothing — which is what keeps one event per
+        arrival rather than one per delivery.
+        """
+        if (self.origin_ident, self.destination_ident, self.route_source) == route:
+            return False
+        self.origin_ident = route.origin_ident
+        self.destination_ident = route.destination_ident
+        self.route_source = route.source
+        self._emit(
+            SightingEventType.ROUTE_ENRICHED,
+            at_ms,
+            {
+                "source": route.source,
+                "origin": route.origin_ident,
+                "destination": route.destination_ident,
+            },
+        )
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
+    # --------------------------------------------------- airport inference
+
+    @property
+    def inferred_airport(self) -> InferredAirport | None:
+        """The airport context inference has established, or ``None``.
+
+        ``None`` is the honest answer to "no airport dataset imported", "the
+        aircraft was never low near a field" and "the answer has not arrived
+        yet" alike, and the API renders every one of them the same way
+        (``docs/API.md`` §2.7).
+        """
+        if self.inferred_airport_ident is None:
+            return None
+        return InferredAirport(ident=self.inferred_airport_ident, phase=self.inferred_phase)
+
+    def apply_inferred_airport(self, inferred: InferredAirport, at_ms: int) -> bool:
+        """Record a local airport inference; ``True`` if anything changed.
+
+        Called from the airport context service's task, never from
+        :meth:`observe` — a field is not something a decoder transmits. The
+        write itself still rides the worker's cycle, exactly as a route does,
+        so the row lands in one transaction and a failed cycle retries it.
+
+        No sighting event is emitted, unlike :meth:`apply_route`. The
+        ``sighting_events.type`` vocabulary (``docs/DATA_MODEL.md`` §2.5) is a
+        storage contract fixed at revision 0002 and has no member for this, and
+        an inference that refines itself over an approach would in any case
+        produce a stream of events rather than the transition
+        ``route_enriched`` marks. The columns carry the answer; the timeline
+        does not need a line for each revision of a guess.
+
+        Idempotent by comparison, and monotone in confidence: an inference that
+        *loses* its phase — the aircraft levels off on final — keeps the phase
+        already recorded rather than blanking it, because the sighting's
+        history is "this aircraft was seen arriving at KBFI", and a later
+        ambiguous second does not unmake that. A phase that changes to the
+        other value does replace it: that is a genuinely different reading of
+        the same field, and the newer one is built on more observations.
+        """
+        phase = inferred.phase if inferred.phase is not None else self.inferred_phase
+        if inferred.ident != self.inferred_airport_ident:
+            # A different field: the previous field's phase does not carry over
+            # to it, so an inference about KBFI never leaves a phase attached
+            # to KSEA.
+            phase = inferred.phase
+        if (self.inferred_airport_ident, self.inferred_phase) == (inferred.ident, phase):
+            return False
+        self.inferred_airport_ident = inferred.ident
+        self.inferred_phase = phase
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
+    # ------------------------------------------------------ alert evaluation
+
+    def apply_alert_severity(self, severity: str, reason: str, at_ms: int) -> bool:
+        """Raise this sighting's alert severity; ``True`` if anything changed.
+
+        Called from the alert engine's task (slice 038), never from
+        :meth:`observe`, and the exact shape of :meth:`apply_route` and
+        :meth:`apply_inferred_airport`: a plain in-memory mutation plus a
+        queued event, with the transaction, the ordering and the
+        retry-on-failure all staying the worker's. So the column and its event
+        land in one commit and a failed cycle rewrites both.
+
+        **Monotone.** ``max_alert_severity`` is a maximum over the sighting, so
+        a later, lower-severity match does not lower it — the sighting really
+        did reach the higher one — and a repeat of the standing severity
+        changes nothing. That is what makes this idempotent under a replay and
+        under a restart that rehydrated the stored value.
+
+        Two ``sighting_events`` come out of it, and they are the two
+        ``docs/DATA_MODEL.md`` §2.5 reserved for this slice:
+        ``alert_matched`` the first time this sighting alerts at all, and
+        ``alert_severity_upgraded`` each time a later match raises the bar.
+        SPEC §48's "a newly matched higher-priority condition may notify again"
+        is exactly the second one, so the timeline records the distinction the
+        notification layer acts on rather than making it re-derive it.
+
+        Args:
+            severity: the matched severity, one of
+                :data:`~flightsite.sightings.vocabulary.ALERT_SEVERITIES`.
+            reason: the human-readable match reason, recorded on the event so
+                the sighting timeline says *why* without a join.
+            at_ms: when the match happened, in UTC epoch milliseconds.
+        """
+        if not outranks_severity(severity, self.max_alert_severity):
+            return False
+        previous = self.max_alert_severity
+        self.max_alert_severity = severity
+        if previous is None:
+            self._emit(
+                SightingEventType.ALERT_MATCHED,
+                at_ms,
+                {"severity": severity, "reason": reason},
+            )
+        else:
+            self._emit(
+                SightingEventType.ALERT_SEVERITY_UPGRADED,
+                at_ms,
+                {"from": previous, "to": severity, "reason": reason},
+            )
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
     # ------------------------------------------------------------- the writes
 
     def checkpoint_batch(self) -> CheckpointBatch | None:
@@ -503,5 +724,6 @@ __all__ = [
     "ActiveSighting",
     "CheckpointBatch",
     "PendingEvent",
+    "SightingRoute",
     "open_from",
 ]

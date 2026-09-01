@@ -6,6 +6,8 @@ import {
   WIZARD_STEPS,
   type WizardStepId,
 } from "@/features/setup/constants";
+import { canRequest } from "@/features/notifications/lib/permission";
+import { useNotificationPermission } from "@/features/notifications/useNotificationPermission";
 import { WizardNav } from "@/features/setup/components/WizardNav";
 import { WizardProgress } from "@/features/setup/components/WizardProgress";
 import { buildConfigPatch, draftFromConfig } from "@/features/setup/lib/draft";
@@ -41,6 +43,7 @@ export function SetupWizardPage() {
   const configQuery = useConfigQuery();
   const putConfigMutation = usePutConfigMutation();
   const navigate = useNavigate();
+  const notificationPermission = useNotificationPermission();
 
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   // The config query can refetch in the background (e.g. React Query's
@@ -105,6 +108,21 @@ export function SetupWizardPage() {
       return;
     }
     setSubmitError(null);
+    // The notifications step (SPEC §45's "do not silently enable every
+    // possible notification") records a *preference*; this click is the opt-in
+    // `docs/SECURITY.md` §5 requires before the browser may be asked, so the
+    // ask happens here — synchronously, inside the handler, because the user
+    // activation `requestPermission()` needs does not survive the awaited
+    // config save below (`features/notifications/lib/permission.ts`). Its
+    // answer is deliberately not awaited: finishing setup must not wait on a
+    // browser prompt, and Settings shows and re-asks the permission later
+    // whatever the user does with it now.
+    if (
+      draft.notifications.enabled &&
+      canRequest(notificationPermission.permission)
+    ) {
+      void notificationPermission.request();
+    }
     putConfigMutation.mutate(buildConfigPatch(draft), {
       onSuccess: (response) => {
         applyServerConfigToMapStore(response.config);
@@ -136,7 +154,7 @@ export function SetupWizardPage() {
               onClick={() => {
                 void configQuery.refetch();
               }}
-              className="text-sm font-medium text-accent-foreground underline"
+              className="text-sm font-medium text-accent underline"
             >
               Retry
             </button>

@@ -14,6 +14,7 @@ suite.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -43,6 +44,12 @@ class InMemoryMetadataProvider:
         report: an explicit validation report, overriding the default.
         bad_rows: raw addresses yielded as unnormalizable records, to exercise
             the rejection tolerance.
+        hold: when given, ``download`` awaits this event before proceeding —
+            a way to freeze a run mid-flight (holding the registry's
+            ``running`` state) so a test can observe "in progress" and
+            exercise concurrent-trigger behavior before letting it finish.
+            :attr:`started` is what a test awaits to know the freeze has
+            actually taken hold, rather than polling.
     """
 
     def __init__(
@@ -54,6 +61,7 @@ class InMemoryMetadataProvider:
         fail_after: int = 0,
         report: ValidationReport | None = None,
         bad_rows: int = 0,
+        hold: asyncio.Event | None = None,
     ) -> None:
         self.records = list(records)
         self.version = version
@@ -61,12 +69,19 @@ class InMemoryMetadataProvider:
         self.fail_after = fail_after
         self.report = report
         self.bad_rows = bad_rows
+        self.hold = hold
+        #: Set the instant ``download`` is entered — before it ever waits on
+        #: ``hold`` — so a test can await this rather than poll ``downloads``.
+        self.started = asyncio.Event()
         self.downloads = 0
         self.validations = 0
         self.transforms = 0
 
     async def download(self, workdir: Path) -> SourceArtifact:
         self.downloads += 1
+        self.started.set()
+        if self.hold is not None:
+            await self.hold.wait()
         if self.fail_at is ImportPhase.DOWNLOAD:
             raise ProviderFailure("upstream unreachable")
         path = workdir / "snapshot.json"

@@ -53,13 +53,17 @@ EXPECTED_COLUMNS = {
 EXPECTED_INDEXES = {"ix_class_mil", "ix_class_gov", "ix_class_law", "ix_class_mission"}
 
 
-def test_this_revision_sits_directly_on_the_previous_head() -> None:
-    """The linear-head rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations"."""
+def test_this_revision_sits_directly_on_the_previous_one() -> None:
+    """The linear-history rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations".
+
+    That there is exactly *one* head is asserted by
+    :func:`tests.db.test_migrations.test_migration_graph_has_exactly_one_head`,
+    which is where it belongs: this revision stopped being the head when slice
+    026 added 0006 on top of it, and it will stop again with every later slice.
+    """
     script = migrate.script_directory().get_revision(REVISION)
 
     assert script.down_revision == PREVIOUS
-    assert migrate.heads() == (REVISION,)
-    assert migrate.head_revision() == REVISION
 
 
 async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Path) -> None:
@@ -68,11 +72,21 @@ async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Pat
         assert await database.current_revision() == PREVIOUS
     assert TABLE not in table_names(db_path)
 
-    async with database_at(db_path, "head") as database:
+    async with database_at(db_path, REVISION) as database:
         assert await database.current_revision() == REVISION
-        assert await autogenerate_diffs(database) == []
 
     assert TABLE in table_names(db_path)
+
+
+async def test_models_and_migration_do_not_drift(db_path: Path) -> None:
+    """``alembic check`` as a test.
+
+    Against ``head``, not against this revision: the models describe the whole
+    current schema, so a database stopped at 0005 legitimately differs from
+    them by every table a later slice added.
+    """
+    async with database_at(db_path, "head") as database:
+        assert await autogenerate_diffs(database) == []
 
 
 async def test_the_table_matches_the_data_model(db_path: Path) -> None:

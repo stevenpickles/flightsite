@@ -361,3 +361,128 @@ describe("batching", () => {
     expect(notifications).toBe(2);
   });
 });
+
+describe("positionChangedAt", () => {
+  const AT = { icao: "aaaaaa", position: { lat: 47, lon: -122 } } as const;
+
+  function anchor(): number | undefined {
+    return store().aircraft.aaaaaa?.positionChangedAt;
+  }
+
+  beforeEach(() => {
+    store().applySnapshot({ aircraft: [makeAircraft(AT)], receiver: null }, T0);
+  });
+
+  it("starts at the frame the aircraft first appeared on", () => {
+    expect(anchor()).toBe(T0);
+  });
+
+  it("survives a delta that repeats the same fix", () => {
+    // Issue #119: the backend sends complete objects, so a frame reporting
+    // only a new RSSI still carries the last decoded position verbatim.
+    store().applyDelta(
+      {
+        updated: [makeAircraft({ ...AT, rssi_db: -30 })],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0);
+    expect(store().aircraft.aaaaaa?.receivedAt).toBe(T0 + 1000);
+  });
+
+  it("advances when the fix actually moves", () => {
+    store().applyDelta(
+      {
+        updated: [makeAircraft({ ...AT, position: { lat: 47.01, lon: -122 } })],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0 + 1000);
+  });
+
+  it("advances when only the longitude moves", () => {
+    store().applyDelta(
+      {
+        updated: [makeAircraft({ ...AT, position: { lat: 47, lon: -122.01 } })],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0 + 1000);
+  });
+
+  it("advances when a different source places the aircraft", () => {
+    // Identical coordinates from a different measurement chain is still a new
+    // report, and costs nothing to honour: an aircraft that has not moved has
+    // nothing to re-anchor.
+    store().applyDelta(
+      {
+        updated: [makeAircraft({ ...AT, position_source: "mlat" })],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0 + 1000);
+  });
+
+  it("advances when a position appears for a Mode S-only aircraft", () => {
+    store().applySnapshot(
+      {
+        aircraft: [
+          makeAircraft({
+            icao: "aaaaaa",
+            position: null,
+            position_source: "none",
+          }),
+        ],
+        receiver: null,
+      },
+      T0 + 1000,
+    );
+    store().applyDelta(
+      { updated: [makeAircraft(AT)], stale: [], removed: [] },
+      T0 + 2000,
+    );
+
+    expect(anchor()).toBe(T0 + 2000);
+  });
+
+  it("survives a snapshot that repeats the same fix", () => {
+    // A resync or reconnect is not evidence that the aircraft moved.
+    store().applySnapshot(
+      { aircraft: [makeAircraft(AT)], receiver: null },
+      T0 + 5000,
+    );
+
+    expect(anchor()).toBe(T0);
+  });
+
+  it("survives a stale flip", () => {
+    store().applyDelta(
+      { updated: [], stale: ["aaaaaa"], removed: [] },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0);
+  });
+
+  it("restarts for an aircraft removed and restored in the same batch", () => {
+    // A returning aircraft is a new track, not a continuation of the old one.
+    store().applyDelta(
+      { updated: [makeAircraft(AT)], stale: [], removed: ["aaaaaa"] },
+      T0 + 1000,
+    );
+
+    expect(anchor()).toBe(T0 + 1000);
+  });
+});

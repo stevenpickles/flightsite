@@ -21,6 +21,12 @@
 # Backend log level: CRITICAL, ERROR, WARNING, INFO or DEBUG.
 log_level: INFO
 
+# Write rotating JSON logs to <data_dir>/logs/flightsite.log (SPEC §68).
+# Container stdout still receives them either way; the file keeps a history
+# that survives a restart, which is what the Health page's recent-error list
+# complements rather than replaces.
+log_file_enabled: true
+
 # Display unit system: "aviation" (nm/ft/kt) or "metric" (km/m/km-h).
 units: aviation
 
@@ -101,4 +107,18 @@ notifications:
 alerts:
   # Ids of the shipped alert templates to instantiate. Chosen during first-run
   # setup; empty means no alert templates are enabled.
+  #
+  # Valid ids: military, government, police, emergency_squawk, first_ever,
+  # locally_rare, locally_rare_type, watchlist. An id that is not one of these
+  # is skipped with a warning in the log rather than refused — a key from
+  # another build must not stop the install from starting.
+  #
+  # Adding an id here instantiates its rule when the file is saved through the
+  # Settings UI or the setup wizard. Editing this file by hand instead takes
+  # effect on the next restart. Removing an id never deletes a rule, and a
+  # shipped rule you delete is not recreated: from first run on, the Alerts
+  # page owns the rules.
+  #
+  # `emergency_squawk` creates no rule — 7500/7600/7700 alert unconditionally
+  # and cannot be switched off (SPEC §47).
   enabled_templates: []

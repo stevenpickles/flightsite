@@ -1,15 +1,40 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
 
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
+import { ActivityPage } from "@/pages/ActivityPage";
+import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
-import { AnalyticsPage } from "@/pages/AnalyticsPage";
+import { HealthPage } from "@/pages/HealthPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
-import { ReceiverPage } from "@/pages/ReceiverPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SightingDetailPage } from "@/pages/SightingDetailPage";
 import { SightingsPage } from "@/pages/SightingsPage";
+
+/**
+ * The Analytics and Receiver pages both pull in ECharts (roadmap slices 032
+ * and 034), which the Live Map — the app's index route, and the one every
+ * session loads first — has no use for. Route-level `lazy` keeps that chunk
+ * out of the initial bundle entirely; it only downloads when a user actually
+ * navigates to one of these two.
+ */
+/* eslint-disable react-refresh/only-export-components -- this route config
+   module's only real export is `router`; the lazy-loaded component bindings
+   have to live beside the route tree that references them. */
+const AnalyticsPage = lazy(() =>
+  import("@/pages/AnalyticsPage").then((module) => ({
+    default: module.AnalyticsPage,
+  })),
+);
+const ReceiverPage = lazy(() =>
+  import("@/pages/ReceiverPage").then((module) => ({
+    default: module.ReceiverPage,
+  })),
+);
+/* eslint-enable react-refresh/only-export-components */
 
 export const router = createBrowserRouter([
   {
@@ -24,11 +49,54 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <LiveMapPage /> },
           { path: "aircraft", element: <AircraftPage /> },
+          { path: "aircraft/:icao", element: <AircraftDetailPage /> },
           { path: "sightings", element: <SightingsPage /> },
-          { path: "analytics", element: <AnalyticsPage /> },
-          { path: "receiver", element: <ReceiverPage /> },
+          { path: "sightings/:id", element: <SightingDetailPage /> },
+          {
+            path: "analytics",
+            element: (
+              <Suspense
+                fallback={
+                  <p
+                    role="status"
+                    className="p-8 text-sm text-muted-foreground"
+                  >
+                    Loading analytics…
+                  </p>
+                }
+              >
+                <AnalyticsPage />
+              </Suspense>
+            ),
+          },
+          {
+            path: "receiver",
+            element: (
+              <Suspense
+                fallback={
+                  <p
+                    role="status"
+                    className="p-8 text-sm text-muted-foreground"
+                  >
+                    Loading receiver…
+                  </p>
+                }
+              >
+                <ReceiverPage />
+              </Suspense>
+            ),
+          },
           { path: "alerts", element: <AlertsPage /> },
           { path: "settings", element: <SettingsPage /> },
+          // Inside the shell but deliberately not in `NAV_ITEMS`: SPEC §10
+          // fixes the sidebar at seven sections, so the activity feed's
+          // fuller view is reached from the Live Map panel's "View all"
+          // link, the way `sightings/:id` is reached from the log.
+          { path: "activity", element: <ActivityPage /> },
+          // Same reasoning for the health area (roadmap slice 042): SPEC §67
+          // wants it reachable without SSH, not an eighth sidebar section, so
+          // the Receiver and Settings pages both link to it.
+          { path: "health", element: <HealthPage /> },
         ],
       },
       // Outside AppShell's sidebar chrome: a full-screen wizard layout

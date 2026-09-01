@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { STACK_BASE_URL } from "./stackContract";
+
 /**
  * FlightSite E2E configuration (roadmap slice 020).
  *
@@ -45,10 +47,10 @@ export default defineConfig({
     : [["list"], ["html", { open: "never", outputFolder: `playwright-report${outputSuffix}` }]],
 
   use: {
-    // 127.0.0.1, not localhost: on Linux CI runners Firefox resolves localhost
-    // to ::1 while Docker publishes the compose port on IPv4 only, which made
-    // every Firefox test fail at its first assertion (page never loaded).
-    baseURL: "http://127.0.0.1:8080",
+    // The compose stack's published host port (default 8090, overridable with
+    // FLIGHTSITE_HOST_PORT). `stackContract.ts` also explains why the origin
+    // is 127.0.0.1 rather than localhost.
+    baseURL: STACK_BASE_URL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

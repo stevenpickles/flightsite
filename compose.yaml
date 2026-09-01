@@ -73,8 +73,20 @@ services:
       context: ./frontend
     container_name: flightsite-frontend
     restart: unless-stopped
+    # Host port 8090, not 8080. The container side is always 8080 (nginx
+    # listens there as an unprivileged user); only the published host port is
+    # configurable, via FLIGHTSITE_HOST_PORT.
+    #
+    # Why 8090 is the default: FlightSite is normally installed on the same
+    # host as the ADS-B decoder, and dump1090-fa/tar1090/readsb publish their
+    # own web UI on 8080 — the same port `receiver.port` defaults to in
+    # config.example.yaml. Defaulting FlightSite there too made a co-resident
+    # install fail on first `up` with an "address already in use" bind error,
+    # which is a poor first five minutes. 8090 keeps the common case working
+    # untouched; anyone who needs a different port sets:
+    #   FLIGHTSITE_HOST_PORT=9000 docker compose up -d
     ports:
-      - "8080:8080"
+      - "${FLIGHTSITE_HOST_PORT:-8090}:8080"
     depends_on:
       flightsite-backend:
         condition: service_healthy

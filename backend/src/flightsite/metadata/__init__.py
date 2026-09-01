@@ -24,7 +24,7 @@ Reading order:
 
 from __future__ import annotations
 
-from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
+from flightsite.metadata.cache import AircraftMetadataView, MetadataCache, OnResolvedFn
 from flightsite.metadata.importer import (
     ImportFailure,
     ImportRun,
@@ -57,8 +57,8 @@ from flightsite.metadata.registry import (
     SourceStatus,
     SourceStatusRecord,
 )
-from flightsite.metadata.repository import MetadataRepository
-from flightsite.metadata.service import MetadataService
+from flightsite.metadata.repository import MetadataClearCounts, MetadataRepository
+from flightsite.metadata.service import ImportListener, MetadataService
 
 __all__ = [
     "DEFAULT_FIELD_PRIORITIES",
@@ -66,15 +66,18 @@ __all__ = [
     "AircraftMetadataView",
     "FieldPriority",
     "ImportFailure",
+    "ImportListener",
     "ImportPhase",
     "ImportRun",
     "MetadataCache",
+    "MetadataClearCounts",
     "MetadataError",
     "MetadataImporter",
     "MetadataProvider",
     "MetadataRepository",
     "MetadataService",
     "NormalizedAircraftRecord",
+    "OnResolvedFn",
     "PrecedenceModel",
     "RecordError",
     "RegisteredSource",

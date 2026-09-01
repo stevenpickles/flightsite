@@ -1,11 +1,13 @@
-import { Wand2 } from "lucide-react";
+import { Stethoscope, Wand2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { requireNavItem } from "@/components/shell/nav-items";
 import { AlertsSection } from "@/features/settings/sections/AlertsSection";
+import { DangerZoneSection } from "@/features/settings/sections/DangerZoneSection";
 import { DecoderSection } from "@/features/settings/sections/DecoderSection";
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
 import { EnrichmentSection } from "@/features/settings/sections/EnrichmentSection";
+import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import { NotificationsSection } from "@/features/settings/sections/NotificationsSection";
 import { ReceiverSection } from "@/features/settings/sections/ReceiverSection";
 import { RetentionSection } from "@/features/settings/sections/RetentionSection";
@@ -41,7 +43,7 @@ export function SettingsPage() {
           onClick={() => {
             void configQuery.refetch();
           }}
-          className="text-sm font-medium text-accent-foreground underline"
+          className="text-sm font-medium text-accent underline"
         >
           Retry
         </button>
@@ -70,13 +72,25 @@ export function SettingsPage() {
           </h1>
           <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
-        <Link
-          to="/setup"
-          className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
-        >
-          <Wand2 className="size-4" aria-hidden="true" />
-          Re-run setup wizard
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {/* The health area (SPEC §67) has no sidebar entry of its own —
+              SPEC §10 fixes that at seven sections — so Settings and
+              Receiver are the two places a user looks for it. */}
+          <Link
+            to="/health"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
+          >
+            <Stethoscope className="size-4" aria-hidden="true" />
+            Health &amp; diagnostics
+          </Link>
+          <Link
+            to="/setup"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
+          >
+            <Wand2 className="size-4" aria-hidden="true" />
+            Re-run setup wizard
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -87,8 +101,11 @@ export function SettingsPage() {
         <AlertsSection config={config} />
         <NotificationsSection config={config} />
         <EnrichmentSection config={config} hasStoredKey={hasStoredKey} />
+        <MetadataSection timezone={config.timezone} />
         <RetentionSection config={config} />
       </div>
+
+      <DangerZoneSection />
     </div>
   );
 }

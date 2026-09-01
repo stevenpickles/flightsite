@@ -2,6 +2,7 @@ import type { Map as MapLibreGlMap } from "maplibre-gl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AIRCRAFT_ATTENTION_LAYER_ID,
   AIRCRAFT_LABEL_LAYER_ID,
   AIRCRAFT_MLAT_RING_LAYER_ID,
   AIRCRAFT_SELECTED_LABEL_LAYER_ID,
@@ -40,13 +41,14 @@ beforeEach(() => {
 });
 
 describe("ensureAircraftLayers", () => {
-  it("adds both sources and all six layers", () => {
+  it("adds both sources and all seven layers", () => {
     ensureAircraftLayers(map);
     expect([...mock.sources.keys()].sort()).toEqual(
       [AIRCRAFT_SOURCE_ID, AIRCRAFT_TRACK_SOURCE_ID].sort(),
     );
     expect([...mock.layers.keys()]).toEqual([
       AIRCRAFT_TRACK_LAYER_ID,
+      AIRCRAFT_ATTENTION_LAYER_ID,
       AIRCRAFT_SELECTION_LAYER_ID,
       AIRCRAFT_MLAT_RING_LAYER_ID,
       AIRCRAFT_SYMBOL_LAYER_ID,
@@ -62,6 +64,11 @@ describe("ensureAircraftLayers", () => {
     ensureAircraftLayers(map);
     const order = [...mock.layers.keys()];
     expect(order.indexOf(AIRCRAFT_TRACK_LAYER_ID)).toBeLessThan(
+      order.indexOf(AIRCRAFT_ATTENTION_LAYER_ID),
+    );
+    // The attention ring is the outermost of the three rings, so it paints
+    // first and the selection halo stays legible on top of it.
+    expect(order.indexOf(AIRCRAFT_ATTENTION_LAYER_ID)).toBeLessThan(
       order.indexOf(AIRCRAFT_SELECTION_LAYER_ID),
     );
     expect(order.indexOf(AIRCRAFT_MLAT_RING_LAYER_ID)).toBeLessThan(
@@ -79,7 +86,7 @@ describe("ensureAircraftLayers", () => {
     ensureAircraftLayers(map);
     const first = mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID);
     ensureAircraftLayers(map);
-    expect(mock.layers.size).toBe(6);
+    expect(mock.layers.size).toBe(7);
     expect(mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(first);
   });
 
@@ -93,6 +100,83 @@ describe("ensureAircraftLayers", () => {
       const options = call[1] as Record<string, unknown> | undefined;
       expect(options?.cluster).toBeUndefined();
     }
+  });
+
+  it("draws the attention ring only for aircraft with an active match", () => {
+    ensureAircraftLayers(map);
+    expect(mock.layers.get(AIRCRAFT_ATTENTION_LAYER_ID)?.filter).toEqual([
+      "!=",
+      ["get", "severity"],
+      "",
+    ]);
+  });
+
+  it("encodes severity in ring geometry, not colour alone", () => {
+    // SPEC §36: "never rely exclusively on color to communicate
+    // classification or severity". Radius and stroke width must both step
+    // monotonically with severity, so the ladder survives a viewer who
+    // cannot separate amber from red.
+    ensureAircraftLayers(map);
+    const paint = mock.layers.get(AIRCRAFT_ATTENTION_LAYER_ID)?.paint as Record<
+      string,
+      unknown
+    >;
+
+    const pick = (expression: unknown[], severity: string): number => {
+      const index = expression.indexOf(severity);
+      return index === -1
+        ? (expression.at(-1) as number)
+        : (expression[index + 1] as number);
+    };
+
+    const width = paint["circle-stroke-width"] as unknown[];
+    expect(pick(width, "info")).toBeLessThan(pick(width, "interesting"));
+    expect(pick(width, "interesting")).toBeLessThan(pick(width, "high"));
+    expect(pick(width, "high")).toBeLessThan(pick(width, "critical"));
+
+    // The radius folds severity into each zoom stop's output — the same
+    // shape ICON_SIZE uses, because `["zoom"]` must stay the direct input
+    // of the top-level interpolate or style validation fails silently.
+    const radius = paint["circle-radius"] as unknown[];
+    expect(radius[0]).toBe("interpolate");
+    expect(radius[2]).toEqual(["zoom"]);
+
+    // Read the selection halo's own radius rather than restating its
+    // numbers, so this stays true if that layer is ever retuned.
+    const halo = (
+      mock.layers.get(AIRCRAFT_SELECTION_LAYER_ID)?.paint as Record<
+        string,
+        unknown
+      >
+    )["circle-radius"] as unknown[];
+
+    for (const [stopIndex, haloIndex] of [
+      [4, 4],
+      [6, 6],
+    ]) {
+      const stop = radius[stopIndex!] as unknown[];
+      expect(stop[0]).toBe("match");
+      expect(pick(stop, "info")).toBeLessThan(pick(stop, "interesting"));
+      expect(pick(stop, "interesting")).toBeLessThan(pick(stop, "high"));
+      expect(pick(stop, "high")).toBeLessThan(pick(stop, "critical"));
+      // Outside the selection halo at the same zoom, so a selected alerting
+      // aircraft shows both rings rather than one swallowing the other.
+      expect(pick(stop, "info")).toBeGreaterThan(halo[haloIndex!] as number);
+    }
+  });
+
+  it("fades the attention ring with the feature's own opacity", () => {
+    // A stale or ground-dimmed aircraft's ring must fade exactly as its icon
+    // does, rather than staying at full strength over a ghost.
+    ensureAircraftLayers(map);
+    const paint = mock.layers.get(AIRCRAFT_ATTENTION_LAYER_ID)?.paint as Record<
+      string,
+      unknown
+    >;
+    expect(paint["circle-stroke-opacity"]).toEqual(["get", "opacity"]);
+    const fill = paint["circle-opacity"] as unknown[];
+    expect(fill[0]).toBe("*");
+    expect(fill[1]).toEqual(["get", "opacity"]);
   });
 
   it("filters the non-selected label layer to non-empty, non-selected labels", () => {
@@ -254,6 +338,7 @@ describe("drawAircraftFrame", () => {
           ground_speed_kt: null,
         }),
         receivedAt: NOW,
+        positionChangedAt: NOW,
       },
     },
     departing: {},

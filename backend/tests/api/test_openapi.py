@@ -43,6 +43,40 @@ def test_the_live_endpoints_are_documented() -> None:
     assert "/api/v1/ready" in paths
 
 
+def test_the_history_endpoints_are_documented() -> None:
+    paths = schema()["paths"]
+
+    assert "/api/v1/aircraft" in paths
+    assert "/api/v1/aircraft/{icao}" in paths
+
+
+def test_the_history_row_and_detail_objects_are_described_by_components() -> None:
+    components = schema()["components"]["schemas"]
+
+    assert "AircraftHistoryRow" in components
+    assert "AircraftDetail" in components
+    assert "lifetime" in components["AircraftDetail"]["properties"]
+
+
+def test_the_history_sort_keys_are_published() -> None:
+    # §3.5's documented sort keys, in the schema rather than only in prose.
+    operation = schema()["paths"]["/api/v1/aircraft"]["get"]
+    sort_param = next(param for param in operation["parameters"] if param["name"] == "sort")
+
+    assert set(sort_param["schema"]["enum"]) == {
+        "registration",
+        "icao",
+        "type",
+        "operator",
+        "classification",
+        "first_seen",
+        "last_seen",
+        "sighting_count",
+        "closest_approach_nm",
+        "max_range_nm",
+    }
+
+
 def test_the_internal_surface_is_absent() -> None:
     paths = schema()["paths"]
 
@@ -78,6 +112,36 @@ def test_the_position_source_vocabulary_is_published() -> None:
     properties = schema()["components"]["schemas"]["AircraftView"]["properties"]
 
     assert set(properties["position_source"]["enum"]) == {"adsb", "mlat", "none", "other"}
+
+
+def test_the_sightings_endpoints_are_documented() -> None:
+    paths = schema()["paths"]
+
+    assert "/api/v1/sightings" in paths
+    assert "/api/v1/sightings/{sighting_id}" in paths
+    assert "/api/v1/aircraft/{icao}/sightings" in paths
+
+
+def test_the_sightings_row_and_detail_objects_are_described_by_components() -> None:
+    components = schema()["components"]["schemas"]
+
+    assert "SightingRow" in components
+    assert "SightingDetail" in components
+    for field in ("events", "path", "reception", "records", "route"):
+        assert field in components["SightingDetail"]["properties"], field
+
+
+def test_the_sightings_sort_keys_are_published() -> None:
+    # §3.6's documented sort keys, in the schema rather than only in prose.
+    operation = schema()["paths"]["/api/v1/sightings"]["get"]
+    sort_param = next(param for param in operation["parameters"] if param["name"] == "sort")
+
+    assert set(sort_param["schema"]["enum"]) == {
+        "started_at",
+        "duration_s",
+        "closest_approach_nm",
+        "max_range_nm",
+    }
 
 
 def test_the_positioned_filter_is_documented() -> None:

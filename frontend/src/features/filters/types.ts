@@ -10,13 +10,15 @@
  * payload until a later slice populates it (`docs/API.md` §2.7):
  * `categoryText`/`operatorText`/`operatorGroupText` match `aircraft_type`
  * / `operator` / `operator_group` (slice 024), `classifications` and
- * `missionCategories` match `classification` (slice 024), and
- * `interestingOnly` matches `interesting` (slice 038). The UI keeps them
+ * `missionCategories` match `classification` (slice 024). The UI keeps them
  * fully wired — this is plumbing, not a stub — but until that data exists,
- * a non-empty `classifications`/`missionCategories` selection or
- * `interestingOnly: true` matches nothing, by design (see
- * `lib/applyFilters.ts`'s doc comment on why "nothing" and not
- * "everything").
+ * a non-empty `classifications`/`missionCategories` selection matches
+ * nothing, by design (see `lib/applyFilters.ts`'s doc comment on why
+ * "nothing" and not "everything").
+ *
+ * `interestingOnly` was one of those and no longer is: slice 038's alert
+ * engine populates `interesting` on every live payload, so the filter now
+ * narrows the map to exactly the set `features/interesting`'s panel lists.
  */
 
 import type { LiveAircraft } from "@/lib/api/live";

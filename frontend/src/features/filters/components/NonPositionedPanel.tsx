@@ -11,6 +11,12 @@
  * fly to an aircraft with no position; the header docstring on
  * `AircraftDetailPanel` covers what a selection without live data — including
  * one FlightSite has never had a fix for — shows instead.
+ *
+ * The card does **not** position itself. Slice 039 added a second
+ * aircraft-list panel to the same bottom-left corner (`InterestingPanel`),
+ * so `LiveMapPage` now owns that corner as one flex column and both cards
+ * are plain children of it — two absolutely-positioned siblings claiming
+ * `bottom-3 left-3` would simply have stacked on top of each other.
  */
 
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -43,7 +49,7 @@ export function NonPositionedPanel() {
   return (
     <div
       data-testid="non-positioned-panel"
-      className="absolute bottom-3 left-3 z-10 w-72 max-w-[80vw] overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm"
+      className="pointer-events-auto overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm"
     >
       <button
         type="button"

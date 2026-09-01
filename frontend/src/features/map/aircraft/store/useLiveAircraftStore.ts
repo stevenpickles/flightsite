@@ -14,9 +14,22 @@
  * `updated`**. Following it leaves the client holding exactly what
  * `GET /api/v1/aircraft/current` would have returned when the frame was built.
  *
- * Records keep `receivedAt` alongside the payload. That timestamp — not
- * `last_seen`, which is the receiver's clock and may be skewed from the
- * browser's — is the base the interpolator dead-reckons from.
+ * Records keep two local timestamps alongside the payload, both read from the
+ * browser's clock rather than `last_seen` (the receiver's clock, which may be
+ * skewed from the browser's):
+ *
+ * * `receivedAt` — when this object arrived. Dates the *data*: how long ago the
+ *   client last heard anything at all about this aircraft.
+ * * `positionChangedAt` — when the reported fix last actually moved. Dates the
+ *   *position*, which is a different thing entirely, because the backend sends
+ *   complete aircraft objects every frame: a delta carrying nothing but a new
+ *   RSSI still repeats the last decoded position verbatim.
+ *
+ * The interpolator dead-reckons from `positionChangedAt`. Anchoring it to
+ * `receivedAt` was issue #119: distant aircraft decode a CPR position only
+ * every 2-10 s while transmitting Mode S every second, so every intervening
+ * delta reset elapsed time to zero and snapped the marker back to the stale
+ * fix before it crept forward again.
  */
 
 import { create } from "zustand";
@@ -27,11 +40,15 @@ import type { LiveAircraft, ReceiverInfo } from "@/lib/api/live";
 import type { ConnectionStatus } from "@/lib/ws/liveSocket";
 import type { DeltaData, SnapshotData } from "@/lib/ws/protocol";
 
-/** One live aircraft plus the local clock reading that dates it. */
+/** One live aircraft plus the local clock readings that date it. */
 export interface LiveAircraftRecord {
   aircraft: LiveAircraft;
   /** `Date.now()` when this object was applied. */
   receivedAt: number;
+  /** `Date.now()` when `aircraft.position` last changed — the moment the
+   * receiver placed the aircraft where the record now says it is. Carried
+   * forward unchanged by every frame that repeats the same fix. */
+  positionChangedAt: number;
 }
 
 /** An aircraft the server has dropped, kept briefly so it fades out instead of
@@ -83,6 +100,46 @@ function initialState(): Omit<
   };
 }
 
+/**
+ * Whether `next` reports the aircraft at the same place `previous` did.
+ *
+ * Coordinate identity is the available signal: the payload has no "this is a
+ * fresh decode" flag, and two independent CPR solutions for a moving aircraft
+ * do not agree to the last float bit. A change of `position_source` counts as
+ * a new fix even at identical coordinates — a different measurement chain
+ * placed it there — which costs nothing, since a source flip without motion
+ * would only re-anchor an aircraft that is not moving anyway.
+ */
+function samePosition(previous: LiveAircraft, next: LiveAircraft): boolean {
+  const before = previous.position;
+  const after = next.position;
+  if (before === null || after === null) {
+    return before === after;
+  }
+  return (
+    before.lat === after.lat &&
+    before.lon === after.lon &&
+    previous.position_source === next.position_source
+  );
+}
+
+/** The record for a freshly delivered aircraft object, inheriting the position
+ * anchor from the record it replaces when the fix has not moved. */
+function upsert(
+  entry: LiveAircraft,
+  previous: LiveAircraftRecord | undefined,
+  now: number,
+): LiveAircraftRecord {
+  return {
+    aircraft: entry,
+    receivedAt: now,
+    positionChangedAt:
+      previous && samePosition(previous.aircraft, entry)
+        ? previous.positionChangedAt
+        : now,
+  };
+}
+
 function pruneDeparting(
   departing: Record<string, DepartingRecord>,
   now: number,
@@ -126,10 +183,12 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
   applySnapshot: (data, now = Date.now()) => {
     set((state) => {
       // A snapshot replaces the picture wholesale (§4.2), so the map is rebuilt
-      // rather than merged; anything it omits is simply gone.
+      // rather than merged; anything it omits is simply gone. An aircraft that
+      // survives the rebuild still keeps its position anchor — a reconnect or
+      // a periodic resync is not evidence that the aircraft moved.
       const aircraft: Record<string, LiveAircraftRecord> = {};
       for (const entry of data.aircraft) {
-        aircraft[entry.icao] = { aircraft: entry, receivedAt: now };
+        aircraft[entry.icao] = upsert(entry, state.aircraft[entry.icao], now);
       }
       return {
         aircraft,
@@ -160,6 +219,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
           aircraft[icao] = {
             aircraft: { ...record.aircraft, state: "stale" },
             receivedAt: record.receivedAt,
+            positionChangedAt: record.positionChangedAt,
           };
         }
       }
@@ -167,7 +227,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
       // aircraft that reappears here after being removed in the same batch is
       // restored, which is why this step runs last.
       for (const entry of data.updated) {
-        aircraft[entry.icao] = { aircraft: entry, receivedAt: now };
+        aircraft[entry.icao] = upsert(entry, aircraft[entry.icao], now);
         delete departing[entry.icao];
       }
 

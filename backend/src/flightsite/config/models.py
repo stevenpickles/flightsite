@@ -238,6 +238,10 @@ class Settings(BaseSettings):
     data_dir: Annotated[Path, Field(exclude=True)] = DEFAULT_DATA_DIR
 
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
+    #: SPEC §68's rotating local logs, written to ``<data_dir>/logs``. On by
+    #: default: an appliance the user is not expected to SSH into needs a log
+    #: history that outlives the container's stdout buffer.
+    log_file_enabled: bool = True
 
     units: UnitSystem = "aviation"
     timezone: str = "UTC"

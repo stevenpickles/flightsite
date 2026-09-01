@@ -1,0 +1,166 @@
+name: perf
+
+# The sustained half of the slice-049 performance harness (SPEC §85).
+#
+# The *hard gates* do not live here. They run in `backend.yml` on every PR, as
+# part of the ordinary pytest run: tests/perf/test_harness.py drives a short
+# smoke run of the whole pipeline at 500 aircraft and asserts every hard gate
+# SPEC §85 names. A regression must fail the required check on the PR that
+# causes it, not a nightly job somebody reads on Monday.
+#
+# What runs here is the `load`-marked sustained run, which pytest excludes from
+# the default suite (`-m 'not load'` in backend/pyproject.toml). It is minutes
+# of wall clock and it exists to catch what a short run cannot see even in
+# principle: memory drift, a queue that fills slowly, a duty cycle whose worst
+# tick only appears after the scenario has wrapped. On a schedule and on
+# demand, therefore, rather than on every PR.
+#
+# This job is deliberately NOT a required status check. Its budgets are stated
+# for the reference hardware (Raspberry Pi 4) and a shared GitHub runner is
+# neither that hardware nor a quiet one; treating a noisy trend signal as a
+# merge blocker would train people to re-run it until it passed. The Pi 4
+# qualification procedure in docs/PERFORMANCE.md is what converts these
+# reference budgets into hard gates, and that is a release activity run on real
+# hardware.
+
+on:
+  schedule:
+    # Sundays, 04:17 UTC. Off the hour, because everyone else picks the hour.
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      ticks:
+        description: "Measured 1 Hz ticks (default: the suite's own sustained length)"
+        required: false
+        type: string
+      storage-days:
+        description: "Days of synthetic history to qualify (default: 365; 1095 needs ~20 GB)"
+        required: false
+        type: string
+  pull_request:
+    # Changes to the harness itself must prove the sustained path still runs;
+    # nothing else pays for this job.
+    paths:
+      - "backend/src/flightsite/perf/**"
+      - "backend/tests/perf/**"
+      - ".github/workflows/perf.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sustained:
+    name: sustained load
+    runs-on: ubuntu-latest
+    # Generous: a sustained run is minutes by construction, and a runner that
+    # is having a bad day should report a slow result rather than a cancelled
+    # one. Still bounded, so a hang cannot burn an hour.
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.8"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # No coverage: instrumentation roughly doubles every measured figure, and
+      # this job exists to produce numbers rather than to cover lines. The
+      # coverage gate is backend.yml's job.
+      # Scoped away from tests/perf/storage: the storage qualification is also
+      # `load`-marked, but it builds gigabytes and takes far longer, so it runs
+      # as its own job below rather than inside this one's timeout.
+      - name: Sustained load run
+        run: uv run pytest -m load --no-cov -v --ignore=tests/perf/storage
+
+      # The standalone entry point, exercised on the same runner. This is the
+      # command docs/PERFORMANCE.md tells an operator to run on a Pi, so a
+      # change that broke its arguments or its exit status should be caught
+      # here rather than by the person doing the qualification.
+      - name: Standalone harness (report artifact)
+        run: |
+          uv run flightsite-perf \
+            --ticks "${TICKS:-300}" \
+            --data-dir "${RUNNER_TEMP}/flightsite-perf" \
+            --json "${RUNNER_TEMP}/perf-report.json"
+        env:
+          TICKS: ${{ inputs.ticks }}
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: perf-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/perf-report.json
+          if-no-files-found: warn
+
+  storage:
+    name: storage qualification
+    runs-on: ubuntu-latest
+    # Slower and larger than the sustained job by a wide margin: this one
+    # synthesizes a multi-year history, queries it, prunes it, backs it up and
+    # vacuums it. An hour is generous for the default one-year span and still
+    # bounds a hang.
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.8"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # The span is deliberately a year rather than the three the acceptance
+      # criterion names. A qualification needs room for the database, the
+      # backup's VACUUM INTO snapshot, the compressed archive and a full VACUUM
+      # beside it — roughly four times the database — and a hosted runner does
+      # not have that for three years of history. The three-year run is a
+      # standalone `flightsite-storage-qual` on a machine with the disk for it,
+      # recorded in docs/PERFORMANCE.md §7.6.
+      - name: Multi-year storage qualification
+        run: uv run pytest -m load tests/perf/storage --no-cov -v
+        env:
+          FLIGHTSITE_STORAGE_QUAL_DAYS: ${{ inputs.storage-days }}
+
+      # The standalone entry point, exercised on the same runner. This is the
+      # command docs/PERFORMANCE.md tells an operator to run against the
+      # storage being qualified, so a change that broke its arguments or its
+      # exit status should be caught here rather than by the person doing the
+      # qualification. Short span: the assertion is that the command works.
+      - name: Standalone qualification (report artifact)
+        run: |
+          uv run flightsite-storage-qual \
+            --scenario suburban \
+            --days 60 \
+            --data-dir "${RUNNER_TEMP}/flightsite-qual" \
+            --json "${RUNNER_TEMP}/storage-report.json"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: storage-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/storage-report.json
+          if-no-files-found: warn

@@ -85,10 +85,19 @@ GET /api/v1/aircraft?limit=50&offset=100&sort=last_seen&order=desc
 }
 ```
 
-- `total` MAY be omitted or approximate on large collections (`/aircraft`,
-  `/sightings`) — an exact filtered `COUNT(*)` per page is too expensive at
-  multi-year scale on Pi-class hardware. Endpoints that can compute it cheaply
-  return it exactly; clients must not rely on `total` for anything beyond display.
+- `total` MAY be `null` or approximate — an exact filtered `COUNT(*)` per page is too
+  expensive at multi-year scale on Pi-class hardware. Clients must not rely on
+  `total` for anything beyond display. In practice:
+
+  | Endpoint | `total` |
+  |---|---|
+  | `/aircraft` | exact |
+  | `/sightings`, `/aircraft/{icao}/sightings`, `/activity`, `/alerts/matches` | always `null` |
+
+- **Two list endpoints do not paginate at all**: `/aircraft/current` and
+  `/aircraft/interesting` describe the live picture, which is already bounded by what
+  is in the air right now. They return `items` and `total` only — no `limit` or
+  `offset` in the envelope, and neither is accepted as a parameter.
 
 ### 2.5 Error envelope
 
@@ -181,10 +190,40 @@ schema. Delivered incrementally starting with slice 010.
 | `GET /api/v1/ready` | Readiness: migrations applied, ingestion loop started. |
 
 ```json
-{ "status": "ok", "version": "0.3.1", "uptime_s": 86211 }
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "uptime_s": 86211,
+  "counters": {
+    "ingestion_failures": 0,
+    "db_errors": 0,
+    "enrichment_failures": 0,
+    "ws_disconnects": 0,
+    "live_events_dropped": 0
+  },
+  "demo": false
+}
 ```
 
-`/ready` returns `503` with `{"status": "starting"}` until ready.
+`counters` are process-lifetime totals, reset on restart. `demo` reports whether the
+backend is running against the simulated decoder rather than real hardware.
+
+`/ready` reports per-subsystem readiness and uses the same body shape on both `200`
+and `503`, returning `503` while any subsystem is still false:
+
+```json
+{ "ready": true, "subsystems": { "database": true, "ingestion": true } }
+```
+
+`subsystems` lists the subsystems that actually registered, so its keys vary with how
+the install is running. In particular, a **first-run install reports only
+`{"database": true}`** — with no configuration saved there is no decoder to connect
+to, ingestion never starts, and it therefore never registers. Treat a missing key as
+"not applicable to this install", not as a failure; `ready` is the field to branch on.
+
+Decoder health deliberately never affects readiness. A decoder that goes away leaves
+the service ready, because reporting not-ready would invite an orchestrator to
+restart a backend whose only problem is on the other end of the network.
 
 ### 3.2 Receiver info — slice 010
 
@@ -256,14 +295,20 @@ Aircraft object (the same shape used by the WebSocket):
     "severity": "high",
     "reasons": ["Rule: Military aircraft"]
   },
+  "route": { "origin": "KATL", "destination": "KSEA" },
   "provenance": {
     "registration": "mictronics",
     "operator": "mictronics",
     "classification": "mictronics",
-    "distance_nm": "derived"
+    "distance_nm": "derived",
+    "route": "aerodatabox"
   }
 }
 ```
+
+- `route`: the current sighting's externally reported route (§2.6 shape) — always
+  present, members `null` until enrichment lands (slice 026); never a locally
+  inferred value (that is the separate nearest-airport context, slice 027).
 
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.
@@ -301,12 +346,29 @@ Lifetime record block (SPEC §53):
 }
 ```
 
-### 3.6 Sightings — slice 030
+### 3.6 Map overlays — slices 027/028
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`. Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/airports` | Airport overlay rows for a map viewport. Query: `bbox`, `min_size` (size class); capped count, largest-first. |
+| `GET /api/v1/airspace` | The user-supplied airspace overlay (`airspace.geojson` in the data dir) as a validated FeatureCollection; empty when absent (ADR-0012). |
+
+`bbox` is **`west,south,east,north`** in decimal degrees (WGS-84) — that is
+longitude first, matching GeoJSON axis order, not latitude first. For example
+`bbox=-123.5,47.0,-121.5,48.0`. Omitting it queries the whole dataset.
+
+`min_size` is one of `large`, `medium`, `small`, `heliport`, and names the *smallest*
+size class to include.
+
+### 3.7 Sightings — slice 030
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
+
+`from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
+`started_at`. A value without a timezone is interpreted as UTC rather than rejected.
 
 Sighting detail sketch:
 
@@ -351,7 +413,7 @@ Sighting detail sketch:
 SPEC §19). Active sightings return the live full-resolution track instead and
 `ended_at: null`.
 
-### 3.7 Analytics — slice 031
+### 3.8 Analytics — slice 031
 
 All analytics endpoints accept `preset=today|7d|30d|ytd|t0` (default `today`), or
 explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
@@ -366,24 +428,53 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 
-### 3.8 Receiver statistics — slices 033/034
+### 3.9 Receiver statistics — slices 033/034
 
 | Path | Returns |
 |---|---|
 | `GET /api/v1/receiver/scorecard` | SPEC §61 scorecard (current visible, msgs/s, pos/s, ranges, uniques, uptimes, health summary). |
-| `GET /api/v1/receiver/metrics` | Time-series metrics. Params: `metric` (`messages_per_s`, `positions_per_s`, `aircraft_count`, `max_range_nm`, ...), `resolution=high|hourly|daily`, `from`/`to`. |
+| `GET /api/v1/receiver/metrics` | One time-series chart. Params: `metric`, `resolution=high\|hourly\|daily` (default `hourly`), `from`/`to`. |
 | `GET /api/v1/receiver/range-by-bearing` | Polar max-range histogram (buckets of bearing → max nm). |
 | `GET /api/v1/receiver/signal-distribution` | RSSI distribution histogram, derived from per-sighting `rssi_*_db` reception stats over the selected window. |
 | `GET /api/v1/receiver/lifetime` | SPEC §63 lifetime statistics since T0. |
 
-### 3.9 Activity & alert history — slices 035/038
+`metric` is one of `messages_per_sec`, `positions_per_sec`, `aircraft_count`,
+`max_range_nm`, `messages_total`, `positions_total`, `unique_aircraft`.
+
+Not every metric exists at every resolution, and asking for an unavailable
+combination is a `400`, not an empty series:
+
+- `unique_aircraft` is `daily` only.
+- `messages_total` and `positions_total` are `hourly` or `daily` only.
+- `from` later than `to` returns `400 invalid_range`.
+
+### 3.10 Activity & alert history — slices 035/038
 
 | Path | Returns |
 |---|---|
 | `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`). |
-| `GET /api/v1/alerts/matches` | Alert match history: rule, aircraft, sighting, severity, reason, matched_at. |
+| `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `from`, `to`. |
 
-### 3.10 Diagnostics — slice 042
+An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
+`severity`, `reason`, `icao`, `sighting_id`, `rule` (null for a built-in match),
+`builtin_key` (set when the match came from a built-in rather than a user rule, e.g.
+`emergency_7600`), and `notified`:
+
+```json
+{
+  "id": 4,
+  "at": "2026-09-01T20:35:29.959Z",
+  "severity": "critical",
+  "reason": "Emergency squawk 7600 (radio failure)",
+  "icao": "56ff74",
+  "sighting_id": 70,
+  "rule": null,
+  "builtin_key": "emergency_7600",
+  "notified": false
+}
+```
+
+### 3.11 Diagnostics — slice 042
 
 `GET /api/v1/diagnostics`
 
@@ -391,6 +482,30 @@ Everything in SPEC §67: decoder connection state and last successful update, da
 health/size/row counts, free disk space, backend uptime, versions, metadata source
 ages, recent error ring buffers (ingestion/db/enrichment/websocket), WebSocket client
 count. **Never contains secrets** (tested requirement).
+
+Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health banner
+renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`, `database`
+(`quick_check`, `storage`, `row_counts`, `maintenance`, `recovery`), `metadata`,
+`notifications`, `enrichment`, `websocket`, `counters`, `recent_errors`.
+
+Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
+pragma takes the writer lock, so the endpoint reports the result the maintenance
+scheduler already computed rather than imposing a file walk on a running receiver.
+
+Two contract details worth knowing:
+
+- `decoder.state` distinguishes `unconfigured` (a first-run install with no receiver
+  yet) from `down` (a receiver that should be answering and is not). Rendering the
+  first as an outage would be wrong.
+- `notifications` carries only what the server can know — the configured severities —
+  and `permission_known_by` is always `"client"`. Browser permission is unobservable
+  from the backend, so the health page joins this with the frontend notification store
+  (slice 040) to show the permission the user actually granted.
+
+Secrets are redacted twice on the way out: once as each error is captured into the
+ring buffer, and once over the whole assembled payload, both against the configured
+`SecretStr` values discovered by type. A secret that reached a log record by mistake
+still cannot reach this response.
 
 ---
 
@@ -449,8 +564,28 @@ against the slice-010 protocol ignore this frame type until they support it (§ 
 
 ### 4.5 Keepalive, reconnect, slow consumers
 
-- Server pings every 30 s (WebSocket ping frames); a client missing 2 pings is
-  dropped.
+- Server pings every 30 s and drops a client that has sent nothing across 2
+  consecutive pings.
+
+  The ping is an **application-level JSON frame** layered over — not instead of —
+  the transport ping frames, so that it survives an intermediary proxy that answers
+  protocol pings on the client's behalf. It uses the same envelope as every other
+  frame:
+
+  ```json
+  { "type": "ping", "seq": 9, "ts": "...", "data": {} }
+  ```
+
+  **A client is expected to answer it**, with either a JSON frame or a bare string:
+
+  ```json
+  { "type": "pong" }
+  ```
+
+  Any inbound message resets the counter, so a client that talks for other reasons
+  will not be dropped. A client may also send `{"type": "ping"}` at any time and gets
+  a `pong` envelope back.
+
 - **Reconnect:** clients reconnect with backoff; every new connection receives a
   fresh `snapshot`. There is no delta replay — the snapshot is the resync mechanism.
 - **Slow consumers:** if a client's outbound queue exceeds its bound, the server
@@ -468,14 +603,23 @@ config/domain models the backend uses.
 
 | Group | Endpoints (sketch) | Slice |
 |---|---|---|
-| Setup / first-run | `GET /setup/state`, `POST /setup/complete` | 018 |
-| Config | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`), `PUT /config` (masked values ignored unless replaced; secrets never echoed back) | 004/019 |
+| Config & first-run | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`; carries the `first_run` flag the frontend uses to decide whether to show the wizard), `PUT /config` (masked values ignored unless replaced; secrets never echoed back). There are no dedicated setup endpoints — the wizard reads `GET /config` and finishes with a single `PUT /config` | 004/018/019 |
 | Connection test | `POST /decoder/test` → reachability, parse result, sample aircraft count | 007/018 |
 | Watchlists | `GET/POST /watchlists`, `PUT/DELETE /watchlists/{id}`, entries CRUD | 037 |
-| Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates` | 038/041 |
+| Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates`, `POST /alert-templates/{key}/rules` (instantiates a shipped template as a rule carrying its `template_key`; empty body — the conditions come from the catalogue, never from the caller; `404` unknown key, `409` built-in or already instantiated) | 038/041 |
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
-| Backup status | `GET /backup/info` (last backup manifest summary; backup/restore themselves are CLI operations) | 043 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
+
+Backup and restore have **no HTTP surface at all**, internal or external: they are
+CLI operations (`flightsite-backup`, see `docs/BACKUP.md`), deliberately, so that a
+restore cannot be triggered by anything reachable from a browser.
+
+Note that this surface also carries pure reads (`GET /config`,
+`GET /metadata/status`, `GET /watchlists`, `GET /alert-rules`). ADR-0007 splits on
+*audience*, not on HTTP method: `/api/internal` is "mutations plus frontend-only
+conveniences", and everything under `/api/v1` is read-only. `POST /decoder/test` is
+the mirror-image case — a POST that mutates no state, but performs an outbound
+network probe on the caller's behalf.
 
 Secret-handling rules (SPEC §29): secret fields are write-only through the API;
 reads return masked placeholders; logs and diagnostics never include them.

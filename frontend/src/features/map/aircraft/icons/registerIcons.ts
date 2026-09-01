@@ -52,14 +52,18 @@ export interface IconImageRegistry {
   ): unknown;
 }
 
-const loadViaImageElement: ImageLoader = (dataUri) =>
+/** Decodes a data URI through a plain `Image` element. Exported so other
+ * icon sets registered the same way (the airport overlay's size-class
+ * glyphs, `features/map/overlays/airportIcons.ts`) can reuse the identical
+ * loader rather than reimplementing this decode-and-reject dance. */
+export const loadViaImageElement: ImageLoader = (dataUri) =>
   new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
       resolve(image);
     };
     image.onerror = () => {
-      reject(new Error("failed to decode aircraft icon"));
+      reject(new Error("failed to decode icon"));
     };
     image.src = dataUri;
   });

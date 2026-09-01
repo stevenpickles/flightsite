@@ -68,17 +68,11 @@ releases:
     after_phase: 3
     theme: "Live radar MVP: ingestion, sightings, live map, demo mode, setup wizard."
   - version: "v0.2.0"
-    after_phase: 4
-    theme: "Aircraft identity: offline metadata, classification, enrichment, overlays."
-  - version: "v0.3.0"
-    after_phase: 5
-    theme: "History & analytics."
-  - version: "v0.4.0"
-    after_phase: 6
-    theme: "Alerts & notifications."
-  - version: "v0.5.0"
-    after_phase: 7
-    theme: "Operations: backup/restore, maintenance, diagnostics."
+    after_phase: 8
+    theme: "Consolidated release: identity completion, history & analytics, alerts
+      & notifications, operations, and the Phase 8 hardening pass. (Development
+      outpaced the release cadence; the planned v0.2-v0.5 themes shipped together.
+      Recorded 2026-09-01.)"
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -730,7 +724,7 @@ slices:
     title: "Metadata update action"
     phase: 4
     branch: "025-metadata-update-ui"
-    status: planned
+    status: merged
     depends_on: ["019", "022", "023"]
     objective: "Settings action to manually update all metadata sources with independent per-source status reporting."
     scope:
@@ -750,7 +744,7 @@ slices:
     title: "Route enrichment (AeroDataBox)"
     phase: 4
     branch: "026-route-enrichment"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "052"]
     objective: "Optional AeroDataBox route enrichment behind a generic provider interface with caching, rate limiting, and provenance."
     scope:
@@ -775,7 +769,7 @@ slices:
     title: "Airport data & context"
     phase: 4
     branch: "027-airport-context"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "021", "025", "026"]
     objective: "Import an openly licensed airport dataset and provide nearest-airport plus clearly-labeled arrival/departure inference."
     scope:
@@ -796,7 +790,7 @@ slices:
     title: "Aviation overlays"
     phase: 4
     branch: "028-aviation-overlays"
-    status: planned
+    status: merged
     depends_on: ["013", "027"]
     objective: "Airport and airspace map overlays with documented open licensing."
     scope:
@@ -817,7 +811,7 @@ slices:
     title: "Aircraft page"
     phase: 5
     branch: "029-aircraft-page"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "024"]
     objective: "Sortable historical Aircraft page backed by paginated aircraft-history APIs."
     scope:
@@ -836,7 +830,7 @@ slices:
     title: "Sightings page"
     phase: 5
     branch: "030-sightings-page"
-    status: planned
+    status: merged
     depends_on: ["009", "013", "016", "024", "052"]
     objective: "Chronological sightings log with per-sighting detail including the simplified path."
     scope:
@@ -855,7 +849,7 @@ slices:
     title: "Analytics backend"
     phase: 5
     branch: "031-analytics-backend"
-    status: planned
+    status: merged
     depends_on: ["009", "024"]
     objective: "Daily rollups and aggregation APIs powering the Analytics page and today-at-a-glance."
     scope:
@@ -877,7 +871,7 @@ slices:
     title: "Analytics page"
     phase: 5
     branch: "032-analytics-page"
-    status: planned
+    status: merged
     depends_on: ["031", "033"]
     objective: "Analytics UI with time presets and aviation-styled charts."
     scope:
@@ -896,7 +890,7 @@ slices:
     title: "Receiver metrics & retention"
     phase: 5
     branch: "033-receiver-metrics"
-    status: planned
+    status: merged
     depends_on: ["005", "007"]
     objective: "Ingest decoder-native statistics plus FlightSite metrics with high-res retention, downsampling, and pruning."
     scope:
@@ -919,7 +913,7 @@ slices:
     title: "Receiver page"
     phase: 5
     branch: "034-receiver-page"
-    status: planned
+    status: merged
     depends_on: ["031", "033", "052"]
     objective: "Receiver scorecard and charts including the range-by-bearing polar plot."
     scope:
@@ -940,7 +934,7 @@ slices:
     title: "Activity feed & milestones"
     phase: 5
     branch: "035-activity-milestones"
-    status: planned
+    status: merged
     depends_on: ["009", "010", "024", "025"]
     objective: "Persistent activity event stream and receiver milestone/record detection with a feed UI."
     scope:
@@ -962,7 +956,7 @@ slices:
     title: "Today at a glance"
     phase: 5
     branch: "036-today-glance"
-    status: planned
+    status: merged
     depends_on: ["031", "033", "035"]
     objective: "Compact daily summary surfaced on the Live Map experience."
     scope:
@@ -982,7 +976,7 @@ slices:
     title: "Watchlists"
     phase: 6
     branch: "037-watchlists"
-    status: planned
+    status: merged
     depends_on: ["009", "024"]
     objective: "User-defined watchlists with CRUD UI and live matching."
     scope:
@@ -1002,7 +996,7 @@ slices:
     title: "Alert rule engine"
     phase: 6
     branch: "038-alert-engine"
-    status: planned
+    status: merged
     depends_on: ["024", "031", "037"]
     objective: "Evaluate interesting-aircraft rules (AND-combined conditions, severities) with rarity, emergency squawk handling, templates, and per-sighting dedup."
     scope:
@@ -1030,7 +1024,7 @@ slices:
     title: "Interesting aircraft surfaces"
     phase: 6
     branch: "039-interesting-panel"
-    status: planned
+    status: merged
     depends_on: ["038", "014", "035"]
     objective: "Surface interesting aircraft: panel, map emphasis, label indicator, and feed integration."
     scope:
@@ -1050,7 +1044,7 @@ slices:
     title: "Browser notifications"
     phase: 6
     branch: "040-browser-notifications"
-    status: planned
+    status: merged
     depends_on: ["038", "039"]
     objective: "Deliver alert notifications via the browser Notification API with correct permission handling and deduplication."
     scope:
@@ -1071,7 +1065,7 @@ slices:
     title: "Alerts page & rule builder"
     phase: 6
     branch: "041-alerts-page"
-    status: planned
+    status: merged
     depends_on: ["038", "037"]
     objective: "Visual rule builder, template management, and alert history on the Alerts page."
     scope:
@@ -1094,7 +1088,7 @@ slices:
     title: "Health & diagnostics"
     phase: 7
     branch: "042-health-diagnostics"
-    status: planned
+    status: merged
     depends_on: ["010", "019", "025", "026", "033", "040"]
     objective: "Comprehensive health/diagnostics UI and API so users never need SSH to assess FlightSite."
     scope:
@@ -1114,7 +1108,7 @@ slices:
     title: "Backup & restore"
     phase: 7
     branch: "043-backup-restore"
-    status: planned
+    status: merged
     depends_on: ["004", "005", "021"]
     objective: "Version-aware, checksum-validated backup and restore commands safe for live SQLite."
     scope:
@@ -1136,7 +1130,7 @@ slices:
     title: "Database maintenance"
     phase: 7
     branch: "044-db-maintenance"
-    status: planned
+    status: merged
     depends_on: ["005", "009", "033", "053"]
     objective: "Automated conservative maintenance: integrity checks, pruning, optimization, and hardened unclean-shutdown handling."
     scope:
@@ -1157,7 +1151,7 @@ slices:
     title: "Data reset actions"
     phase: 7
     branch: "045-data-reset"
-    status: planned
+    status: merged
     depends_on: ["019", "043"]
     objective: "Deliberate, confirmed Reset FlightSite Data and Clear Metadata Cache actions."
     scope:
@@ -1178,7 +1172,7 @@ slices:
     title: "E2E expansion"
     phase: 8
     branch: "046-e2e-expansion"
-    status: planned
+    status: merged
     depends_on: ["020", "025", "030", "032", "040", "043", "045"]
     objective: "Complete the SPEC.md §82 critical-flow E2E suite."
     scope:
@@ -1196,7 +1190,7 @@ slices:
     title: "Visual regression suite"
     phase: 8
     branch: "047-visual-regression"
-    status: planned
+    status: merged
     depends_on: ["020", "032", "034", "039", "041"]
     objective: "Deterministic screenshot regression over stable views using demo data."
     scope:
@@ -1215,7 +1209,7 @@ slices:
     title: "Accessibility baseline"
     phase: 8
     branch: "048-accessibility"
-    status: planned
+    status: merged
     depends_on: ["032", "034", "039", "041"]
     objective: "Apply and verify the SPEC.md §80 accessibility baseline across main flows."
     scope:
@@ -1233,7 +1227,7 @@ slices:
     title: "Performance harness & Pi gates"
     phase: 8
     branch: "049-performance-harness"
-    status: planned
+    status: merged
     depends_on: ["009", "010", "011", "012", "038", "053"]
     objective: "Performance regression harness measuring SPEC.md §85 metrics with hard gates for correctness-critical limits."
     scope:
@@ -1254,7 +1248,7 @@ slices:
     title: "Multi-year storage qualification"
     phase: 8
     branch: "050-storage-qualification"
-    status: planned
+    status: merged
     depends_on: ["031", "043", "044", "049"]
     objective: "Generate a realistic synthetic multi-year dataset and qualify growth, queries, retention, and backup/restore at scale."
     scope:
@@ -1273,7 +1267,7 @@ slices:
     title: "Documentation & install polish"
     phase: 8
     branch: "051-docs-polish"
-    status: planned
+    status: merged
     depends_on: ["042", "045", "046"]
     objective: "Complete user-facing documentation so a fresh install succeeds from docs alone."
     scope:
@@ -1289,6 +1283,68 @@ slices:
     expected_artifacts: [README.md, docs/INSTALL.md, docs/CONFIGURATION.md, docs/API.md refresh]
     preferred_agent: sonnet
     risk_level: low
+
+  - id: "054"
+    title: "Live map motion correctness"
+    phase: 8
+    branch: "054-live-map-motion"
+    status: merged
+    depends_on: ["014", "039"]
+    objective: "Fix live-map markers that creep forward then teleport back, by anchoring dead reckoning to the last position change rather than the last delta."
+    scope:
+      - "store records carry `positionChangedAt`: set only when the reported fix actually moves (lat/lon or position_source), preserved across deltas and snapshots that repeat the same fix"
+      - "`displayPosition` projects from that anchor instead of `receivedAt`, so a delta carrying only rssi/altitude no longer resets elapsed time to zero"
+      - "interpolation bounds re-derived for the new anchor: a fix-age cap sized to the 2-10 s CPR cadence of distant aircraft, plus a stall grace measured from the last delivered frame so a dead stream freezes in place instead of snapping backwards"
+      - interpolation module docstring corrected (it documented the faulty anchor as intentional design)
+    out_of_scope:
+      - "exponential correction blend on new fixes: analysed and rejected in-slice (needs per-aircraft render state in a pure path; residual step is second-order once the anchor is fixed)"
+      - renderer-side smoothing or MapLibre symbol animation (049)
+    acceptance_criteria:
+      - "a delta whose position is unchanged does not reset the projection anchor; the marker keeps advancing instead of snapping back to the stale fix"
+      - "an aircraft on a 2-10 s fix cadence is projected continuously between fixes; a stalled stream freezes at its last projected point and never rewinds"
+      - "500-aircraft frame-cost budget (slice 014 / frame.perf.test.ts) is not regressed"
+    required_tests: [store anchor-preservation tests, displayPosition regression tests for the snap-back, bound tests for fix-age cap and stall grace]
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/interpolation.ts
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/test/liveAircraftFixtures.ts
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #119 (user-reported on a real install; mechanism confirmed). Added by Fable outside the phase plan."
+
+  - id: "055"
+    title: "Alert template instantiation fixes"
+    phase: 8
+    branch: "055-alert-template-fixes"
+    status: merged
+    depends_on: ["038", "041", "046"]
+    objective: "Make the setup wizard's alert-template choice actually create rules: instantiate on config save, and fix the wizard/catalogue key mismatch that silently dropped the law-enforcement selection."
+    scope:
+      - "instantiate newly enabled templates when a config save changes `alerts.enabled_templates`, so a fresh install has its shipped rules without a backend restart"
+      - "instantiation-on-save adds only keys never instantiated before (per-key provenance), preserving the startup guard's purpose: a shipped rule the user deleted stays deleted"
+      - "wizard sends the catalogue key `police` instead of the unrecognized `law_enforcement`"
+      - "`law_enforcement` accepted as a read-time alias for `police` so an existing config.yaml keeps working; other unknown keys warn instead of being silently skipped"
+    out_of_scope:
+      - alert rule CRUD, engine, or notification-channel changes
+      - "template catalogue additions (the SPEC §45 set is unchanged)"
+      - "config schema migration: the alias is normalized on read, config.yaml is never rewritten"
+    acceptance_criteria:
+      - "enabling templates in the setup wizard creates the corresponding alert rules on save, with no backend restart"
+      - "a shipped rule the user deleted is not resurrected by a later config save"
+      - "an unknown key in `alerts.enabled_templates` logs a warning and does not fail the save"
+      - "every template key the frontend can send resolves against the backend catalogue"
+    required_tests:
+      - config-save instantiation tests (newly enabled keys create rules; an unchanged list creates nothing)
+      - deleted-template non-resurrection test
+      - unknown-key warning test
+      - wizard template-key contract test asserting the catalogue keys
+    expected_artifacts:
+      - backend/src/flightsite/alerts/service.py
+      - backend/src/flightsite/alerts/templates.py
+      - frontend/src/features/setup/
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issues #110 and #111 (found by slice 046). Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

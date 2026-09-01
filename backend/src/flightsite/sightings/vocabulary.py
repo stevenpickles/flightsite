@@ -42,6 +42,56 @@ class ClosureReason(StrEnum):
 #: severities and notifications are slice 038's.
 EMERGENCY_SQUAWKS: Final[frozenset[str]] = frozenset({"7500", "7600", "7700"})
 
+#: ``docs/API.md`` §2.8's severity ladder, lowest first — the ordering behind
+#: ``sightings.max_alert_severity`` (slice 038's column on this slice's table).
+#:
+#: Spelled here rather than imported from
+#: :class:`flightsite.alerts.vocabulary.AlertSeverity`, which owns the domain
+#: enum, because the dependency runs one way: :mod:`flightsite.alerts` consumes
+#: the persistence worker, so this package must not reach back into it.
+#: ``tests/alerts/test_vocabulary.py`` asserts the two agree, which is the same
+#: answer this module already gives for :data:`EMERGENCY_SQUAWKS` and the
+#: ``CHECK`` predicates in :mod:`flightsite.db.models`.
+ALERT_SEVERITIES: Final[tuple[str, ...]] = ("info", "interesting", "high", "critical")
+
+
+def alert_severity_rank(severity: str) -> int:
+    """Position of ``severity`` on the ladder, ``0`` lowest.
+
+    Raises:
+        ValueError: on a value outside the ladder. Guessing an order for an
+            unrecognized severity would let a bad value silently outrank — or
+            be outranked by — a real one, and the column's ``CHECK`` means such
+            a value can only have come from a caller, never from storage.
+    """
+    try:
+        return ALERT_SEVERITIES.index(severity)
+    except ValueError:
+        raise ValueError(f"unknown alert severity: {severity!r}") from None
+
+
+def outranks_severity(candidate: str, current: str | None) -> bool:
+    """Whether ``candidate`` is *strictly* higher on the ladder than ``current``.
+
+    ``None`` means nothing is standing yet, which anything outranks. A tie does
+    not: SPEC §48 allows a further notification for a *higher*-priority
+    condition, so equal severities must not read as an upgrade.
+
+    ``candidate`` is ranked *before* the ``None`` short-circuit, deliberately:
+    the column carries a ``CHECK``, so a value outside the ladder must be
+    refused where it enters memory rather than accepted here and rejected by
+    SQLite a flush later, with the failing transaction naming a row rather than
+    a caller.
+
+    Raises:
+        ValueError: ``candidate`` (or a non-``None`` ``current``) is not on the
+            ladder.
+    """
+    candidate_rank = alert_severity_rank(candidate)
+    if current is None:
+        return True
+    return candidate_rank > alert_severity_rank(current)
+
 
 class SightingEventType(StrEnum):
     """A meaningful change within a sighting (``docs/DATA_MODEL.md`` §2.5).
@@ -137,10 +187,13 @@ def position_source_name(code: int) -> PositionSource:
 
 
 __all__ = [
+    "ALERT_SEVERITIES",
     "EMERGENCY_SQUAWKS",
     "ClosureReason",
     "PositionSourceCode",
     "SightingEventType",
+    "alert_severity_rank",
+    "outranks_severity",
     "position_source_code",
     "position_source_name",
 ]
