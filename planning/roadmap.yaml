@@ -817,7 +817,7 @@ slices:
     title: "Aircraft page"
     phase: 5
     branch: "029-aircraft-page"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "024"]
     objective: "Sortable historical Aircraft page backed by paginated aircraft-history APIs."
     scope:
