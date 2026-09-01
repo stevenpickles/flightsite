@@ -434,7 +434,15 @@ class AnalyticsQueries:
         return (hour, "receiver_metrics_hourly") if hour is not None else (None, None)
 
     async def _busiest_hour_today(self, window: Window) -> int | None:
-        """The in-progress day's busiest hour, from slice 033's hourly table."""
+        """The in-progress day's busiest hour, from slice 033's hourly table.
+
+        ``receiver_metrics_hourly`` is keyed by **UTC** hour (§6.2), so the
+        buckets considered are those that begin inside the window. In a zone
+        whose offset is not a whole number of hours the bucket straddling local
+        midnight is therefore excluded rather than attributed to a day it is
+        only half inside — which is the honest reading of a bucket that spans
+        two local days, and costs at most the first half hour of the day.
+        """
         if window.empty:
             return None
         statement = (
