@@ -45,6 +45,12 @@ export function PresetSelector({ preset, onChange }: PresetSelectorProps) {
             type="button"
             role="radio"
             aria-checked={active}
+            // The preset's identity, not just its prose label: the E2E suite
+            // asserts every window in SPEC §82's "Analytics windows" flow
+            // against the value that reaches the API and the URL, so it does
+            // not have to keep a copy of these five display strings in step.
+            data-testid="analytics-preset"
+            data-preset={option}
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(option)}
             className={cn(

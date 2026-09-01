@@ -91,12 +91,17 @@ npm test                               # Chromium only, against the running stac
 npm run stack:down
 ```
 
-The suite's spec files (`e2e/tests/01-*` … `05-*`) run in that fixed order, serially
+The suite's spec files (`e2e/tests/01-*` … `11-*`) run in that fixed order, serially
 (`workers: 1`), against one shared backend within a browser: `01` completes
 first-run setup, `02` exercises the decoder connection test against the now-configured
-install, and `03`–`05` assume setup is already done. Failures produce Playwright
-traces/screenshots/video under `e2e/test-results/` and `e2e/playwright-report/`
-(`npm run report` to view).
+install, and `03`–`11` assume setup is already done. The later files additionally
+assume demo traffic has been accumulating since `01` — `07` and `08` read persisted
+history, so they poll the API for it rather than assuming the write-behind worker has
+flushed — and each one leaves the install as it found it: `06` deletes the alert rule
+it arms (and the matches that came with it), `10` never lets a real metadata download
+start, and `11` keeps both its backup and its restore outside the live data directory.
+Failures produce Playwright traces/screenshots/video under `e2e/test-results/` and
+`e2e/playwright-report/` (`npm run report` to view).
 
 ### Visual regression suite
 

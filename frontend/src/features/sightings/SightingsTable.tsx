@@ -146,6 +146,18 @@ export function SightingsTable({
           {rows.map((row) => (
             <tr
               key={row.id}
+              // As on the Aircraft table, but load-bearing rather than
+              // convenient: a sightings row contains no anchor at all, so the
+              // sighting id exists nowhere in the DOM. Without this the E2E
+              // suite cannot assert that the row it clicked is the sighting
+              // the detail page then opened.
+              data-testid="sighting-row"
+              data-sighting-id={row.id}
+              // The aircraft identity too: a row displays registration or
+              // callsign, either of which may be absent and neither of which
+              // is unique, so the ICAO — the one identifier every aircraft
+              // has — is otherwise absent from this page's DOM entirely.
+              data-icao={row.icao}
               onClick={() => navigate(`/sightings/${row.id}`)}
               className="cursor-pointer border-b border-border/60 hover:bg-secondary/50"
             >

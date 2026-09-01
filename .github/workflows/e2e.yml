@@ -1,13 +1,16 @@
 name: e2e
 
-# End-to-end tests (roadmap slice 020, docs/TEST_STRATEGY.md §1.3/§4) against
-# the composed application (compose.yaml) in demo mode — no ADS-B hardware or
-# external network required (docs/DEVELOPMENT.md).
+# End-to-end tests (roadmap slices 020 and 046, docs/TEST_STRATEGY.md §1.3/§4)
+# against the composed application (compose.yaml) in demo mode — no ADS-B
+# hardware or external network required (docs/DEVELOPMENT.md).
 #
 # One job, `e2e`, the required check. Builds both images once (mirroring
 # .github/workflows/docker.yml's build step), then runs the full ordered spec
-# sequence (first-run setup -> decoder connection test -> live map ->
-# selection/detail) on Chromium, Firefox, AND WebKit (SPEC §81, docs/
+# sequence — SPEC §82's complete critical-flow list as of slice 046: first-run
+# setup -> decoder connection test -> live map -> selection/detail -> browser
+# notifications -> interesting-aircraft alert -> Aircraft page -> Sightings
+# page -> Analytics windows -> metadata update -> backup/restore smoke — on
+# Chromium, Firefox, AND WebKit (SPEC §81, docs/
 # TEST_STRATEGY.md §7), each against its own fresh compose stack (see
 # e2e/scripts/run-suite.mjs — a shared stack across projects would only let
 # the first browser see a genuine first-run state). WebKit ran stably in
