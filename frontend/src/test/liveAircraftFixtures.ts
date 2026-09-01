@@ -5,8 +5,13 @@
  * present-and-`null` rather than absent, so a fixture that omitted keys would
  * let a test pass against a payload the backend never sends. `makeAircraft`
  * therefore starts from a complete object and takes overrides.
+ *
+ * `makeRecord` wraps one in the store's record shape so tests that only need
+ * "an aircraft in the live picture" do not each hand-assemble the local
+ * timestamps — and do not each need editing when the record grows a field.
  */
 
+import type { LiveAircraftRecord } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { LiveAircraft } from "@/lib/api/live";
 
 const BASE: LiveAircraft = {
@@ -47,4 +52,24 @@ export function makeAircraft(
   overrides: Partial<LiveAircraft> = {},
 ): LiveAircraft {
   return { ...BASE, ...overrides };
+}
+
+/** Timestamps for {@link makeRecord}. `positionChangedAt` defaults to
+ * `receivedAt`: the anchor an aircraft gets on the frame it first appears. */
+export interface RecordTimes {
+  receivedAt?: number;
+  positionChangedAt?: number;
+}
+
+/** One aircraft in the store's record shape. */
+export function makeRecord(
+  overrides: Partial<LiveAircraft> = {},
+  times: RecordTimes = {},
+): LiveAircraftRecord {
+  const receivedAt = times.receivedAt ?? 0;
+  return {
+    aircraft: makeAircraft(overrides),
+    receivedAt,
+    positionChangedAt: times.positionChangedAt ?? receivedAt,
+  };
 }

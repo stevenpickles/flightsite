@@ -34,10 +34,18 @@ function fakeMap(): {
 function state(aircraftList: ReturnType<typeof makeAircraft>[]) {
   const aircraft: Record<
     string,
-    { aircraft: ReturnType<typeof makeAircraft>; receivedAt: number }
+    {
+      aircraft: ReturnType<typeof makeAircraft>;
+      receivedAt: number;
+      positionChangedAt: number;
+    }
   > = {};
   for (const entry of aircraftList) {
-    aircraft[entry.icao] = { aircraft: entry, receivedAt: 0 };
+    aircraft[entry.icao] = {
+      aircraft: entry,
+      receivedAt: 0,
+      positionChangedAt: 0,
+    };
   }
   return { aircraft, departing: {}, selectedIcao: null, track: null };
 }
