@@ -12,6 +12,11 @@ export interface MapLibreMapProps {
   config: MapConfig;
   basemap: BasemapDefinition;
   className?: string;
+  /** When provided, clicking the map reports the clicked position — used
+   * by the setup wizard's location step for click-to-place. Read via a
+   * ref internally so passing a new function each render never tears
+   * down and recreates the map (see the mount effect's `[]` deps). */
+  onMapClick?: (position: { lat: number; lon: number }) => void;
 }
 
 /** Zoom level that keeps a receiver's full 250 nm default display radius
@@ -38,9 +43,15 @@ const INITIAL_ZOOM = 6;
  * only the basemap imagery/vector tiles are affected, and a small
  * non-blocking indicator surfaces that state.
  */
-export function MapLibreMap({ config, basemap, className }: MapLibreMapProps) {
+export function MapLibreMap({
+  config,
+  basemap,
+  className,
+  onMapClick,
+}: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreGlMap | null>(null);
+  const onMapClickRef = useRef(onMapClick);
   // The map is already constructed with `basemap.style` (see the mount
   // effect below), so the basemap-switch effect — which also runs once on
   // mount, like every effect — must skip that first run or it would
@@ -48,6 +59,13 @@ export function MapLibreMap({ config, basemap, className }: MapLibreMapProps) {
   // reloading it a second time for nothing.
   const isInitialBasemapRef = useRef(true);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
+
+  // Keeps the click handler current without the mount effect depending on
+  // it (a new function identity every render must never tear down and
+  // recreate the map — see that effect's `[]` deps below).
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
 
   // Create the map exactly once. Basemap and config changes are applied
   // to the existing instance by the effects below instead of tearing it
@@ -77,6 +95,10 @@ export function MapLibreMap({ config, basemap, className }: MapLibreMapProps) {
 
     map.on("error", () => {
       setTilesUnavailable(true);
+    });
+
+    map.on("click", (event) => {
+      onMapClickRef.current?.({ lat: event.lngLat.lat, lon: event.lngLat.lng });
     });
 
     return () => {

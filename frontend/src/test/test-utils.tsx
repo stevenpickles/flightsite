@@ -4,6 +4,8 @@ import type { ReactElement } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 
 import { AppShell } from "@/components/shell/AppShell";
+import { RootLayout } from "@/components/shell/RootLayout";
+import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -22,16 +24,22 @@ export function renderApp(initialPath = "/") {
   const router = createMemoryRouter(
     [
       {
-        path: "/",
-        element: <AppShell />,
+        element: <RootLayout />,
         children: [
-          { index: true, element: <LiveMapPage /> },
-          { path: "aircraft", element: <AircraftPage /> },
-          { path: "sightings", element: <SightingsPage /> },
-          { path: "analytics", element: <AnalyticsPage /> },
-          { path: "receiver", element: <ReceiverPage /> },
-          { path: "alerts", element: <AlertsPage /> },
-          { path: "settings", element: <SettingsPage /> },
+          {
+            path: "/",
+            element: <AppShell />,
+            children: [
+              { index: true, element: <LiveMapPage /> },
+              { path: "aircraft", element: <AircraftPage /> },
+              { path: "sightings", element: <SightingsPage /> },
+              { path: "analytics", element: <AnalyticsPage /> },
+              { path: "receiver", element: <ReceiverPage /> },
+              { path: "alerts", element: <AlertsPage /> },
+              { path: "settings", element: <SettingsPage /> },
+            ],
+          },
+          { path: "/setup", element: <SetupWizardPage /> },
         ],
       },
     ],

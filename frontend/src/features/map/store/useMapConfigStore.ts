@@ -5,9 +5,12 @@ import type { MapConfig } from "@/features/map/types";
 
 export interface MapConfigState {
   config: MapConfig;
-  /** Replaces the active map configuration. This is the seam slice 004/010
-   * wiring will call once the real receiver position and configured
-   * ring/display-radius settings are available from the backend. */
+  /** Replaces the active map configuration. Called by
+   * `applyServerConfigToMapStore` (`src/features/setup/lib/mapConfigSync.ts`)
+   * whenever the server's config carries a configured receiver location —
+   * from `RootLayout` on every config load, and from the setup wizard's
+   * finish step — so the map centers on the real site instead of the
+   * `DEV_PLACEHOLDER_MAP_CONFIG` fallback. */
   setConfig: (config: MapConfig) => void;
 }
 
