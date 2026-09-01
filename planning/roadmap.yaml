@@ -877,7 +877,7 @@ slices:
     title: "Analytics page"
     phase: 5
     branch: "032-analytics-page"
-    status: planned
+    status: merged
     depends_on: ["031", "033"]
     objective: "Analytics UI with time presets and aviation-styled charts."
     scope:
