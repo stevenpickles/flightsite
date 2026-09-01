@@ -101,6 +101,122 @@ def test_every_other_template_reports_the_conditions_it_would_create(
             assert template["conditions"]["version"] == 1
 
 
+# ------------------------------------------------------- template instantiation
+
+
+def test_instantiating_a_template_creates_a_rule_carrying_its_provenance(
+    client: TestClient,
+) -> None:
+    response = client.post(f"{TEMPLATES_PATH}/military/rules")
+
+    assert response.status_code == 201, response.text
+    rule = response.json()
+    assert rule["template_key"] == "military"
+    assert rule["name"] == "Military aircraft"
+    assert rule["severity"] == "high"
+    assert rule["enabled"] is True
+    assert rule["describes"] == ["military"]
+    assert client.get(RULES_PATH).json()["rules"] == [rule]
+
+
+def test_an_instantiated_template_says_exactly_what_the_gallery_showed(
+    client: TestClient,
+) -> None:
+    """The gallery's preview and the rule it creates are one document.
+
+    Slice 041's gallery renders ``GET /alert-templates``'s ``conditions``; this
+    pins that the rule the ``POST`` creates carries that same document rather
+    than a re-derivation of it.
+    """
+    templates = client.get(TEMPLATES_PATH).json()["templates"]
+
+    for template in templates:
+        if template["builtin"]:
+            continue
+        rule = client.post(f"{TEMPLATES_PATH}/{template['key']}/rules").json()
+        assert rule["conditions"] == template["conditions"]
+        assert rule["severity"] == template["severity"]
+        assert rule["name"] == template["name"]
+
+
+def test_instantiating_a_template_twice_is_refused(client: TestClient) -> None:
+    assert client.post(f"{TEMPLATES_PATH}/military/rules").status_code == 201
+
+    response = client.post(f"{TEMPLATES_PATH}/military/rules")
+
+    assert response.status_code == 409
+    assert len(client.get(RULES_PATH).json()["rules"]) == 1
+
+
+def test_instantiating_the_built_in_emergency_template_is_refused(
+    client: TestClient,
+) -> None:
+    """SPEC §47: emergency alerting is already on and has no rule to create."""
+    response = client.post(f"{TEMPLATES_PATH}/emergency_squawk/rules")
+
+    assert response.status_code == 409
+    assert client.get(RULES_PATH).json()["rules"] == []
+
+
+def test_instantiating_an_unknown_template_answers_404(client: TestClient) -> None:
+    response = client.post(f"{TEMPLATES_PATH}/no_such_template/rules")
+
+    assert response.status_code == 404
+
+
+def test_a_deleted_template_rule_can_be_instantiated_again(client: TestClient) -> None:
+    """Deleting a shipped rule is not a permanent ban on the template.
+
+    Start-up instantiation deliberately never re-creates a deleted shipped rule
+    (:mod:`flightsite.alerts.templates`); an explicit request from the gallery
+    is the user asking for it back, which is a different act.
+    """
+    rule = client.post(f"{TEMPLATES_PATH}/military/rules").json()
+    assert client.delete(f"{RULES_PATH}/{rule['id']}").status_code == 204
+
+    response = client.post(f"{TEMPLATES_PATH}/military/rules")
+
+    assert response.status_code == 201
+    assert response.json()["template_key"] == "military"
+
+
+def test_a_template_rule_keeps_its_provenance_when_customized(
+    client: TestClient,
+) -> None:
+    """SPEC §45's "enable, then customize": tuning does not erase where it came from."""
+    rule = client.post(f"{TEMPLATES_PATH}/locally_rare/rules").json()
+
+    response = client.put(
+        f"{RULES_PATH}/{rule['id']}",
+        json={
+            "name": "Rare here",
+            "description": None,
+            "severity": "high",
+            "conditions": {"version": 1, "rare_aircraft": {"max_sightings": 5}},
+            "enabled": False,
+        },
+    )
+
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["template_key"] == "locally_rare"
+    assert updated["severity"] == "high"
+    assert updated["enabled"] is False
+    assert updated["conditions"]["rare_aircraft"] == {"max_sightings": 5}
+
+
+def test_an_instantiated_rule_is_in_force_for_the_next_live_read(
+    client: TestClient,
+) -> None:
+    """The gallery's "enable" recompiles the engine, like every other mutation."""
+    client.post(f"{TEMPLATES_PATH}/watchlist/rules")
+
+    rules = client.get(RULES_PATH).json()["rules"]
+
+    assert [rule["template_key"] for rule in rules] == ["watchlist"]
+    assert client.get(INTERESTING_PATH).status_code == 200
+
+
 # ------------------------------------------------------------------ rule CRUD
 
 
