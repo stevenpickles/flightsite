@@ -62,10 +62,14 @@ corruption diagnostics rather than silent failure (slice 044).
 
 ### R-06 — Browser notification limitations
 Notifications only work while a FlightSite tab is open; permission UX varies by
-browser and OS; some platforms suppress background-tab notifications.
+browser and OS; some platforms suppress background-tab notifications; browsers
+withhold the API entirely from the plain-HTTP LAN origin FlightSite normally runs on.
 **Mitigation:** scope is explicitly browser-only in v1 (SPEC §48); permission status
 surfaced in diagnostics; degradation is clean and visible; richer channels are
-tracked backlog items, not silent scope creep.
+tracked backlog items, not silent scope creep. Delivered in slice 040: each
+non-delivering state — not asked, blocked, unsupported browser, insecure origin —
+carries its own explanation and remedy in Settings, and alerts that could not be
+shown are counted there, so a degraded install is visibly degraded.
 
 ### R-07 — Map tile provider changes
 Free basemap providers change terms, styles, or availability.

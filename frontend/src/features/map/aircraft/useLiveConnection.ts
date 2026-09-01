@@ -14,12 +14,19 @@
  * `ActivityPanel` can show them arriving while the map is open — while
  * `/activity` reads the same events from the database when it is not. Both
  * stores are reset on unmount for the same reason.
+ *
+ * An `activity` frame also goes to `dispatchAlertNotification` (slice 040),
+ * which turns the two alert event types into a browser notification when the
+ * user has asked for one. It is called here rather than downstream of the
+ * store because delivery must survive the store's reset on teardown: "already
+ * notified" is a fact about the tab, not about the current connection.
  */
 
 import { useEffect } from "react";
 
 import { useActivityFeedStore } from "@/features/activity/store/useActivityFeedStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { dispatchAlertNotification } from "@/features/notifications/lib/dispatch";
 import { LiveSocket } from "@/lib/ws/liveSocket";
 
 export function useLiveConnection(): void {
@@ -35,6 +42,7 @@ export function useLiveConnection(): void {
       },
       onActivity: (event) => {
         activity().addEvent(event);
+        dispatchAlertNotification(event);
       },
       onStatus: (status) => {
         store().setConnection(status);

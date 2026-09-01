@@ -155,8 +155,11 @@ information. No period-over-period comparison in v1.
   rule (§47).
 - **Browser notifications** (the only v1 channel): once per sighting per rule, with a
   higher-priority re-notification allowed; include callsign/tail, type,
-  classification, altitude, distance, match reason; clicking opens/selects the
-  aircraft; works while FlightSite is open, including background tabs (§48).
+  classification, altitude, distance, match reason; clicking focuses the tab and
+  selects the aircraft; works while FlightSite is open, including background and
+  minimized tabs (§48). "Open" means a tab on the Live Map, which is where the
+  connection that carries live alerts lives; permission is asked for once, from the
+  setup wizard or Settings, and never on load (`docs/SECURITY.md` §5).
 
 ### 4.9 Activity & Records (§16, §53–§55)
 
