@@ -11,8 +11,9 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`SightingEvent` in slice 052, and the metadata group
 (:class:`MetadataSource`, :class:`AircraftMetadata`,
 :class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
-:class:`OperatorGroup`, :class:`Operator`) in slice 021, and
-:class:`AircraftClassification` in slice 024.
+:class:`OperatorGroup`, :class:`Operator`) in slice 021,
+:class:`AircraftClassification` in slice 024, and :class:`RouteCache` in
+slice 026.
 """
 
 from __future__ import annotations
@@ -101,6 +102,22 @@ SIGHTING_EVENT_TYPE_CHECK: Final[str] = (
 #: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``metadata``
 #: depends on ``db``, not the reverse), so a test asserts the two agree.
 METADATA_SOURCE_STATUS_CHECK: Final[str] = "status IN ('never_run', 'ok', 'failed')"
+
+#: The ``route_cache.status`` vocabulary of ``docs/DATA_MODEL.md`` §7, spelled
+#: as the SQL ``CHECK`` predicate.
+#:
+#: All three values are constrained from birth. Slice 026 writes ``ok`` and
+#: ``not_found``: it never records a *provider unavailability* — a timeout, a
+#: 429, a 5xx, an open circuit — because those say nothing about the callsign
+#: and caching them would turn one bad minute into hours of false "no route".
+#: ``error`` is the shape reserved for the different case of a provider that
+#: answers definitively and unusably for a particular key, the same way
+#: :data:`CLOSURE_REASON_CHECK` carried values before the code that writes them
+#: existed. The runtime enum is
+#: :class:`flightsite.enrichment.model.RouteCacheStatus`; as with
+#: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``enrichment``
+#: depends on ``db``, not the reverse), so a test asserts the two agree.
+ROUTE_CACHE_STATUS_CHECK: Final[str] = "status IN ('ok', 'not_found', 'error')"
 
 
 class Base(DeclarativeBase):
@@ -652,3 +669,50 @@ class AircraftClassification(Base):
             f"AircraftClassification(icao24={self.icao24!r}, "
             f"mission_category={self.mission_category!r})"
         )
+
+
+class RouteCache(Base):
+    """Cached route lookups for the enrichment provider (§7, slice 026).
+
+    SPEC §28's instruction is to *cache aggressively and respect provider
+    limits*, and this table is what makes that mechanical: a callsign is asked
+    about at most once per key, however many sightings, restarts or aircraft
+    ask about it.
+
+    The key is a **normalized callsign plus a UTC date bucket** (§7). The date
+    is part of the key rather than an implicit TTL because the fact being cached
+    is a fact about a *flight on a day* — ``DAL1234`` flies a different pair of
+    airports next week — so a key that omitted it would eventually serve a
+    correct answer to the wrong question. ``expires_ms`` then bounds staleness
+    *within* a day, and is shorter for a negative result than for a positive
+    one: "no route yet" is often a schedule that has not been filed, and is
+    worth re-asking about later in the day.
+
+    ``WITHOUT ROWID`` with the text key as the primary key: every access is a
+    point lookup by that key, and the table is small — one row per airline
+    flight actually heard, pruned by expiry.
+
+    The index is on ``expires_ms`` alone, which is the only non-key query:
+    maintenance deleting what has expired.
+    """
+
+    __tablename__ = "route_cache"
+    __table_args__ = (
+        CheckConstraint(ROUTE_CACHE_STATUS_CHECK, name="ck_route_cache_status"),
+        Index("ix_route_cache_expiry", "expires_ms"),
+        {"sqlite_with_rowid": False},
+    )
+
+    cache_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    origin_ident: Mapped[str | None] = mapped_column(Text)
+    destination_ident: Mapped[str | None] = mapped_column(Text)
+    #: Provider extras kept verbatim for diagnostics — never the request, and
+    #: therefore never the API key. Schema-validated on the way in by
+    #: :mod:`flightsite.enrichment.aerodatabox`.
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    fetched_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RouteCache(cache_key={self.cache_key!r}, status={self.status!r})"

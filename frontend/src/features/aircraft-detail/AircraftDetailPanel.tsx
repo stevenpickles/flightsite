@@ -250,8 +250,22 @@ export function AircraftDetailPanel() {
 
               <IdentityMetadataSection aircraft={aircraft} />
 
+              {/* External route only (§2.6). Both rows always render: a
+               * route the provider has not answered for is `Unknown`, which
+               * is the same thing the panel says about every other optional
+               * field, and is what a stock install with enrichment switched
+               * off shows for every aircraft. */}
               <DetailSection title="Route">
-                <ReservedSectionRow note="Origin and destination arrive with route enrichment (a later slice)." />
+                <FieldRow
+                  label="Origin"
+                  value={aircraft.route.origin}
+                  provenanceSource={aircraft.provenance.route}
+                />
+                <FieldRow
+                  label="Destination"
+                  value={aircraft.route.destination}
+                  provenanceSource={aircraft.provenance.route}
+                />
               </DetailSection>
 
               <DetailSection title="Nearest airport">

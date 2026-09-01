@@ -750,7 +750,7 @@ slices:
     title: "Route enrichment (AeroDataBox)"
     phase: 4
     branch: "026-route-enrichment"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "052"]
     objective: "Optional AeroDataBox route enrichment behind a generic provider interface with caching, rate limiting, and provenance."
     scope:

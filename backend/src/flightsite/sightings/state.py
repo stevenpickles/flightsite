@@ -89,6 +89,25 @@ class PendingEvent(NamedTuple):
         return json.dumps(self.payload, separators=(",", ":"), sort_keys=True)
 
 
+class SightingRoute(NamedTuple):
+    """An externally reported origin/destination pair, with its provenance.
+
+    Kept here rather than in :mod:`flightsite.enrichment` because the columns
+    are the sighting's (``docs/DATA_MODEL.md`` §2.3) and the dependency runs one
+    way: enrichment consumes the sighting lifecycle, nothing in this package
+    imports enrichment. It is also what the live API reads to publish a route
+    for the aircraft's *current* sighting without touching SQLite.
+
+    ``source`` is the ``route_source`` vocabulary — ``aerodatabox`` is the only
+    value v1 ships — and is deliberately distinct from the ``inferred_*``
+    columns beside it, which hold local heuristics (SPEC §28, §41).
+    """
+
+    origin_ident: str | None
+    destination_ident: str | None
+    source: str
+
+
 class CheckpointBatch(NamedTuple):
     """One flush cycle's worth of checkpoint rows, and what producing them ate.
 
@@ -141,6 +160,13 @@ class ActiveSighting:
     #: is what makes ``emergency_start`` fire once per episode rather than once
     #: per observation.
     emergency_active: bool = False
+
+    #: Externally reported route (slice 026). Never written by
+    #: :meth:`observe` — no decoder transmits a route — and never guessed:
+    #: these stay ``None`` unless a provider actually named an airport.
+    origin_ident: str | None = None
+    destination_ident: str | None = None
+    route_source: str | None = None
 
     any_position: bool = False
     mlat_used: bool = False
@@ -427,6 +453,58 @@ class ActiveSighting:
     def _emit(self, event: SightingEventType, at_ms: int, payload: dict[str, str | None]) -> None:
         self.pending_events.append(PendingEvent(type=event, ts_ms=at_ms, payload=payload))
 
+    # ------------------------------------------------------- route enrichment
+
+    @property
+    def route(self) -> SightingRoute | None:
+        """The route enrichment has established, or ``None`` if it has not.
+
+        ``None`` is the honest answer to all of "enrichment is switched off",
+        "the callsign is not an airline flight", "nobody has a route for it"
+        and "the answer has not arrived yet" — and the API renders every one of
+        them the same way (``docs/API.md`` §2.7).
+        """
+        if self.route_source is None:
+            return None
+        return SightingRoute(
+            origin_ident=self.origin_ident,
+            destination_ident=self.destination_ident,
+            source=self.route_source,
+        )
+
+    def apply_route(self, route: SightingRoute, at_ms: int) -> bool:
+        """Record an externally reported route; ``True`` if anything changed.
+
+        Called from the enrichment consumer's task, never from
+        :meth:`observe` — a route is not something a decoder transmits. The
+        write itself still rides the worker's cycle: this only sets the running
+        values and queues the ``route_enriched`` event, exactly as a callsign
+        change does, so the row and its event land in one transaction and a
+        failed cycle retries both (SPEC §52).
+
+        Idempotent by comparison. A cached answer re-applied after a resync, or
+        the same route arriving for a second sighting of the same flight,
+        changes nothing and emits nothing — which is what keeps one event per
+        arrival rather than one per delivery.
+        """
+        if (self.origin_ident, self.destination_ident, self.route_source) == route:
+            return False
+        self.origin_ident = route.origin_ident
+        self.destination_ident = route.destination_ident
+        self.route_source = route.source
+        self._emit(
+            SightingEventType.ROUTE_ENRICHED,
+            at_ms,
+            {
+                "source": route.source,
+                "origin": route.origin_ident,
+                "destination": route.destination_ident,
+            },
+        )
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
     # ------------------------------------------------------------- the writes
 
     def checkpoint_batch(self) -> CheckpointBatch | None:
@@ -503,5 +581,6 @@ __all__ = [
     "ActiveSighting",
     "CheckpointBatch",
     "PendingEvent",
+    "SightingRoute",
     "open_from",
 ]

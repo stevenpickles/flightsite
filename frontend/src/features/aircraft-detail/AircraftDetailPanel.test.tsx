@@ -138,6 +138,78 @@ describe("AircraftDetailPanel", () => {
     expect(unknowns.length).toBe(6);
   });
 
+  it("shows the enriched route with its provenance", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "KATL", destination: "KSLC" },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section");
+    expect(section).not.toBeNull();
+    expect(
+      within(section as HTMLElement).getByText("KATL"),
+    ).toBeInTheDocument();
+    expect(
+      within(section as HTMLElement).getByText("KSLC"),
+    ).toBeInTheDocument();
+    expect(
+      within(section as HTMLElement).getAllByRole("button", {
+        name: /Source: AeroDataBox\. Looked up from the AeroDataBox/i,
+      }).length,
+    ).toBe(2);
+  });
+
+  it("renders Unknown for a route nobody has answered for", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        provenance: {},
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section");
+    expect(section).not.toBeNull();
+    // Origin and destination: enrichment off, ineligible callsign, no answer
+    // yet and no route filed all look the same, which is the point (§2.7).
+    expect(within(section as HTMLElement).getAllByText("Unknown").length).toBe(
+      2,
+    );
+  });
+
+  it("renders half a route as half a route, not as nothing", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "EHAM", destination: null },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section");
+    expect(
+      within(section as HTMLElement).getByText("EHAM"),
+    ).toBeInTheDocument();
+    expect(within(section as HTMLElement).getAllByText("Unknown").length).toBe(
+      1,
+    );
+  });
+
   it("shows an emergency squawk badge for 7700 even without the emergency field set", () => {
     renderPanel();
     seedSnapshot([

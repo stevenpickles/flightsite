@@ -37,6 +37,19 @@ export interface Classification {
   confidence: string | null;
 }
 
+/** Origin and destination of the flight — `docs/API.md` §2.6, filled by
+ * route enrichment (slice 026) and attributed in `provenance.route`.
+ *
+ * Never `null` as a whole: both keys are always present and either may be
+ * `null` on its own, so the panel renders `Unknown` without having to tell an
+ * absent block from a block of nulls (§2.7). External data only — local
+ * arrival/departure inference is a separate field, kept distinct on purpose
+ * (SPEC §41). */
+export interface RouteInfo {
+  origin: string | null;
+  destination: string | null;
+}
+
 /** An active alert match (slice 038); `null` when nothing matches. */
 export interface InterestingMatch {
   severity: "info" | "interesting" | "high" | "critical";
@@ -75,6 +88,7 @@ export interface LiveAircraft {
   operator: string | null;
   operator_group: string | null;
   classification: Classification | null;
+  route: RouteInfo;
   interesting: InterestingMatch | null;
 
   /** §2.6: keys name fields, values name the source. A field with no entry is

@@ -60,6 +60,23 @@ class Classification(_Model):
     confidence: str | None = None
 
 
+class RouteView(_Model):
+    """Origin and destination of the flight — ``docs/API.md`` §2.6.
+
+    Externally reported only (slice 026), and attributed in ``provenance``
+    under the key ``route``. Local arrival/departure inference (slice 027) is
+    deliberately a different field: SPEC §41 keeps what somebody told
+    FlightSite structurally apart from what FlightSite guessed.
+
+    Both keys are always present; either may be ``null`` on its own — a
+    provider that named one airport and not the other is reporting half a
+    route, which is information, not an error.
+    """
+
+    origin: str | None = None
+    destination: str | None = None
+
+
 class InterestingMatch(_Model):
     """An active alert match (slice 038); ``null`` when nothing matches."""
 
@@ -104,6 +121,8 @@ class AircraftView(_Model):
     operator: str | None = None
     operator_group: str | None = None
     classification: Classification | None = None
+    #: Never ``null`` as a whole — see :class:`RouteView`.
+    route: RouteView = Field(default_factory=RouteView)
     interesting: InterestingMatch | None = None
 
     #: §2.6. Keys name fields; values are the canonical provenance vocabulary.
@@ -248,5 +267,6 @@ __all__ = [
     "LifetimeRecord",
     "PositionSourceLiteral",
     "ReceiverInfo",
+    "RouteView",
     "SortOrder",
 ]

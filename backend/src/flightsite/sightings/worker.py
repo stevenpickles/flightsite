@@ -138,7 +138,7 @@ from flightsite.live import (
 )
 from flightsite.sightings.recovery import RecoveryReport, ShutdownRecovery
 from flightsite.sightings.repository import ClosedTrack, SightingIds, SightingRepository
-from flightsite.sightings.state import ActiveSighting, open_from
+from flightsite.sightings.state import ActiveSighting, SightingRoute, open_from
 from flightsite.sightings.vocabulary import ClosureReason
 
 logger = structlog.get_logger(__name__)
@@ -310,6 +310,50 @@ class PersistenceWorker:
         """
         active = self.sighting_for(icao)
         return None if active is None else active.sighting_id
+
+    def route_for(self, icao: str) -> SightingRoute | None:
+        """The externally reported route of ``icao``'s open sighting, if any.
+
+        The route half of :meth:`sighting_id_for`, and read the same way and
+        for the same reason: the live API serializes the whole live set on
+        every frame, so this is an in-memory lookup on the accumulator the
+        worker already holds. Reading the ``sightings`` row here would put
+        SQLite on the live path (``docs/ARCHITECTURE.md`` §3.1).
+
+        ``None`` means no route is known — enrichment disabled, the callsign
+        not an airline flight, no answer yet, or no route filed — and every one
+        of those serializes identically (``docs/API.md`` §2.7).
+        """
+        active = self.sighting_for(icao)
+        return None if active is None else active.route
+
+    def apply_route(self, icao: str, route: SightingRoute, *, at_ms: int) -> bool:
+        """Attach an enrichment result to ``icao``'s open sighting.
+
+        The seam route enrichment writes through (slice 026). It is a plain
+        in-memory mutation of the accumulator plus a queued event: the
+        transaction, the ordering and the retry-on-failure all stay the
+        worker's, so an enriched route reaches the database by exactly the path
+        a callsign change does and cannot half-land.
+
+        Returns ``False`` when there is no open sighting for ``icao`` — the
+        aircraft's closure gap expired while the lookup was in flight, which is
+        an ordinary outcome — and when the route is the one already recorded.
+        """
+        active = self.sighting_for(icao)
+        if active is None:
+            return False
+        if not active.apply_route(route, at_ms):
+            return False
+        logger.info(
+            "sighting_route_enriched",
+            icao=icao,
+            sighting_id=active.sighting_id,
+            origin=route.origin_ident,
+            destination=route.destination_ident,
+            source=route.source,
+        )
+        return True
 
     # -------------------------------------------------------------- lifecycle
 

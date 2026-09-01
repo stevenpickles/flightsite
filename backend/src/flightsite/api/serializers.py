@@ -22,6 +22,11 @@ change to accommodate it: §2.7 makes ``null`` the honest statement of
 "unknown", so emitting the full key set from the start meant a client written
 against §3.3 needed no change when the values began arriving.
 
+Slice 026 adds the ``route`` block of §2.6 — origin and destination for the
+aircraft's *current* sighting — on the same terms: both keys are always
+present, both are ``null`` until enrichment has something to say, and the
+provenance entry appears only when there is a value to attribute.
+
 The metadata is passed in rather than looked up here. This function is called
 once per aircraft per WebSocket frame and must not touch SQLite
 (``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
@@ -83,6 +88,7 @@ from flightsite.db.clock import from_epoch_ms
 from flightsite.ingest import Position
 from flightsite.live import LiveAircraft
 from flightsite.metadata.cache import AircraftMetadataView
+from flightsite.sightings.state import SightingRoute
 from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
 
 #: Provenance keys from the live record that name a field this payload exposes.
@@ -138,7 +144,25 @@ def _round(value: float | None, decimals: int) -> float | None:
     return None if value is None else round(value, decimals)
 
 
-def _provenance(record: LiveAircraft, metadata: AircraftMetadataView | None) -> dict[str, str]:
+def _route(route: SightingRoute | None) -> dict[str, str | None]:
+    """The §2.6 ``route`` block: both keys always, values ``null`` if unknown.
+
+    A stable object rather than a nullable one. "No route yet", "not an airline
+    flight", "enrichment is off" and "nobody has a route for this flight" are
+    four different reasons for the same display, and a client that has to
+    distinguish an absent block from a block of nulls before it can render
+    *Unknown* is carrying that distinction for nothing (§2.7).
+    """
+    if route is None:
+        return {"origin": None, "destination": None}
+    return {"origin": route.origin_ident, "destination": route.destination_ident}
+
+
+def _provenance(
+    record: LiveAircraft,
+    metadata: AircraftMetadataView | None,
+    route: SightingRoute | None,
+) -> dict[str, str]:
     """The §2.6 provenance map, restricted to fields this payload publishes."""
     found = {
         field: provenance.value
@@ -150,6 +174,12 @@ def _provenance(record: LiveAircraft, metadata: AircraftMetadataView | None) -> 
             published = METADATA_PROVENANCE_KEYS.get(key)
             if published is not None:
                 found[published] = source
+    # Only when there is a route to attribute: §2.6's entries name the source
+    # of a value, and a provenance for two nulls would name the source of
+    # nothing. `route_source` is the sighting column, which is the same
+    # vocabulary — ``aerodatabox`` — the provenance map uses.
+    if route is not None:
+        found["route"] = route.source
     return found
 
 
@@ -158,6 +188,7 @@ def aircraft_payload(
     *,
     sighting_id: int | None = None,
     metadata: AircraftMetadataView | None = None,
+    route: SightingRoute | None = None,
 ) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
@@ -176,6 +207,12 @@ def aircraft_payload(
             first sub-second of a new aircraft's life, and the permanent state
             on an install with no metadata database. Every metadata field is
             ``null`` in that case, per §2.7.
+        route: the route route enrichment (slice 026) has established for the
+            aircraft's *current* sighting, or ``None``. ``None`` is the normal
+            state everywhere: enrichment is optional and off by default, only
+            airline-form callsigns are ever looked up, and the answer arrives a
+            second or two after the aircraft does. It serializes as a ``route``
+            block of nulls, never as a missing key.
     """
     resolved = None if metadata is None else metadata.metadata
     return {
@@ -205,8 +242,9 @@ def aircraft_payload(
         "operator": None if resolved is None else resolved.operator_name,
         "operator_group": None if metadata is None else metadata.operator_group,
         "classification": None if metadata is None else metadata.classification.payload(),
+        "route": _route(route),
         "interesting": None,
-        "provenance": _provenance(record, metadata),
+        "provenance": _provenance(record, metadata, route),
     }
 
 
