@@ -706,7 +706,7 @@ slices:
     title: "Classification & operator normalization"
     phase: 4
     branch: "024-classification-engine"
-    status: planned
+    status: merged
     depends_on: ["021", "022"]
     objective: "Classify aircraft (military/government/law-enforcement, mission/use categories) and normalize operators into groups, with provenance and calibrated confidence."
     scope:
