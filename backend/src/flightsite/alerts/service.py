@@ -46,7 +46,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import structlog
-from pydantic import ValidationError
 
 from flightsite.alerts.engine import AlertEngine
 from flightsite.alerts.errors import AlertRuleNotFoundError, AlertRuleValueError
@@ -151,11 +150,6 @@ class AlertService:
     def engine(self) -> AlertEngine:
         """The evaluation engine — read on the aircraft path for the §3.3 block."""
         return self._engine
-
-    @property
-    def repository(self) -> AlertRepository:
-        """The alert tables' query layer, which the API reads history through."""
-        return self._repository
 
     # -------------------------------------------------------------- lifecycle
 
@@ -270,10 +264,6 @@ class AlertService:
         """Every rule, by id."""
         return await self._repository.list_rules()
 
-    async def get_rule(self, rule_id: int) -> AlertRuleRecord | None:
-        """One rule, or ``None`` if it does not exist."""
-        return await self._repository.get_rule(rule_id)
-
     async def create_rule(
         self,
         *,
@@ -340,21 +330,6 @@ class AlertService:
         if deleted:
             await self.reload_rules()
         return deleted
-
-    @staticmethod
-    def parse_conditions(document: object) -> RuleConditions:
-        """Validate a condition document from an untrusted source.
-
-        Raises:
-            AlertRuleValueError: it does not validate. The Pydantic message is
-                carried through verbatim — it names the offending field and
-                bound, which is precisely what a rule builder needs to show
-                beside the input the user got wrong.
-        """
-        try:
-            return RuleConditions.model_validate(document)
-        except ValidationError as exc:
-            raise AlertRuleValueError(str(exc)) from exc
 
 
 __all__ = ["AlertRadiusProbe", "AlertService", "ClockFn"]

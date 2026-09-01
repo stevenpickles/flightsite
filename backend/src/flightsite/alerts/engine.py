@@ -382,22 +382,6 @@ class AlertEngine:
         state = self._states.get(icao)
         return None if state is None else state.interesting
 
-    def interesting_icaos(self) -> tuple[str, ...]:
-        """Every live aircraft currently matching, severity then ICAO order.
-
-        The ordering ``docs/API.md`` §3.4 asks for, minus the distance
-        tie-break: distance is a live-record field the caller already has, so
-        it applies that half itself rather than making this method reach back
-        into the live store for it.
-        """
-        matching: list[tuple[str, InterestingState]] = [
-            (icao, state.interesting)
-            for icao, state in self._states.items()
-            if state.interesting is not None
-        ]
-        matching.sort(key=lambda item: (-item[1].severity.rank, item[0]))
-        return tuple(icao for icao, _ in matching)
-
     # --------------------------------------------------------------- the seams
 
     def subscribe(self, listener: AlertListener) -> None:
@@ -541,7 +525,12 @@ class AlertEngine:
             self._idle.clear()
             try:
                 await self._cycle((event, *subscription.drain()))
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pragma: no cover - see below
+                # A shutdown almost always cancels this task while it is
+                # awaiting the next event above, not mid-cycle. The arm is
+                # still needed: without it the `except Exception` below would
+                # swallow a cancellation that *did* land inside a cycle and
+                # turn `stop()` into a hang.
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 # The loop outliving a bad cycle matters more than the cycle: a
@@ -644,7 +633,13 @@ class AlertEngine:
                 persistence=self._persistence,
                 now_ms=now_ms,
             )
-            if subject is None:
+            if subject is None:  # pragma: no cover - see below
+                # An address with no live record. Unreachable as the cycle
+                # stands — `_collect` drops an aircraft whose removal it
+                # drained, and `_resync` takes its addresses from the snapshot
+                # — but the guard is what keeps that a *local* property rather
+                # than a coupling between three methods, and it is what a
+                # future `_evaluate` that awaited would need.
                 self._states.pop(icao, None)
                 continue
             state = self._state_for(icao, subject)
@@ -696,9 +691,9 @@ class AlertEngine:
         writable: list[tuple[str, MatchProposal, NewAlertMatch]] = []
         held = 0
         for icao, proposal in owed:
-            subject_ids = self._persistence.sighting_for(icao)
-            sighting_id = None if subject_ids is None else subject_ids.sighting_id
-            aircraft_id = None if subject_ids is None else subject_ids.aircraft_id
+            active = self._persistence.sighting_for(icao)
+            sighting_id = None if active is None else active.sighting_id
+            aircraft_id = None if active is None else active.aircraft_id
             if sighting_id is None or aircraft_id is None:
                 held += 1
                 continue

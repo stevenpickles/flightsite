@@ -76,10 +76,21 @@ def outranks_severity(candidate: str, current: str | None) -> bool:
     ``None`` means nothing is standing yet, which anything outranks. A tie does
     not: SPEC §48 allows a further notification for a *higher*-priority
     condition, so equal severities must not read as an upgrade.
+
+    ``candidate`` is ranked *before* the ``None`` short-circuit, deliberately:
+    the column carries a ``CHECK``, so a value outside the ladder must be
+    refused where it enters memory rather than accepted here and rejected by
+    SQLite a flush later, with the failing transaction naming a row rather than
+    a caller.
+
+    Raises:
+        ValueError: ``candidate`` (or a non-``None`` ``current``) is not on the
+            ladder.
     """
+    candidate_rank = alert_severity_rank(candidate)
     if current is None:
         return True
-    return alert_severity_rank(candidate) > alert_severity_rank(current)
+    return candidate_rank > alert_severity_rank(current)
 
 
 class SightingEventType(StrEnum):

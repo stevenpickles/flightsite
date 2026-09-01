@@ -88,12 +88,6 @@ class NewAlertMatch:
     rule_id: int | None = None
     builtin_key: str | None = None
 
-    @property
-    def key(self) -> str:
-        """The per-sighting dedupe identity, matching
-        :attr:`flightsite.alerts.model.MatchProposal.key`."""
-        return f"rule:{self.rule_id}" if self.rule_id is not None else f"builtin:{self.builtin_key}"
-
 
 @dataclass(frozen=True, slots=True)
 class AlertRepository:

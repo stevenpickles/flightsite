@@ -35,6 +35,7 @@ from flightsite.classification.vocabulary import (
     MissionCategory,
 )
 from flightsite.db import Database, database_path
+from flightsite.ingest import Position
 from flightsite.live import GroundState, LiveStore
 from flightsite.metadata import MetadataService, SourceRegistry
 from flightsite.sightings import PersistenceWorker
@@ -205,10 +206,17 @@ def clock() -> Clock:
     return Clock()
 
 
+#: The receiver position these tests measure distances from. Present because a
+#: distance condition cannot hold for an aircraft FlightSite cannot place, so a
+#: store with no receiver location would silently make every distance rule
+#: untestable rather than failing loudly.
+RECEIVER = Position(latitude=51.0, longitude=-1.0)
+
+
 @pytest.fixture
 def live(clock: Clock) -> LiveStore:
     """A live store with a hand-driven clock and generous lifecycle thresholds."""
-    return LiveStore(clock=clock, stale_s=100.0, remove_s=200.0)
+    return LiveStore(clock=clock, stale_s=100.0, remove_s=200.0, receiver_location=RECEIVER)
 
 
 @pytest.fixture
@@ -310,6 +318,72 @@ def make_service(
         )
 
     return build
+
+
+async def seed_resolved_metadata(
+    database: Database,
+    icao24: str,
+    *,
+    type_code: str | None = None,
+    model: str | None = None,
+    registration: str | None = None,
+) -> None:
+    """Insert one ``aircraft_metadata_resolved`` row the cache will read.
+
+    Written with raw SQL rather than by running an import: these tests are
+    about what the alert engine does with a resolved view, not about how the
+    precedence rules produced one — slice 021's own tests own that.
+    """
+    async with database.writer_session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO aircraft_metadata_resolved "
+                "(icao24, registration, registration_src, type_code, type_code_src, "
+                "model, model_src, updated_ms) "
+                "VALUES (:icao24, :registration, 'mictronics', :type_code, 'mictronics', "
+                ":model, 'mictronics', :now)"
+            ),
+            {
+                "icao24": icao24,
+                "registration": registration,
+                "type_code": type_code,
+                "model": model,
+                "now": NOW_MS,
+            },
+        )
+
+
+async def seed_rules(database: Database, *compiled: CompiledRule) -> None:
+    """Insert the ``alert_rules`` rows the compiled rules' ids name.
+
+    ``alert_matches.rule_id`` is a real foreign key and ADR-0001 enforces it,
+    so a rule the engine evaluates must exist as a row before a match can cite
+    it. Engine tests build their rules in memory (that is the point — the
+    evaluator is pure), so this is what makes the ids they chose citable.
+
+    ``ON CONFLICT DO NOTHING`` so a test can re-seed the same rule after adding
+    another one, which is what "a second rule matches later" scenarios do.
+    """
+    if not compiled:
+        return
+    async with database.writer_session() as session:
+        for entry in compiled:
+            record = entry.rule
+            await session.execute(
+                text(
+                    "INSERT INTO alert_rules "
+                    "(id, name, severity, enabled, conditions_json, created_ms, updated_ms) "
+                    "VALUES (:id, :name, :severity, 1, :conditions, :now, :now) "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {
+                    "id": record.id,
+                    "name": record.name,
+                    "severity": record.severity.value,
+                    "conditions": record.conditions.to_json(),
+                    "now": NOW_MS,
+                },
+            )
 
 
 async def settle(service: MetadataService) -> None:
