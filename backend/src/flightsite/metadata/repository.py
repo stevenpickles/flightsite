@@ -15,10 +15,13 @@ transaction, because only it has to be atomic.
 
 **Atomicity where it is load-bearing.** :meth:`MetadataRepository.promote` does
 the whole visible swap inside one transaction: the source's old rows go, the
-staged rows land, staging is cleared, ``aircraft_metadata_resolved`` is rebuilt
-and the status row is updated. Any exception rolls all of it back, which is what
-makes SPEC §27's *"preserves the previous working dataset if an import fails"*
-a property of the storage layer rather than a hope about error handling.
+staged rows land, staging is cleared, ``aircraft_metadata_resolved``, the
+curated operator tables and ``aircraft_classification`` are rebuilt, and the
+status row is updated. Any exception rolls all of it back, which is what makes
+SPEC §27's *"preserves the previous working dataset if an import fails"* a
+property of the storage layer rather than a hope about error handling — and
+what keeps an airframe's metadata and its classification describing the same
+dataset at every instant a reader could look.
 
 The resolved rebuild streams rather than loading the table: a snapshot runs to
 hundreds of thousands of airframes, and keyset pagination over ``icao24`` keeps
@@ -32,7 +35,7 @@ the end of.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Final
 
 from sqlalchemy import delete, func, insert, select, text, update
@@ -40,6 +43,15 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from flightsite.classification.engine import classify
+from flightsite.classification.model import Evidence
+from flightsite.classification.operators import OperatorDirectory, default_directory
+from flightsite.classification.store import (
+    add_classifications,
+    add_operators,
+    clear_classifications,
+    sync_operator_directory,
+)
 from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
@@ -91,6 +103,43 @@ IN_CLAUSE_CHUNK: Final = 500
 #: a provider that raises a megabyte-long string must not turn the status row
 #: into one.
 MAX_ERROR_CHARS: Final = 500
+
+
+@dataclass(frozen=True, slots=True)
+class AircraftLookup:
+    """Everything one read of the metadata tables knows about one airframe.
+
+    A record rather than a tuple because it grew a fourth and fifth member in
+    slice 024 and would have grown a sixth in 026: naming the parts is what
+    keeps the cache's population loop readable.
+
+    ``military_flag_source`` names the source whose military bit is set, and is
+    ``None`` when none is — which covers both "nobody has heard of it" and "a
+    source says it is civilian", neither of which is a reason to say military.
+    It is read here rather than off ``aircraft_metadata_resolved`` because
+    ``docs/DATA_MODEL.md`` §3.3 gives that table no military column: the bit is
+    evidence for a classification, not a resolved field of its own.
+    """
+
+    metadata: ResolvedMetadata | None = None
+    sighting_count: int | None = None
+    military_flag_source: str | None = None
+    #: Display name of the curated operator group (``docs/API.md`` §3.3's
+    #: ``operator_group``), or ``None`` when the operator matched no group.
+    operator_group: str | None = None
+
+    def evidence(self, icao24: str, *, callsign: str | None = None) -> Evidence:
+        """The classification engine's inputs for this airframe."""
+        metadata = self.metadata
+        return Evidence(
+            icao24=icao24,
+            military_flag=self.military_flag_source is not None,
+            military_flag_source=self.military_flag_source,
+            operator_name=None if metadata is None else metadata.operator_name,
+            type_code=None if metadata is None else metadata.type_code,
+            registration=None if metadata is None else metadata.registration,
+            callsign=callsign,
+        )
 
 
 class MetadataRepository:
@@ -288,46 +337,99 @@ class MetadataRepository:
         *,
         precedence: PrecedenceModel,
         at_ms: int,
+        directory: OperatorDirectory | None = None,
     ) -> int:
-        """Rebuild ``aircraft_metadata_resolved`` from the per-source rows.
+        """Rebuild resolution, operator grouping and classification together.
 
         Runs inside the caller's transaction — normally the promotion's — so
-        the resolved table is never observable in a half-rebuilt state. Returns
-        the number of resolved rows written.
+        none of the three tables is ever observable in a half-rebuilt state.
+        Returns the number of resolved rows written.
+
+        One pass, three outputs, because they all read the same thing: an
+        airframe's per-source claims. Splitting classification into a second
+        pass would re-read ``aircraft_metadata`` end to end for evidence this
+        loop already has in hand, and would have to read the military bit from
+        a resolved table that (by design, ``docs/DATA_MODEL.md`` §3.3) does not
+        carry it.
+
+        The order is fixed by ``foreign_keys=ON`` (ADR-0001): resolved rows
+        reference ``operator_groups``, so they are cleared *before* the curated
+        group rows are replaced, and written again afterwards.
 
         Airframes for which no source supplies a single resolvable field are
-        omitted rather than written as an all-``NULL`` row: absence is the
-        honest representation of "nothing is known", and it is what the lookup
-        cache reports either way.
+        omitted from the resolved table rather than written as an all-``NULL``
+        row: absence is the honest representation of "nothing is known". They
+        can still earn a classification row — an airframe known only by a
+        military bit has nothing to resolve and something to say — and an
+        airframe whose classification asserts nothing is likewise left out of
+        ``aircraft_classification`` rather than stored as a row of negatives.
         """
-        groups = await self._operator_groups(session)
+        resolver = directory if directory is not None else default_directory()
         await session.execute(delete(AircraftMetadataResolved))
+        await clear_classifications(session)
+        await sync_operator_directory(session, resolver)
 
         written = 0
         pending: list[dict[str, str | int | None]] = []
+        classifications: list[dict[str, str | int | float | None]] = []
+        # Operator strings the *dataset* uses that a curated phrase claims.
+        # Curated exact names are already in the table; these are the ones only
+        # an import can discover, and they are collected rather than inserted
+        # per row so one name seen on a thousand airframes is written once.
+        discovered: dict[str, int] = {}
+
         async for icao24, claims in self._claim_groups(session):
             resolved = precedence.resolve(icao24, claims, updated_ms=at_ms)
-            if resolved.is_empty:
-                continue
-            pending.append(_with_group(resolved, groups).as_row())
+            operator_name = resolved.operator_name
+            match = resolver.match(operator_name)
+            if match is not None and operator_name is not None:
+                resolved = replace(resolved, operator_group_id=match.group_id)
+                discovered[operator_name] = match.group_id
+            if not resolved.is_empty:
+                pending.append(resolved.as_row())
+
+            classification = classify(_evidence(icao24, resolved, claims), directory=resolver)
+            if not classification.is_unknown:
+                classifications.append(classification.as_row(icao24, updated_ms=at_ms))
+
             if len(pending) >= STAGE_BATCH_ROWS:
                 await session.execute(insert(AircraftMetadataResolved), pending)
                 written += len(pending)
                 pending = []
+            if len(classifications) >= STAGE_BATCH_ROWS:
+                await add_classifications(session, classifications)
+                classifications = []
+
         if pending:
             await session.execute(insert(AircraftMetadataResolved), pending)
             written += len(pending)
+        if classifications:
+            await add_classifications(session, classifications)
+        await self._add_discovered_operators(session, discovered)
         return written
 
-    async def _operator_groups(self, session: AsyncSession) -> Mapping[str, int]:
-        """Exact operator string to curated group id.
+    @staticmethod
+    async def _add_discovered_operators(session: AsyncSession, discovered: dict[str, int]) -> None:
+        """Record dataset operator strings that a curated *phrase* claimed.
 
-        Empty until slice 024 populates ``operators``; loaded whole because it
-        is curated data measured in thousands of rows, not a scan of anything
-        that grows with traffic.
+        Written after the curated names so a name that is both curated and
+        present in the dataset is not inserted twice; sorted so a re-import over
+        the same snapshot produces the same rows in the same order.
+
+        The existence check is chunked because there is no bound on how many
+        distinct names a phrase can claim — every county sheriff's office in a
+        national registry is a separate string — and SQLite's host-parameter
+        limit is not generous.
         """
-        rows = (await session.execute(select(Operator.name, Operator.group_id))).all()
-        return {str(name): int(group_id) for name, group_id in rows}
+        names = sorted(discovered)
+        curated: set[str] = set()
+        for chunk in _chunks(names, IN_CLAUSE_CHUNK):
+            found = await session.execute(select(Operator.name).where(Operator.name.in_(chunk)))
+            curated.update(str(name) for name in found.scalars().all())
+        rows: list[Mapping[str, str | int]] = [
+            {"name": name, "group_id": discovered[name]} for name in names if name not in curated
+        ]
+        await add_operators(session, rows)
 
     async def _claim_groups(
         self, session: AsyncSession
@@ -383,10 +485,8 @@ class MetadataRepository:
 
     # ------------------------------------------------------------- lookups
 
-    async def load_live_view(
-        self, icaos: Sequence[str]
-    ) -> dict[str, tuple[ResolvedMetadata | None, int | None]]:
-        """Resolved metadata *and* rarity counter for ``icaos``, in one query.
+    async def load_live_view(self, icaos: Sequence[str]) -> dict[str, AircraftLookup]:
+        """Resolved metadata, rarity, grouping and military bit, in one query.
 
         The cache's read, and its only one. Splitting it into a metadata
         query and a rarity query would be tidier to read and twice as slow:
@@ -403,12 +503,19 @@ class MetadataRepository:
         than composed in Core.
 
         Every requested address appears in the result, with ``None`` for
-        whichever half is missing; that is what lets the cache distinguish
+        whichever part is missing; that is what lets the cache distinguish
         "nobody knows" from "not looked up yet".
+
+        Slice 024 added two columns to the same query rather than a second one.
+        The operator group's *name* comes from a join (the resolved row stores
+        only its id, and the API publishes prose), and the military bit from a
+        correlated lookup on ``aircraft_metadata``'s primary key — an index seek
+        per address, cheap enough to keep the cache's read a single round trip,
+        which is what its per-appear latency budget is built on.
         """
         if not icaos:
             return {}
-        found: dict[str, tuple[ResolvedMetadata | None, int | None]] = {}
+        found: dict[str, AircraftLookup] = {}
         async with self._database.read_session() as session:
             for chunk in _chunks(icaos, IN_CLAUSE_CHUNK):
                 params = {f"i{index}": icao for index, icao in enumerate(chunk)}
@@ -421,9 +528,13 @@ class MetadataRepository:
                 for mapping in rows:
                     icao24 = str(mapping["icao24"])
                     count = mapping["sighting_count"]
-                    found[icao24] = (
-                        _resolved_from_mapping(icao24, mapping),
-                        None if count is None else int(count),
+                    group = mapping["operator_group"]
+                    military_src = mapping["military_src"]
+                    found[icao24] = AircraftLookup(
+                        metadata=_resolved_from_mapping(icao24, mapping),
+                        sighting_count=None if count is None else int(count),
+                        military_flag_source=None if military_src is None else str(military_src),
+                        operator_group=None if group is None else str(group),
                     )
         return found
 
@@ -461,10 +572,15 @@ SELECT w.icao24,
        r.operator_name, r.operator_src,
        r.operator_group_id,
        r.owner, r.owner_src,
-       r.updated_ms
+       r.updated_ms,
+       g.name AS operator_group,
+       (SELECT m.source FROM aircraft_metadata AS m
+         WHERE m.icao24 = w.icao24 AND m.military_flag = 1
+         ORDER BY m.source LIMIT 1) AS military_src
 FROM wanted AS w
 LEFT JOIN aircraft AS a ON a.icao24 = w.icao24
 LEFT JOIN aircraft_metadata_resolved AS r ON r.icao24 = w.icao24
+LEFT JOIN operator_groups AS g ON g.id = r.operator_group_id
 """
 
 
@@ -532,19 +648,29 @@ def _to_claim(row: AircraftMetadata) -> SourceClaim:
     )
 
 
-def _with_group(resolved: ResolvedMetadata, groups: Mapping[str, int]) -> ResolvedMetadata:
-    """Attach the curated operator group for the resolved operator, if any.
+def _evidence(icao24: str, resolved: ResolvedMetadata, claims: Sequence[SourceClaim]) -> Evidence:
+    """Assemble the classification engine's inputs for one airframe.
 
-    A miss is the normal case until slice 024 lands: the exact operator string
-    stays on the row either way, which is what SPEC §38 means by grouping being
-    additive.
+    The identity fields come from the *resolved* row so classification agrees
+    with what the API publishes. The military bit comes from the raw claims,
+    because ``docs/DATA_MODEL.md`` §3.3 does not resolve it into a column: it
+    is evidence, not a field.
+
+    A source claiming military wins outright — any positive assertion is taken,
+    and a source's silence or explicit ``False`` is not a counter-claim. That is
+    the same rule precedence uses for values ("silence never wins"), applied to
+    a bit whose only interesting state is set. Ties go to the alphabetically
+    first source so a re-import writes the same provenance every time.
     """
-    if resolved.operator_name is None:
-        return resolved
-    group_id = groups.get(resolved.operator_name)
-    if group_id is None:
-        return resolved
-    return replace(resolved, operator_group_id=group_id)
+    asserting = sorted(claim.source for claim in claims if claim.record.military_flag)
+    return Evidence(
+        icao24=icao24,
+        military_flag=bool(asserting),
+        military_flag_source=asserting[0] if asserting else None,
+        operator_name=resolved.operator_name,
+        type_code=resolved.type_code,
+        registration=resolved.registration,
+    )
 
 
 def _to_status(row: MetadataSource) -> SourceStatusRecord:
@@ -565,5 +691,6 @@ __all__ = [
     "METADATA_COLUMNS",
     "REBUILD_PAGE_ROWS",
     "STAGE_BATCH_ROWS",
+    "AircraftLookup",
     "MetadataRepository",
 ]
