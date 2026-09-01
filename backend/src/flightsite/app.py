@@ -23,6 +23,7 @@ from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
 from flightsite.metadata import MetadataService
+from flightsite.metadata.sources import FaaRegistryProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.sightings import PersistenceWorker
 
@@ -272,6 +273,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     app.state.metadata = MetadataService(
         database=app.state.database, live=app.state.live, data_dir=store.data_dir
     )
+    app.state.metadata.registry.register("faa", FaaRegistryProvider())
     app.state.start_time = time.monotonic()
     # Read once at app-construction time, not per-request: demo mode is a
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
