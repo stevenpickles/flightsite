@@ -5,6 +5,93 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.2.0] — 2026-09-01
+
+Everything between the live-radar MVP and a feature-complete observatory: full
+history and analytics, the complete alerting stack with browser notifications,
+operations tooling (backup/restore, maintenance, diagnostics), and a hardening
+pass (performance gates, visual regression, accessibility, multi-year storage
+qualification) driven by the first real-world Raspberry Pi deployment. This
+release consolidates the roadmap's planned v0.2–v0.4 themes into one version.
+
+### Added
+
+**History & analytics**
+- Aircraft page: the full seen-here fleet, sortable and filterable, with
+  per-airframe history (#29)
+- Sightings page with filtering and per-sighting detail incl. decoded track
+  playback data (#30)
+- Analytics backend and page: activity, rarity, altitude/distance
+  distributions, records, and five time presets, all deep-linkable (#31, #32)
+- Receiver metrics with retention/downsampling, and the Receiver page:
+  message rates, range envelope, signal statistics (#33, #34)
+- Activity feed with milestones, and the Today-at-a-glance panel (#35, #36)
+
+**Aircraft identity completion**
+- One-click offline metadata updates (Mictronics/tar1090, FAA, airports) with
+  transactional import and per-source status (#25)
+- Optional AeroDataBox route enrichment — airline callsigns only, at most one
+  request per callsign per UTC day; nothing else ever leaves your network (#26)
+- Airport context on sightings and aviation map overlays (#27, #28)
+
+**Alerts & notifications**
+- Watchlists with live matching (#37)
+- In-memory alert rule engine: ten condition kinds, shipped template
+  catalogue, built-in 7500/7600/7700 emergency detection, severity ladder
+  with upgrade events; a 500-aircraft evaluation cycle costs ~6 ms (#38)
+- Interesting-aircraft surfaces: Live Map panel (severity→distance ordering),
+  severity-scaled map attention ring, label indicator — severity is never
+  signaled by color alone (#39)
+- Browser notifications with correct permission handling: asked only from an
+  explicit user click, never on load; denied/blocked/insecure-context states
+  surfaced and degrade cleanly (#40)
+- Alerts page: rule list, visual rule builder covering every condition kind,
+  template gallery, match history (#41)
+
+**Operations**
+- Health & diagnostics: `GET /api/v1/diagnostics` serving every SPEC §67 item
+  plus a diagnostics UI — assess an install without SSH; provably
+  secret-free output (#42)
+- SQLite-safe backup & restore with checksum-verified archives (#43)
+- Scheduled database maintenance (integrity checks, pruning, vacuum) (#44)
+- Explicit, confirmed data-reset actions (#45)
+- Rotating file logs under the data directory (#42)
+
+**Quality & qualification**
+- Complete SPEC §82 critical-flow E2E suite across Chromium/Firefox/WebKit
+  (#46), deterministic visual-regression baselines (#47), WCAG-oriented
+  accessibility baseline with axe checks in CI (#48)
+- Performance harness with hard CI gates on the SPEC §85 correctness budgets
+  and a documented on-hardware procedure (`flightsite-perf`);
+  `docs/PERFORMANCE.md` budget table (#49)
+- Multi-year storage qualification tool (`flightsite-storage-qual`): 3-year
+  synthetic datasets validate retention and query behavior at scale (#50)
+- Install & configuration guides written from a rehearsed fresh install,
+  including Raspberry Pi troubleshooting (mixed-architecture userlands,
+  libseccomp SIGSYS, port conflicts, mDNS-in-containers) (#51)
+
+### Fixed
+- Live map aircraft no longer stutter forward and snap back: dead reckoning
+  is anchored to the last actual position fix instead of the last message
+  (#54, #119)
+- Alert templates enabled in the setup wizard now instantiate immediately on
+  save instead of requiring a backend restart; deleted shipped rules still
+  stay deleted (#55, #110)
+- The wizard's law-enforcement template selection is no longer silently
+  dropped (key mismatch; old configs accepted via alias), and the
+  locally-rare-type template is now actually offered (#55, #111)
+- Frontend runtime image patched for CVE-2026-66046 (libexpat)
+
+### Changed
+- Default frontend host port is now **8090** (was 8080, which collides with
+  decoder web UIs on the same host); override with `FLIGHTSITE_HOST_PORT`
+- API documentation corrected against the served OpenAPI (bbox axis order,
+  `/ready` shape, metric and field names) (#51)
+
+### Known limitations
+- A first-run install still needs one backend restart after the setup wizard
+  saves the receiver configuration before ingestion starts (#122)
+
 ## [0.1.0] — 2026-09-01
 
 First integrated release: the live radar MVP, plus the aircraft-identity layer.

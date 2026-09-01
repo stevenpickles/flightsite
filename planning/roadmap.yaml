@@ -68,17 +68,11 @@ releases:
     after_phase: 3
     theme: "Live radar MVP: ingestion, sightings, live map, demo mode, setup wizard."
   - version: "v0.2.0"
-    after_phase: 4
-    theme: "Aircraft identity: offline metadata, classification, enrichment, overlays."
-  - version: "v0.3.0"
-    after_phase: 5
-    theme: "History & analytics."
-  - version: "v0.4.0"
-    after_phase: 6
-    theme: "Alerts & notifications."
-  - version: "v0.5.0"
-    after_phase: 7
-    theme: "Operations: backup/restore, maintenance, diagnostics."
+    after_phase: 8
+    theme: "Consolidated release: identity completion, history & analytics, alerts
+      & notifications, operations, and the Phase 8 hardening pass. (Development
+      outpaced the release cadence; the planned v0.2-v0.5 themes shipped together.
+      Recorded 2026-09-01.)"
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
