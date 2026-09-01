@@ -68,9 +68,12 @@ from flightsite.alerts.schemas import AlertRuleWriteRequest
 from flightsite.alerts.service import AlertRadiusProbe, AlertService
 from flightsite.alerts.templates import (
     SHIPPED_TEMPLATES,
+    TEMPLATE_KEY_ALIASES,
     TEMPLATES_BY_KEY,
     AlertTemplate,
+    aliased_template_keys,
     enabled_templates,
+    normalize_template_keys,
     unknown_template_keys,
 )
 from flightsite.alerts.vocabulary import (
@@ -88,6 +91,7 @@ __all__ = [
     "EMERGENCY_SEVERITY",
     "SHIPPED_TEMPLATES",
     "TEMPLATES_BY_KEY",
+    "TEMPLATE_KEY_ALIASES",
     "AircraftAlertState",
     "AlertEngine",
     "AlertError",
@@ -113,12 +117,14 @@ __all__ = [
     "RarityCondition",
     "RuleConditions",
     "StoredAlertMatch",
+    "aliased_template_keys",
     "emergency_builtin_key",
     "emergency_match",
     "emergency_reason",
     "enabled_templates",
     "evaluate",
     "matches",
+    "normalize_template_keys",
     "subject_for",
     "unknown_template_keys",
 ]

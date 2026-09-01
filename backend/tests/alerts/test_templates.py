@@ -16,9 +16,12 @@ from flightsite.alerts.evaluator import matches
 from flightsite.alerts.model import AlertSubject, CompiledRule, RuleConditions
 from flightsite.alerts.templates import (
     SHIPPED_TEMPLATES,
+    TEMPLATE_KEY_ALIASES,
     TEMPLATES_BY_KEY,
     AlertTemplate,
+    aliased_template_keys,
     enabled_templates,
+    normalize_template_keys,
     unknown_template_keys,
 )
 from flightsite.alerts.vocabulary import AlertSeverity
@@ -175,3 +178,44 @@ def test_every_shipped_key_is_accepted_by_the_configuration_model() -> None:
     settings = Settings(alerts={"enabled_templates": list(EXPECTED_KEYS)})  # type: ignore[arg-type]
 
     assert settings.alerts.enabled_templates == list(EXPECTED_KEYS)
+
+
+# ------------------------------------------------------------- the one alias
+
+
+def test_the_law_enforcement_alias_selects_the_police_template() -> None:
+    """Issue #111's compatibility half: an install whose ``config.yaml`` was
+    written by the wizard that sent ``law_enforcement`` keeps the template its
+    user chose, without anything rewriting the file."""
+    assert [template.key for template in enabled_templates(["law_enforcement"])] == ["police"]
+
+
+def test_the_alias_is_not_reported_as_an_unknown_key() -> None:
+    """It resolves to a catalogue key, so it selects something — which is what
+    separates it from the keys the caller warns about."""
+    assert unknown_template_keys(["law_enforcement"]) == ()
+    assert aliased_template_keys(["law_enforcement", "military"]) == ("law_enforcement",)
+
+
+def test_normalizing_collapses_an_alias_onto_the_key_it_means() -> None:
+    """A file naming both spellings means the police template once, not twice —
+    which matters because the config apply path diffs these lists."""
+    assert normalize_template_keys(["law_enforcement", "police"]) == ("police",)
+    assert normalize_template_keys(["police", "law_enforcement"]) == ("police",)
+
+
+def test_normalizing_preserves_order_and_leaves_unknown_keys_alone() -> None:
+    """Unknown keys pass through in the spelling the file actually contains, so
+    the warning about them names something the user can find."""
+    assert normalize_template_keys(["watchlist", "nope", "military"]) == (
+        "watchlist",
+        "nope",
+        "military",
+    )
+
+
+def test_every_alias_resolves_to_a_real_catalogue_key() -> None:
+    """An alias pointing at nothing would be a silent skip wearing a disguise."""
+    for alias, key in TEMPLATE_KEY_ALIASES.items():
+        assert key in TEMPLATES_BY_KEY
+        assert alias not in TEMPLATES_BY_KEY

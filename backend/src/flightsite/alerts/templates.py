@@ -52,8 +52,39 @@ idempotency rule, and it is the right one rather than a per-key check for two
 reasons. A user who deletes a shipped rule must not have it silently return on
 the next restart; and a user who changes ``alerts.enabled_templates`` after
 first run is editing a wizard answer, not asking for their tuned rule set to be
-rewritten. The setup wizard writes the list once; from then on the Alerts page
-(slice 041) owns the rules.
+rewritten.
+
+Startup is not the only edge, though, and slice 055 added the other one.
+``AlertService.start`` runs before the setup wizard has written anything, so on
+a genuinely fresh install the list it reads is empty and the templates the user
+is about to choose are instantiated by nothing at all — the install has no
+alert rules until the backend is restarted (issue #110). The other edge is the
+config save itself:
+:meth:`flightsite.alerts.service.AlertService.apply_enabled_templates`, called
+from the config apply path with the list as it was and the list as it now is.
+Its semantics are documented there; the short version is that it instantiates
+the keys *this save added*, which is why it can add the wizard's choice without
+ever resurrecting a rule the user deleted.
+
+Key spellings, and the one alias
+--------------------------------
+
+The catalogue key is the contract: it is what ``alerts.enabled_templates``
+names, what ``alert_rules.template_key`` records, and what the setup wizard has
+to send. ``police`` is that key for the law-enforcement template — SPEC §45
+writes the template as "police/law enforcement", and the catalogue took the
+first half.
+
+The wizard sent ``law_enforcement`` instead, and because an unrecognized key is
+skipped, the selection vanished with no rule and no complaint (issue #111). The
+wizard is fixed to send ``police``; :data:`TEMPLATE_KEY_ALIASES` covers the
+installs whose ``config.yaml`` already records the wrong spelling, mapping it to
+``police`` on *read* only. Nothing rewrites the file: the alias is one entry in
+a table, the config layer stays ignorant of the catalogue (its validator checks
+shape, not names), and the next time the user saves the wizard's answer the
+stored spelling corrects itself. An unknown key that is *not* an alias is still
+skipped rather than fatal — but it is now warned about, which is what would
+have made #111 visible on the first boot rather than in an E2E suite.
 """
 
 from __future__ import annotations
@@ -193,8 +224,53 @@ TEMPLATES_BY_KEY: Final[MappingProxyType[str, AlertTemplate]] = MappingProxyType
 )
 
 
+#: Spellings that are not catalogue keys but unambiguously mean one, mapped to
+#: the key they mean. Read-only compatibility, never a second name a new client
+#: may use: the alias exists so an install whose ``config.yaml`` was written by
+#: the wizard that shipped with issue #111 keeps the templates its user chose,
+#: and adding to this table is a migration substitute, not an API.
+TEMPLATE_KEY_ALIASES: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {"law_enforcement": "police"}
+)
+
+
+def normalize_template_keys(keys: Sequence[str]) -> tuple[str, ...]:
+    """``keys`` with aliases resolved and duplicates dropped, in the given order.
+
+    Order-preserving and de-duplicating because an alias can collide with the
+    key it resolves to: a ``config.yaml`` naming both ``law_enforcement`` and
+    ``police`` means the police template once, not twice, and the caller uses
+    this result to decide what a save *added*.
+
+    A key that is neither a catalogue key nor an alias passes through unchanged
+    — recognizing it is :func:`unknown_template_keys`' job, and reporting it in
+    the spelling the file actually contains is what makes that warning useful.
+    """
+    normalized: list[str] = []
+    for key in keys:
+        resolved = TEMPLATE_KEY_ALIASES.get(key, key)
+        if resolved not in normalized:
+            normalized.append(resolved)
+    return tuple(normalized)
+
+
+def aliased_template_keys(keys: Sequence[str]) -> tuple[str, ...]:
+    """The alias spellings present in ``keys``, in order.
+
+    Separate from :func:`normalize_template_keys` so the caller can say which
+    deprecated spelling it accepted and what it took it to mean, rather than
+    silently repairing the configuration and leaving the user's file quietly
+    wrong.
+    """
+    return tuple(key for key in keys if key in TEMPLATE_KEY_ALIASES)
+
+
 def enabled_templates(keys: Sequence[str]) -> tuple[AlertTemplate, ...]:
     """The shipped templates ``keys`` names, in catalogue order.
+
+    Aliases are resolved first (:func:`normalize_template_keys`), so a
+    configuration written by a client that used a superseded spelling selects
+    the template its user meant.
 
     An unrecognized key is skipped rather than raising: ``alerts.
     enabled_templates`` is validated for *shape* by the config model, which
@@ -208,21 +284,29 @@ def enabled_templates(keys: Sequence[str]) -> tuple[AlertTemplate, ...]:
     of enabled templates get rules created in the same order and therefore the
     same ids — which is what makes a fixture of shipped rules comparable.
     """
-    wanted = set(keys)
+    wanted = set(normalize_template_keys(keys))
     return tuple(template for template in SHIPPED_TEMPLATES if template.key in wanted)
 
 
 def unknown_template_keys(keys: Sequence[str]) -> tuple[str, ...]:
-    """The names in ``keys`` this build's catalogue does not have, in order."""
-    return tuple(key for key in keys if key not in TEMPLATES_BY_KEY)
+    """The names in ``keys`` this build's catalogue does not have, in order.
+
+    An alias is *not* unknown — it resolves to a catalogue key — so the result
+    is exactly the keys that will select nothing, which is what the caller
+    warns about.
+    """
+    return tuple(key for key in normalize_template_keys(keys) if key not in TEMPLATES_BY_KEY)
 
 
 __all__ = [
     "SHIPPED_TEMPLATES",
     "TEMPLATES_BY_KEY",
+    "TEMPLATE_KEY_ALIASES",
     "TEMPLATE_RARE_MAX_SIGHTINGS",
     "TEMPLATE_RARE_MAX_TYPE_AIRCRAFT",
     "AlertTemplate",
+    "aliased_template_keys",
     "enabled_templates",
+    "normalize_template_keys",
     "unknown_template_keys",
 ]
