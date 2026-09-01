@@ -27,11 +27,11 @@ import type { AlertSeverity } from "@/lib/api/sightings";
 /**
  * §3.9 / SPEC §55's event vocabulary.
  *
- * `alert_triggered` and `emergency_squawk` are in the published schema but no
- * backend producer emits them until phase 6 (roadmap slice 039). They are
- * typed here anyway so the feed already has a label and an icon for them the
- * day they start arriving — the alternative is a released client that renders
- * a blank row for a real event.
+ * `alert_triggered` and `emergency_squawk` arrive from slice 038's alert
+ * engine, which emits one event per match it actually recorded — the two are
+ * separate types because SPEC §47 wants an emergency squawk prominent rather
+ * than one entry among the alerts, and a feed filtered to `emergency_squawk`
+ * is a question users genuinely ask.
  */
 export type ActivityEventType =
   | "alert_triggered"

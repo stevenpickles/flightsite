@@ -1030,7 +1030,7 @@ slices:
     title: "Interesting aircraft surfaces"
     phase: 6
     branch: "039-interesting-panel"
-    status: planned
+    status: merged
     depends_on: ["038", "014", "035"]
     objective: "Surface interesting aircraft: panel, map emphasis, label indicator, and feed integration."
     scope:

@@ -5,11 +5,9 @@
  *
  * 1. **Identity** — callsign, falling back to registration (slice 024),
  *    falling back to the upper-cased ICAO hex the decoder always supplies.
- *    Prefixed with the interesting-match indicator once slice 038 starts
- *    populating `interesting` — the field is present and `null` on every
- *    payload this slice can receive (`docs/API.md` §2.7: `null` is the
- *    honest representation of "unknown", not an absent key), so the
- *    indicator never actually renders yet, but the slot is wired now.
+ *    Prefixed with the interesting-match indicator whenever the aircraft
+ *    carries an active match — slice 038 populates `interesting`, and slice
+ *    039 is where the indicator starts appearing on real aircraft.
  * 2. **Operator** — renders only when the metadata field is non-null.
  *    Always null until slice 024 supplies it.
  * 3. **Altitude** — flight level above the ~FL180 transition altitude, feet
@@ -25,10 +23,19 @@
 import type { LabelTier } from "@/features/map/labels/priority";
 import type { LiveAircraft } from "@/lib/api/live";
 
-/** Prefixed onto line 1 once an aircraft carries an active interesting
+/** Prefixed onto line 1 when an aircraft carries an active interesting
  * match. A glyph reads as "notable" without relying on colour alone,
  * consistent with the MLAT ring's dash-pattern-over-colour approach
- * (`icons/silhouettes.ts`). */
+ * (`icons/silhouettes.ts`).
+ *
+ * One glyph for every severity, deliberately. SPEC §35 asks the label for an
+ * *"interesting-status indicator"* — presence, not rank — and the label is
+ * the one surface here whose glyphs come from the basemap style's SDF font
+ * atlas rather than the UI font, so a four-glyph ladder would be four
+ * chances to render a tofu box on some basemap. Severity is carried where it
+ * can be carried reliably: the attention ring's radius and stroke width on
+ * the map (`aircraft/aircraftLayers.ts`), and the severity word itself in
+ * the interesting panel and the detail view. */
 export const INTERESTING_INDICATOR = "★";
 
 /** The altitude at and above which the label switches from feet to flight
