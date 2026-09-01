@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import text
 
 from flightsite.analytics.backfill import AnalyticsBackfill, BackfillResult
 from flightsite.analytics.bucketing import day_bounds_ms, local_day, shift_days
@@ -421,3 +422,48 @@ def test_the_service_refuses_a_nonsense_cadence(database: Database) -> None:
 
 def test_a_world_fixture_with_no_sightings_names_no_days(zone: ZoneInfo) -> None:
     assert World(aircraft=(), sightings=(), group_ids={}, zone=zone).by_icao() == {}
+
+
+async def test_a_type_resolved_after_the_sighting_reaches_type_stats_on_the_next_pass(
+    database: Database, repository: AnalyticsRepository, clock: ManualClock, zone: ZoneInfo
+) -> None:
+    """The ordinary case: a metadata import lands hours after the airframe did.
+
+    ``type_stats`` is maintained on *type resolution*, not on the sighting, so
+    a designator that only became known between two passes must appear without
+    waiting for the day to close.
+    """
+    world = await seed_random_world(database, 88, zone=zone, days=1, sightings=10)
+    service = build_service(database, clock)
+    clock.set_local(world.days()[0], 20, zone)
+    await service.start()
+    async with database.writer_session() as session:
+        await session.execute(text("DELETE FROM aircraft_metadata_resolved"))
+    service.mark_dirty(world.days()[0])
+    await service.flush()
+    assert await repository.type_stats() == ()
+
+    async with database.writer_session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO aircraft_metadata_resolved (icao24, type_code, updated_ms) "
+                "SELECT icao24, 'B738', 1 FROM aircraft"
+            )
+        )
+    service.mark_dirty(world.days()[0])
+    await service.flush()
+
+    assert [row.type_code for row in await repository.type_stats()] == ["B738"]
+    await service.stop()
+
+
+async def test_stopping_a_service_that_never_started_is_a_no_op(
+    database: Database, clock: ManualClock
+) -> None:
+    """Shutdown runs on every path, including one where startup never got there."""
+    service = build_service(database, clock)
+
+    await service.stop()
+
+    assert service.running is False
+    assert service.dirty_days == frozenset()

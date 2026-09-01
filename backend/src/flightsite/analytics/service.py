@@ -217,11 +217,6 @@ class AnalyticsService:
         return self._startup
 
     @property
-    def repository(self) -> AnalyticsRepository:
-        """The rollup repository, for the API's read path and for tests."""
-        return self._repository
-
-    @property
     def backfill(self) -> AnalyticsBackfill:
         """The backfill job, callable directly by tests and later by slice 044."""
         return self._backfill
@@ -357,14 +352,21 @@ class AnalyticsService:
         self._dirty -= due
         try:
             result = await self._backfill.rebuild_days(sorted(due), now_ms=now_ms)
-            if closed:
-                await self._backfill.refresh_type_stats()
+            # Re-derived on every pass that rebuilt anything, not only at day
+            # close: ``type_stats`` is a since-T0 table maintained on *type
+            # resolution*, and a metadata import lands hours after the sighting
+            # whose airframe it names. Deriving it is a grouped read of
+            # ``aircraft`` — bounded by airframes ever heard, not by history —
+            # so keeping it current costs a few milliseconds a pass. (A day
+            # with no traffic at all runs no pass, and the next boot's repair
+            # picks up an import that landed during one.)
+            await self._backfill.refresh_type_stats()
+            if closed and complete:
                 # Only when the rebuilt run reaches back to where the last pass
                 # left off: a truncated run has unfinalized days behind it, and
                 # a watermark past them would stop the next boot's repair from
                 # ever reaching them.
-                if complete:
-                    await self._backfill.set_watermark(closed[-1])
+                await self._backfill.set_watermark(closed[-1])
         except Exception as exc:
             self._dirty |= due
             self._counters.increment(DB_ERRORS_COUNTER)

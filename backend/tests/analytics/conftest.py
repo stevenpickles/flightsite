@@ -317,11 +317,20 @@ async def seed_world(
 
 
 async def seed_random_world(
-    database: Database, seed: int, *, zone: ZoneInfo, **kwargs: int
+    database: Database,
+    seed: int,
+    *,
+    zone: ZoneInfo,
+    first_day: str | None = None,
+    **kwargs: int,
 ) -> World:
     """:func:`random_world` seeded straight into a database."""
-    first_day = str(kwargs.pop("first_day", local_day(BASE_EPOCH_MS, zone)))
-    aircraft, sightings = random_world(seed, zone=zone, first_day=first_day, **kwargs)
+    aircraft, sightings = random_world(
+        seed,
+        zone=zone,
+        first_day=first_day if first_day is not None else local_day(BASE_EPOCH_MS, zone),
+        **kwargs,
+    )
     return await seed_world(database, zone=zone, aircraft=aircraft, sightings=sightings)
 
 

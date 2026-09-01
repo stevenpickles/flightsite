@@ -206,11 +206,13 @@ class AnalyticsBackfill:
         result = await self.rebuild_days(planned, now_ms=now_ms)
         await self.refresh_type_stats()
 
+        # The plan always reaches back to at least yesterday (see
+        # :meth:`plan_startup_repair`), so there is always a closed day to
+        # advance the watermark to — and today is always excluded from it,
+        # because a day still accumulating sightings is not complete.
         today = local_day(now_ms, self._zone)
-        covered = [day for day in result.days if day < today]
-        through = covered[-1] if covered else None
-        if through is not None:
-            await self.set_watermark(through)
+        through = [day for day in result.days if day < today][-1]
+        await self.set_watermark(through)
         logger.info(
             "analytics_backfill_complete",
             days=result.rebuilt,

@@ -101,13 +101,25 @@ async def test_a_dst_transition_day_folds_the_hours_it_actually_had(
 # ------------------------------------------------------------- the fold itself
 
 
-def _fact(sighting_id: int, aircraft_id: int, started_ms: int, **fields: object) -> SightingFact:
+def _fact(
+    sighting_id: int,
+    aircraft_id: int,
+    started_ms: int,
+    *,
+    first_seen_ms: int | None = None,
+    max_range_nm: float | None = None,
+    type_code: str | None = None,
+    operator_group_id: int | None = None,
+) -> SightingFact:
+    """One fact, defaulting an airframe's first observation to this sighting."""
     return SightingFact(
         sighting_id=sighting_id,
         aircraft_id=aircraft_id,
         started_ms=started_ms,
-        first_seen_ms=int(fields.pop("first_seen_ms", started_ms)),  # type: ignore[arg-type]
-        **fields,  # type: ignore[arg-type]
+        first_seen_ms=started_ms if first_seen_ms is None else first_seen_ms,
+        max_range_nm=max_range_nm,
+        type_code=type_code,
+        operator_group_id=operator_group_id,
     )
 
 

@@ -357,3 +357,22 @@ def test_the_world_helper_reports_the_days_it_actually_placed(zone: ZoneInfo) ->
     world = World(aircraft=(), sightings=(), group_ids={}, zone=zone)
 
     assert world.days() == []
+
+
+async def test_a_history_that_starts_today_still_repairs_yesterday(
+    database: Database, job: AnalyticsBackfill, zone: ZoneInfo
+) -> None:
+    """The first day of an install's life.
+
+    Yesterday is rebuilt (to its empty row) and becomes the watermark; today is
+    not, because a day still accumulating sightings is not complete and the
+    next boot must rebuild it again.
+    """
+    world = await seed_random_world(database, 4, zone=zone, days=1, sightings=15)
+    today = world.days()[0]
+
+    result = await job.run_startup_repair(now_ms=day_bounds_ms(today, zone)[0] + 6 * MS_PER_HOUR)
+
+    assert result.days == (shift_days(today, -1), today)
+    assert result.through_day == shift_days(today, -1)
+    assert await job.watermark() == shift_days(today, -1)

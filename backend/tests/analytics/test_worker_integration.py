@@ -128,7 +128,7 @@ async def test_an_opened_sighting_reaches_the_rollup_through_the_seam(
     repository: AnalyticsRepository,
 ) -> None:
     zone = ZoneInfo(ZONE_NAME)
-    observe(live, clock, position=north_of(live.receiver_location, 42.0))
+    observe(live, clock, position=north_of(SEATTLE, 42.0))
     await worker.process_pending()
 
     assert analytics.dirty_days == frozenset({local_day(clock.epoch_ms(), zone)})
@@ -181,12 +181,12 @@ async def test_a_closed_sighting_carries_its_final_range_into_the_day(
 ) -> None:
     """The range is only final at close; the seam re-dirties the opening day."""
     zone = ZoneInfo(ZONE_NAME)
-    observe(live, clock, position=north_of(live.receiver_location, 30.0))
+    observe(live, clock, position=north_of(SEATTLE, 30.0))
     await worker.process_pending()
     await analytics.flush()
 
     clock.advance(60.0)
-    observe(live, clock, position=north_of(live.receiver_location, 210.0))
+    observe(live, clock, position=north_of(SEATTLE, 210.0))
     clock.advance(120.0)
     live.sweep()
     await worker.process_pending()

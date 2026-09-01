@@ -26,11 +26,13 @@ from collections.abc import AsyncIterator
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from flightsite.analytics.backfill import AnalyticsBackfill
 from flightsite.analytics.bucketing import day_bounds_ms, local_day, shift_days
 from flightsite.analytics.repository import AnalyticsRepository
+from flightsite.analytics.service import AnalyticsService
 from flightsite.app import create_app
 from flightsite.db import Database, MetaRepository, ReceiverMetricDaily
 from flightsite.db.clock import utc_now_ms
@@ -81,7 +83,7 @@ PRESETS = ("today", "7d", "30d", "ytd", "t0")
 class Fixture:
     """Two years of sightings, their rollups, and the app serving them."""
 
-    def __init__(self, app: object, zone: ZoneInfo, now_ms: int) -> None:
+    def __init__(self, app: FastAPI, zone: ZoneInfo, now_ms: int) -> None:
         self.app = app
         self.zone = zone
         self.now_ms = now_ms
@@ -240,7 +242,7 @@ async def test_maintaining_the_current_day_stays_cheap_at_multi_year_scale(
     populated: Fixture,
 ) -> None:
     """The incremental path's own cost: one flush rebuilds today, not history."""
-    service = populated.app.state.analytics  # type: ignore[attr-defined]
+    service: AnalyticsService = populated.app.state.analytics
     service.mark_dirty(populated.today)
 
     started = time.perf_counter()
