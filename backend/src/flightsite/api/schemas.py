@@ -735,6 +735,11 @@ class AnalyticsSummary(_Model):
     busiest_hour_source: str | None = None
     first_sighting_at: IsoTimestamp | None = None
     last_sighting_at: IsoTimestamp | None = None
+    #: SPEC §59's "new milestones/records" — activity-feed milestone and
+    #: record events (``first_ever_aircraft``, ``new_type``, ``range_record``,
+    #: ``receiver_record``, ``milestone``) whose moment falls inside the
+    #: window.
+    new_milestones: int
 
 
 class AnalyticsSummaryResponse(_Model):
