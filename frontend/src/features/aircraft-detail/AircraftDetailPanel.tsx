@@ -27,6 +27,7 @@ import { EmergencySquawkBadge } from "@/features/aircraft-detail/components/Emer
 import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/ExternalTrackerLinks";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
+import { InterestingSection } from "@/features/aircraft-detail/components/InterestingSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
 import { NearestAirportSection } from "@/features/aircraft-detail/components/NearestAirportSection";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
@@ -154,6 +155,11 @@ export function AircraftDetailPanel() {
             </p>
           ) : (
             <>
+              {/* First, above Live: an active match is the most important
+               * thing the panel can say about an aircraft, and it is why
+               * the user clicked the row or the ringed icon that opened
+               * this. Renders nothing at all when nothing is matching. */}
+              <InterestingSection interesting={aircraft.interesting} />
               <DetailSection title="Live">
                 <FieldRow
                   label="Altitude"

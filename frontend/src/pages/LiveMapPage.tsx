@@ -6,6 +6,7 @@ import { FilterDrawer } from "@/features/filters/components/FilterDrawer";
 import { NonPositionedPanel } from "@/features/filters/components/NonPositionedPanel";
 import { QuickFilterChips } from "@/features/filters/components/QuickFilterChips";
 import { useFilterUrlSync } from "@/features/filters/hooks/useFilterUrlSync";
+import { InterestingPanel } from "@/features/interesting/InterestingPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
@@ -26,9 +27,11 @@ const item = requireNavItem("/");
  * the display-radius cap indicator — slice 017), all of which read and
  * write the same filtered set via `features/filters`, the activity feed
  * panel (slice 035), which is the one floating control fed by the socket's
- * `activity` frames rather than by the live picture, and the "Today at a
+ * `activity` frames rather than by the live picture, the "Today at a
  * glance" card (slice 036), a top-center strip fed by the analytics summary
- * endpoint rather than by anything the live picture or the feed carry.
+ * endpoint rather than by anything the live picture or the feed carry, and
+ * the interesting-aircraft panel (slice 039, SPEC §49), which shares the
+ * bottom-left column with the non-positioned list.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -57,7 +60,15 @@ export function LiveMapPage() {
       <LayersControl />
       <QuickFilterChips />
       <FilterDrawer />
-      <NonPositionedPanel />
+      {/* The bottom-left corner, as one upward-growing column: the two
+       * aircraft-list cards share it rather than each claiming the same
+       * absolute slot. `pointer-events-none` on the column keeps the gap
+       * between the cards click-through to the map; each card turns
+       * pointer events back on for itself. */}
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-72 max-w-[80vw] flex-col gap-2">
+        <InterestingPanel />
+        <NonPositionedPanel />
+      </div>
       <ActivityPanel />
       <TodayPanel />
       <DisplayRadiusIndicator />
