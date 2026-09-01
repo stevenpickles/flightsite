@@ -771,6 +771,25 @@ retention policy — which would relax SPEC §65's retain-indefinitely rule and 
 requires an ADR plus explicit reconciliation with the spec, not a silent change.
 Simplification epsilon is the main tuning knob and is benchmarked in slice 052.
 
+> **Measured (slice 050; full results in `docs/PERFORMANCE.md` §7.6).** Three years
+> of Scenario A came out at **5.03 GB — 1.68 GB/year**, against the 1.0–1.2 GB/year
+> predicted above. The row counts in this table are right and so is its arithmetic;
+> the discrepancy is entirely `sighting_tracks`, measured at **2,868 B/row** rather
+> than the ~1.3 KB assumed here. A `WITHOUT ROWID` row (§2.4's table is one) holds
+> only 1002 bytes inline at SQLite's default 4096-byte page size, so a packed track
+> beyond ~46 points spills a whole 4 KiB overflow page — and **54.5% of tracks do**,
+> because the retained-point distribution has a real tail (median 50, p90 110,
+> p99 211). Scenario B scales by the same factor: ~72 GB over three years as built
+> today, against the 36–42 GB predicted above, so that paragraph's sizing advice is
+> optimistic as things stand.
+>
+> The lever is the inline limit, not retention. Giving `sighting_tracks` a rowid, or
+> raising the page size, moves the limit past the distribution; measured at a
+> 16384-byte page the same history is 3.09 GB (1.03 GB/year), inside the prediction
+> above. **The tiered track retention lever is therefore not the one to reach for
+> first**; `docs/PERFORMANCE.md` §7.7 sets out the options, each of which needs an
+> ADR.
+
 ---
 
 ## 10. Time & timezone rules
