@@ -502,7 +502,7 @@ class PersistenceWorker:
         batches = {
             active.icao: batch
             for active in [*opens, *flushes]
-            if (batch := active.checkpoint_batch()) is not None
+            if active.icao not in closing and (batch := active.checkpoint_batch()) is not None
         }
         # Events are written for every accumulator holding any, including one
         # closing this cycle: the transition happened inside the sighting and

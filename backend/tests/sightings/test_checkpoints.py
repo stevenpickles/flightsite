@@ -272,3 +272,39 @@ async def test_an_aircraft_that_leaves_the_live_set_checkpoints_its_tail(
     rows = await checkpoints_of(database, await sighting_id_of(database))
     assert len(rows) == 3
     assert worker.pending_count == 1
+
+
+async def test_an_overflow_episode_loses_no_points_the_live_track_still_holds(
+    live: LiveStore, clock: SimulatedTime, database: Database
+) -> None:
+    """What a shed event costs a track, and what it does not.
+
+    The harvest is keyed on the *track's* high-water mark, not on having seen
+    every event, so an overflow that sheds a hundred ``AircraftUpdated`` events
+    costs nothing: the resync re-observes the record, and the next harvest
+    takes every point the live track accumulated meanwhile. Points are only
+    ever missing when the live track itself no longer has them — and then they
+    are simply absent, visible as a gap between timestamps rather than as an
+    invented straight line.
+    """
+    worker = PersistenceWorker(
+        database=database,
+        live=live,
+        flush_interval_s=FLUSH_INTERVAL_S,
+        tick_interval_s=3_600.0,
+        queue_size=4,
+        clock=clock.epoch_ms,
+    )
+    await worker.start()
+    try:
+        fly(live, clock, [(5.0 + index, index * index * 0.05) for index in range(30)])
+
+        result = await worker.process_pending()
+
+        assert result.resynced is True
+        rows = await checkpoints_of(database, await sighting_id_of(database))
+        stamps = [row.ts_ms for row in rows]
+        assert stamps == sorted(set(stamps))
+        assert len(rows) == 30
+    finally:
+        await worker.stop()
