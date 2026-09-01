@@ -23,10 +23,13 @@ convention:
   whose connections set ``PRAGMA query_only=ON``. A stray write on a read
   session raises instead of quietly becoming a second writer.
 
-From slice 009 onward the write-behind persistence worker is the sole caller of
-:meth:`writer_session`; API queries and analytics use :meth:`read_session`. The
-lock means an accidental second writer degrades to serialization, never to
-``SQLITE_BUSY`` storms or interleaved transactions.
+From slice 009 onward the write-behind persistence worker is the principal
+caller of :meth:`writer_session` — and the only writer of ``aircraft`` and
+``sightings``. The subsystems that own tables of their own reach them the same
+way: the metadata import, the airport dataset, and the receiver metrics each
+take this lock rather than opening a writer of their own. API queries and
+analytics use :meth:`read_session`. The lock means a second writer degrades to
+serialization, never to ``SQLITE_BUSY`` storms or interleaved transactions.
 
 Connection pragmas
 ------------------
