@@ -7,8 +7,11 @@ predicates in :mod:`flightsite.db.models` carry the same list, and
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import IntEnum, StrEnum
+from types import MappingProxyType
 from typing import Final
+
+from flightsite.ingest import PositionSource
 
 
 class ClosureReason(StrEnum):
@@ -40,4 +43,104 @@ class ClosureReason(StrEnum):
 EMERGENCY_SQUAWKS: Final[frozenset[str]] = frozenset({"7500", "7600", "7700"})
 
 
-__all__ = ["EMERGENCY_SQUAWKS", "ClosureReason"]
+class SightingEventType(StrEnum):
+    """A meaningful change within a sighting (``docs/DATA_MODEL.md`` §2.5).
+
+    The first four are emitted by this slice, from values the live stream
+    already carries. The rest belong to the slices that produce the facts they
+    describe — route enrichment (026), classification (024) and alert
+    evaluation (038) — and are listed here, and in the schema's ``CHECK``, so
+    the vocabulary is fixed before the code that writes it lands.
+
+    What is deliberately *not* here: one event per decoder snapshot. SPEC §52
+    asks for meaningful changes, and a table that grew with the update rate
+    would be a second track table with none of the packing.
+    """
+
+    #: The flight began transmitting a different callsign.
+    CALLSIGN_CHANGE = "callsign_change"
+    #: The transponder code changed.
+    SQUAWK_CHANGE = "squawk_change"
+    #: An emergency squawk (:data:`EMERGENCY_SQUAWKS`) appeared.
+    EMERGENCY_START = "emergency_start"
+    #: The squawk left the emergency set again.
+    EMERGENCY_END = "emergency_end"
+    #: Route enrichment answered for this sighting (slice 026).
+    ROUTE_ENRICHED = "route_enriched"
+    #: Classification became available for the airframe (slice 024).
+    CLASSIFICATION_AVAILABLE = "classification_available"
+    #: An alert rule matched (slice 038).
+    ALERT_MATCHED = "alert_matched"
+    #: A matched alert was upgraded to a higher severity (slice 038).
+    ALERT_SEVERITY_UPGRADED = "alert_severity_upgraded"
+
+
+class PositionSourceCode(IntEnum):
+    """Integer codes for ``position_source`` on the hot track structures.
+
+    ``docs/DATA_MODEL.md`` §Conventions puts ``TEXT`` enums on low-volume
+    tables and **integer codes** on the high-volume ones — the checkpoint table
+    and the packed track encoding, where the difference is bytes per point
+    multiplied by a multi-year history. The string forms in ``docs/API.md``
+    §2.8 stay the API's vocabulary; these codes never leave storage.
+
+    The numbering is part of the on-disk format: a packed track written today
+    is decoded by every later version, so codes are appended, never
+    renumbered.
+    """
+
+    ADSB = 0
+    MLAT = 1
+    NONE = 2
+    OTHER = 3
+
+
+_CODE_BY_SOURCE: Final[MappingProxyType[str, PositionSourceCode]] = MappingProxyType(
+    {
+        "adsb": PositionSourceCode.ADSB,
+        "mlat": PositionSourceCode.MLAT,
+        "none": PositionSourceCode.NONE,
+        "other": PositionSourceCode.OTHER,
+    }
+)
+
+_SOURCE_BY_CODE: Final[MappingProxyType[int, PositionSource]] = MappingProxyType(
+    {
+        PositionSourceCode.ADSB.value: "adsb",
+        PositionSourceCode.MLAT.value: "mlat",
+        PositionSourceCode.NONE.value: "none",
+        PositionSourceCode.OTHER.value: "other",
+    }
+)
+
+
+def position_source_code(source: PositionSource) -> int:
+    """The stored integer code for a canonical ``position_source`` string."""
+    code = _CODE_BY_SOURCE.get(source)
+    if code is None:  # pragma: no cover - unreachable while the Literal holds
+        raise ValueError(f"unknown position source: {source!r}")
+    return code.value
+
+
+def position_source_name(code: int) -> PositionSource:
+    """The canonical ``position_source`` string for a stored integer code.
+
+    Raises:
+        ValueError: on a code this build does not know. A track written by a
+            newer FlightSite is not decoded by guessing — the same refusal the
+            packed encoding applies to an unknown ``encoding_version``.
+    """
+    source = _SOURCE_BY_CODE.get(code)
+    if source is None:
+        raise ValueError(f"unknown position source code: {code!r}")
+    return source
+
+
+__all__ = [
+    "EMERGENCY_SQUAWKS",
+    "ClosureReason",
+    "PositionSourceCode",
+    "SightingEventType",
+    "position_source_code",
+    "position_source_name",
+]

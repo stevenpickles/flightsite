@@ -345,7 +345,7 @@ slices:
     title: "Sighting tracks & reception stats"
     phase: 2
     branch: "052-sighting-tracks"
-    status: planned
+    status: merged
     depends_on: ["009"]
     objective: "Store sighting tracks (checkpointed while active, simplified and packed at close), reception statistics, and sighting events."
     scope:

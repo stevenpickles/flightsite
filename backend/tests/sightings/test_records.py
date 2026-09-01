@@ -248,22 +248,23 @@ async def test_a_non_positioned_aircraft_still_gets_a_sighting(
     assert sighting.highest_alt_ft == 4_000
 
 
-async def test_reception_statistics_are_left_for_slice_052(
+async def test_enrichment_and_alert_columns_are_left_for_later_slices(
     worker: PersistenceWorker, live: LiveStore, clock: SimulatedTime, database: Database
 ) -> None:
+    # Reception statistics are filled from the live stream by this slice (see
+    # test_reception_stats.py); route enrichment, airport inference and alert
+    # outcomes belong to slices 026/027/038, and nothing here may invent them.
     observe(live, clock, rssi_db=-12.5, messages=400)
     await worker.process_pending()
 
     sighting = await only_sighting(database)
 
-    assert sighting.msg_count == 0
-    assert sighting.pos_count == 0
-    assert sighting.rssi_peak_db is None
-    assert sighting.rssi_avg_db is None
-    assert sighting.pos_time_pct is None
-    # As are enrichment and alert outcomes.
+    assert sighting.msg_count == 400
+    assert sighting.rssi_peak_db == -12.5
     assert sighting.origin_ident is None
+    assert sighting.destination_ident is None
     assert sighting.route_source is None
+    assert sighting.inferred_airport_ident is None
     assert sighting.max_alert_severity is None
 
 
