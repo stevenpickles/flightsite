@@ -29,6 +29,12 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 FROM nginxinc/nginx-unprivileged:1.31.4-alpine AS runtime
 
+# Patch base-image packages with published fixes (CVE-2026-66046: libexpat
+# 2.8.3 DoS, fixed 2.8.4-r0) until the pinned nginx tag ships them.
+USER root
+RUN apk upgrade --no-cache libexpat
+USER 101
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /build/dist /usr/share/nginx/html
 
