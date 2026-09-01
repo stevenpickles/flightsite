@@ -47,7 +47,10 @@ from flightsite.api.serializers import (
     aircraft_history_row_payload,
     aircraft_payload,
     receiver_payload,
+    sighting_detail_payload,
+    sighting_row_payload,
 )
+from flightsite.api.sightings import SightingsRepository
 from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms
 from flightsite.live import LiveAircraft, LiveStore
@@ -222,6 +225,55 @@ class LiveApiContext:
         if row is None:
             return None
         return aircraft_detail_payload(row, live=self.live.get(icao24) is not None)
+
+    @property
+    def sightings(self) -> SightingsRepository:
+        """The Sightings page's query layer, built from the running database."""
+        database: Database = self._app.state.database
+        return SightingsRepository(database)
+
+    async def sighting_list(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        sort: str,
+        order: str,
+        icao: str | None = None,
+        from_ms: int | None = None,
+        to_ms: int | None = None,
+        interesting: bool | None = None,
+        open_only: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """One page of the sightings log, serialized — §3.6.
+
+        Shared by ``GET /api/v1/sightings`` and
+        ``GET /api/v1/aircraft/{icao}/sightings`` (the per-aircraft log),
+        which is that same query with ``icao`` fixed to one address.
+        """
+        rows = await self.sightings.list_sightings(
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            order=order,
+            icao=icao,
+            from_ms=from_ms,
+            to_ms=to_ms,
+            interesting=interesting,
+            open_only=open_only,
+        )
+        return [sighting_row_payload(row) for row in rows]
+
+    async def sighting_detail(self, sighting_id: int) -> dict[str, Any] | None:
+        """One sighting's full detail, or ``None`` if it doesn't exist — §3.6."""
+        repository = self.sightings
+        row = await repository.get_sighting(sighting_id)
+        if row is None:
+            return None
+        is_open = row["ended_ms"] is None
+        events = await repository.get_events(sighting_id)
+        path = await repository.get_path(sighting_id, is_open=is_open)
+        return sighting_detail_payload(row, events=events, path=path)
 
     async def receiver(self) -> dict[str, Any]:
         """The §3.2 receiver info block, including T0.

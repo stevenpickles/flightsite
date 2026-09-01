@@ -51,6 +51,7 @@ export class MapLibreMockMap {
     this.styleLoaded = false;
   });
   jumpTo = vi.fn();
+  fitBounds = vi.fn();
 
   /** When true, the next construction throws — simulating a browser with
    * no WebGL context (MapLibre throws from its constructor there). Reset by

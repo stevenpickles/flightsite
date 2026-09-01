@@ -17,6 +17,7 @@ import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { LifetimeSection } from "@/features/aircraft-detail/components/LifetimeSection";
 import { LiveMapJumpLink } from "@/features/aircraft-detail/components/LiveMapJumpLink";
+import { RecentSightingsSection } from "@/features/aircraft-detail/components/RecentSightingsSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiV1Error, useAircraftDetailQuery } from "@/lib/api/aircraft";
@@ -111,6 +112,8 @@ export function AircraftDetailPage() {
           units={units}
           timezone={timezone}
         />
+
+        <RecentSightingsSection icao={detail.icao} timezone={timezone} />
 
         <DetailSection title="External trackers">
           <ExternalTrackerLinks
