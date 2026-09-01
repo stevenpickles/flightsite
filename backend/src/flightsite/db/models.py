@@ -8,7 +8,10 @@ model here without a matching migration (or vice versa) fails the drift test in
 Tables land slice by slice per ``docs/DATA_MODEL.md`` §12: :class:`Meta` in
 slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`SightingTrackCheckpoint`, :class:`SightingTrack` and
-:class:`SightingEvent` in slice 052.
+:class:`SightingEvent` in slice 052, and the metadata group
+(:class:`MetadataSource`, :class:`AircraftMetadata`,
+:class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
+:class:`OperatorGroup`, :class:`Operator`) in slice 021.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from sqlalchemy import (
     REAL,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -69,6 +73,20 @@ SIGHTING_EVENT_TYPE_CHECK: Final[str] = (
     "'route_enriched', 'classification_available', 'alert_matched', "
     "'alert_severity_upgraded')"
 )
+
+#: The ``metadata_sources.status`` vocabulary of ``docs/DATA_MODEL.md`` §3.1,
+#: spelled as the SQL ``CHECK`` predicate.
+#:
+#: Three terminal values, deliberately: a run that is *in flight* is process
+#: state, not stored state — a crash mid-import must not leave a row claiming
+#: to be running forever. In-flight progress is
+#: :class:`flightsite.metadata.registry.SourceRunState`, held in memory and
+#: read by the slice-025 status endpoint; the row here records only what the
+#: last completed attempt did. The runtime enum is
+#: :class:`flightsite.metadata.registry.SourceStatus`; as with
+#: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``metadata``
+#: depends on ``db``, not the reverse), so a test asserts the two agree.
+METADATA_SOURCE_STATUS_CHECK: Final[str] = "status IN ('never_run', 'ok', 'failed')"
 
 
 class Base(DeclarativeBase):
@@ -356,3 +374,202 @@ class SightingEvent(Base):
         return (
             f"SightingEvent(id={self.id!r}, sighting_id={self.sighting_id!r}, type={self.type!r})"
         )
+
+
+class MetadataSource(Base):
+    """Per-source import status (``docs/DATA_MODEL.md`` §3.1, SPEC §27).
+
+    One row per configured metadata source, and the only place "when did this
+    source last work, and what did it fail with" is recorded. SPEC §27 requires
+    each source to succeed or fail *independently*, so nothing here is shared
+    between sources: an import writes exactly its own row.
+
+    ``last_attempt_ms`` moves on every attempt while ``last_success_ms``,
+    ``dataset_version`` and ``row_count`` describe the dataset currently in
+    ``aircraft_metadata`` — after a failed import those still describe the
+    previous, still-intact dataset, which is precisely what "preserves the
+    previous working dataset" means to a user reading the status.
+    """
+
+    __tablename__ = "metadata_sources"
+    __table_args__ = (
+        CheckConstraint(METADATA_SOURCE_STATUS_CHECK, name="ck_metadata_sources_status"),
+        {"sqlite_with_rowid": False},
+    )
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_attempt_ms: Mapped[int | None] = mapped_column(Integer)
+    last_success_ms: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="never_run", server_default=text("'never_run'")
+    )
+    #: Upstream version string or content hash — whatever identifies the
+    #: snapshot that produced the current rows.
+    dataset_version: Mapped[str | None] = mapped_column(Text)
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"MetadataSource(source={self.source!r}, status={self.status!r})"
+
+
+class _AircraftMetadataColumns:
+    """The per-source metadata column set, shared by the live and staging tables.
+
+    A declarative mixin rather than two hand-written copies: the staging table
+    exists only to receive a full source snapshot before it is promoted, so any
+    divergence between the two shapes would be a bug, and the ``INSERT ...
+    SELECT`` that promotes one into the other assumes they match column for
+    column.
+    """
+
+    icao24: Mapped[str] = mapped_column(Text, primary_key=True)
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    registration: Mapped[str | None] = mapped_column(Text)
+    #: ICAO type designator, e.g. ``B738``.
+    type_code: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    manufacture_year: Mapped[int | None] = mapped_column(Integer)
+    operator_name: Mapped[str | None] = mapped_column(Text)
+    #: FAA owner where released; ``NULL`` when withheld — SPEC §26 prefers
+    #: ``Unknown`` in the UI to speculation here.
+    owner: Mapped[str | None] = mapped_column(Text)
+    #: Upstream military flag, normalized to 0/1 by the provider.
+    military_flag: Mapped[int | None] = mapped_column(Integer)
+    #: Remaining source-specific flags, opaque to SQL; slice 024 reads them.
+    flags_json: Mapped[str | None] = mapped_column(Text)
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class AircraftMetadata(_AircraftMetadataColumns, Base):
+    """One row per ``(icao24, source)`` (``docs/DATA_MODEL.md`` §3.2).
+
+    Sources never overwrite each other: an import replaces only its own rows,
+    so a failed FAA import cannot damage Mictronics data and the field-level
+    precedence in :class:`AircraftMetadataResolved` always has every source's
+    unmerged claim available to re-derive from.
+
+    ``WITHOUT ROWID`` with ``(icao24, source)`` as the primary key clusters an
+    airframe's per-source rows together, which is how resolution reads them —
+    one airframe's claims at a time, in ``icao24`` order.
+    """
+
+    __tablename__ = "aircraft_metadata"
+    __table_args__ = (
+        # Declared here rather than on the shared mixin: the staging table
+        # takes the same columns but must not take this constraint.
+        ForeignKeyConstraint(["source"], ["metadata_sources.source"]),
+        {"sqlite_with_rowid": False},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AircraftMetadata(icao24={self.icao24!r}, source={self.source!r})"
+
+
+class AircraftMetadataStaging(_AircraftMetadataColumns, Base):
+    """Landing area for one source's snapshot before it is promoted (§3.2).
+
+    ``docs/DATA_MODEL.md`` §3.2 spells the import as *staging table → validate
+    → swap inside one transaction*. Loading a multi-hundred-thousand-row
+    snapshot straight into :class:`AircraftMetadata` inside a single
+    transaction would hold the process's one writer (ADR-0008) for the whole
+    download-sized write, stalling sighting persistence; loading it here in
+    short batched transactions and promoting it with one small
+    ``DELETE``/``INSERT ... SELECT`` keeps the writer available throughout and
+    makes the visible swap atomic.
+
+    Rows here are scratch: they are deleted when their run promotes or fails,
+    and any left behind by a crash are cleared before the next run of that
+    source, so they can never leak into a later import. Deliberately **no**
+    foreign key to ``metadata_sources`` — this is not integrity-bearing data
+    and the per-row check would be paid once per staged row for nothing.
+    """
+
+    __tablename__ = "aircraft_metadata_staging"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AircraftMetadataStaging(icao24={self.icao24!r}, source={self.source!r})"
+
+
+class AircraftMetadataResolved(Base):
+    """Field-level precedence, materialized (``docs/DATA_MODEL.md`` §3.3).
+
+    One row per airframe, each field carrying the name of the source that won
+    it. Resolution happens at import time rather than at read time because the
+    Aircraft page sorts and filters on resolved type and operator in SQL; a
+    per-field EAV provenance table was rejected as slow and unqueryable at this
+    scale (§3.3, §8).
+
+    The ``_src`` value is non-``NULL`` exactly when its field is non-``NULL``:
+    provenance describes a value, so a field nobody supplied has no source.
+    """
+
+    __tablename__ = "aircraft_metadata_resolved"
+    __table_args__ = (
+        Index("ix_amr_registration", "registration"),
+        Index("ix_amr_type", "type_code"),
+        Index("ix_amr_opgroup", "operator_group_id"),
+        {"sqlite_with_rowid": False},
+    )
+
+    icao24: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    registration: Mapped[str | None] = mapped_column(Text)
+    registration_src: Mapped[str | None] = mapped_column(Text)
+    type_code: Mapped[str | None] = mapped_column(Text)
+    type_code_src: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    model_src: Mapped[str | None] = mapped_column(Text)
+    manufacture_year: Mapped[int | None] = mapped_column(Integer)
+    year_src: Mapped[str | None] = mapped_column(Text)
+    operator_name: Mapped[str | None] = mapped_column(Text)
+    operator_src: Mapped[str | None] = mapped_column(Text)
+    #: Curated grouping, filled once slice 024 populates ``operators``. The
+    #: exact operator string above is always preserved beside it (SPEC §38).
+    operator_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("operator_groups.id"))
+    owner: Mapped[str | None] = mapped_column(Text)
+    owner_src: Mapped[str | None] = mapped_column(Text)
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AircraftMetadataResolved(icao24={self.icao24!r}, type_code={self.type_code!r})"
+
+
+class OperatorGroup(Base):
+    """A curated operator grouping (``docs/DATA_MODEL.md`` §3.5).
+
+    Created empty by slice 021 and populated by slice 024. It exists this early
+    because :class:`AircraftMetadataResolved` references it and ADR-0001 runs
+    with ``foreign_keys=ON``: the referenced table has to exist at the moment
+    the referencing one is created, so splitting the two across migrations
+    would make the first metadata migration fail.
+    """
+
+    __tablename__ = "operator_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"OperatorGroup(id={self.id!r}, slug={self.slug!r})"
+
+
+class Operator(Base):
+    """An exact operator string mapped to its group (§3.5).
+
+    Created empty by slice 021, populated by slice 024. Grouping is additive:
+    the exact operator string stays on the metadata rows regardless of whether
+    a group claims it (SPEC §38).
+    """
+
+    __tablename__ = "operators"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("operator_groups.id"), nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Operator(name={self.name!r}, group_id={self.group_id!r})"
