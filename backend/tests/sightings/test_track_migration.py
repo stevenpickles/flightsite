@@ -161,7 +161,10 @@ def test_this_revision_sits_directly_on_the_previous_one() -> None:
     script = migrate.script_directory().get_revision(REVISION)
 
     assert script.down_revision == PREVIOUS
-    assert migrate.head_revision() == REVISION
+    # Not "this is the head": later slices legitimately add revisions on top of
+    # it (021 added 0004). What must stay true is that this one hangs off the
+    # head it was written against and remains on the single linear path — the
+    # head itself is asserted by tests/db/test_migrations.py.
     reachable = {revision.revision for revision in migrate.script_directory().walk_revisions()}
     assert REVISION in reachable
 

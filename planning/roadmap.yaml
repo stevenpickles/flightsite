@@ -638,7 +638,7 @@ slices:
     title: "Metadata framework"
     phase: 4
     branch: "021-metadata-framework"
-    status: planned
+    status: merged
     depends_on: ["005"]
     objective: "Normalized aircraft-metadata schema, provider interface, and transactional import pipeline with per-source status."
     scope:
