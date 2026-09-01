@@ -23,6 +23,7 @@ from flightsite.db.models import (
     META_KEY_T0,
     METADATA_SOURCE_STATUS_CHECK,
     ROUTE_CACHE_STATUS_CHECK,
+    WATCHLIST_ENTRY_KIND_CHECK,
     Aircraft,
     AircraftClassification,
     AircraftMetadata,
@@ -48,6 +49,8 @@ from flightsite.db.models import (
     SightingTrack,
     SightingTrackCheckpoint,
     TypeStats,
+    Watchlist,
+    WatchlistEntry,
 )
 from flightsite.db.startup import DATABASE_SUBSYSTEM, initialize_database
 
@@ -59,6 +62,7 @@ __all__ = [
     "META_KEY_T0",
     "QUICK_CHECK_OK",
     "ROUTE_CACHE_STATUS_CHECK",
+    "WATCHLIST_ENTRY_KIND_CHECK",
     "Aircraft",
     "AircraftClassification",
     "AircraftMetadata",
@@ -87,6 +91,8 @@ __all__ = [
     "SightingTrack",
     "SightingTrackCheckpoint",
     "TypeStats",
+    "Watchlist",
+    "WatchlistEntry",
     "create_sqlite_engine",
     "database_path",
     "from_epoch_ms",

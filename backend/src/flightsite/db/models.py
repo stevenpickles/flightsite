@@ -34,6 +34,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -123,6 +124,17 @@ METADATA_SOURCE_STATUS_CHECK: Final[str] = "status IN ('never_run', 'ok', 'faile
 #: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``enrichment``
 #: depends on ``db``, not the reverse), so a test asserts the two agree.
 ROUTE_CACHE_STATUS_CHECK: Final[str] = "status IN ('ok', 'not_found', 'error')"
+
+#: The ``watchlist_entries.kind`` vocabulary of ``docs/DATA_MODEL.md`` §4.1 /
+#: SPEC §42, spelled as the SQL ``CHECK`` predicate.
+#:
+#: The runtime enum is
+#: :class:`flightsite.watchlists.vocabulary.WatchlistEntryKind`; it cannot be
+#: imported here (``watchlists`` depends on ``db``, not the reverse), so a
+#: test asserts the two agree rather than letting them drift silently.
+WATCHLIST_ENTRY_KIND_CHECK: Final[str] = (
+    "kind IN ('icao24', 'registration', 'type_code', 'operator', 'category')"
+)
 
 
 class Base(DeclarativeBase):
@@ -1064,3 +1076,77 @@ class TypeStats(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"TypeStats(type_code={self.type_code!r}, unique={self.unique_aircraft!r})"
+
+
+class Watchlist(Base):
+    """A user-defined watchlist (``docs/DATA_MODEL.md`` §4.1, SPEC §42, slice 037).
+
+    A plain rowid table, like :class:`Aircraft` and :class:`Sighting`: rows are
+    few (a handful to a few dozen, created and edited through the internal
+    CRUD API), addressed by surrogate id from :class:`WatchlistEntry`'s foreign
+    key, and never bulk-scanned — the opposite access pattern from the
+    ``WITHOUT ROWID`` rollup tables above.
+    """
+
+    __tablename__ = "watchlists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Watchlist(id={self.id!r}, name={self.name!r})"
+
+
+class WatchlistEntry(Base):
+    """One membership rule on a watchlist (§4.1).
+
+    ``kind`` names which field of a live aircraft this entry matches against —
+    ``icao24``, ``registration``, ``type_code``, ``operator`` or ``category``
+    (SPEC §42's reference list) — and ``value`` is that field's *normalized*
+    form: lower-case for ``icao24``, upper-case for ``registration`` and
+    ``type_code``, upper-case for ``operator``, and the
+    :class:`~flightsite.classification.vocabulary.MissionCategory` spelling for
+    ``category``. Normalizing at write time is what lets the in-memory match
+    index (:mod:`flightsite.watchlists.matcher`) compare a live aircraft's own
+    normalized fields with simple equality rather than re-normalizing on every
+    lookup.
+
+    ``ON DELETE CASCADE`` — the only cascading foreign key in the schema —
+    because an entry has no meaning once its watchlist is gone and deleting a
+    watchlist is meant to delete everything on it in one action; ADR-0001 runs
+    with ``PRAGMA foreign_keys = ON``, which is what makes SQLite enforce the
+    cascade rather than merely declare it.
+
+    The ``UNIQUE`` constraint is per watchlist: the same ICAO hex may appear on
+    two different watchlists (a user tracking it for two different reasons),
+    but not twice on the same one. ``ix_wentries_kind_value`` is the match
+    index's read path if it is ever rebuilt from SQL instead of held in
+    memory, and is what a future audit query over "every entry naming this
+    aircraft" would use.
+    """
+
+    __tablename__ = "watchlist_entries"
+    __table_args__ = (
+        CheckConstraint(WATCHLIST_ENTRY_KIND_CHECK, name="ck_watchlist_entries_kind"),
+        UniqueConstraint(
+            "watchlist_id", "kind", "value", name="uq_watchlist_entries_watchlist_kind_value"
+        ),
+        Index("ix_wentries_kind_value", "kind", "value"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    watchlist_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"WatchlistEntry(id={self.id!r}, watchlist_id={self.watchlist_id!r}, "
+            f"kind={self.kind!r}, value={self.value!r})"
+        )
