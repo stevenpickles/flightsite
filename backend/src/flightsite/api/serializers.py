@@ -46,6 +46,12 @@ this field is additive on purpose so that slice can read watchlist membership
 (:meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches`) as one of
 several conditions without this payload's shape changing under it.
 
+Slice 038 fills in ``interesting``, and the shape did not have to change for it
+either — §2.7's ``null``-when-unknown rule meant the key was already there,
+already documented, and already the right one. It is a nullable *object*
+rather than an always-present one of nulls, and §3.3 says why: ``null`` is not
+"we have not checked", it is "nothing is matching", which is a complete answer.
+
 The metadata is passed in rather than looked up here. This function is called
 once per aircraft per WebSocket frame and must not touch SQLite
 (``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
@@ -53,8 +59,6 @@ once per aircraft per WebSocket frame and must not touch SQLite
 in-memory read, or ``None`` for an aircraft the cache has not resolved yet.
 ``None`` and "resolved to nothing" both serialize as ``null`` fields — the
 difference matters to the cache, not to a client.
-
-The alert match (``interesting``) still arrives with slice 038.
 
 ``emergency`` is not a separate decoder field — it is the squawk restated when
 the squawk is one of the three emergency codes (:data:`EMERGENCY_SQUAWKS`), so
@@ -106,6 +110,7 @@ from flightsite.activity.model import StoredActivityEvent
 from flightsite.airports.model import AirportContext
 from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
+from flightsite.alerts.model import InterestingState, StoredAlertMatch
 from flightsite.analytics.bucketing import Window
 from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, RareType, Summary
 from flightsite.api.receiver_stats import CommonRecord, MostFrequentAircraft, SignalHistogram
@@ -265,6 +270,7 @@ def aircraft_payload(
     route: SightingRoute | None = None,
     airport: AirportContext | None = None,
     watchlists: Sequence[str] = (),
+    interesting: InterestingState | None = None,
 ) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
@@ -303,6 +309,16 @@ def aircraft_payload(
             list, not a missing key, is "no watchlist matches this", and a
             client never has to tell that apart from "watchlists is not a
             thing this build carries".
+        interesting: the alert match standing against this aircraft *right
+            now* (slice 038), from
+            :meth:`~flightsite.alerts.engine.AlertEngine.interesting` — another
+            pure in-memory lookup, so this never costs the aircraft path a
+            database read either. ``None`` is §3.3's own definition of the
+            null block ("no active alert match") and covers an install with no
+            rules, an aircraft nothing matches, and an aircraft that matched
+            earlier in its sighting and no longer does. The record of what
+            happened is not lost with it: it is on the sighting's
+            ``max_alert_severity``, in its timeline, and in the alert history.
     """
     resolved = None if metadata is None else metadata.metadata
     return {
@@ -334,7 +350,7 @@ def aircraft_payload(
         "classification": None if metadata is None else metadata.classification.payload(),
         "route": _route(route),
         "nearest_airport": _nearest_airport(airport),
-        "interesting": None,
+        "interesting": None if interesting is None else interesting.payload(),
         "watchlists": list(watchlists),
         "provenance": _provenance(record, metadata, route, airport),
     }
@@ -1040,6 +1056,30 @@ def activity_event_payload(event: StoredActivityEvent) -> dict[str, Any]:
     }
 
 
+def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
+    """One alert-match history row — ``docs/API.md`` §3.9's
+    ``GET /api/v1/alerts/matches``.
+
+    ``rule`` is an object rather than two flat fields because a built-in match
+    has no rule at all (SPEC §47), and ``rule: null`` beside a ``builtin_key``
+    says that in one read; two nullable columns would leave a client inferring
+    it. The ``reason`` is the text recorded when the match happened, never
+    recomposed from the rule as it stands today — so history keeps saying what
+    the user was actually shown even after the rule behind it is renamed.
+    """
+    return {
+        "id": match.id,
+        "at": iso_utc(from_epoch_ms(match.matched_ms)),
+        "severity": match.severity,
+        "reason": match.reason,
+        "icao": match.icao24,
+        "sighting_id": match.sighting_id,
+        "rule": (None if match.rule_id is None else {"id": match.rule_id, "name": match.rule_name}),
+        "builtin_key": match.builtin_key,
+        "notified": match.notified,
+    }
+
+
 def _rounded(value: float | None) -> float | None:
     """A distance rounded to the API's documented precision, or ``None``."""
     return None if value is None else round(value, DISTANCE_DECIMALS)
@@ -1056,6 +1096,7 @@ __all__ = [
     "aircraft_history_row_payload",
     "aircraft_payload",
     "airport_feature_collection_payload",
+    "alert_match_payload",
     "analytics_aircraft_payload",
     "analytics_daily_row_payload",
     "analytics_group_payload",

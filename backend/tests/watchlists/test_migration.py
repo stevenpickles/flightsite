@@ -191,7 +191,11 @@ async def test_models_and_migrations_do_not_drift_at_head(db_path: Path) -> None
 
 
 async def test_the_downgrade_drops_exactly_this_slice_s_tables(db_path: Path) -> None:
-    await upgrade_empty_database(db_path)
+    """Upgraded to *this* revision rather than to head: later slices add tables
+    of their own (0012's alert tables are the first), and a downgrade from head
+    to 0010 would drop theirs too — which would say nothing about what 0011's
+    own downgrade does."""
+    await upgrade_empty_database(db_path, REVISION)
     before = table_names(db_path)
 
     async with database_at(db_path) as database:

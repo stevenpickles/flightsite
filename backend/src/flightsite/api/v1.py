@@ -51,6 +51,8 @@ from flightsite.api.schemas import (
     AirportFeatureCollection,
     AirportSizeClassLiteral,
     AirspaceFeatureCollection,
+    AlertMatchListResponse,
+    AlertSeverityLiteral,
     AnalyticsAircraftResponse,
     AnalyticsClassificationResponse,
     AnalyticsDailyResponse,
@@ -59,6 +61,7 @@ from flightsite.api.schemas import (
     AnalyticsRarityResponse,
     AnalyticsSummaryResponse,
     CurrentAircraftResponse,
+    InterestingAircraftResponse,
     ReceiverInfo,
     ReceiverLifetimeStats,
     ReceiverMetricSeries,
@@ -340,6 +343,35 @@ async def current_aircraft(
     size of the returned set.
     """
     items = _context(request).aircraft(positioned=positioned)
+    return {"items": items, "total": len(items)}
+
+
+@router.get(
+    "/aircraft/interesting",
+    response_model=InterestingAircraftResponse,
+    tags=["live"],
+    summary="Currently interesting aircraft",
+)
+async def interesting_aircraft(request: Request) -> dict[str, Any]:
+    """Live aircraft an alert rule or a built-in currently matches — §3.4.
+
+    The §3.3 aircraft object with ``interesting`` guaranteed non-null, ordered
+    **severity then distance** (SPEC §49's panel ordering). An aircraft with no
+    known distance sorts last within its severity band: a panel that put the
+    aircraft it cannot place above the one overhead would answer the wrong
+    question.
+
+    Answered entirely from the in-memory live registry and the alert engine's
+    already-computed state; nothing on this path touches SQLite
+    (``docs/ARCHITECTURE.md`` §3.1). Not paginated, for the reason
+    ``/aircraft/current`` is not.
+
+    ``interesting`` reflects what is matching *right now*, so an aircraft whose
+    only rule was a distance window it has since left drops out of this list.
+    What happened is not lost with it — the sighting keeps its
+    ``max_alert_severity`` and ``GET /api/v1/alerts/matches`` keeps the match.
+    """
+    items = _context(request).interesting_aircraft()
     return {"items": items, "total": len(items)}
 
 
@@ -628,6 +660,57 @@ async def activity_feed(
         limit=limit,
         offset=offset,
         types=type,
+        from_ms=_bound_ms(from_),
+        to_ms=_bound_ms(to),
+    )
+    return {"items": items, "total": None, "limit": limit, "offset": offset}
+
+
+@router.get(
+    "/alerts/matches",
+    response_model=AlertMatchListResponse,
+    tags=["activity"],
+    summary="Alert match history",
+)
+async def alert_matches(
+    request: Request,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    severity: Annotated[
+        AlertSeverityLiteral | None,
+        Query(description="Restrict to one severity of the §2.8 ladder."),
+    ] = None,
+    icao: Annotated[
+        str | None,
+        Query(pattern=ICAO_PATTERN, description="Restrict to one airframe (§2.9)."),
+    ] = None,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="Inclusive lower bound on `at` (§2.2)."),
+    ] = None,
+    to: Annotated[
+        datetime | None, Query(description="Inclusive upper bound on `at` (§2.2).")
+    ] = None,
+) -> dict[str, Any]:
+    """Every alert that has fired — ``docs/API.md`` §3.9, SPEC §43 to §48.
+
+    Newest first, with the match id as the tie-break so paging through several
+    matches recorded in one instant can neither repeat nor skip a row — the
+    same ordering ``/activity`` uses and for the same reason.
+
+    One row per rule per sighting (SPEC §48), plus the documented exception: a
+    higher-priority condition matching later is a *different* rule, so it is a
+    different row. A built-in emergency match has ``rule: null`` and a
+    ``builtin_key`` instead, because SPEC §47 makes it fire without a rule at
+    all. ``total`` is always ``null``, for the reason ``/activity`` gives.
+    """
+    items = await _context(request).alert_matches(
+        limit=limit,
+        offset=offset,
+        severity=severity,
+        icao=icao,
         from_ms=_bound_ms(from_),
         to_ms=_bound_ms(to),
     )

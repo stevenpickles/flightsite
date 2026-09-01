@@ -19,7 +19,10 @@ reaches the database and the index is never rebuilt from something invalid.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import contextlib
+from collections.abc import Awaitable, Callable
+
+import structlog
 
 from flightsite.db import Database, utc_now_ms
 from flightsite.watchlists.matcher import WatchlistMatcher
@@ -33,8 +36,23 @@ from flightsite.watchlists.vocabulary import (
     normalize_watchlist_name,
 )
 
+logger = structlog.get_logger(__name__)
+
 #: UTC epoch-millisecond source, injected for tests.
 ClockFn = Callable[[], int]
+
+#: Awaited after the match index has been rebuilt, so a consumer that derives
+#: something from *which watchlist a name belongs to* can recompute it on the
+#: same edge (roadmap slice 038: an alert rule's ``watchlist_id`` condition
+#: resolves to a watchlist name, and a rename or a deletion changes what it
+#: resolves to without any rule changing).
+#:
+#: Awaited rather than synchronous, unlike the sighting worker's own listeners:
+#: this fires from a CRUD request handler, not from inside a cycle, so a
+#: listener that needs to read the database may — and the acceptance criterion
+#: it exists for ("matching updates without restart") is about the mutation
+#: having *finished* propagating before the request answers.
+IndexListener = Callable[[], Awaitable[None]]
 
 
 class WatchlistService:
@@ -45,17 +63,54 @@ class WatchlistService:
         clock: UTC epoch-millisecond source, injected for tests.
     """
 
-    __slots__ = ("_clock", "_matcher", "_repository")
+    __slots__ = ("_clock", "_listeners", "_matcher", "_repository")
 
     def __init__(self, *, database: Database, clock: ClockFn = utc_now_ms) -> None:
         self._repository = WatchlistRepository(database)
         self._matcher = WatchlistMatcher()
         self._clock = clock
+        self._listeners: list[IndexListener] = []
 
     @property
     def matcher(self) -> WatchlistMatcher:
         """The live match index — read on the aircraft path, never written there."""
         return self._matcher
+
+    # --------------------------------------------------------------- the seam
+
+    def subscribe_index(self, listener: IndexListener) -> None:
+        """Register a listener awaited after every index rebuild.
+
+        Idempotent per listener object, exactly like the sighting worker's own
+        seam: registering the same callable twice registers it once, so a
+        service restarted against a running app cannot end up notified in
+        duplicate.
+        """
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def unsubscribe_index(self, listener: IndexListener) -> None:
+        """Remove a listener registered by :meth:`subscribe_index`."""
+        with contextlib.suppress(ValueError):
+            self._listeners.remove(listener)
+
+    async def _notify_index(self) -> None:
+        """Tell every listener the index was rebuilt, defensively.
+
+        A listener that raises is logged and skipped rather than allowed to
+        propagate: the watchlist mutation has already committed and its own
+        index is already correct, so an exception here could only turn a
+        successful CRUD request into a 500 about something that worked.
+        """
+        for listener in self._listeners:
+            try:
+                await listener()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "watchlist_index_listener_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     async def start(self) -> None:
         """Load the index from the database.
@@ -81,6 +136,7 @@ class WatchlistService:
         entries = await self._repository.list_all_entries()
         names = {watchlist.id: watchlist.name for watchlist in watchlists}
         self._matcher.reload(entries, names)
+        await self._notify_index()
 
     # --------------------------------------------------------- watchlists
 
@@ -200,4 +256,4 @@ class WatchlistService:
         return removed
 
 
-__all__ = ["ClockFn", "WatchlistService"]
+__all__ = ["ClockFn", "IndexListener", "WatchlistService"]

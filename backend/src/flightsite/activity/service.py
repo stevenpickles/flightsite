@@ -11,6 +11,9 @@ wait on SQLite, and only one thing in the process may write to it.
   :meth:`~flightsite.sightings.worker.PersistenceWorker.subscribe_lifecycle`
   and records what each *committed* cycle closed. That callback is synchronous,
   allocation-light and never raises — it runs inside the worker's cycle.
+  :meth:`ActivityService.record_alert_matches` (slice 038) is the same shape
+  and the same contract, called from the alert engine's cycle once its own
+  transaction has committed.
 * **Written on this service's own task, in its own transaction.** A pass reads
   the facts, asks the producers what they justify, and writes the result
   through :meth:`~flightsite.db.engine.Database.writer_session`. A feed bug can
@@ -79,6 +82,7 @@ from typing import Final
 import structlog
 
 from flightsite.activity.facts import (
+    AlertMatchFact,
     HealthEpisode,
     ImportOutcome,
     LongestSighting,
@@ -91,6 +95,7 @@ from flightsite.activity.model import (
     StoredActivityEvent,
 )
 from flightsite.activity.producers import (
+    alert_events,
     best_closed,
     first_ever_events,
     health_events,
@@ -211,6 +216,7 @@ class ActivityService:
         "_longest",
         "_meta",
         "_milestones",
+        "_pending_alerts",
         "_pending_closed",
         "_pending_episodes",
         "_pending_imports",
@@ -263,6 +269,7 @@ class ActivityService:
         self._pending_closed: set[int] = set()
         self._pending_imports: list[ImportOutcome] = []
         self._pending_episodes: list[HealthEpisode] = []
+        self._pending_alerts: list[AlertMatchFact] = []
         self._announced_offline: bool | None = None
         self._announced_since_ms = 0
         self._candidate_offline: bool | None = None
@@ -342,6 +349,25 @@ class ActivityService:
                     error=result.error,
                 )
             )
+
+    def record_alert_matches(self, matches: Sequence[AlertMatchFact]) -> None:
+        """Note alert matches the alert engine has just recorded (slice 038).
+
+        Synchronous and memory-only, the same contract
+        :meth:`record_lifecycle` has: it is called from
+        :class:`flightsite.alerts.engine.AlertEngine`'s cycle, right after that
+        cycle's own transaction committed, and it must not be able to fail one.
+        The events are written by the next pass, on this service's own
+        transaction, so a feed failure can never turn a recorded alert into an
+        unrecorded one.
+
+        Only matches the alert tables actually *created* reach here — the two
+        partial unique indexes on ``alert_matches`` decide that — so this
+        method never sees a duplicate to filter, and the ``dedupe_key`` the
+        producer derives is a second, independent guarantee rather than the
+        only one.
+        """
+        self._pending_alerts.extend(matches)
 
     def _publish(self, events: Sequence[StoredActivityEvent]) -> None:
         """Hand new events to every listener, defensively.
@@ -460,6 +486,8 @@ class ActivityService:
         self._pending_imports = []
         episodes = self._pending_episodes
         self._pending_episodes = []
+        alerts = self._pending_alerts
+        self._pending_alerts = []
 
         observations: tuple[SightingObservation, ...] = ()
         try:
@@ -469,7 +497,12 @@ class ActivityService:
             observations = await self._repository.observations(sorted(set(scanned) | closed))
             records = await self._repository.receiver_records()
             batch = await self._detect(
-                observations, records=records, imports=imports, episodes=episodes, now_ms=now_ms
+                observations,
+                records=records,
+                imports=imports,
+                episodes=episodes,
+                alerts=alerts,
+                now_ms=now_ms,
             )
             watermark = max(scanned, default=self._watermark)
             published = await self._repository.record(batch)
@@ -483,6 +516,7 @@ class ActivityService:
             self._pending_closed |= closed
             self._pending_imports = imports + self._pending_imports
             self._pending_episodes = episodes + self._pending_episodes
+            self._pending_alerts = alerts + self._pending_alerts
             self._counters.increment(DB_ERRORS_COUNTER)
             logger.warning("activity_pass_failed", error=str(exc), error_type=type(exc).__name__)
             return PassResult(examined=len(observations), failed=True)
@@ -513,6 +547,7 @@ class ActivityService:
         records: ReceiverRecords,
         imports: Sequence[ImportOutcome],
         episodes: Sequence[HealthEpisode],
+        alerts: Sequence[AlertMatchFact],
         now_ms: int,
     ) -> ActivityBatch:
         """Ask every producer what these facts justify, and merge the answers."""
@@ -527,6 +562,7 @@ class ActivityService:
             record_events(self._records, records, now_ms=now_ms),
             health_events(episodes),
             import_events(imports),
+            alert_events(alerts),
         ]
         if await self._military_due(observations):
             batches.append(military_milestone(await self._repository.military_first()))

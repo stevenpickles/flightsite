@@ -19,7 +19,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`LifetimeStat`) in slice 033, and the analytics rollup group
 (:class:`DailyStats`, :class:`DailyTypeStats`, :class:`DailyOperatorStats`,
 :class:`TypeStats`) in slice 031, and the activity group
-(:class:`ActivityEvent`, :class:`Milestone`) in slice 035.
+(:class:`ActivityEvent`, :class:`Milestone`) in slice 035, and the alert group
+(:class:`AlertRule`, :class:`AlertMatch`) in slice 038.
 """
 
 from __future__ import annotations
@@ -73,6 +74,22 @@ ALERT_SEVERITY_CHECK: Final[str] = (
 #: ``max_alert_severity``. Constrained — unlike ``activity_events.type``,
 #: which stays open — because the ladder is fixed and shared.
 ACTIVITY_SEVERITY_CHECK: Final[str] = "severity IN ('info', 'interesting', 'high', 'critical')"
+
+#: The same §2.8 ladder again, on ``alert_rules.severity`` and
+#: ``alert_matches.severity`` (``docs/DATA_MODEL.md`` §4.2/§4.3, slice 038).
+#:
+#: Spelled out rather than aliased to :data:`ACTIVITY_SEVERITY_CHECK`, whose
+#: text it happens to equal: each constraint belongs to the document that owns
+#: its table, and a migration copies the predicate it was written against
+#: rather than whatever a shared name later points at. A test asserts every
+#: spelling of the ladder — these two, :data:`ALERT_SEVERITY_CHECK` and
+#: :class:`flightsite.alerts.vocabulary.AlertSeverity` — stays one ladder.
+ALERT_ROW_SEVERITY_CHECK: Final[str] = "severity IN ('info', 'interesting', 'high', 'critical')"
+
+#: Every ``alert_matches`` row attributes itself to *something* that matched
+#: (``docs/DATA_MODEL.md`` §4.3): a user rule, or one of the built-in
+#: emergency-squawk detectors, which have no rule row to point at (SPEC §47).
+ALERT_MATCH_ORIGIN_CHECK: Final[str] = "rule_id IS NOT NULL OR builtin_key IS NOT NULL"
 
 #: SPEC §39's mission/use categories, spelled as ``docs/DATA_MODEL.md`` §3.4's
 #: ``CHECK`` predicate.
@@ -1242,3 +1259,114 @@ class Milestone(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Milestone(key={self.key!r}, achieved_ms={self.achieved_ms!r})"
+
+
+class AlertRule(Base):
+    """One interesting-aircraft rule (``docs/DATA_MODEL.md`` §4.2, slice 038).
+
+    The conditions are an **embedded, Pydantic-validated JSON document** rather
+    than a child table, and §4.2 gives the reason: v1's conditions are a small
+    closed set combined with ``AND`` only (SPEC §43), evaluated in memory
+    against live state and never queried relationally, so a conditions table
+    would add joins and migration surface for no query benefit. The document is
+    versioned (``conditions_json.version``) so that a future nested-expression
+    feature migrates explicitly rather than by guesswork —
+    :class:`flightsite.alerts.model.RuleConditions` owns its shape.
+
+    ``template_key`` is the provenance §4.2 asks for: non-``NULL`` on a rule
+    instantiated from one of SPEC §45's shipped templates, ``NULL`` on a rule a
+    user wrote. It carries no ``UNIQUE`` constraint, deliberately — a user may
+    duplicate a shipped rule and tune the copy — so the once-only guarantee for
+    template instantiation is *"instantiate only when no template-provenance
+    row exists at all"*, which
+    :class:`flightsite.alerts.service.AlertService` applies.
+
+    Emergency-squawk detection is **not** representable here and is not meant
+    to be: §4.2's condition set has no squawk kind, because SPEC §47 makes
+    emergency detection built in and rule-independent. See
+    :mod:`flightsite.alerts.builtins`.
+    """
+
+    __tablename__ = "alert_rules"
+    __table_args__ = (CheckConstraint(ALERT_ROW_SEVERITY_CHECK, name="ck_alert_rules_severity"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    template_key: Mapped[str | None] = mapped_column(Text)
+    conditions_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AlertRule(id={self.id!r}, name={self.name!r}, severity={self.severity!r})"
+
+
+class AlertMatch(Base):
+    """One rule (or built-in) that matched one sighting (§4.3, slice 038).
+
+    The two partial ``UNIQUE`` indexes **are** the once-per-sighting-per-rule
+    guarantee of SPEC §48, and they are what makes it survive a restart: the
+    engine's in-memory record of what it has already fired is an optimisation,
+    while the constraint is the contract. A rule and a built-in are indexed
+    separately because a row carries exactly one of them, and SQLite treats
+    each ``NULL`` in a unique index as distinct — a single index over both
+    columns would therefore not constrain anything.
+
+    Severity upgrades of the built-ins use *distinct* ``builtin_key``\\ s
+    (``emergency_7600`` then ``emergency_7700``), which §4.3 names as exactly
+    the allowed "a newly matched higher-priority condition may notify again"
+    path: two different keys are two different rows, not one rule firing twice.
+
+    ``notified`` is delivery state for the browser notifications of slice 040;
+    this slice writes every row with the default and never reads it back.
+    """
+
+    __tablename__ = "alert_matches"
+    __table_args__ = (
+        CheckConstraint(ALERT_ROW_SEVERITY_CHECK, name="ck_alert_matches_severity"),
+        CheckConstraint(ALERT_MATCH_ORIGIN_CHECK, name="ck_alert_matches_origin"),
+        Index(
+            "ux_amatch_rule_sighting",
+            "rule_id",
+            "sighting_id",
+            unique=True,
+            sqlite_where=text("rule_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_amatch_builtin_sighting",
+            "builtin_key",
+            "sighting_id",
+            unique=True,
+            sqlite_where=text("builtin_key IS NOT NULL"),
+        ),
+        Index("ix_amatch_matched", "matched_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ``NULL`` for a built-in match, which has no rule row to point at.
+    rule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("alert_rules.id"))
+    #: ``NULL`` for a rule match; otherwise a built-in detector's stable key.
+    builtin_key: Mapped[str | None] = mapped_column(Text)
+    sighting_id: Mapped[int] = mapped_column(Integer, ForeignKey("sightings.id"), nullable=False)
+    aircraft_id: Mapped[int] = mapped_column(Integer, ForeignKey("aircraft.id"), nullable=False)
+    matched_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    #: A human-readable sentence: what matched, and why (SPEC §48's "match
+    #: reason"). Composed when the match happens, from the values that
+    #: produced it, so history keeps the reason the user was actually shown
+    #: even after the rule behind it is edited.
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    notified: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"AlertMatch(id={self.id!r}, rule_id={self.rule_id!r}, "
+            f"builtin_key={self.builtin_key!r}, sighting_id={self.sighting_id!r})"
+        )

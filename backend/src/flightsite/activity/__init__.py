@@ -16,6 +16,7 @@ in four layers that never reach past each other:
 from __future__ import annotations
 
 from flightsite.activity.facts import (
+    AlertMatchFact,
     HealthEpisode,
     ImportOutcome,
     LongestSighting,
@@ -60,6 +61,7 @@ __all__ = [
     "ActivityListener",
     "ActivityRepository",
     "ActivityService",
+    "AlertMatchFact",
     "HealthEpisode",
     "HealthProbe",
     "ImportOutcome",

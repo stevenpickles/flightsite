@@ -33,6 +33,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from flightsite.alerts import AlertService
 from flightsite.api.ws import (
     DEFAULT_CLIENT_QUEUE_SIZE,
     DEFAULT_PING_INTERVAL_S,
@@ -91,6 +92,36 @@ class LiveApp:
         await self.broadcaster.broadcast_once()
         await settle()
 
+    async def pause_alerts(self) -> None:
+        """Take the alert engine's evaluation loop off the event queue.
+
+        That loop is *event-driven* — it wakes the instant an observation is
+        published — so a test that also drove
+        :meth:`~flightsite.alerts.engine.AlertEngine.process_pending` would be
+        racing it for the same queue. Stopping and re-attaching leaves the
+        engine subscribed and idle with the test as its only driver, which is
+        the same bargain this harness already makes with the lifecycle sweep
+        and the broadcast tick. Called before any traffic is fed, so the
+        discarded subscription had nothing in it.
+        """
+        engine = self.app.state.alerts.engine
+        await engine.stop()
+        engine.attach()
+
+    async def evaluate_alerts(self) -> None:
+        """Run one alert evaluation over the traffic fed so far.
+
+        Four steps, and each is a real one rather than a test convenience:
+        let the metadata cache resolve what just appeared, commit the open
+        sightings (a match has no ids to be written with until they exist),
+        evaluate, and flush the sighting rows the evaluation raised
+        ``max_alert_severity`` on.
+        """
+        await settle()
+        await self.app.state.persistence.process_pending()
+        await self.app.state.alerts.engine.process_pending()
+        await self.app.state.persistence.process_pending()
+
 
 def build_live_app(
     *,
@@ -100,15 +131,25 @@ def build_live_app(
 ) -> LiveApp:
     """Build an app whose live store and broadcaster answer to the test.
 
-    The store and the persistence worker are replaced together, so the worker
-    is subscribed to the store the test actually feeds; the broadcaster reads
-    ``app.state`` lazily and therefore picks both up without being told.
+    The store, the persistence worker and the alert service are replaced
+    together, because each of the latter two *captures* the store rather than
+    reading it from ``app.state`` — a worker or an engine left subscribed to
+    the original store would simply never see the traffic a test feeds. The
+    broadcaster and the API context read ``app.state`` lazily and therefore
+    pick all three up without being told.
     """
     app = create_app()
     clock = ManualClock()
     live = LiveStore(clock=clock, receiver_location=SEATTLE, sweep_interval_s=NEVER_S)
     app.state.live = live
     app.state.persistence = PersistenceWorker(database=app.state.database, live=live)
+    app.state.alerts = AlertService(
+        database=app.state.database,
+        live=live,
+        metadata=app.state.metadata.cache,
+        watchlists=app.state.watchlists,
+        persistence=app.state.persistence,
+    )
 
     ping_clock = ManualClock()
     broadcaster = LiveBroadcaster(
@@ -128,6 +169,7 @@ async def live_app() -> AsyncIterator[LiveApp]:
     """A started app on driven clocks, torn down through its real lifespan."""
     harness = build_live_app()
     async with harness.app.router.lifespan_context(harness.app):
+        await harness.pause_alerts()
         yield harness
 
 

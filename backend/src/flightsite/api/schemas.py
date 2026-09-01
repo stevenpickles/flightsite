@@ -904,6 +904,62 @@ class ActivityListResponse(_Model):
     offset: int
 
 
+class InterestingAircraftResponse(_Model):
+    """``GET /api/v1/aircraft/interesting`` — ``docs/API.md`` §3.4.
+
+    The same aircraft object as §3.3, with ``interesting`` guaranteed non-null,
+    ordered severity then distance. Not paginated, for the reason
+    ``/aircraft/current`` is not: this is a view of the live picture, and a
+    truncated one would be a wrong one.
+    """
+
+    items: list[AircraftView] = Field(default_factory=list)
+    total: int
+
+
+class AlertMatchRuleRef(_Model):
+    """The rule an alert match names — ``null`` for a built-in (SPEC §47)."""
+
+    id: int
+    #: ``null`` only if the rule row vanished between the match and this read,
+    #: which deleting a rule's matches with the rule makes impossible in
+    #: practice.
+    name: str | None = None
+
+
+class AlertMatchView(_Model):
+    """One recorded alert match — ``docs/API.md`` §3.9.
+
+    ``reason`` is the text recorded when the match happened, not one recomposed
+    from the rule as it stands now: history says what the user was shown.
+    """
+
+    id: int
+    at: IsoTimestamp
+    severity: AlertSeverityLiteral
+    reason: str
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    sighting_id: int
+    #: ``null`` for a built-in emergency match, which has no rule.
+    rule: AlertMatchRuleRef | None = None
+    #: ``null`` for a rule match; a built-in detector's key otherwise.
+    builtin_key: str | None = None
+    #: Whether a browser notification has been delivered (slice 040 owns it).
+    notified: bool = False
+
+
+class AlertMatchListResponse(_Model):
+    """``GET /api/v1/alerts/matches`` — the §2.4 paginated list envelope."""
+
+    items: list[AlertMatchView] = Field(default_factory=list)
+    #: Always ``null``, for the reason ``/activity`` gives: the history grows
+    #: without bound, so §2.4's allowance to omit an exact filtered count
+    #: applies and a client pages until a page comes back short.
+    total: int | None = None
+    limit: int
+    offset: int
+
+
 __all__ = [
     "ActivityEventTypeLiteral",
     "ActivityEventView",
@@ -919,6 +975,9 @@ __all__ = [
     "AirportProperties",
     "AirportSizeClassLiteral",
     "AirspaceFeatureCollection",
+    "AlertMatchListResponse",
+    "AlertMatchRuleRef",
+    "AlertMatchView",
     "AlertSeverityLiteral",
     "AnalyticsAircraftResponse",
     "AnalyticsAircraftRow",
@@ -937,6 +996,7 @@ __all__ = [
     "ClosureReasonLiteral",
     "CurrentAircraftResponse",
     "GeoPosition",
+    "InterestingAircraftResponse",
     "InterestingMatch",
     "IsoTimestamp",
     "LifetimeRecord",

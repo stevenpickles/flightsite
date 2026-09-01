@@ -5,14 +5,20 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
 
 from flightsite import __version__
-from flightsite.activity import ActivityListener, ActivityService, HealthProbe, StoredActivityEvent
+from flightsite.activity import (
+    ActivityListener,
+    ActivityService,
+    AlertMatchFact,
+    HealthProbe,
+    StoredActivityEvent,
+)
 from flightsite.airports import (
     AIRPORTS_SOURCE,
     AirportContextService,
@@ -20,6 +26,7 @@ from flightsite.airports import (
     AirportRepository,
     OurAirportsProvider,
 )
+from flightsite.alerts import AlertListener, AlertService
 from flightsite.analytics import AnalyticsService
 from flightsite.api.context import LiveApiContext
 from flightsite.api.internal import router as internal_router
@@ -172,6 +179,41 @@ def _broadcast_activity(app: FastAPI) -> ActivityListener:
     return broadcast
 
 
+def _record_alert_matches(app: FastAPI) -> AlertListener:
+    """Push the alert engine's created matches into the activity feed (SPEC §55).
+
+    The alert engine writes ``alert_matches`` on its own transaction and then
+    hands what it *created* to this listener; the activity service records the
+    ``alert_triggered`` / ``emergency_squawk`` events on its own pass, its own
+    transaction and its own dedupe key. Two subsystems, two commits, one
+    direction of dependency — and a feed failure can never turn a recorded
+    alert into an unrecorded one.
+    """
+
+    def record(matches: Sequence[AlertMatchFact]) -> None:
+        activity: ActivityService = app.state.activity
+        activity.record_alert_matches(matches)
+
+    return record
+
+
+def _alert_radius(app: FastAPI) -> Callable[[], float | None]:
+    """Read the configured alert radius at the moment a cycle needs it (SPEC §66).
+
+    A callable rather than a captured value for the reason
+    :class:`~flightsite.api.context.LiveApiContext` reads ``app.state`` lazily:
+    ``PUT /api/internal/config`` replaces ``app.state.settings`` on a running
+    app, and a captured radius would keep bounding alerts by a setting the user
+    has since changed.
+    """
+
+    def probe() -> float | None:
+        settings: Settings = app.state.settings
+        return settings.alert_radius_nm
+
+    return probe
+
+
 def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWorker:
     """Construct the write-behind persistence worker (ADR-0008).
 
@@ -278,6 +320,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     analytics: AnalyticsService = app.state.analytics
     watchlists: WatchlistService = app.state.watchlists
     activity: ActivityService = app.state.activity
+    alerts: AlertService = app.state.alerts
     maintenance: MaintenanceService = app.state.maintenance
 
     # Migrations and the integrity check run before startup is declared
@@ -339,6 +382,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # truth. A failed migration leaves the feed empty and nothing else
         # degraded — the same shape as every subsystem above it.
         await activity.start()
+        # Same condition again: the alert engine reads `alert_rules` and writes
+        # `alert_matches`, both created by the migration that may have failed,
+        # and it instantiates the shipped templates on its first ever start.
+        # Skipping it leaves every aircraft's `interesting` block null — the
+        # documented "no active alert match" state — with the live picture, the
+        # sightings and the feed all completely unaffected.
+        #
+        # After the activity service, deliberately: the engine publishes its
+        # created matches into that service's pending queue, so the consumer of
+        # this producer is already running before it can produce anything. And
+        # after the metadata cache and the watchlist service, because those two
+        # supply the resolved views and the match index every evaluation reads
+        # — starting the engine first would mean its first cycles evaluated
+        # every aircraft against empty inputs.
+        await alerts.start()
         # Same condition once more, and last of the database-dependent
         # subsystems: maintenance verifies, prunes and optimizes the very
         # schema the migration may have failed to create, so there is nothing
@@ -400,6 +458,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # it applies inferences through the worker too.
         await enrichment.stop()
         await airports.stop()
+        # Beside those two and for the same reason: the alert engine applies
+        # `max_alert_severity` *through* the persistence worker, so it must
+        # have stopped before that worker's final flush, or a severity could
+        # land on an accumulator nobody will write again.
+        await alerts.stop()
         await metadata.stop()
         # Stopped before the engines close because its final flush is a real
         # write: an interval of samples, and the lifetime increments they
@@ -514,6 +577,23 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     through a listener wired here. It also reads decoder health for the
     offline/restored events and takes metadata import results through the same
     post-import listener list the airport index rebuild uses.
+
+    Interesting-aircraft alerting (SPEC §43 to §48) is constructed as
+    ``app.state.alerts`` — the seventh background task and the fifth consumer
+    of the live event stream. Its engine evaluates each aircraft's rules on
+    that aircraft's own updates, from in-memory inputs only, so a full cycle
+    over the whole live set stays inside a fraction of a poll; matches are
+    deduplicated once per sighting per rule by two partial unique indexes;
+    ``sightings.max_alert_severity`` is applied through the persistence
+    worker's accumulator, so it lands in the same transaction as the rest of
+    the sighting row; and the activity feed takes the matches that were
+    actually created through a listener wired here. Emergency squawks (SPEC
+    §47) are evaluated by the engine unconditionally and are not expressible
+    as a rule, so no configuration can switch them off. Startup instantiates
+    the shipped templates named by ``alerts.enabled_templates`` on an install
+    that has never had any; shutdown stops it before the persistence worker,
+    because it writes through that worker.
+
     Database maintenance (SPEC §70) is constructed as ``app.state.maintenance``:
     the seventh low-frequency background task, running an integrity check,
     retention pruning, ``PRAGMA optimize``, WAL checkpoint management and a
@@ -663,6 +743,27 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         health=_decoder_health(app),
     )
     app.state.activity.subscribe(_broadcast_activity(app))
+    # Interesting-aircraft alerting (SPEC §43 to §48, docs/DATA_MODEL.md §4.2
+    # and §4.3). A seventh background task and a fifth consumer of the live
+    # event stream: it evaluates each aircraft's rules on its own updates from
+    # purely in-memory inputs — the live record, the metadata cache's resolved
+    # view and rarity counters, the watchlist match index, and the persistence
+    # worker's open accumulator — so nothing on this path can reach SQLite.
+    # Matches are written on its own writer transaction; the sighting's
+    # `max_alert_severity` rides the persistence worker's, exactly as an
+    # enriched route does; and the activity feed takes what was created through
+    # the listener wired below. Constructing it subscribes to nothing and opens
+    # no connection.
+    app.state.alerts = AlertService(
+        database=app.state.database,
+        live=app.state.live,
+        metadata=app.state.metadata.cache,
+        watchlists=app.state.watchlists,
+        persistence=app.state.persistence,
+        template_keys=settings.alerts.enabled_templates,
+        alert_radius=_alert_radius(app),
+    )
+    app.state.alerts.engine.subscribe(_record_alert_matches(app))
     # Slice 025's update-in-progress coordinator: the background task the
     # current "Update Aircraft Metadata" run is executing in, and when it
     # started. ``None`` means no run has ever been triggered on this process.

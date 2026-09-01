@@ -100,8 +100,9 @@ The lifecycle seam
 ------------------
 
 :meth:`PersistenceWorker.subscribe_lifecycle` publishes what each *committed*
-cycle opened and closed. It is the mirror image of :meth:`apply_route` and
-:meth:`apply_inferred_airport`, which push values into the cycle: this reports
+cycle opened and closed. It is the mirror image of :meth:`apply_route`,
+:meth:`apply_inferred_airport` and :meth:`apply_alert_severity`, which push
+values into the cycle from their own subsystems' tasks: this reports
 what the cycle did, after it has reached the disk, so a listener sees exactly
 the state a query would. Listeners are synchronous and may only touch memory —
 the notification runs inside the cycle — and one that raises is logged and
@@ -501,6 +502,50 @@ class PersistenceWorker:
             sighting_id=active.sighting_id,
             ident=inferred.ident,
             phase=active.inferred_phase,
+        )
+        return True
+
+    def max_alert_severity_for(self, icao: str) -> str | None:
+        """The alert severity ``icao``'s open sighting has reached, if any.
+
+        The alert half of :meth:`route_for`, read the same way and for the same
+        reason: this is an in-memory lookup on the accumulator the worker
+        already holds, so the alert engine can tell an upgrade from a repeat
+        without a read of the ``sightings`` row it is about to write.
+
+        ``None`` means the sighting has not alerted — which on a stock install
+        is almost every sighting.
+        """
+        active = self.sighting_for(icao)
+        return None if active is None else active.max_alert_severity
+
+    def apply_alert_severity(self, icao: str, severity: str, reason: str, *, at_ms: int) -> bool:
+        """Raise the alert severity on ``icao``'s open sighting (slice 038).
+
+        The seam alert evaluation writes through, and the exact shape of
+        :meth:`apply_route` and :meth:`apply_inferred_airport`: a plain
+        in-memory mutation of the accumulator plus a queued sighting event, so
+        the column and its event land in one transaction and a failed cycle
+        retries both. They are separate methods rather than one because they
+        are separate columns fed by separate subsystems, and none of them may
+        be able to write another's.
+
+        Returns ``False`` when there is no open sighting for ``icao`` — the
+        aircraft's closure gap expired between the match and this call, which
+        is an ordinary outcome — and when the severity does not outrank the one
+        already recorded, which is the ordinary case for every match after the
+        first.
+        """
+        active = self.sighting_for(icao)
+        if active is None:
+            return False
+        if not active.apply_alert_severity(severity, reason, at_ms):
+            return False
+        logger.info(
+            "sighting_alert_severity_raised",
+            icao=icao,
+            sighting_id=active.sighting_id,
+            severity=severity,
         )
         return True
 

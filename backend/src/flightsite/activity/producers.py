@@ -37,6 +37,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from flightsite.activity.facts import (
+    AlertMatchFact,
     HealthEpisode,
     ImportOutcome,
     LongestSighting,
@@ -456,6 +457,74 @@ def import_events(outcomes: Iterable[ImportOutcome]) -> ActivityBatch:
     return ActivityBatch(events=tuple(events))
 
 
+def alert_events(matches: Iterable[AlertMatchFact]) -> ActivityBatch:
+    """``alert_triggered`` / ``emergency_squawk`` events for recorded matches.
+
+    Two event types rather than one, because SPEC §55 lists them separately and
+    SPEC §47 wants an emergency squawk *prominent* rather than one row among
+    the alerts: a feed filtered to ``emergency_squawk`` is a question a user
+    genuinely asks, and it cannot be asked of a single ``alert_triggered``
+    type with a flag in the payload.
+
+    The dedupe key names the **match**, not the moment: ``alert_triggered:
+    {rule_id}:{sighting_id}`` and ``emergency_squawk:{builtin_key}:
+    {sighting_id}``. That is the same identity ``alert_matches``'s two partial
+    unique indexes enforce, so the feed inherits SPEC §48's
+    once-per-sighting-per-rule guarantee rather than restating it — and the
+    documented exception inherits with it, since a higher-severity rule and a
+    second emergency code are different keys and therefore different events.
+
+    The event's ``severity`` is the match's own, not a fixed one. That is what
+    lets the feed and the browser notifications of slice 040 apply SPEC §46's
+    ladder to the thing that actually happened: a ``critical`` emergency and an
+    ``info`` first-ever sighting are both alerts, and flattening them would
+    throw away the only field either layer sorts on.
+    """
+    events: list[NewActivityEvent] = []
+    for match in matches:
+        emergency = match.emergency
+        event_type = (
+            ActivityEventType.EMERGENCY_SQUAWK if emergency else ActivityEventType.ALERT_TRIGGERED
+        )
+        payload: dict[str, Any] = {
+            "icao": match.icao24,
+            "callsign": match.callsign,
+            "registration": match.registration,
+            "type_code": match.type_code,
+            "model": match.model,
+            "operator": match.operator,
+            "reason": match.reason,
+            "severity": match.severity,
+            "distance_nm": match.distance_nm,
+            "altitude_ft": match.altitude_ft,
+            "military": match.military,
+            "government": match.government,
+            "law_enforcement": match.law_enforcement,
+        }
+        if emergency:
+            payload["builtin_key"] = match.builtin_key
+            payload["squawk"] = match.squawk
+        else:
+            payload["rule_id"] = match.rule_id
+            payload["rule_name"] = match.rule_name
+        events.append(
+            NewActivityEvent(
+                type=event_type,
+                ts_ms=match.matched_ms,
+                dedupe_key=dedupe_key(
+                    event_type.value,
+                    match.builtin_key if emergency else match.rule_id,
+                    match.sighting_id,
+                ),
+                severity=Severity(match.severity),
+                aircraft_id=match.aircraft_id,
+                sighting_id=match.sighting_id,
+                payload=payload,
+            )
+        )
+    return ActivityBatch(events=tuple(events))
+
+
 def merge(batches: Sequence[ActivityBatch]) -> ActivityBatch:
     """Concatenate batches in order, dropping repeated dedupe keys.
 
@@ -484,6 +553,7 @@ def merge(batches: Sequence[ActivityBatch]) -> ActivityBatch:
 
 
 __all__ = [
+    "alert_events",
     "best_closed",
     "first_ever_events",
     "health_events",
