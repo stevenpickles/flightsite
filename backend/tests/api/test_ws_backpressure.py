@@ -11,6 +11,7 @@ lost.
 from __future__ import annotations
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from flightsite.api.ws import (
     RESYNC_CLOSE_CODE,
@@ -256,3 +257,27 @@ async def test_stopping_twice_is_harmless() -> None:
     await harness.broadcaster.stop()
 
     assert harness.broadcaster.running is False
+
+
+async def test_evictions_are_visible_in_the_health_payload() -> None:
+    # An operator's first question about a flaky client is "is the server
+    # dropping it?", so the counter has to be reachable without a debugger.
+    harness = build_live_app(client_queue_size=1)
+    async with (
+        harness.app.router.lifespan_context(harness.app),
+        AsyncClient(
+            transport=ASGITransport(app=harness.app), base_url="http://testserver"
+        ) as client,
+    ):
+        stalled, _snapshot = await open_probe(harness)
+        stalled.stall()
+        try:
+            for index in range(5):
+                harness.feed(make_update("ae1463", offset_s=index, position=NEARBY))
+                await harness.broadcast()
+
+            health = (await client.get("/api/v1/health")).json()
+            assert health["counters"]["ws_disconnects"] == 1
+        finally:
+            stalled.resume()
+            await stalled.disconnect()
