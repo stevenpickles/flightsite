@@ -338,6 +338,7 @@ describe("drawAircraftFrame", () => {
           ground_speed_kt: null,
         }),
         receivedAt: NOW,
+        positionChangedAt: NOW,
       },
     },
     departing: {},

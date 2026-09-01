@@ -134,6 +134,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 049 | Performance harness & Pi gates | 009, 010, 011, 012, 038, 053 | opus | high | SPEC §85 performance regression harness with hard gates |
 | 050 | Multi-year storage qualification | 031, 043, 044, 049 | opus | high | Synthetic multi-year dataset qualification of growth, queries, retention |
 | 051 | Documentation & install polish | 042, 045, 046 | sonnet | low | Docs complete enough for a fresh install from documentation alone |
+| 054 | Live map motion correctness | 014, 039 | opus | medium | Anchor dead reckoning to the last position change so markers stop creeping forward then teleporting back (issue #119) |
 
 ## Parallelization Guide
 

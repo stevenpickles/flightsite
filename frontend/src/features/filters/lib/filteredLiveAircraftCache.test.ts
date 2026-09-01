@@ -7,13 +7,13 @@ import {
 } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import type { LiveAircraftRecord } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { makeAircraft } from "@/test/liveAircraftFixtures";
+import { makeRecord } from "@/test/liveAircraftFixtures";
 
 const CONFIG = { displayRadiusNm: 250 };
 
 function records(): Record<string, LiveAircraftRecord> {
   return {
-    aaaaaa: { aircraft: makeAircraft({ icao: "aaaaaa" }), receivedAt: 0 },
+    aaaaaa: makeRecord({ icao: "aaaaaa" }),
   };
 }
 

@@ -19,7 +19,7 @@ import {
   ZOOM_LABELS_MIN,
 } from "@/features/map/labels/priority";
 import type { LiveAircraft } from "@/lib/api/live";
-import { makeAircraft } from "@/test/liveAircraftFixtures";
+import { makeAircraft, makeRecord } from "@/test/liveAircraftFixtures";
 
 const NOW = 1_800_000_000_000;
 
@@ -28,8 +28,8 @@ function records(
 ): Record<string, LiveAircraftRecord> {
   const map: Record<string, LiveAircraftRecord> = {};
   for (const entry of entries) {
-    const aircraft = makeAircraft(entry);
-    map[aircraft.icao] = { aircraft, receivedAt: NOW };
+    const record = makeRecord(entry, { receivedAt: NOW });
+    map[record.aircraft.icao] = record;
   }
   return map;
 }
