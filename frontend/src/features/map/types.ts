@@ -23,4 +23,11 @@ export interface MapConfig {
   /** Range ring radii, in nautical miles, smallest first. */
   ringRadiiNm: readonly number[];
   unit: DistanceUnit;
+  /** SPEC §66 default distance cap for the Live Map's aircraft render set
+   * (roadmap slice 017) — `FlightSiteConfig.display_radius_nm`. Aircraft
+   * beyond it stay in the live store, `/api/v1` responses, and range
+   * records; only what the map/filters draw shrinks. An explicit
+   * user-chosen max distance (`features/filters`) overrides this default
+   * either way, larger or smaller. */
+  displayRadiusNm: number;
 }

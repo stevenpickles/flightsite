@@ -4,6 +4,10 @@
  * location is configured. Called from `RootLayout` on every config load
  * (covers a returning user reopening the app) and from the wizard's
  * review/finish step (covers finishing setup in the current session).
+ *
+ * The derived config also carries `display_radius_nm` (SPEC §66) through as
+ * `displayRadiusNm` — the default distance cap `features/filters` applies to
+ * the map's render set (roadmap slice 017).
  */
 import { DEFAULT_RING_RADII_NM } from "@/features/map/mapConfig";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
@@ -30,6 +34,7 @@ export function deriveMapConfig(config: FlightSiteConfig): MapConfig | null {
     receiver: { lat: latitude, lon: longitude, label },
     ringRadiiNm,
     unit: config.units === "metric" ? "km" : "nm",
+    displayRadiusNm: config.display_radius_nm,
   };
 }
 
