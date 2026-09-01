@@ -34,8 +34,18 @@
  *   FlightSite's half — ask offered, ask made exactly once, answer reflected,
  *   ask withdrawn — and stubbing makes it the same assertion everywhere
  *   instead of three engine-specific ones.
- * - **A real grant, where an engine honours one** (test 4), which keeps one
- *   unstubbed path over the genuine permission machinery.
+ * - **A real grant, where an engine honours one** (test 4). Be clear about what
+ *   this is worth: it skips in all three headless engines — Firefox and WebKit
+ *   because Playwright cannot grant the permission there at all, Chromium
+ *   because the grant does not move a permission the engine has no notification
+ *   centre to satisfy. It earns its place as the one unstubbed path over the
+ *   genuine permission machinery for a headed local run, and as a tripwire: if
+ *   a future engine starts honouring the grant, this stops skipping and starts
+ *   asserting instead of quietly staying green.
+ *
+ * So in headless CI, tests 1-3 run and test 4 skips. Tests 1 and 2 are the
+ * unstubbed ones, and between them they cover what the browser decides; test 3
+ * covers what FlightSite decides.
  *
  * Delivery itself (an alert becoming exactly one notification) is not here.
  * A demo alert fires at a fixed phase of the scenario's 30-minute rotation
