@@ -36,11 +36,15 @@ const AXE_TIMEOUT = 20_000;
  */
 async function expectNoViolations(container: HTMLElement): Promise<void> {
   const results = await axe(container);
-  const summary = results.violations.map((violation) => ({
-    id: violation.id,
-    help: violation.help,
-    nodes: violation.nodes.map((node) => node.target.join(" ")),
-  }));
+  const summary = results.violations.map(
+    (violation: (typeof results.violations)[number]) => ({
+      id: violation.id,
+      help: violation.help,
+      nodes: violation.nodes.map((node: (typeof violation.nodes)[number]) =>
+        node.target.join(" "),
+      ),
+    }),
+  );
   expect(summary).toEqual([]);
 }
 
