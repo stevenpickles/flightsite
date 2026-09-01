@@ -21,6 +21,7 @@ from pathlib import Path
 
 import structlog
 
+from flightsite.classification.engine import classify
 from flightsite.db import Database, utc_now_ms
 from flightsite.live.store import LiveStore
 from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
@@ -104,15 +105,23 @@ class MetadataService:
             return cached
 
         found = await self._repository.load_live_view([icao24])
-        metadata, sighting_count = found.get(icao24, (None, None))
-        if metadata is None and sighting_count is None:
+        lookup = found.get(icao24)
+        if lookup is None or (lookup.metadata is None and lookup.sighting_count is None):
             return None
+        metadata = lookup.metadata
         type_code = None if metadata is None else metadata.type_code
+        # No callsign: this path answers about an airframe that is not live, so
+        # there is no transmission to read one from. The classification is the
+        # metadata-only one, which is the same one the import wrote.
+        evidence = lookup.evidence(icao24)
         return AircraftMetadataView(
             icao24=icao24,
             metadata=metadata,
-            sighting_count=sighting_count,
+            sighting_count=lookup.sighting_count,
             type_count=None if type_code is None else self._cache.type_count(type_code),
+            operator_group=lookup.operator_group,
+            evidence=evidence,
+            classification=classify(evidence),
         )
 
     async def update(self, sources: Sequence[str] | None = None) -> ImportRun:

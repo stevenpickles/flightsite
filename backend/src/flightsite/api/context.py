@@ -15,11 +15,18 @@ process's life. Reading late also means the context can be built before the
 lifespan hook has started anything.
 
 Nothing here touches SQLite on the aircraft path — the live registry answers
-from memory, which is the invariant ``docs/ARCHITECTURE.md`` §3.1 states as
-"no live request or decoder poll ever waits on SQLite". The one database read
-in this module is T0 for the receiver block, which is a single indexed lookup
-on a write-once key, made on a REST request or a WebSocket connect and never
-per frame.
+from memory and so does the metadata cache, which is the invariant
+``docs/ARCHITECTURE.md`` §3.1 states as "no live request or decoder poll ever
+waits on SQLite" and §3.3 restates as "metadata joins and rarity checks hit a
+cache, not the database". The one database read in this module is T0 for the
+receiver block, which is a single indexed lookup on a write-once key, made on a
+REST request or a WebSocket connect and never per frame.
+
+An aircraft the cache has not resolved yet serializes with ``null`` metadata
+rather than waiting for it. That is the deliberate trade of ``docs/API.md``
+§2.7: metadata is enrichment, a live aircraft is fully usable without it, and a
+frame that blocked on a lookup would trade the live picture's latency for a
+field that will arrive a fraction of a second later anyway.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from flightsite.api.serializers import aircraft_payload, receiver_payload
 from flightsite.config import Settings
 from flightsite.db import Database, MetaRepository, from_epoch_ms
 from flightsite.live import LiveAircraft, LiveStore
+from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
@@ -78,6 +86,19 @@ class LiveApiContext:
         demo: bool = self._app.state.demo_enabled
         return demo
 
+    @property
+    def metadata(self) -> MetadataCache:
+        """The in-memory metadata, rarity and classification cache.
+
+        Read on the aircraft path, which is why it is the *cache* and not the
+        service: :meth:`~flightsite.metadata.cache.MetadataCache.get` is a dict
+        lookup with no ``await`` and no session, so the invariant this module's
+        docstring states — nothing here touches SQLite on the aircraft path —
+        survives metadata joining the payload.
+        """
+        service: MetadataService = self._app.state.metadata
+        return service.cache
+
     # -------------------------------------------------------------- payloads
 
     def aircraft(self, *, positioned: bool | None = None) -> list[dict[str, Any]]:
@@ -94,9 +115,14 @@ class LiveApiContext:
                 live picture, which is the default and the documented one.
         """
         worker: PersistenceWorker = self._app.state.persistence
+        cache = self.metadata
         records = sorted(self.live.snapshot(), key=lambda record: record.icao)
         return [
-            aircraft_payload(record, sighting_id=worker.sighting_id_for(record.icao))
+            aircraft_payload(
+                record,
+                sighting_id=worker.sighting_id_for(record.icao),
+                metadata=cache.get(record.icao),
+            )
             for record in records
             if _wanted(record, positioned)
         ]
@@ -114,11 +140,18 @@ class LiveApiContext:
         """
         worker: PersistenceWorker = self._app.state.persistence
         live = self.live
+        cache = self.metadata
         payloads: list[dict[str, Any]] = []
         for icao in icaos:
             record = live.get(icao)
             if record is not None:
-                payloads.append(aircraft_payload(record, sighting_id=worker.sighting_id_for(icao)))
+                payloads.append(
+                    aircraft_payload(
+                        record,
+                        sighting_id=worker.sighting_id_for(icao),
+                        metadata=cache.get(icao),
+                    )
+                )
         return payloads
 
     async def receiver(self) -> dict[str, Any]:

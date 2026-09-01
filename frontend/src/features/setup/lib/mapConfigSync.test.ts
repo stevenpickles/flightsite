@@ -35,6 +35,7 @@ describe("deriveMapConfig", () => {
       receiver: { lat: 51.5, lon: -0.12, label: "Home Roof" },
       ringRadiiNm: [50, 100, 150, 200],
       unit: "nm",
+      displayRadiusNm: 250,
     });
   });
 
@@ -84,6 +85,21 @@ describe("deriveMapConfig", () => {
       }),
     );
     expect(derived?.unit).toBe("km");
+  });
+
+  it("carries the server's display radius through as displayRadiusNm", () => {
+    const derived = deriveMapConfig(
+      defaultFlightSiteConfig({
+        display_radius_nm: 100,
+        location: {
+          latitude: 1,
+          longitude: 2,
+          site_name: "Home",
+          antenna_height_ft: null,
+        },
+      }),
+    );
+    expect(derived?.displayRadiusNm).toBe(100);
   });
 });
 

@@ -111,14 +111,16 @@ def test_unreported_fields_are_null_rather_than_zero() -> None:
         assert payload[field] is None, field
 
 
-def test_metadata_fields_are_null_until_their_own_slices() -> None:
-    # Enrichment (021-024) and alert matching (038) have not landed; §2.7 says
+def test_metadata_fields_are_null_when_the_cache_has_not_resolved_the_aircraft() -> None:
+    # The normal state for the first sub-second of a new aircraft's life, and
+    # the permanent state on an install with no metadata database. §2.7 says
     # the honest answer is null, and the keys stay so clients can rely on them.
     payload = aircraft_payload(positioned_record())
 
     for field in ("registration", "aircraft_type", "model", "operator", "operator_group"):
         assert payload[field] is None, field
     assert payload["classification"] is None
+    # Alert matching (slice 038) has not landed.
     assert payload["interesting"] is None
 
 

@@ -40,13 +40,17 @@ NEW_TABLES = {
 }
 
 
-def test_this_revision_sits_directly_on_the_previous_head() -> None:
-    """The linear-head rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations"."""
+def test_this_revision_sits_directly_on_the_previous_one() -> None:
+    """The linear-history rule of ``docs/DEVELOPMENT.md`` §"Parallel migrations".
+
+    That there is exactly *one* head is asserted by
+    :func:`tests.db.test_migrations.test_migration_graph_has_exactly_one_head`,
+    which is where it belongs: this revision stopped being the head when slice
+    024 added 0005 on top of it, and it will stop again with every later slice.
+    """
     script = migrate.script_directory().get_revision(REVISION)
 
     assert script.down_revision == PREVIOUS
-    assert migrate.heads() == (REVISION,)
-    assert migrate.head_revision() == REVISION
 
 
 async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Path) -> None:
@@ -55,9 +59,8 @@ async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Pat
         assert await database.current_revision() == PREVIOUS
     assert not NEW_TABLES & table_names(db_path)
 
-    async with database_at(db_path, "head") as database:
+    async with database_at(db_path, REVISION) as database:
         assert await database.current_revision() == REVISION
-        assert await autogenerate_diffs(database) == []
 
     assert table_names(db_path) >= NEW_TABLES
 

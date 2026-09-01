@@ -4,6 +4,7 @@ import type { AircraftFrameInput } from "@/features/map/aircraft/geojson";
 import {
   buildAircraftFeatureCollection,
   buildTrackFeatureCollection,
+  GROUND_DIM_OPACITY,
   STALE_OPACITY,
 } from "@/features/map/aircraft/geojson";
 import { iconImageId } from "@/features/map/aircraft/icons/silhouettes";
@@ -397,6 +398,100 @@ describe("buildAircraftFeatureCollection", () => {
       expect(collection.features[0]?.properties.label).toBe("");
       expect(collection.features[0]?.properties.interesting).toBe(false);
     });
+  });
+});
+
+describe("filtering (features/filters integration)", () => {
+  it("omits an aircraft not in visibleIcaos", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({ icao: "aaaaaa" }, { icao: "bbbbbb" }),
+        visibleIcaos: new Set(["aaaaaa"]),
+      }),
+    );
+    const properties = propertiesByIcao(collection);
+    expect(properties.aaaaaa).toBeDefined();
+    expect(properties.bbbbbb).toBeUndefined();
+  });
+
+  it("draws everything when visibleIcaos is omitted — back-compat with unfiltered callers", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft: records({ icao: "aaaaaa" }, { icao: "bbbbbb" }) }),
+    );
+    expect(collection.features).toHaveLength(2);
+  });
+
+  it("dims rather than excludes an aircraft in dimmedIcaos", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({ icao: "aaaaaa", on_ground: true }),
+        visibleIcaos: new Set(["aaaaaa"]),
+        dimmedIcaos: new Set(["aaaaaa"]),
+      }),
+    );
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.properties.opacity).toBeCloseTo(
+      GROUND_DIM_OPACITY,
+      6,
+    );
+    expect(collection.features[0]?.properties.opacity).toBeLessThan(1);
+  });
+
+  it("combines the stale and ground-dim factors multiplicatively", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({ icao: "aaaaaa", state: "stale", on_ground: true }),
+        visibleIcaos: new Set(["aaaaaa"]),
+        dimmedIcaos: new Set(["aaaaaa"]),
+      }),
+    );
+    expect(collection.features[0]?.properties.opacity).toBeCloseTo(
+      STALE_OPACITY * GROUND_DIM_OPACITY,
+      6,
+    );
+  });
+
+  it("uses the filtered (visible) count for label density, not the full live picture", () => {
+    // A crowd well above the density threshold, but only one survives
+    // filtering — the survivor should get the full label stack a lone
+    // aircraft is entitled to, not the callsign-only tier a genuinely
+    // crowded sky would force.
+    const crowd = records(
+      ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD + 5 }, (_, i) => ({
+        icao: (i + 1).toString(16).padStart(6, "0"),
+        callsign: `AA${i}`,
+        altitude_ft: 35000,
+      })),
+    );
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: crowd,
+        visibleIcaos: new Set(["000001"]),
+        zoom: ZOOM_LABELS_FULL,
+      }),
+    );
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.properties.label).toBe("AA0\nFL350");
+  });
+
+  it("never filters a departing (fading) aircraft — it is exempt, not part of the live filtered set", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        departing: {
+          aaaaaa: {
+            aircraft: makeAircraft({
+              icao: "aaaaaa",
+              position: { lat: 1, lon: 2 },
+            }),
+            removedAt: NOW - 100,
+          },
+        },
+        // An empty visible set would exclude every live aircraft, but the
+        // departing aircraft is unaffected.
+        visibleIcaos: new Set(),
+      }),
+    );
+    expect(collection.features).toHaveLength(1);
   });
 });
 

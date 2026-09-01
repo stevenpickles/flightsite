@@ -11,7 +11,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`SightingEvent` in slice 052, and the metadata group
 (:class:`MetadataSource`, :class:`AircraftMetadata`,
 :class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
-:class:`OperatorGroup`, :class:`Operator`) in slice 021.
+:class:`OperatorGroup`, :class:`Operator`) in slice 021, and
+:class:`AircraftClassification` in slice 024.
 """
 
 from __future__ import annotations
@@ -57,6 +58,19 @@ INFERRED_PHASE_CHECK: Final[str] = "inferred_phase IN ('arriving', 'departing')"
 #: Alert severity ladder (``docs/API.md`` §2.8); populated by slice 038.
 ALERT_SEVERITY_CHECK: Final[str] = (
     "max_alert_severity IN ('info', 'interesting', 'high', 'critical')"
+)
+
+#: SPEC §39's mission/use categories, spelled as ``docs/DATA_MODEL.md`` §3.4's
+#: ``CHECK`` predicate.
+#:
+#: Spelled out rather than generated from
+#: :class:`flightsite.classification.vocabulary.MissionCategory`, for the same
+#: reason as :data:`CLOSURE_REASON_CHECK` above: ``classification`` depends on
+#: ``db`` and not the reverse. A test asserts the two lists agree.
+MISSION_CATEGORY_CHECK: Final[str] = (
+    "mission_category IN ('commercial_passenger', 'cargo', 'general_aviation', "
+    "'business_aviation', 'military', 'government', 'law_enforcement', 'medical', "
+    "'firefighting', 'training', 'helicopter', 'unknown')"
 )
 
 #: The ``sighting_events.type`` vocabulary of ``docs/DATA_MODEL.md`` §2.5,
@@ -573,3 +587,68 @@ class Operator(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Operator(name={self.name!r}, group_id={self.group_id!r})"
+
+
+class AircraftClassification(Base):
+    """Computed classification with per-claim provenance (§3.4, SPEC §39).
+
+    One row per airframe, rebuilt inside the metadata import transaction beside
+    :class:`AircraftMetadataResolved`. Keyed by ``icao24`` rather than by a
+    sighting or an ``aircraft`` row, so an airframe is classified whether or
+    not the receiver has ever heard it — which is what lets the Aircraft page
+    filter by classification over the whole metadata database.
+
+    Every claim gets three columns, not one: the answer, the source that
+    supports it, and a confidence. A ``NULL`` ``*_src``/``*_conf`` pair beside a
+    ``0`` flag is the shape of "nothing asserts this", and the pair is non-``NULL``
+    exactly when the flag is set — the same rule the resolved table follows for
+    its ``*_src`` columns.
+
+    ``icon_category`` has no ``CHECK``, unlike ``mission_category``: it is the
+    icon hierarchy's own vocabulary and grows with the icon set, while the
+    mission list is SPEC §39's and does not.
+    """
+
+    __tablename__ = "aircraft_classification"
+    __table_args__ = (
+        CheckConstraint(MISSION_CATEGORY_CHECK, name="ck_aircraft_classification_mission"),
+        Index("ix_class_mil", "military", sqlite_where=text("military = 1")),
+        Index("ix_class_gov", "government", sqlite_where=text("government = 1")),
+        Index("ix_class_law", "law_enforcement", sqlite_where=text("law_enforcement = 1")),
+        Index("ix_class_mission", "mission_category"),
+        {"sqlite_with_rowid": False},
+    )
+
+    icao24: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    military: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    military_src: Mapped[str | None] = mapped_column(Text)
+    military_conf: Mapped[float | None] = mapped_column(REAL)
+    government: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    government_src: Mapped[str | None] = mapped_column(Text)
+    government_conf: Mapped[float | None] = mapped_column(REAL)
+    law_enforcement: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    law_enforcement_src: Mapped[str | None] = mapped_column(Text)
+    law_enforcement_conf: Mapped[float | None] = mapped_column(REAL)
+    mission_category: Mapped[str] = mapped_column(
+        Text, nullable=False, default="unknown", server_default=text("'unknown'")
+    )
+    mission_src: Mapped[str | None] = mapped_column(Text)
+    mission_conf: Mapped[float | None] = mapped_column(REAL)
+    #: Input to the map icon hierarchy (SPEC §34), not a mission category.
+    icon_category: Mapped[str] = mapped_column(
+        Text, nullable=False, default="unknown", server_default=text("'unknown'")
+    )
+    updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"AircraftClassification(icao24={self.icao24!r}, "
+            f"mission_category={self.mission_category!r})"
+        )

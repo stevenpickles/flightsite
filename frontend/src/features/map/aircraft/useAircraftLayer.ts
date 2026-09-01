@@ -9,8 +9,9 @@
  *    because a symbol layer naming an unregistered image renders nothing and
  *    warns per feature per frame.
  * 2. **Feed.** A store subscription draws immediately whenever the picture
- *    changes (~1 Hz), and an animation loop draws interpolated frames in
- *    between at {@link FRAME_INTERVAL_MS}.
+ *    changes (~1 Hz) or the live filters (`features/filters`) do, and an
+ *    animation loop draws interpolated frames in between at
+ *    {@link FRAME_INTERVAL_MS}.
  * 3. **Select.** One map click handler resolves the aircraft under the cursor,
  *    or clears the selection when the click hit nothing.
  *
@@ -29,7 +30,9 @@ import {
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { registerAircraftIcons } from "@/features/map/aircraft/icons/registerIcons";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useMapInstance } from "@/features/map/MapInstanceContext";
+import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 
 /**
  * Minimum gap between interpolation frames — ~12.5 fps.
@@ -62,6 +65,8 @@ export function useAircraftLayer(): void {
         ensureAircraftLayers(map);
         drawAircraftFrame(map, useLiveAircraftStore.getState(), Date.now(), {
           includeTrack: true,
+          filters: useFilterStore.getState().filters,
+          displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
         });
       })
       .catch(() => {
@@ -88,6 +93,8 @@ export function useAircraftLayer(): void {
       lastDrawnAt = now;
       drawAircraftFrame(map, useLiveAircraftStore.getState(), now, {
         includeTrack,
+        filters: useFilterStore.getState().filters,
+        displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
       });
     };
 
@@ -96,6 +103,16 @@ export function useAircraftLayer(): void {
     // picture the server just sent. The track is rebuilt here and only here.
     const unsubscribe = useLiveAircraftStore.subscribe(() => {
       draw(Date.now(), true);
+    });
+    // A filter edit changes what the *same* live picture should draw, so it
+    // gets the same immediate, un-throttled redraw as new data rather than
+    // waiting up to `FRAME_INTERVAL_MS` for the interpolation tick to pick
+    // it up — the map, the drawer's counts, and the non-positioned panel
+    // (all reading `getFilteredLiveAircraft` through the same memo) settle
+    // on the new set together. The track is unaffected by filters, so this
+    // never rebuilds it.
+    const unsubscribeFilters = useFilterStore.subscribe(() => {
+      draw(Date.now(), false);
     });
 
     const canAnimate = typeof requestAnimationFrame === "function";
@@ -112,6 +129,7 @@ export function useAircraftLayer(): void {
 
     return () => {
       unsubscribe();
+      unsubscribeFilters();
       if (canAnimate) {
         cancelAnimationFrame(frame);
       }

@@ -550,7 +550,7 @@ slices:
     title: "Live filters & non-positioned list"
     phase: 3
     branch: "017-live-filters"
-    status: planned
+    status: merged
     depends_on: ["014"]
     objective: "Filter drawer, quick filters, and the non-positioned aircraft list for the live map."
     scope:
@@ -664,7 +664,7 @@ slices:
     title: "Mictronics/tar1090 importer"
     phase: 4
     branch: "022-mictronics-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the Mictronics/tar1090 aircraft database as the primary offline metadata source."
     scope:
@@ -686,7 +686,7 @@ slices:
     title: "FAA registry importer"
     phase: 4
     branch: "023-faa-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
     scope:
@@ -706,7 +706,7 @@ slices:
     title: "Classification & operator normalization"
     phase: 4
     branch: "024-classification-engine"
-    status: planned
+    status: merged
     depends_on: ["021", "022"]
     objective: "Classify aircraft (military/government/law-enforcement, mission/use categories) and normalize operators into groups, with provenance and calibrated confidence."
     scope:

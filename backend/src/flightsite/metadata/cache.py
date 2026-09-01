@@ -23,6 +23,14 @@ What it holds, and why that is bounded
 * **Resolved metadata per live aircraft**, loaded when the aircraft appears and
   dropped when it leaves the live set. Bounded by the live set (§3.3: ≤ ~1,000
   aircraft), not by the size of the metadata database.
+* **Its classification** (SPEC §39), computed by
+  :func:`flightsite.classification.engine.classify` as the entry is built and
+  recomputed in memory when the aircraft's callsign changes — the one
+  classification input that moves during a flight. So the API serializer reads
+  a classification rather than deriving one, and the hot path stays a dict
+  lookup. The equivalent rows are also written to ``aircraft_classification``
+  at import time for the SQL the Aircraft page will need; the engine is the
+  same function, so the two cannot disagree.
 * **A rarity counter per live aircraft** — ``aircraft.sighting_count``, the
   lifetime figure of ``docs/DATA_MODEL.md`` §2.2 — loaded in the same batch.
 * **The full type-count map**, a few thousand entries, refreshed with the rest
@@ -57,21 +65,24 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 import structlog
 
+from flightsite.classification.engine import classify
+from flightsite.classification.model import Classification, Evidence
 from flightsite.db import Database
 from flightsite.live.events import (
     AircraftAppeared,
     AircraftRemoved,
+    AircraftUpdated,
     EventSubscription,
     LiveEvent,
 )
 from flightsite.live.store import LiveStore
 from flightsite.metadata.precedence import ResolvedMetadata
-from flightsite.metadata.repository import MetadataRepository
+from flightsite.metadata.repository import AircraftLookup, MetadataRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +119,18 @@ class AircraftMetadataView:
     sighting_count: int | None = None
     #: Unique airframes ever recorded of this aircraft's resolved type.
     type_count: int | None = None
+    #: Display name of the curated operator group (SPEC §38), or ``None`` when
+    #: the exact operator matched no group. The exact operator is on
+    #: :attr:`metadata` either way — grouping is additive, never a replacement.
+    operator_group: str | None = None
+    #: The classification engine's inputs for this airframe, retained so a
+    #: later callsign can be folded in without another database read.
+    evidence: Evidence = field(default_factory=lambda: Evidence(icao24=""))
+    #: SPEC §39's answer for this airframe. Never ``None``: an airframe nobody
+    #: knows anything about has a complete classification whose every claim is
+    #: absent (:attr:`Classification.is_unknown`), which is a different and more
+    #: useful statement than a missing object.
+    classification: Classification = field(default_factory=Classification)
 
     @property
     def type_code(self) -> str | None:
@@ -120,8 +143,19 @@ class AircraftMetadataView:
         return self.metadata is not None
 
     def provenance(self) -> dict[str, str]:
-        """Per-field provenance in the ``docs/API.md`` §2.6 shape."""
-        return {} if self.metadata is None else self.metadata.provenance()
+        """Per-field provenance in the ``docs/API.md`` §2.6 shape.
+
+        Includes ``classification`` and ``operator_group`` where they have a
+        value: both are FlightSite's own statements rather than an upstream
+        database's, and §2.6 exists so a reader can tell which is which.
+        """
+        found = {} if self.metadata is None else self.metadata.provenance()
+        source = self.classification.source
+        if source is not None:
+            found["classification"] = source.value
+        if self.operator_group is not None:
+            found["operator_group"] = "derived"
+        return found
 
 
 class MetadataCache:
@@ -339,15 +373,24 @@ class MetadataCache:
         Removals are applied here rather than deferred: eviction is what bounds
         the cache to the live set, and an aircraft that left before its appear
         was resolved must not be resolved at all.
+
+        A callsign change on an aircraft the cache already holds needs no
+        database read — the evidence for its classification is retained on the
+        entry — so it is reclassified in place here rather than joining the
+        resolution list.
         """
         events = (first, *subscription.drain())
         if subscription.overflowed:
             # Shed events may have hidden a removal, so the live snapshot — not
-            # the event history — decides what the cache should hold.
+            # the event history — decides what the cache should hold. Shed
+            # events may equally have hidden a callsign, so everything the cache
+            # kept is reclassified against the snapshot.
             subscription.acknowledge_overflow()
             live = {aircraft.icao for aircraft in self._live.snapshot()}
             for icao in [icao for icao in self._entries if icao not in live]:
                 del self._entries[icao]
+            for icao in list(self._entries):
+                self._reclassify(icao)
             return [icao for icao in live if icao not in self._entries]
 
         wanted: list[str] = []
@@ -358,6 +401,8 @@ class MetadataCache:
                     wanted.remove(event.icao)
             elif isinstance(event, AircraftAppeared) and event.icao not in self._entries:
                 wanted.append(event.icao)
+            elif isinstance(event, AircraftUpdated) and "callsign" in event.changed:
+                self._reclassify(event.icao)
         return wanted
 
     async def _populate(self, icaos: Sequence[str]) -> None:
@@ -370,14 +415,43 @@ class MetadataCache:
             view = await self._repository.load_live_view(chunk)
             self._populations += 1
             for icao in chunk:
-                metadata, count = view.get(icao, (None, None))
-                type_code = None if metadata is None else metadata.type_code
-                self._entries[icao] = AircraftMetadataView(
-                    icao24=icao,
-                    metadata=metadata,
-                    sighting_count=count,
-                    type_count=None if type_code is None else self.type_count(type_code),
-                )
+                self._install(icao, view.get(icao, AircraftLookup()))
+
+    def _install(self, icao: str, lookup: AircraftLookup) -> None:
+        """Build and store one entry, classifying it as it is built.
+
+        Classification happens here — once per aircraft, on the population task,
+        never on a request — because it is the same shape of work as the
+        metadata join it accompanies and belongs on the same side of the line
+        ``docs/ARCHITECTURE.md`` §3.1 draws. The serializer then reads a value
+        rather than computing one.
+        """
+        record = self._live.get(icao)
+        evidence = lookup.evidence(icao, callsign=None if record is None else record.callsign)
+        type_code = None if lookup.metadata is None else lookup.metadata.type_code
+        self._entries[icao] = AircraftMetadataView(
+            icao24=icao,
+            metadata=lookup.metadata,
+            sighting_count=lookup.sighting_count,
+            type_count=None if type_code is None else self.type_count(type_code),
+            operator_group=lookup.operator_group,
+            evidence=evidence,
+            classification=classify(evidence),
+        )
+
+    def _reclassify(self, icao: str) -> None:
+        """Recompute one held entry's classification for its current callsign.
+
+        Pure memory: the entry already carries the metadata evidence, and only
+        the callsign has moved. An entry the cache does not hold is ignored —
+        its appear event will classify it with the callsign it has by then.
+        """
+        entry = self._entries.get(icao)
+        record = self._live.get(icao)
+        if entry is None or record is None or entry.evidence.callsign == record.callsign:
+            return
+        evidence = replace(entry.evidence, callsign=record.callsign)
+        self._entries[icao] = replace(entry, evidence=evidence, classification=classify(evidence))
 
     async def _reload_type_counts(self) -> None:
         self._type_counts = await self._repository.load_type_counts()
