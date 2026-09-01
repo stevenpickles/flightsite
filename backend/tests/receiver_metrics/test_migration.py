@@ -76,16 +76,22 @@ def test_this_revision_sits_directly_on_the_previous_head() -> None:
 
 
 async def test_a_database_at_the_previous_revision_upgrades_cleanly(db_path: Path) -> None:
-    """The upgrade path an existing install takes."""
+    """The upgrade path an existing install takes.
+
+    Drift is asserted after upgrading the rest of the way to head rather than
+    at this revision: the models describe head, so an intermediate revision is
+    *expected* to lack whatever later slices added.
+    """
     async with database_at(db_path, PREVIOUS) as database:
         assert await database.current_revision() == PREVIOUS
     assert not set(TABLES) & table_names(db_path)
 
     async with database_at(db_path, REVISION) as database:
         assert await database.current_revision() == REVISION
-        assert await autogenerate_diffs(database) == []
-
     assert set(TABLES) <= table_names(db_path)
+
+    async with database_at(db_path, "head") as database:
+        assert await autogenerate_diffs(database) == []
 
 
 async def test_the_raw_table_matches_the_data_model(db_path: Path) -> None:
