@@ -1318,6 +1318,40 @@ slices:
     risk_level: medium
     notes: "Unplanned fix slice for GitHub issue #119 (user-reported on a real install; mechanism confirmed). Added by Fable outside the phase plan."
 
+  - id: "055"
+    title: "Alert template instantiation fixes"
+    phase: 8
+    branch: "055-alert-template-fixes"
+    status: merged
+    depends_on: ["038", "041", "046"]
+    objective: "Make the setup wizard's alert-template choice actually create rules: instantiate on config save, and fix the wizard/catalogue key mismatch that silently dropped the law-enforcement selection."
+    scope:
+      - "instantiate newly enabled templates when a config save changes `alerts.enabled_templates`, so a fresh install has its shipped rules without a backend restart"
+      - "instantiation-on-save adds only keys never instantiated before (per-key provenance), preserving the startup guard's purpose: a shipped rule the user deleted stays deleted"
+      - "wizard sends the catalogue key `police` instead of the unrecognized `law_enforcement`"
+      - "`law_enforcement` accepted as a read-time alias for `police` so an existing config.yaml keeps working; other unknown keys warn instead of being silently skipped"
+    out_of_scope:
+      - alert rule CRUD, engine, or notification-channel changes
+      - "template catalogue additions (the SPEC §45 set is unchanged)"
+      - "config schema migration: the alias is normalized on read, config.yaml is never rewritten"
+    acceptance_criteria:
+      - "enabling templates in the setup wizard creates the corresponding alert rules on save, with no backend restart"
+      - "a shipped rule the user deleted is not resurrected by a later config save"
+      - "an unknown key in `alerts.enabled_templates` logs a warning and does not fail the save"
+      - "every template key the frontend can send resolves against the backend catalogue"
+    required_tests:
+      - config-save instantiation tests (newly enabled keys create rules; an unchanged list creates nothing)
+      - deleted-template non-resurrection test
+      - unknown-key warning test
+      - wizard template-key contract test asserting the catalogue keys
+    expected_artifacts:
+      - backend/src/flightsite/alerts/service.py
+      - backend/src/flightsite/alerts/templates.py
+      - frontend/src/features/setup/
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issues #110 and #111 (found by slice 046). Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
