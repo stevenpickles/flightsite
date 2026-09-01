@@ -775,7 +775,7 @@ slices:
     title: "Airport data & context"
     phase: 4
     branch: "027-airport-context"
-    status: planned
+    status: merged
     depends_on: ["009", "016", "021", "025", "026"]
     objective: "Import an openly licensed airport dataset and provide nearest-airport plus clearly-labeled arrival/departure inference."
     scope:
