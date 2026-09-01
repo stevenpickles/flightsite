@@ -35,8 +35,9 @@ from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import Final
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flightsite.db import Database
@@ -81,9 +82,9 @@ STAGE_BATCH_ROWS: Final = 1_000
 #: airframe this is a few thousand airframes per round trip.
 REBUILD_PAGE_ROWS: Final = 4_000
 
-#: Maximum values bound into one ``IN (...)`` predicate. SQLite's default host
-#: parameter limit is 999; staying under it keeps batched cache reads working
-#: without depending on a build-time setting.
+#: Addresses bound into one lookup. SQLite's default host-parameter limit is
+#: 999; staying under it keeps a whole-live-set read working without
+#: depending on a build-time setting.
 IN_CLAUSE_CHUNK: Final = 500
 
 #: Cap on a stored error message. Status is a summary a user reads, not a log:
@@ -363,10 +364,11 @@ class MetadataRepository:
                 # of its claims.
                 last = rows[-1].icao24
                 complete = [row for row in rows if row.icao24 != last]
-                if not complete:
-                    # One airframe filled an entire page — impossible with a
-                    # sane number of sources, but resolving nothing forever is
-                    # worse than resolving it from a full page.
+                if not complete:  # pragma: no cover - see below
+                    # One airframe filling an entire page would need
+                    # REBUILD_PAGE_ROWS sources, so this cannot happen — but
+                    # if it ever did, resolving it from a full page beats
+                    # looping forever on a cursor that never advances.
                     complete = list(rows)
             after = complete[-1].icao24
 
@@ -381,51 +383,49 @@ class MetadataRepository:
 
     # ------------------------------------------------------------- lookups
 
-    async def load_resolved(self, icaos: Sequence[str]) -> dict[str, ResolvedMetadata]:
-        """Resolved metadata for ``icaos``, keyed by address.
+    async def load_live_view(
+        self, icaos: Sequence[str]
+    ) -> dict[str, tuple[ResolvedMetadata | None, int | None]]:
+        """Resolved metadata *and* rarity counter for ``icaos``, in one query.
 
-        Addresses with no resolved row are simply absent from the result — the
-        caller reports them as unknown rather than as empty.
+        The cache's read, and its only one. Splitting it into a metadata
+        query and a rarity query would be tidier to read and twice as slow:
+        each aiosqlite round trip is a thread hand-off, and on an appear
+        that arrives alone the second one is pure added latency against the
+        slice's per-event budget. One query is also the honest shape of the
+        question — *everything the cache holds about these aircraft*.
+
+        An address may have a resolved row, an ``aircraft`` row, both, or
+        neither, so the addresses themselves are the driving table — a join in
+        either direction would silently drop one of those cases. SQLite has no
+        portable full outer join at the version floor FlightSite targets, hence
+        the ``VALUES`` list and the two ``LEFT JOIN``s spelled out here rather
+        than composed in Core.
+
+        Every requested address appears in the result, with ``None`` for
+        whichever half is missing; that is what lets the cache distinguish
+        "nobody knows" from "not looked up yet".
         """
         if not icaos:
             return {}
-        found: dict[str, ResolvedMetadata] = {}
+        found: dict[str, tuple[ResolvedMetadata | None, int | None]] = {}
         async with self._database.read_session() as session:
             for chunk in _chunks(icaos, IN_CLAUSE_CHUNK):
+                params = {f"i{index}": icao for index, icao in enumerate(chunk)}
+                values = ", ".join(f"(:{name})" for name in params)
                 rows = (
-                    await session.scalars(
-                        select(AircraftMetadataResolved).where(
-                            AircraftMetadataResolved.icao24.in_(chunk)
-                        )
+                    (await session.execute(text(_LIVE_VIEW_SQL.format(values=values)), params))
+                    .mappings()
+                    .all()
+                )
+                for mapping in rows:
+                    icao24 = str(mapping["icao24"])
+                    count = mapping["sighting_count"]
+                    found[icao24] = (
+                        _resolved_from_mapping(icao24, mapping),
+                        None if count is None else int(count),
                     )
-                ).all()
-                for row in rows:
-                    found[row.icao24] = _to_resolved(row)
         return found
-
-    async def load_sighting_counts(self, icaos: Sequence[str]) -> dict[str, int]:
-        """Persisted lifetime sighting counts for ``icaos``.
-
-        ``aircraft.sighting_count`` is the rarity counter of SPEC §44 and
-        ``docs/DATA_MODEL.md`` §2.2 — maintained by the persistence worker, and
-        read here rather than recomputed so rarity and the aircraft page cannot
-        disagree.
-        """
-        if not icaos:
-            return {}
-        counts: dict[str, int] = {}
-        async with self._database.read_session() as session:
-            for chunk in _chunks(icaos, IN_CLAUSE_CHUNK):
-                rows = (
-                    await session.execute(
-                        select(Aircraft.icao24, Aircraft.sighting_count).where(
-                            Aircraft.icao24.in_(chunk)
-                        )
-                    )
-                ).all()
-                for icao24, count in rows:
-                    counts[str(icao24)] = int(count)
-        return counts
 
     async def load_type_counts(self) -> dict[str, int]:
         """Unique airframes ever recorded, per resolved ICAO type designator.
@@ -446,6 +446,51 @@ class MetadataRepository:
                 )
             ).all()
             return {str(type_code): int(count) for type_code, count in rows}
+
+
+#: The cache's single read (see :meth:`MetadataRepository.load_live_view`).
+#: ``{values}`` is filled with one ``(:param)`` per requested address.
+_LIVE_VIEW_SQL: Final = """
+WITH wanted(icao24) AS (VALUES {values})
+SELECT w.icao24,
+       a.sighting_count,
+       r.registration, r.registration_src,
+       r.type_code, r.type_code_src,
+       r.model, r.model_src,
+       r.manufacture_year, r.year_src,
+       r.operator_name, r.operator_src,
+       r.operator_group_id,
+       r.owner, r.owner_src,
+       r.updated_ms
+FROM wanted AS w
+LEFT JOIN aircraft AS a ON a.icao24 = w.icao24
+LEFT JOIN aircraft_metadata_resolved AS r ON r.icao24 = w.icao24
+"""
+
+
+def _resolved_from_mapping(icao24: str, mapping: RowMapping) -> ResolvedMetadata | None:
+    """Build a resolved record from a joined row, or ``None`` if there was none."""
+    if mapping["updated_ms"] is None:
+        return None
+    year = mapping["manufacture_year"]
+    group_id = mapping["operator_group_id"]
+    return ResolvedMetadata(
+        icao24=icao24,
+        updated_ms=int(mapping["updated_ms"]),
+        registration=mapping["registration"],
+        registration_src=mapping["registration_src"],
+        type_code=mapping["type_code"],
+        type_code_src=mapping["type_code_src"],
+        model=mapping["model"],
+        model_src=mapping["model_src"],
+        manufacture_year=None if year is None else int(year),
+        year_src=mapping["year_src"],
+        operator_name=mapping["operator_name"],
+        operator_src=mapping["operator_src"],
+        operator_group_id=None if group_id is None else int(group_id),
+        owner=mapping["owner"],
+        owner_src=mapping["owner_src"],
+    )
 
 
 def _chunks(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
@@ -500,26 +545,6 @@ def _with_group(resolved: ResolvedMetadata, groups: Mapping[str, int]) -> Resolv
     if group_id is None:
         return resolved
     return replace(resolved, operator_group_id=group_id)
-
-
-def _to_resolved(row: AircraftMetadataResolved) -> ResolvedMetadata:
-    return ResolvedMetadata(
-        icao24=row.icao24,
-        updated_ms=row.updated_ms,
-        registration=row.registration,
-        registration_src=row.registration_src,
-        type_code=row.type_code,
-        type_code_src=row.type_code_src,
-        model=row.model,
-        model_src=row.model_src,
-        manufacture_year=row.manufacture_year,
-        year_src=row.year_src,
-        operator_name=row.operator_name,
-        operator_src=row.operator_src,
-        operator_group_id=row.operator_group_id,
-        owner=row.owner,
-        owner_src=row.owner_src,
-    )
 
 
 def _to_status(row: MetadataSource) -> SourceStatusRecord:

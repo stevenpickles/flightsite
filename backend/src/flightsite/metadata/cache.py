@@ -140,7 +140,6 @@ class MetadataCache:
         "_populations",
         "_queue_size",
         "_repository",
-        "_resolved_events",
         "_subscription",
         "_task",
         "_type_counts",
@@ -162,7 +161,6 @@ class MetadataCache:
         self._subscription: EventSubscription | None = None
         self._task: asyncio.Task[None] | None = None
         self._populations = 0
-        self._resolved_events = 0
         # Set while the population task has nothing left to do. Tests await it
         # instead of sleeping, and it is what makes the latency measurement a
         # measurement of the cache rather than of a poll loop.
@@ -190,11 +188,6 @@ class MetadataCache:
     def populations(self) -> int:
         """Batched population rounds run since start. Instrumentation."""
         return self._populations
-
-    @property
-    def resolved_events(self) -> int:
-        """Appear events resolved since start. Instrumentation."""
-        return self._resolved_events
 
     # ---------------------------------------------------------------- lookups
 
@@ -268,7 +261,16 @@ class MetadataCache:
         logger.info("metadata_cache_stopped", aircraft=len(self._entries))
 
     async def wait_idle(self) -> None:
-        """Wait until the population task has drained everything queued."""
+        """Wait until the population task finishes the cycle it is in.
+
+        "Idle" means *not currently resolving*, which is not the same as
+        "everything published has been seen": a caller that has just published
+        an appear must let the task be scheduled before this answers about it
+        (:func:`tests.metadata.conftest.settle` is what does that). Tests wait
+        on this rather than sleeping, which is what makes the latency
+        measurement measure the cache rather than a polling interval
+        (``docs/TEST_STRATEGY.md`` §3).
+        """
         await self._idle.wait()
 
     # ------------------------------------------------------------ invalidation
@@ -347,19 +349,17 @@ class MetadataCache:
             return
         for start in range(0, len(pending), MAX_BATCH):
             chunk = pending[start : start + MAX_BATCH]
-            resolved = await self._repository.load_resolved(chunk)
-            counts = await self._repository.load_sighting_counts(chunk)
+            view = await self._repository.load_live_view(chunk)
             self._populations += 1
             for icao in chunk:
-                metadata = resolved.get(icao)
+                metadata, count = view.get(icao, (None, None))
                 type_code = None if metadata is None else metadata.type_code
                 self._entries[icao] = AircraftMetadataView(
                     icao24=icao,
                     metadata=metadata,
-                    sighting_count=counts.get(icao),
+                    sighting_count=count,
                     type_count=None if type_code is None else self.type_count(type_code),
                 )
-            self._resolved_events += len(chunk)
 
     async def _reload_type_counts(self) -> None:
         self._type_counts = await self._repository.load_type_counts()

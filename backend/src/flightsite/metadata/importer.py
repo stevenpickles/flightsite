@@ -158,11 +158,6 @@ class MetadataImporter:
         self._data_dir = Path(data_dir)
         self._clock = clock
 
-    @property
-    def repository(self) -> MetadataRepository:
-        """The repository this importer writes through."""
-        return self._repository
-
     async def run(self, sources: Sequence[str] | None = None) -> ImportRun:
         """Import ``sources`` (default: every registered source).
 
@@ -271,29 +266,31 @@ class MetadataImporter:
         await self._repository.clear_staging(name)
 
         collector = _TransformCollector(provider, artifact)
-        staged = 0
+        accepted = 0
         while True:
             batch = await collector.next_batch()
             if not batch:
                 break
-            staged += await self._repository.stage_batch(name, batch, updated_ms=at_ms)
-            self._registry.mark_phase(name, ImportPhase.STAGING, staged_rows=staged)
+            accepted += await self._repository.stage_batch(name, batch, updated_ms=at_ms)
+            self._registry.mark_phase(name, ImportPhase.STAGING, staged_rows=accepted)
 
-        # `staged` counts distinct addresses after conflict resolution, so it
-        # can trail the records yielded; both are reported honestly.
-        staged = await self._repository.count_staged(name)
         rejected = collector.rejected
-        total = staged + rejected
+        # Two different counts, both needed. `accepted` + `rejected` is the
+        # transform's error rate, which is what the tolerance is about;
+        # `staged` is distinct addresses after duplicates collapsed, which is
+        # what the dataset actually contains.
+        staged = await self._repository.count_staged(name)
+        yielded = accepted + rejected
 
         if staged == 0:
             raise ImportFailure(
                 ImportPhase.STAGING,
                 f"{name} produced no usable rows from {artifact.describe()}",
             )
-        if total and rejected / total > MAX_REJECT_RATIO:
+        if yielded and rejected / yielded > MAX_REJECT_RATIO:
             raise ImportFailure(
                 ImportPhase.STAGING,
-                f"{name} rejected {rejected} of {total} rows, above the "
+                f"{name} rejected {rejected} of {yielded} rows, above the "
                 f"{MAX_REJECT_RATIO:.0%} tolerance",
             )
         if report.expected_rows is not None and staged < report.expected_rows:
