@@ -57,7 +57,7 @@ from flightsite.metadata.registry import (
     SourceStatus,
     SourceStatusRecord,
 )
-from flightsite.metadata.repository import MetadataRepository
+from flightsite.metadata.repository import MetadataClearCounts, MetadataRepository
 from flightsite.metadata.service import ImportListener, MetadataService
 
 __all__ = [
@@ -70,6 +70,7 @@ __all__ = [
     "ImportPhase",
     "ImportRun",
     "MetadataCache",
+    "MetadataClearCounts",
     "MetadataError",
     "MetadataImporter",
     "MetadataProvider",

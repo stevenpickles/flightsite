@@ -283,3 +283,28 @@ async def test_a_replacement_larger_than_one_insert_chunk_lands_whole(
 
     assert written == 2_500
     assert await repository.count() == 2_500
+
+
+# ------------------------------------------------------- clear_all (slice 045)
+
+
+async def test_clear_all_empties_the_table_and_reports_what_it_removed(
+    repository: AirportRepository,
+) -> None:
+    """SPEC §73's Clear Metadata Cache action, at the repository layer."""
+    await replace(repository)
+    assert await repository.count() == len(FIXTURE_AIRPORTS)
+
+    removed = await repository.clear_all()
+
+    assert removed == len(FIXTURE_AIRPORTS)
+    assert await repository.load_all() == ()
+    assert await repository.count() == 0
+
+
+async def test_clear_all_on_an_empty_table_removes_nothing(
+    repository: AirportRepository,
+) -> None:
+    """Idempotent: a second clear (or a first, on a fresh install) is a no-op."""
+    assert await repository.clear_all() == 0
+    assert await repository.count() == 0

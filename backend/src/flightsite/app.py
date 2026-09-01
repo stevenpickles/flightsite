@@ -39,6 +39,7 @@ from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
+from flightsite.reset import apply_pending_reset
 from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
@@ -353,11 +354,20 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     registry and uptime clock, constructs the database, and mounts the
     routers.
 
+    Before any of that, a pending ``Reset FlightSite Data`` marker (SPEC §73,
+    slice 045) is applied: :func:`~flightsite.reset.apply_pending_reset`
+    deletes ``flightsite.sqlite3`` and its WAL sidecars if
+    ``POST /api/internal/reset/data`` left one behind on a previous run, and
+    is a no-op otherwise. See :mod:`flightsite.reset.marker` for why this is a
+    mark-and-restart action rather than a live tear-down.
+
     The ``database`` subsystem is registered here, not in the lifespan hook,
     so it reads as not-ready from the very first request; the lifespan hook
     migrates the database and marks it ready. Constructing
     :class:`~flightsite.db.Database` opens nothing and creates no directory —
-    building an app is still side-effect free.
+    building an app is still side-effect free, and by this point any pending
+    reset has already made sure there is nothing left to migrate but a fresh
+    schema.
 
     The in-memory live aircraft registry is constructed here and exposed as
     ``app.state.live``; startup starts its lifecycle sweep and, when a
@@ -436,6 +446,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # it here keeps the env override winning (SPEC §30).
     configure_logging(level=settings.log_level)
 
+    # SPEC §73's "Reset FlightSite Data" is mark-and-restart (slice 045,
+    # flightsite.reset.marker): POST /api/internal/reset/data only writes a
+    # marker file and asks the operator to restart. A pending marker is
+    # applied here — before Database is even constructed below — so the
+    # migration that follows always creates a brand new database rather than
+    # migrating one this same call is about to delete out from under it.
+    reset_applied = apply_pending_reset(store.data_dir)
+
     # docs/API.md §2.10 places the published schema and its interactive docs
     # under the versioned prefix, not at the server root: the OpenAPI document
     # describes /api/v1 and nothing else, so it belongs beside what it
@@ -450,6 +468,9 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     )
     app.state.config_store = store
     app.state.settings = settings
+    # True exactly on the first create_app() call after a reset marker was
+    # written; tests and startup logging read it, nothing else depends on it.
+    app.state.data_reset_applied = reset_applied
     app.state.readiness = ReadinessRegistry()
     app.state.readiness.register(DATABASE_SUBSYSTEM)
     app.state.database = Database(database_path(store.data_dir))
