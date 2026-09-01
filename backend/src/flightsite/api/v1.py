@@ -9,7 +9,7 @@ This slice adds the live picture — ``GET /aircraft/current`` (§3.3), ``GET
 /receiver`` (§3.2) and the ``ws/live`` WebSocket (§4, documented in
 :mod:`flightsite.api.ws`) — on top of the health and readiness endpoints from
 slice 001. Later slices add the history (§3.5), sightings (§3.6) and analytics
-(§3.7) surfaces; diagnostics (§3.10) is still to come.
+(§3.7) surfaces, and slice 042 adds diagnostics (§3.10).
 
 The REST endpoints declare Pydantic response models, so the OpenAPI document
 served at ``/api/v1/openapi.json`` (§2.10) describes them exactly and every
@@ -61,6 +61,7 @@ from flightsite.api.schemas import (
     AnalyticsRarityResponse,
     AnalyticsSummaryResponse,
     CurrentAircraftResponse,
+    DiagnosticsResponse,
     InterestingAircraftResponse,
     ReceiverInfo,
     ReceiverLifetimeStats,
@@ -88,6 +89,7 @@ from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
 from flightsite.db import to_epoch_ms
+from flightsite.diagnostics import collect_diagnostics
 from flightsite.readiness import ReadinessRegistry
 
 #: §2.9's ``{icao}`` path parameter validator: lowercase 6-hex-char ICAO
@@ -153,6 +155,26 @@ async def ready(request: Request, response: Response) -> dict[str, Any]:
     if not is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {"ready": is_ready, "subsystems": readiness.snapshot()}
+
+
+@router.get(
+    "/diagnostics",
+    response_model=DiagnosticsResponse,
+    tags=["service"],
+    summary="Full system diagnostics",
+)
+async def diagnostics(request: Request) -> dict[str, Any]:
+    """Every SPEC §67 item in one payload — ``docs/API.md`` §3.10.
+
+    Read-only in the strong sense: no writer session, no lock ingestion wants,
+    and no fresh ``quick_check`` (that pragma takes the writer lock, so the
+    result maintenance already computed is reported instead). A diagnostics
+    request arriving during a decoder burst costs the burst nothing.
+
+    The payload is redacted against the configured secrets on the way out, so
+    it cannot carry an API key however a later slice extends it.
+    """
+    return await collect_diagnostics(request.app)
 
 
 @router.get(

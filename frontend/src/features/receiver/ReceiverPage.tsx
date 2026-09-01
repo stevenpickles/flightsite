@@ -3,7 +3,9 @@
  * (SPEC §62, including the range-by-bearing polar plot and the signal-
  * strength distribution), and lifetime statistics (SPEC §63).
  */
+import { Stethoscope } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useReceiverQuery } from "@/lib/api/receiver";
 import { LifetimeStatsSection } from "@/features/receiver/components/LifetimeStatsSection";
@@ -32,11 +34,23 @@ export function ReceiverPage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold">Receiver</h1>
-        <p className="text-sm text-muted-foreground">
-          Performance and coverage of your own receiver.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold">Receiver</h1>
+          <p className="text-sm text-muted-foreground">
+            Performance and coverage of your own receiver.
+          </p>
+        </div>
+        {/* SPEC §10 fixes the sidebar at seven sections, so the health area
+            (SPEC §67) is reached from here — the page a user already opens
+            when they suspect something is wrong. */}
+        <Link
+          to="/health"
+          className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
+        >
+          <Stethoscope className="size-4" aria-hidden="true" />
+          Health &amp; diagnostics
+        </Link>
       </div>
 
       <ReceiverScorecard units={units} />
