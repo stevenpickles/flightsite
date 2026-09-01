@@ -119,7 +119,7 @@ Flaky tests are treated as defects. Rules:
 | Aircraft selection | 020 |
 | Aircraft detail | 020 |
 | Interesting-aircraft alert | 046 |
-| Browser notification permission flow | 046 |
+| Browser notification permission flow | 040 (Chromium only — see below) |
 | Aircraft page | 046 |
 | Sightings page | 046 |
 | Analytics windows (all presets) | 046 |
@@ -128,6 +128,17 @@ Flaky tests are treated as defects. Rules:
 
 E2E is a required CI check from slice 020 onward. Failures produce traces and
 screenshots as CI artifacts.
+
+**Browser notifications.** The permission flow runs in Chromium only: Playwright can
+grant and clear the `notifications` permission there, cannot in Firefox or WebKit, and
+cannot drive a native permission prompt in any of the three — so the other two
+projects skip the spec, the same capability escape hatch aircraft selection uses for
+WebGL. *Delivery* (an alert becoming exactly one notification, plus the allowed
+severity-upgrade extra) is covered by unit tests against the real protocol client
+rather than E2E: a demo alert fires at a fixed phase of the scenario's 30-minute
+rotation, so waiting for one from an arbitrary start time would be a coin toss.
+Making a demo alert observable end to end belongs with the interesting-aircraft alert
+flow above.
 
 ---
 

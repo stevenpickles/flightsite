@@ -28,6 +28,80 @@ export function activityEvent(
   };
 }
 
+/**
+ * An `alert_triggered` event carrying the exact payload slice 038's
+ * `alert_events()` producer ships for a rule match
+ * (`backend/src/flightsite/activity/producers.py`) — the input the slice-040
+ * notification path is written against.
+ */
+export function alertTriggeredEvent(
+  overrides: Partial<ActivityEvent> = {},
+): ActivityEvent {
+  const { payload, ...rest } = overrides;
+  return {
+    id: 5100,
+    type: "alert_triggered",
+    severity: "high",
+    at: "2026-08-31T14:03:22.418Z",
+    icao: "ae1463",
+    sighting_id: 88213,
+    payload: {
+      icao: "ae1463",
+      callsign: "RCH485",
+      registration: "05-5153",
+      type_code: "C17",
+      model: "Boeing C-17A Globemaster III",
+      operator: "United States Air Force",
+      reason: "Rule: Military aircraft",
+      severity: "high",
+      distance_nm: 12.4,
+      altitude_ft: 24000,
+      military: true,
+      government: false,
+      law_enforcement: false,
+      rule_id: 7,
+      rule_name: "Military aircraft",
+      ...payload,
+    },
+    ...rest,
+  };
+}
+
+/** The built-in emergency-squawk counterpart (SPEC §47): no rule, a
+ * `builtin_key` and a squawk instead. */
+export function emergencySquawkEvent(
+  overrides: Partial<ActivityEvent> = {},
+): ActivityEvent {
+  const { payload, ...rest } = overrides;
+  return {
+    id: 5200,
+    type: "emergency_squawk",
+    severity: "critical",
+    at: "2026-08-31T14:05:02.000Z",
+    icao: "4ca7b3",
+    sighting_id: 88301,
+    payload: {
+      icao: "4ca7b3",
+      callsign: "RYR8213",
+      registration: "EI-DYK",
+      type_code: "B738",
+      model: "Boeing 737-800",
+      operator: "Ryanair",
+      reason: "Emergency squawk 7700 (general emergency)",
+      severity: "critical",
+      distance_nm: 31.8,
+      altitude_ft: 8500,
+      military: false,
+      government: false,
+      law_enforcement: false,
+      builtin_key: "emergency_7700",
+      squawk: "7700",
+      ...payload,
+    },
+    ...rest,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,

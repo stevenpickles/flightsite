@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+import { NotificationPermissionStatus } from "@/features/notifications/components/NotificationPermissionStatus";
+import { canRequest } from "@/features/notifications/lib/permission";
+import { useNotificationPermission } from "@/features/notifications/useNotificationPermission";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
 import {
@@ -44,13 +47,20 @@ const SEVERITY_OPTIONS: readonly {
 ];
 
 /** Browser notification preferences: a master switch plus one toggle per
- * alert severity (SPEC §46/§48). Applies immediately. */
+ * alert severity (SPEC §46/§48), and the browser permission they depend on
+ * (slice 040). Applies immediately.
+ *
+ * This section is one of the two places `docs/SECURITY.md` §5 allows the
+ * permission to be requested from — the other being the setup wizard — and it
+ * is where a user comes back to when they declined the first time, so the ask
+ * is re-promptable here for as long as the browser will still prompt. */
 export function NotificationsSection({ config }: NotificationsSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickNotifications(draftFromConfig(config)),
   );
   const [draft, setDraft] = useState(baseline);
   const mutation = usePutConfigMutation();
+  const { permission, request } = useNotificationPermission();
 
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors: Record<string, string> = {};
@@ -60,6 +70,14 @@ export function NotificationsSection({ config }: NotificationsSectionProps) {
   }
 
   function handleSave() {
+    // Saving with notifications switched on *is* the opt-in, so this is the
+    // moment to ask — and it must happen synchronously inside the click, not
+    // in the mutation's `onSuccess`, because the user activation that
+    // `requestPermission()` requires does not survive a network round trip
+    // (`features/notifications/lib/permission.ts`).
+    if (draft.notifications.enabled && canRequest(permission)) {
+      void request();
+    }
     mutation.mutate(buildNotificationsPatch(draft), {
       onSuccess: (response) => {
         const next = pickNotifications(draftFromConfig(response.config));
@@ -121,6 +139,10 @@ export function NotificationsSection({ config }: NotificationsSectionProps) {
             </label>
           ))}
         </fieldset>
+
+        <NotificationPermissionStatus
+          enabled={baseline.notifications.enabled}
+        />
       </div>
 
       <SectionSaveBar

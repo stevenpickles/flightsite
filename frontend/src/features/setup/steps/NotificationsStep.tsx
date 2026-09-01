@@ -34,10 +34,14 @@ const SEVERITY_OPTIONS: readonly {
 ];
 
 /**
- * Step (e): the browser notification preference only. Per SPEC, requesting
- * the browser's notification permission is a separate concern (slice 040)
- * — this step never calls `Notification.requestPermission()`, it only
- * records what the user wants once that flow exists.
+ * Step (e): the browser notification preference only. This step never calls
+ * `Notification.requestPermission()` — it records what the user wants, and
+ * the wizard's Finish button is what asks the browser, once, if this
+ * preference is on (slice 040, `docs/SECURITY.md` §5: requested only after
+ * the user opts in, never unprompted). Asking from the Finish click rather
+ * than from this step also means the prompt cannot appear behind a user who
+ * is still deciding, and that it carries the user activation Firefox and
+ * Safari require.
  */
 export function NotificationsStep({ draft, onChange }: NotificationsStepProps) {
   function setNotification(patch: Partial<NotificationConfig>) {
@@ -51,9 +55,9 @@ export function NotificationsStep({ draft, onChange }: NotificationsStepProps) {
           Browser notifications
         </h2>
         <p className="text-sm text-muted-foreground">
-          This only records your preference — FlightSite will ask your browser
-          for notification permission separately, the first time it actually
-          needs to.
+          If you turn these on, FlightSite asks your browser for permission
+          once, when you finish setup. You can change your mind, and ask again,
+          in Settings.
         </p>
       </div>
 

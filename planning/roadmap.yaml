@@ -1050,7 +1050,7 @@ slices:
     title: "Browser notifications"
     phase: 6
     branch: "040-browser-notifications"
-    status: planned
+    status: merged
     depends_on: ["038", "039"]
     objective: "Deliver alert notifications via the browser Notification API with correct permission handling and deduplication."
     scope:
