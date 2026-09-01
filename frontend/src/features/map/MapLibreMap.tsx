@@ -1,4 +1,8 @@
-import { AttributionControl, Map as MapLibreGlMap } from "maplibre-gl";
+import {
+  AttributionControl,
+  Map as MapLibreGlMap,
+  setWorkerUrl,
+} from "maplibre-gl";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -8,6 +12,30 @@ import { MapInstanceContext } from "@/features/map/MapInstanceContext";
 import { ensureOverlayLayers } from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
 import { cn } from "@/lib/utils";
+
+/**
+ * Points MapLibre at its own worker script explicitly, rather than letting
+ * it guess.
+ *
+ * MapLibre computes a default worker URL as a sibling of its own module's
+ * `import.meta.url` at runtime (`maplibre-gl-worker.mjs` next to
+ * `maplibre-gl.mjs`) — a reasonable assumption when the package is loaded
+ * as its own file, but wrong once Vite inlines it into the app's single
+ * bundle: `import.meta.url` then resolves to the app bundle's own URL
+ * (`/assets/index-<hash>.js`), so MapLibre goes looking for
+ * `/assets/maplibre-gl-worker.mjs` — a file nothing ever asked the bundler
+ * to emit, so it 404s. Without a working worker MapLibre cannot tile or
+ * process ANY GeoJSON source, so nothing renders (not the range rings, not
+ * the receiver marker, not aircraft) — silently: no exception reaches the
+ * app, the map just stays visually and functionally empty forever.
+ *
+ * `scripts/copy-maplibre-worker.mjs` (wired as `predev`/`prebuild`) copies
+ * the real worker script from the installed `maplibre-gl` version into
+ * `public/`, which Vite serves verbatim at `/maplibre-gl-worker.mjs` in
+ * both dev and the production build — that fixed path is what this points
+ * to, module-scoped so it runs once, before any `Map` is constructed.
+ */
+setWorkerUrl("/maplibre-gl-worker.mjs");
 
 export interface MapLibreMapProps {
   config: MapConfig;
@@ -58,6 +86,17 @@ export function MapLibreMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreGlMap | null>(null);
   const onMapClickRef = useRef(onMapClick);
+  // Keeps the initial 'load' handler (registered once, see the mount
+  // effect's `[]` deps) reading the *current* config rather than whatever
+  // `config` prop was in scope at mount. The server's real receiver
+  // location almost always arrives (React Query resolving `GET
+  // /api/internal/config`, a fast same-origin call) before the map's own
+  // 'load' event (which waits on the basemap style/sprite/glyph/tile
+  // fetches) — without this ref, that 'load' handler's stale closure would
+  // draw the range rings/receiver marker at the `DEV_PLACEHOLDER_MAP_CONFIG`
+  // fallback forever, exactly the placeholder `mapConfigSync.ts` says it
+  // replaces.
+  const configRef = useRef(config);
   const [instance, setInstance] = useState<MapLibreGlMap | null>(null);
   // Bumped on every completed style load so overlays re-attach after a
   // basemap switch discards the style's custom layers — see
@@ -69,6 +108,13 @@ export function MapLibreMap({
   // immediately call `setStyle` with the style the map already has,
   // reloading it a second time for nothing.
   const isInitialBasemapRef = useRef(true);
+  // Mirrors `isInitialBasemapRef`: the config-recenter effect below must
+  // skip the render it mounted with (that's already the map's construction
+  // center) and only act on a genuine, later change — and then never
+  // again, so it recenters exactly once and never fights a user's manual
+  // pan/zoom or the setup wizard's LocationStep typing after that.
+  const isInitialConfigRef = useRef(true);
+  const hasRecenteredOnceRef = useRef(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
 
   // Keeps the click handler current without the mount effect depending on
@@ -77,6 +123,10 @@ export function MapLibreMap({
   useEffect(() => {
     onMapClickRef.current = onMapClick;
   }, [onMapClick]);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   // Create the map exactly once. Basemap and config changes are applied
   // to the existing instance by the effects below instead of tearing it
@@ -98,10 +148,27 @@ export function MapLibreMap({
     mapRef.current = map;
     setInstance(map);
 
+    // E2E test hook only (roadmap slice 020, docs/DEVELOPMENT.md "Running
+    // E2E locally"): the MapLibre instance has no other externally-reachable
+    // handle, and the Playwright aircraft-selection flow needs its public
+    // `project()` method to turn a live aircraft's lat/lon into the canvas
+    // pixel a real user click would land on. Not part of the app's
+    // supported API — nothing in the app itself reads this global.
+    if (typeof window !== "undefined") {
+      (
+        window as unknown as { __flightsiteMap?: MapLibreGlMap }
+      ).__flightsiteMap = map;
+    }
+
     map.addControl(new AttributionControl({ compact: false }), "bottom-right");
 
     map.on("load", () => {
-      ensureOverlayLayers(map, config);
+      // Reads `configRef` (the current config), not the closed-over
+      // `config` prop from this once-only mount effect — see the ref's own
+      // comment above: whichever config is current by the time the style
+      // has actually finished loading is the one the rings/marker should
+      // reflect, not whatever `config` happened to be at construction time.
+      ensureOverlayLayers(map, configRef.current);
       setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     });
@@ -118,6 +185,14 @@ export function MapLibreMap({
       map.remove();
       mapRef.current = null;
       setInstance(null);
+      if (
+        typeof window !== "undefined" &&
+        (window as unknown as { __flightsiteMap?: MapLibreGlMap })
+          .__flightsiteMap === map
+      ) {
+        delete (window as unknown as { __flightsiteMap?: MapLibreGlMap })
+          .__flightsiteMap;
+      }
     };
     // Deliberately created once — see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,7 +211,7 @@ export function MapLibreMap({
     }
     map.setStyle(basemap.style);
     const handleStyleLoad = () => {
-      ensureOverlayLayers(map, config);
+      ensureOverlayLayers(map, configRef.current);
       setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     };
@@ -146,7 +221,6 @@ export function MapLibreMap({
     };
     // Overlay refresh here only needs to react to `basemap`; `config`
     // changes are handled by the effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basemap]);
 
   // Config change (receiver position/rings): refresh the overlay data in
@@ -159,6 +233,38 @@ export function MapLibreMap({
       return;
     }
     ensureOverlayLayers(map, config);
+  }, [config]);
+
+  // One-time camera recenter, independent of the style/tile load above:
+  // the map is constructed with whatever `config` the *first* render held
+  // (for the Live Map, that's always `DEV_PLACEHOLDER_MAP_CONFIG` — React
+  // Query never resolves synchronously on a first render — until
+  // `mapConfigSync.ts` replaces it with the real receiver location).
+  // Waiting for the map's own 'load' event to do this (as the overlay
+  // refresh above effectively can, since it re-runs once style-loaded)
+  // raced the real config's arrival unpredictably: 'load' can fire before
+  // or after the config fetch resolves depending on network/tile
+  // conditions, so gating the jump on 'load' timing either missed the real
+  // location entirely or (worse) "consumed" the one-time jump on a
+  // still-stale placeholder. Reacting to `config` itself sidesteps the
+  // race — `map.jumpTo` needs no style/tile readiness — and firing only on
+  // the first *change* (never the mount-time render) is what keeps this
+  // from fighting a user's manual pan/zoom or the setup wizard's
+  // LocationStep typing after that first sync.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+    if (isInitialConfigRef.current) {
+      isInitialConfigRef.current = false;
+      return;
+    }
+    if (hasRecenteredOnceRef.current) {
+      return;
+    }
+    hasRecenteredOnceRef.current = true;
+    map.jumpTo({ center: [config.receiver.lon, config.receiver.lat] });
   }, [config]);
 
   const mapInstance = useMemo(

@@ -50,6 +50,7 @@ export class MapLibreMockMap {
   setStyle = vi.fn(() => {
     this.styleLoaded = false;
   });
+  jumpTo = vi.fn();
 
   constructor(options: Record<string, unknown>) {
     this.options = options;

@@ -14,6 +14,13 @@ dist-ssr
 coverage
 *.tsbuildinfo
 
+# Copied from node_modules/maplibre-gl by scripts/copy-maplibre-worker.mjs
+# (predev/prebuild) — see MapLibreMap.tsx's setWorkerUrl comment. Versioned
+# by the copy script re-running on install/build, not by git, so it can
+# never drift from whatever maplibre-gl version is actually installed.
+/public/maplibre-gl-worker.mjs
+/public/maplibre-gl-shared.mjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

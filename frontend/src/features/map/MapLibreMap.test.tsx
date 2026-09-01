@@ -57,6 +57,60 @@ describe("MapLibreMap", () => {
     expect(map.layers.size).toBeGreaterThan(0);
   });
 
+  it("recenters the camera once the real receiver location replaces the mount-time config", () => {
+    // The map is constructed with whatever `config` the first render held
+    // — for the Live Map that's always `DEV_PLACEHOLDER_MAP_CONFIG`, since
+    // React Query never resolves synchronously — until `mapConfigSync.ts`
+    // replaces it with the real receiver location. This must not depend on
+    // the map's own 'load' event: that races the config fetch
+    // unpredictably (tile/style network conditions vary), so the recenter
+    // reacts to the `config` prop itself instead (see MapLibreMap.tsx's
+    // `isInitialConfigRef` comment).
+    const { rerender } = render(
+      <MapLibreMap config={config} basemap={basemap} />,
+    );
+    const map = getLastMockMap();
+    expect(map.jumpTo).not.toHaveBeenCalled();
+
+    const realConfig = {
+      ...config,
+      receiver: { lat: 47.6205, lon: -122.3493, label: "Rooftop Pi" },
+    };
+    act(() => {
+      rerender(<MapLibreMap config={realConfig} basemap={basemap} />);
+    });
+
+    expect(map.jumpTo).toHaveBeenCalledTimes(1);
+    expect(map.jumpTo).toHaveBeenCalledWith({
+      center: [realConfig.receiver.lon, realConfig.receiver.lat],
+    });
+  });
+
+  it("never recenters a second time (a later config edit must not fight the user's pan/zoom)", () => {
+    const { rerender } = render(
+      <MapLibreMap config={config} basemap={basemap} />,
+    );
+    const map = getLastMockMap();
+
+    const firstConfig = {
+      ...config,
+      receiver: { lat: 47.6205, lon: -122.3493, label: "Rooftop Pi" },
+    };
+    act(() => {
+      rerender(<MapLibreMap config={firstConfig} basemap={basemap} />);
+    });
+    expect(map.jumpTo).toHaveBeenCalledTimes(1);
+
+    const secondConfig = {
+      ...config,
+      receiver: { lat: 51.5, lon: -0.1, label: "Another site" },
+    };
+    act(() => {
+      rerender(<MapLibreMap config={secondConfig} basemap={basemap} />);
+    });
+    expect(map.jumpTo).toHaveBeenCalledTimes(1);
+  });
+
   it("shows no degraded indicator before any tile error", () => {
     render(<MapLibreMap config={config} basemap={basemap} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
