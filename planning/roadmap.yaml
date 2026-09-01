@@ -730,7 +730,7 @@ slices:
     title: "Metadata update action"
     phase: 4
     branch: "025-metadata-update-ui"
-    status: planned
+    status: merged
     depends_on: ["019", "022", "023"]
     objective: "Settings action to manually update all metadata sources with independent per-source status reporting."
     scope:
