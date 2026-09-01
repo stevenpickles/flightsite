@@ -103,6 +103,12 @@ export function NotificationPermissionStatus({
     <div
       className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3"
       data-testid="notification-permission-status"
+      // The state behind the prose. The E2E spec compares this against what
+      // the browser itself reports, which is the invariant worth pinning —
+      // asserting the sentence instead would turn a copy edit into a failing
+      // end-to-end test and would say nothing about whether FlightSite and
+      // the browser actually agree.
+      data-permission={permission}
     >
       <div className="flex items-start justify-between gap-3">
         <div

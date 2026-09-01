@@ -68,6 +68,27 @@ describe("NotificationPermissionStatus", () => {
     expect(screen.getByText(/browser permission: blocked/i)).toBeVisible();
   });
 
+  it("publishes the state behind the prose for the E2E spec to compare", () => {
+    // `e2e/tests/05-browser-notifications.spec.ts` asserts this attribute
+    // against what the browser itself reports, so the two must keep the same
+    // vocabulary — and a copy edit must not be able to fail that spec.
+    installNotificationMock({ permission: "denied" });
+    const { rerender } = render(<NotificationPermissionStatus enabled />);
+
+    expect(
+      screen.getByTestId("notification-permission-status"),
+    ).toHaveAttribute("data-permission", "denied");
+
+    vi.stubGlobal("Notification", undefined);
+    vi.stubGlobal("isSecureContext", false);
+    useNotificationStore.getState().refreshPermission();
+    rerender(<NotificationPermissionStatus enabled />);
+
+    expect(
+      screen.getByTestId("notification-permission-status"),
+    ).toHaveAttribute("data-permission", "insecure-context");
+  });
+
   it("names the insecure-origin case rather than calling it unsupported", () => {
     // The most likely real-world cause: FlightSite reached over plain HTTP
     // on a LAN address (`docs/SECURITY.md` §1).
