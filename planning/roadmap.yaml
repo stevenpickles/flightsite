@@ -855,7 +855,7 @@ slices:
     title: "Analytics backend"
     phase: 5
     branch: "031-analytics-backend"
-    status: planned
+    status: merged
     depends_on: ["009", "024"]
     objective: "Daily rollups and aggregation APIs powering the Analytics page and today-at-a-glance."
     scope:
