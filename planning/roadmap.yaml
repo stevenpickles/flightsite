@@ -836,7 +836,7 @@ slices:
     title: "Sightings page"
     phase: 5
     branch: "030-sightings-page"
-    status: planned
+    status: merged
     depends_on: ["009", "013", "016", "024", "052"]
     objective: "Chronological sightings log with per-sighting detail including the simplified path."
     scope:
