@@ -28,9 +28,13 @@ describe("routing", () => {
       expect(
         screen.getByRole("heading", { level: 1, name: item.label }),
       ).toBeInTheDocument();
-      // Every section except Live Map is still a placeholder page
-      // (slice 013 only implements the map foundation).
-      if (item.to !== "/") {
+      // Every section except Live Map (slice 013) and Settings (slice 019)
+      // is still a placeholder page. Settings renders its heading in every
+      // `useConfigQuery` state (loading/error/loaded) but only shows this
+      // description text once config has actually loaded — this sweep
+      // deliberately runs without a config API mock, so Settings exercises
+      // its no-fetch-mock (error) state here instead.
+      if (item.to !== "/" && item.to !== "/settings") {
         expect(screen.getByText(item.description)).toBeInTheDocument();
       }
     }
