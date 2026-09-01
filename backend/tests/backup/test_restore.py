@@ -212,14 +212,12 @@ async def test_restore_rolls_back_a_failed_swap(
     assert glob_names(data_dir, f"*.{PRESERVED_SUFFIX}.*") == []
 
 
-async def test_restore_render_states_the_operational_rule(
-    data_dir: Path, populated_db: Path
-) -> None:
+async def test_restore_render_states_the_next_step(data_dir: Path, populated_db: Path) -> None:
     archive = make_backup(data_dir)
 
     rendered = restore_backup(archive, data_dir, confirm=True, now=fixed_clock()).render()
 
-    assert "Stop FlightSite before restoring" in rendered
+    assert "start FlightSite" in rendered
     assert str(data_dir) in rendered
 
 

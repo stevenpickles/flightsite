@@ -151,7 +151,7 @@ async def test_restore_with_confirm_replaces_the_database(
     assert main(["restore", str(archive), "--confirm"]) == EXIT_OK
 
     assert sqlite_scalar(populated_db, "SELECT COUNT(*) FROM sightings") == 5
-    assert "Stop FlightSite before restoring" in capsys.readouterr().out
+    assert "start FlightSite" in capsys.readouterr().out
 
 
 async def test_restore_of_a_damaged_archive_exits_refused(

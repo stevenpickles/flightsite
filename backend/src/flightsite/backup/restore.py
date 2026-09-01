@@ -79,10 +79,13 @@ PRESERVED_SUFFIX = "pre-restore"
 #: file and must not survive into the restored installation.
 DATABASE_SIDECARS = (f"{DATABASE_MEMBER}-wal", f"{DATABASE_MEMBER}-shm")
 
-#: What ``restore`` tells the operator to do next, every time.
-OPERATIONAL_RULE = (
-    "Stop FlightSite before restoring (docs/BACKUP.md); start it afterwards so "
-    "migrations and the startup integrity check run."
+#: The rule that stands in for a running-process check. Printed whenever a
+#: restore is refused for lack of confirmation.
+OPERATIONAL_RULE = "Stop FlightSite before restoring (docs/BACKUP.md)."
+
+#: What a completed restore tells the operator to do next.
+NEXT_STEP = (
+    "start FlightSite; it applies any pending migrations and runs its startup integrity check"
 )
 
 
@@ -123,7 +126,7 @@ class RestoreResult:
                 f"  note:              the archive carried no {SECRETS_MEMBER}; any existing "
                 "one was left untouched"
             )
-        lines.append(f"  next:              {OPERATIONAL_RULE}")
+        lines.append(f"  next:              {NEXT_STEP}")
         return "\n".join(lines)
 
 
@@ -255,6 +258,7 @@ def _utc_now() -> datetime:
 
 __all__ = [
     "DATABASE_SIDECARS",
+    "NEXT_STEP",
     "OPERATIONAL_RULE",
     "PRESERVED_SUFFIX",
     "RestoreResult",
