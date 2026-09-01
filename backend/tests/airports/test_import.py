@@ -395,17 +395,26 @@ async def test_a_listener_runs_after_a_run_that_changed_data(
     assert seen == [(AIRPORTS_SOURCE,)]
 
 
-async def test_a_listener_does_not_run_when_nothing_changed(
+async def test_a_listener_still_runs_when_every_source_failed(
     database: Database,
     live: LiveStore,
     repository: AirportRepository,
     isolated_data_dir: Path,
 ) -> None:
-    """Rebuilding a 70k-row index for a run that imported nothing is work for nothing."""
-    seen: list[object] = []
+    """A run in which nothing imported is news, and reaches the listeners.
+
+    Slice 035 widened this seam. SPEC §55 puts metadata update *results* in the
+    activity feed and SPEC §27 requires the user to see which sources failed,
+    so the notification cannot be conditional on success. The run arrives with
+    an empty ``succeeded`` and the failure named in ``failed`` — which is what
+    lets the airport index rebuild keep doing nothing (it guards on the source
+    having succeeded, see :func:`flightsite.app._rebuild_airport_index`) while
+    the feed still reports the failure.
+    """
+    seen: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
 
     async def listener(run: object) -> None:
-        seen.append(run)
+        seen.append((run.succeeded, run.failed))  # type: ignore[attr-defined]
 
     registry = registry_with_airports(repository, refusing_provider())
     service = MetadataService(
@@ -418,7 +427,7 @@ async def test_a_listener_does_not_run_when_nothing_changed(
 
     await service.update()
 
-    assert seen == []
+    assert seen == [((), (AIRPORTS_SOURCE,))]
 
 
 async def test_a_failing_listener_does_not_fail_the_import(

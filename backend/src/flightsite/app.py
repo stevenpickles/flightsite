@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
 
 from flightsite import __version__
+from flightsite.activity import ActivityListener, ActivityService, HealthProbe, StoredActivityEvent
 from flightsite.airports import (
     AIRPORTS_SOURCE,
     AirportContextService,
@@ -22,6 +23,7 @@ from flightsite.airports import (
 from flightsite.analytics import AnalyticsService
 from flightsite.api.context import LiveApiContext
 from flightsite.api.internal import router as internal_router
+from flightsite.api.serializers import activity_event_payload
 from flightsite.api.v1 import router as v1_router
 from flightsite.api.ws import LiveBroadcaster
 from flightsite.config import ConfigStore, Settings
@@ -31,8 +33,10 @@ from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository
 from flightsite.enrichment.service import build_provider
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
+from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
+from flightsite.maintenance import MaintenanceService, RouteCachePruner
 from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
@@ -115,6 +119,56 @@ def _rebuild_airport_index(app: FastAPI) -> ImportListener:
         await service.reload()
 
     return rebuild
+
+
+def _record_activity(app: FastAPI) -> ImportListener:
+    """A post-import listener that turns a run's results into feed events.
+
+    Registered beside the airport index rebuild and on the same edge, but with
+    the opposite guard: SPEC §55 wants *"metadata update results"* in the feed
+    and SPEC §27 wants the user to see which sources failed, so this one cares
+    about every completed run rather than only the ones that changed data.
+    """
+
+    async def record(run: ImportRun) -> None:
+        activity: ActivityService = app.state.activity
+        await activity.record_import(run)
+
+    return record
+
+
+def _decoder_health(app: FastAPI) -> HealthProbe:
+    """Read the decoder's current connection health, if there is a decoder.
+
+    A callable rather than a service reference because ``app.state.ingestion``
+    is assigned *during* the lifespan hook, after the activity service has been
+    constructed and started; and it can be ``None`` for the whole life of the
+    process on a first-run install, which is exactly the case the feed must
+    stay silent about rather than report as an outage.
+    """
+
+    def probe() -> AdapterHealth | None:
+        service: IngestionService | None = getattr(app.state, "ingestion", None)
+        return None if service is None else service.health()
+
+    return probe
+
+
+def _broadcast_activity(app: FastAPI) -> ActivityListener:
+    """Push newly recorded activity events onto the WebSocket (§4.4).
+
+    Serialization happens here, in the API layer, rather than inside the
+    activity service: the frame body is the §3.9 payload, and
+    :func:`~flightsite.api.serializers.activity_event_payload` is the one
+    function that builds it — which is what makes the REST feed and the live
+    frame the same object rather than two that agree by inspection.
+    """
+
+    def broadcast(events: Sequence[StoredActivityEvent]) -> None:
+        broadcaster: LiveBroadcaster = app.state.broadcaster
+        broadcaster.publish_activity([activity_event_payload(event) for event in events])
+
+    return broadcast
 
 
 def _build_persistence_worker(app: FastAPI, settings: Settings) -> PersistenceWorker:
@@ -222,6 +276,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
     analytics: AnalyticsService = app.state.analytics
     watchlists: WatchlistService = app.state.watchlists
+    activity: ActivityService = app.state.activity
+    maintenance: MaintenanceService = app.state.maintenance
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -273,6 +329,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # after the persistence worker so the lifecycle seam it
         # subscribes to is already live.
         await analytics.start()
+        # And once more, for the same reason and after the same worker: the
+        # activity detector subscribes to that same lifecycle seam, and its
+        # start seeds the record baselines every announcement is measured
+        # against. It goes after analytics because a busiest-day record is a
+        # `lifetime_stats` value slice 033 writes from rollups slice 031
+        # maintains, and seeding from a repaired database is seeding from the
+        # truth. A failed migration leaves the feed empty and nothing else
+        # degraded — the same shape as every subsystem above it.
+        await activity.start()
+        # Same condition once more, and last of the database-dependent
+        # subsystems: maintenance verifies, prunes and optimizes the very
+        # schema the migration may have failed to create, so there is nothing
+        # for it to do until that succeeds. Started after every other
+        # subsystem so its first cycle — an hour away — cannot overlap the
+        # backfills and recoveries startup is still running.
+        await maintenance.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -289,6 +361,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Maintenance stops first, ahead of the data-flow order below, because
+        # it is the one subsystem whose in-flight work is entirely
+        # discardable: no job holds buffered state, and a cancelled cycle
+        # simply leaves its remaining jobs for the next process. Stopping it
+        # here means no housekeeping statement is holding the writer lock when
+        # the persistence worker takes its final transactions.
+        await maintenance.stop()
         # Shut down along the direction of data flow, so each stage has
         # already stopped producing before its consumer stops: ingestion, then
         # the live store's sweep, then its two consumers — the WebSocket
@@ -333,6 +412,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # sees the last sightings this process wrote. It is the one
         # subsystem that reads what the worker's shutdown produced.
         await analytics.stop()
+        # Last of the background subsystems, for the same reason and one more:
+        # its final pass sees the sightings the worker's shutdown closed, and
+        # it runs after analytics so a busiest-day record it might announce is
+        # measured against rollups that are already final.
+        await activity.stop()
         await database.dispose()
         logger.info("app_shutdown")
 
@@ -411,6 +495,25 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     read a rollup row; shutdown runs after the persistence worker's final flush,
     which is the one subsystem whose shutdown output another one reads.
 
+    Activity and milestones (SPEC §54/§55) are constructed as
+    ``app.state.activity`` — the sixth background task, and the second consumer
+    of that same lifecycle seam. It finds what happened by scanning ``sightings``
+    above a watermark rather than by trusting a notification, records events and
+    milestones whose keys make recording them exactly-once, and publishes what it
+    actually wrote onto the WebSocket's ``activity`` frame (``docs/API.md`` §4.4)
+    through a listener wired here. It also reads decoder health for the
+    offline/restored events and takes metadata import results through the same
+    post-import listener list the airport index rebuild uses.
+    Database maintenance (SPEC §70) is constructed as ``app.state.maintenance``:
+    the seventh low-frequency background task, running an integrity check,
+    retention pruning, ``PRAGMA optimize``, WAL checkpoint management and a
+    guarded ``VACUUM`` on their own cadences. It adds no configuration key —
+    every threshold is a module constant — and its
+    :attr:`~flightsite.maintenance.MaintenanceService.report` is what slice
+    042's diagnostics surface reads. Startup starts it last, so its first cycle
+    cannot overlap the backfills and recoveries; shutdown stops it first,
+    because a cancelled cycle loses nothing.
+
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
     broadcaster is the second consumer of the live event stream: startup gives
@@ -480,18 +583,36 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         live=app.state.live,
         data_dir=store.data_dir,
         registry=_build_metadata_registry(airport_repository),
-        listeners=(_rebuild_airport_index(app),),
+        # Both listeners read `app.state` when they run rather than closing
+        # over an object, so registering them here — before the services they
+        # reach for even exist — is safe and keeps the wiring in one place.
+        listeners=(_rebuild_airport_index(app), _record_activity(app)),
         on_resolved=app.state.watchlists.matcher.on_resolved,
     )
     # Optional route enrichment (SPEC §28). `build_provider` returns None
     # unless the flag is set *and* a key is present, and a service with no
     # provider starts nothing and subscribes to nothing — so a stock install
     # cannot make an external call, whatever else happens at runtime.
+    route_cache = RouteCacheRepository(app.state.database)
     app.state.enrichment = EnrichmentService(
         live=app.state.live,
         persistence=app.state.persistence,
-        cache=RouteCacheRepository(app.state.database),
+        cache=route_cache,
         provider=build_provider(settings),
+    )
+    # Database maintenance (SPEC §70, slice 044): a sixth low-frequency task
+    # running the integrity check, retention pruning, `PRAGMA optimize`, WAL
+    # checkpoint management and a heavily guarded VACUUM on their own cadences.
+    # It is handed the one prunable domain that has no owner of its own —
+    # `route_cache`, whose expired rows were previously ignored on read but
+    # never deleted; the receiver metrics and the track checkpoints prune
+    # themselves, and `flightsite.maintenance.retention` documents why. The
+    # live store is read only for the VACUUM pressure heuristic. Constructing
+    # it opens nothing and starts no task.
+    app.state.maintenance = MaintenanceService(
+        database=app.state.database,
+        retention=(RouteCachePruner(route_cache),),
+        live=app.state.live,
     )
     # Receiver metrics (SPEC §60/§64, ADR-0009): the decoder's own statistics
     # plus FlightSite's, on a rolling high-resolution window with permanent
@@ -509,6 +630,18 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         persistence=app.state.persistence,
         timezone=settings.timezone,
     )
+    # Activity and milestones (SPEC §54/§55, docs/DATA_MODEL.md §5). A sixth
+    # low-frequency background task, and the second consumer of the sighting
+    # worker's lifecycle seam. It writes through the same single writer as
+    # everything else and publishes what it wrote onto the WebSocket's
+    # `activity` frame (docs/API.md §4.4). Constructing it subscribes to
+    # nothing and opens no connection.
+    app.state.activity = ActivityService(
+        database=app.state.database,
+        persistence=app.state.persistence,
+        health=_decoder_health(app),
+    )
+    app.state.activity.subscribe(_broadcast_activity(app))
     # Slice 025's update-in-progress coordinator: the background task the
     # current "Update Aircraft Metadata" run is executing in, and when it
     # started. ``None`` means no run has ever been triggered on this process.

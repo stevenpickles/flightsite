@@ -6,6 +6,7 @@ import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
+import { ActivityPage } from "@/pages/ActivityPage";
 import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
@@ -41,6 +42,7 @@ export function renderApp(initialPath = "/") {
               { path: "receiver", element: <ReceiverPage /> },
               { path: "alerts", element: <AlertsPage /> },
               { path: "settings", element: <SettingsPage /> },
+              { path: "activity", element: <ActivityPage /> },
             ],
           },
           { path: "/setup", element: <SetupWizardPage /> },

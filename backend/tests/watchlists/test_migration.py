@@ -35,7 +35,7 @@ from tests.db.harness import (
 )
 
 REVISION = "0011"
-PREVIOUS = "0009"
+PREVIOUS = "0010"
 
 TABLES = ("watchlists", "watchlist_entries")
 

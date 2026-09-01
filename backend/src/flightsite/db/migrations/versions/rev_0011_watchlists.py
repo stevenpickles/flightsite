@@ -25,18 +25,10 @@ docstring anticipates; the ``UNIQUE`` constraint scopes to one watchlist, so
 the same value may appear on two different watchlists for two different
 reasons.
 
-MIGRATION NOTE (parallel slices): this revision's local ``down_revision`` is
-``0009``, the head in this worktree at the time slice 037 was implemented.
-Slice ``036`` independently owns revision ``0010`` in its own worktree; per
-``docs/DEVELOPMENT.md``'s "Parallel migrations" rebase rule, the orchestrator
-re-parents this file onto ``0010`` at reconcile time (a one-line
-``down_revision`` edit) rather than either slice guessing the other's shape in
-advance. Nothing in this migration's operations depends on anything ``0010``
-creates, so the reparenting is mechanical.
-
-Revision ID: 0011
-Revises: 0009
-Created: 2026-09-01
+Re-parented onto revision 0010 at reconcile per the DEVELOPMENT.md
+parallel-migration rule: this slice was developed concurrently with slice 035
+(which owned 0010), building locally on 0009; Fable moved down_revision to
+0010 before merge so the chain stays linear.
 """
 
 from __future__ import annotations
@@ -47,7 +39,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0011"
-down_revision: str | None = "0009"
+down_revision: str | None = "0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

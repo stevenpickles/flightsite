@@ -205,16 +205,11 @@ async def test_no_rollup_table_carries_a_foreign_key(db_path: Path, table: str) 
 async def test_the_downgrade_drops_exactly_this_slice_s_tables(db_path: Path) -> None:
     """Rolling back loses only a derived view the backfill can rebuild.
 
-    Asserted as "at least these tables" rather than an exact before/after
-    diff: downgrading from *head* to ``PREVIOUS`` also drops whatever a later
-    slice stacked on top of this revision in the meantime (e.g. roadmap
-    slice 037's ``watchlists``/``watchlist_entries``, revision 0011) — a
-    real and correct consequence of a growing migration chain, not a defect
-    in this revision's own downgrade. An exact-equality assertion here would
-    fail every time a later migration lands, for a reason that has nothing
-    to do with this slice.
+    Upgraded to *this* revision rather than to head: later slices add tables of
+    their own, and a downgrade from head to 0008 would drop theirs too — which
+    would say nothing about what 0009's own downgrade does.
     """
-    await upgrade_empty_database(db_path)
+    await upgrade_empty_database(db_path, REVISION)
     before = table_names(db_path)
 
     async with database_at(db_path) as database:

@@ -940,7 +940,7 @@ slices:
     title: "Activity feed & milestones"
     phase: 5
     branch: "035-activity-milestones"
-    status: planned
+    status: merged
     depends_on: ["009", "010", "024", "025"]
     objective: "Persistent activity event stream and receiver milestone/record detection with a feed UI."
     scope:
@@ -1114,7 +1114,7 @@ slices:
     title: "Backup & restore"
     phase: 7
     branch: "043-backup-restore"
-    status: planned
+    status: merged
     depends_on: ["004", "005", "021"]
     objective: "Version-aware, checksum-validated backup and restore commands safe for live SQLite."
     scope:
@@ -1136,7 +1136,7 @@ slices:
     title: "Database maintenance"
     phase: 7
     branch: "044-db-maintenance"
-    status: planned
+    status: merged
     depends_on: ["005", "009", "033", "053"]
     objective: "Automated conservative maintenance: integrity checks, pruning, optimization, and hardened unclean-shutdown handling."
     scope:
