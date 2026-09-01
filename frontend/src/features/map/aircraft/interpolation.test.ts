@@ -2,21 +2,38 @@ import { describe, expect, it } from "vitest";
 
 import {
   displayPosition,
-  INTERPOLATION_MAX_MS,
+  INTERPOLATION_MAX_FIX_AGE_MS,
+  INTERPOLATION_STALL_GRACE_MS,
   normalizeLongitude,
   projectPosition,
 } from "@/features/map/aircraft/interpolation";
 import type { LiveAircraftRecord } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { LiveAircraft } from "@/lib/api/live";
-import { makeAircraft } from "@/test/liveAircraftFixtures";
+import type { RecordTimes } from "@/test/liveAircraftFixtures";
+import { makeRecord } from "@/test/liveAircraftFixtures";
 
 const ONE_HOUR = 3_600_000;
 
+/** A record whose stream is healthy at `now`: `receivedAt` tracks the caller's
+ * clock, so these cases exercise the fix-age bound rather than the stall
+ * grace. Tests that care about a stalled stream set `receivedAt` explicitly. */
 function record(
   overrides: Partial<LiveAircraft>,
-  receivedAt = 0,
+  times: RecordTimes = {},
 ): LiveAircraftRecord {
-  return { aircraft: makeAircraft(overrides), receivedAt };
+  return makeRecord(overrides, times);
+}
+
+/** A record still receiving frames at `now`, with a fix `fixAgeMs` old. */
+function streaming(
+  overrides: Partial<LiveAircraft>,
+  now: number,
+  fixAgeMs: number,
+): LiveAircraftRecord {
+  return makeRecord(overrides, {
+    receivedAt: now,
+    positionChangedAt: now - fixAgeMs,
+  });
 }
 
 describe("projectPosition", () => {
@@ -118,23 +135,83 @@ describe("displayPosition", () => {
   });
 
   it("stops projecting once the stream has stalled", () => {
-    const far = displayPosition(
-      record({
-        position: { lat: 0, lon: 0 },
-        track_deg: 0,
-        ground_speed_kt: 60,
-      }),
-      INTERPOLATION_MAX_MS * 10,
-    );
+    // No frame since t=0: the projection may coast for the grace period and
+    // must then hold, however long the stall lasts.
+    const moving = {
+      position: { lat: 0, lon: 0 },
+      track_deg: 0,
+      ground_speed_kt: 60,
+    };
     const capped = displayPosition(
+      record(moving),
+      INTERPOLATION_STALL_GRACE_MS,
+    );
+    expect(
+      displayPosition(record(moving), INTERPOLATION_STALL_GRACE_MS * 10),
+    ).toEqual(capped);
+    expect(displayPosition(record(moving), ONE_HOUR)).toEqual(capped);
+  });
+
+  it("freezes at the projection it reached, not back at the raw fix", () => {
+    // The stall must look like the aircraft stopping, never like it jumping
+    // backwards — a rewind is the defect this module exists to avoid.
+    const frozen = displayPosition(
       record({
         position: { lat: 0, lon: 0 },
         track_deg: 0,
-        ground_speed_kt: 60,
+        ground_speed_kt: 600,
       }),
-      INTERPOLATION_MAX_MS,
+      ONE_HOUR,
     );
-    expect(far).toEqual(capped);
+    expect(frozen?.lat).toBeGreaterThan(0);
+    // 600 kt for the 4 s grace is 0.667 nm.
+    expect(frozen?.lat).toBeCloseTo(
+      (600 * INTERPOLATION_STALL_GRACE_MS) / ONE_HOUR / 60,
+      9,
+    );
+  });
+
+  it("keeps projecting a live aircraft whose fix is older than the grace", () => {
+    // The regression guard for the bound itself: a distant aircraft heard
+    // every second but positioned every 8 s must not freeze at 4 s.
+    const now = 100_000;
+    const drawn = displayPosition(
+      streaming(
+        { position: { lat: 0, lon: 0 }, track_deg: 0, ground_speed_kt: 360 },
+        now,
+        8_000,
+      ),
+      now,
+    );
+    // 360 kt for eight seconds is 0.8 nm.
+    expect(drawn?.lat).toBeCloseTo(0.8 / 60, 9);
+  });
+
+  it("stops dead-reckoning a fix older than the fix-age cap", () => {
+    // Heard every second, positioned never: a Mode S-only aircraft stays live
+    // but must not be flown across the map on an unconfirmed velocity.
+    const now = 100_000;
+    const moving = {
+      position: { lat: 0, lon: 0 },
+      track_deg: 0,
+      ground_speed_kt: 360,
+    };
+    const atCap = displayPosition(
+      streaming(moving, now, INTERPOLATION_MAX_FIX_AGE_MS),
+      now,
+    );
+    expect(
+      displayPosition(
+        streaming(moving, now, INTERPOLATION_MAX_FIX_AGE_MS * 20),
+        now,
+      ),
+    ).toEqual(atCap);
+  });
+
+  it("covers the distant-aircraft fix cadence with the fix-age cap", () => {
+    // The bound is only correct if it clears the 2-10 s CPR cadence that
+    // motivated it, with room to spare.
+    expect(INTERPOLATION_MAX_FIX_AGE_MS).toBeGreaterThan(10_000);
   });
 
   it("returns the reported position when velocity is unknown", () => {
@@ -163,7 +240,7 @@ describe("displayPosition", () => {
       displayPosition(
         record(
           { position: { lat: 1, lon: 2 }, track_deg: 0, ground_speed_kt: 400 },
-          5000,
+          { receivedAt: 5000 },
         ),
         1000,
       ),

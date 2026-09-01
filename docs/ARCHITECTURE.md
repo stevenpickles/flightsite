@@ -243,7 +243,10 @@ State model:
 
 - **Live data**: a WebSocket client (reconnect + backoff, snapshot-then-delta) feeds a
   Zustand live store. Map layers and live panels subscribe to it. Position
-  interpolation between 1 Hz updates happens client-side.
+  interpolation happens client-side, between successive position *fixes* rather
+  than between 1 Hz frames: frames arrive every second, but a distant aircraft
+  decodes a new position only every 2-10 s, and the store dates the two
+  separately so dead reckoning is anchored to the fix.
 - **Request/response data** (history, analytics, settings): TanStack Query against
   REST, with normal caching/invalidation.
 - **UI state** (selection, filters, theme, panel layout): Zustand + URL params where
