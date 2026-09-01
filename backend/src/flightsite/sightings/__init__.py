@@ -40,7 +40,13 @@ from flightsite.sightings.repository import (
     SightingIds,
     SightingRepository,
 )
-from flightsite.sightings.state import ActiveSighting, CheckpointBatch, PendingEvent, open_from
+from flightsite.sightings.state import (
+    ActiveSighting,
+    CheckpointBatch,
+    PendingEvent,
+    SightingRoute,
+    open_from,
+)
 from flightsite.sightings.track_codec import (
     ENCODING_VERSION,
     PackedTrack,
@@ -97,6 +103,7 @@ __all__ = [
     "SightingEventType",
     "SightingIds",
     "SightingRepository",
+    "SightingRoute",
     "TrackSample",
     "UnsupportedTrackEncoding",
     "from_track_point",

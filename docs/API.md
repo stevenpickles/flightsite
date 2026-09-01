@@ -256,14 +256,20 @@ Aircraft object (the same shape used by the WebSocket):
     "severity": "high",
     "reasons": ["Rule: Military aircraft"]
   },
+  "route": { "origin": "KATL", "destination": "KSEA" },
   "provenance": {
     "registration": "mictronics",
     "operator": "mictronics",
     "classification": "mictronics",
-    "distance_nm": "derived"
+    "distance_nm": "derived",
+    "route": "aerodatabox"
   }
 }
 ```
+
+- `route`: the current sighting's externally reported route (§2.6 shape) — always
+  present, members `null` until enrichment lands (slice 026); never a locally
+  inferred value (that is the separate nearest-airport context, slice 027).
 
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.

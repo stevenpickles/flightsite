@@ -93,6 +93,12 @@ class OpenSightingRow:
     callsign_last: str | None = None
     squawk_last: str | None = None
     had_emergency: bool = False
+    #: Route enrichment already established for this sighting (slice 026). It
+    #: has to come back with the rest: a restart that rehydrated without it
+    #: would blank a route already written the next time the row flushed.
+    origin_ident: str | None = None
+    destination_ident: str | None = None
+    route_source: str | None = None
     any_position: bool = False
     mlat_used: bool = False
     ground_seen: bool = False
@@ -148,6 +154,9 @@ class OpenSightingRow:
             callsign_last=self.callsign_last,
             squawk_last=self.squawk_last,
             had_emergency=self.had_emergency,
+            origin_ident=self.origin_ident,
+            destination_ident=self.destination_ident,
+            route_source=self.route_source,
             # An emergency squawk still standing at restart is not a second
             # episode: deriving this from the stored squawk is what keeps
             # `emergency_start` exactly-once across a process boundary.
@@ -183,9 +192,9 @@ class OpenSightingRow:
         )
 
 
-#: Columns of ``sightings`` maintained from the live stream. Route enrichment
-#: (026), airport inference (027) and alert outcomes (038) own the rest and are
-#: never written here.
+#: Columns of ``sightings`` this repository maintains from the accumulator.
+#: Airport inference (027) and alert outcomes (038) own the rest and are never
+#: written here.
 #:
 #: Each name is an attribute of :class:`~flightsite.sightings.state.
 #: ActiveSighting` too — ``rssi_avg_db`` and ``pos_time_pct`` as derived
@@ -207,6 +216,14 @@ _RUNNING_COLUMNS: Final[tuple[str, ...]] = (
     "rssi_avg_db",
     "rssi_min_db",
     "pos_time_pct",
+    # Route enrichment (slice 026). Not part of the live stream — the values
+    # arrive from an external provider on its own task and are set on the
+    # accumulator, which is why they ride the ordinary flush rather than
+    # needing a write path of their own. All three stay ``None`` on an install
+    # with enrichment switched off, so copying them costs nothing there.
+    "origin_ident",
+    "destination_ident",
+    "route_source",
 )
 
 
@@ -270,6 +287,9 @@ class SightingRepository:
                 callsign_last=sighting.callsign_last,
                 squawk_last=sighting.squawk_last,
                 had_emergency=bool(sighting.had_emergency),
+                origin_ident=sighting.origin_ident,
+                destination_ident=sighting.destination_ident,
+                route_source=sighting.route_source,
                 any_position=bool(sighting.any_position),
                 mlat_used=bool(sighting.mlat_used),
                 ground_seen=bool(sighting.ground_seen),
