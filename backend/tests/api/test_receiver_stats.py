@@ -1,11 +1,17 @@
 """``flightsite.api.receiver_stats`` — pure helpers and the query layer.
 
 Two kinds of assertion: the pure functions (:func:`ever_ranges`,
-:func:`signal_histogram`, :func:`next_local_day`, :func:`unique_aircraft_per_day`)
-are checked against brute-force recomputation and hand-picked fixtures with no
-database involved; :class:`ReceiverStatsRepository` is checked against a
-migrated database seeded the same way the Sightings/Aircraft page tests seed
-one (``tests.api.aircraft_history_fixtures``, ``tests.api.sighting_fixtures``).
+:func:`signal_histogram`, :func:`next_local_day`) are checked against
+brute-force recomputation and hand-picked fixtures with no database involved;
+:class:`ReceiverStatsRepository` is checked against a migrated database
+seeded the same way the Sightings/Aircraft page tests seed one
+(``tests.api.aircraft_history_fixtures``, ``tests.api.sighting_fixtures``).
+
+Unique-aircraft counting (today/since T0/per-day) is deliberately *not*
+covered here — it is read from roadmap slice 031's
+:class:`~flightsite.analytics.queries.AnalyticsQueries` (see
+``tests/api/test_receiver_stats_api.py`` for the endpoint-level assertions,
+and ``tests/analytics/`` for that query layer's own coverage).
 """
 
 from __future__ import annotations
@@ -13,7 +19,6 @@ from __future__ import annotations
 import random
 from collections.abc import AsyncIterator
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -22,7 +27,6 @@ from flightsite.api.receiver_stats import (
     ever_ranges,
     next_local_day,
     signal_histogram,
-    unique_aircraft_per_day,
 )
 from flightsite.db import Database, database_path
 from flightsite.receiver_metrics.model import RangeRecord
@@ -32,7 +36,6 @@ from .sighting_fixtures import SeedSighting, seed_sightings
 
 BASE_MS = 1_756_000_000_000
 DAY_MS = 86_400_000
-UTC = ZoneInfo("UTC")
 
 
 # ------------------------------------------------------------------ fixtures
@@ -181,33 +184,6 @@ def test_next_local_day(day: str, expected: str) -> None:
     assert next_local_day(day) == expected
 
 
-# ------------------------------------------------------ unique_aircraft_per_day
-
-
-def test_unique_aircraft_per_day_counts_distinct_ids_within_a_day() -> None:
-    rows = [(BASE_MS, 1), (BASE_MS + 1_000, 2), (BASE_MS + 2_000, 1)]
-
-    result = unique_aircraft_per_day(rows, UTC)
-
-    assert result == {"2025-08-24": 2}
-
-
-def test_unique_aircraft_per_day_buckets_by_the_given_zone_not_utc() -> None:
-    """A sighting just after local midnight in a zone west of UTC is still
-    "yesterday" in UTC — bucketing must use the receiver's own zone."""
-    zone = ZoneInfo("America/Los_Angeles")
-    # 2025-08-24T05:00:00Z is 2025-08-23T22:00 PDT (UTC-7 in August).
-    ts_ms = 1_756_011_600_000
-
-    result = unique_aircraft_per_day([(ts_ms, 7)], zone)
-
-    assert result == {"2025-08-23": 1}
-
-
-def test_unique_aircraft_per_day_of_no_rows_is_empty() -> None:
-    assert unique_aircraft_per_day([], UTC) == {}
-
-
 # ----------------------------------------------------- ReceiverStatsRepository
 
 AIRCRAFT = [
@@ -240,16 +216,6 @@ AIRCRAFT = [
 ]
 
 
-async def test_unique_aircraft_since_t0_is_the_aircraft_table_row_count(
-    database: Database, stats: ReceiverStatsRepository
-) -> None:
-    assert await stats.unique_aircraft_since_t0() == 0
-
-    await seed_aircraft(database, AIRCRAFT)
-
-    assert await stats.unique_aircraft_since_t0() == 3
-
-
 async def test_total_sightings_counts_every_sighting_row(
     database: Database, stats: ReceiverStatsRepository
 ) -> None:
@@ -263,35 +229,6 @@ async def test_total_sightings_counts_every_sighting_row(
     )
 
     assert await stats.total_sightings() == 2
-
-
-async def test_unique_aircraft_today_counts_a_sighting_spanning_the_day_boundary(
-    database: Database, stats: ReceiverStatsRepository
-) -> None:
-    day_start = BASE_MS
-    day_end = BASE_MS + DAY_MS
-    await seed_sightings(
-        database,
-        AIRCRAFT,
-        [
-            # Started before today, still open: counts as seen today.
-            SeedSighting(icao24="ae1463", started_ms=day_start - 3_600_000, ended_ms=None),
-            # Started and ended entirely within today.
-            SeedSighting(icao24="bbb222", started_ms=day_start + 1_000, ended_ms=day_start + 2_000),
-            # Ended before today started: does not count.
-            SeedSighting(
-                icao24="ccc333", started_ms=day_start - 7_200_000, ended_ms=day_start - 3_600_000
-            ),
-        ],
-    )
-
-    assert await stats.unique_aircraft_today(day_start_ms=day_start, day_end_ms=day_end) == 2
-
-
-async def test_unique_aircraft_today_of_an_empty_install_is_zero(
-    stats: ReceiverStatsRepository,
-) -> None:
-    assert await stats.unique_aircraft_today(day_start_ms=0, day_end_ms=DAY_MS) == 0
 
 
 async def test_signal_values_reads_only_non_null_rssi_within_the_window(

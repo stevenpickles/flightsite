@@ -114,7 +114,11 @@ describe("ReceiverPage", () => {
 
     expect(await screen.findByText("Maximum range")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText("No data in this window.")).toBeInTheDocument();
+      // The shared `EChart` wrapper's own empty-state copy (roadmap slice
+      // 032) — it renders this instead of an empty canvas whenever
+      // `buildOption` returns `null`, regardless of this chart's own
+      // (unused in that case) summary string.
+      expect(screen.getByText("No data for this window.")).toBeInTheDocument();
     });
   });
 

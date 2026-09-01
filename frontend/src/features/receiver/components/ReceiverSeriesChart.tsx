@@ -1,16 +1,18 @@
+import { useCallback, useMemo } from "react";
+
 import type { UnitSystem } from "@/lib/api/config";
 import {
   useReceiverMetricSeriesQuery,
   type ReceiverSeriesResolution,
 } from "@/lib/api/receiverStats";
+import { EChart } from "@/features/analytics/components/EChart";
+import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
 import { ChartCard } from "@/features/receiver/components/ChartCard";
-import { EChart } from "@/features/receiver/components/EChart";
 import {
-  buildTimeSeriesChartOption,
+  buildTimeSeriesChart,
   type ChartPoint,
 } from "@/features/receiver/lib/chartOptions";
 import type { MetricChartConfig } from "@/features/receiver/lib/metricConfig";
-import { chartPalette, useIsDarkTheme } from "@/features/receiver/lib/palette";
 
 interface ReceiverSeriesChartProps {
   config: MetricChartConfig;
@@ -31,51 +33,67 @@ export function ReceiverSeriesChart({
   units,
   timezone,
 }: ReceiverSeriesChartProps) {
-  const isDark = useIsDarkTheme();
   const effectiveResolution = config.alwaysDaily ? "daily" : resolution;
   const { data, isLoading, isError } = useReceiverMetricSeriesQuery({
     metric: config.metric,
     resolution: effectiveResolution,
   });
 
+  const points: ChartPoint[] = useMemo(
+    () =>
+      (data?.points ?? []).map((point) => ({
+        t: point.t,
+        value: point.value === null ? null : config.convert(point.value, units),
+      })),
+    [data?.points, config, units],
+  );
+
+  const { summary } = useMemo(
+    () =>
+      buildTimeSeriesChart({
+        points,
+        kind: config.kind,
+        timezone,
+        resolution: effectiveResolution,
+        seriesName: config.title,
+        unitLabel: config.unitLabel(units),
+        formatValue: (value) => config.formatValue(value, units),
+      }),
+    [points, config, timezone, effectiveResolution, units],
+  );
+
+  // Stable across re-renders the underlying data/settings did not touch
+  // (e.g. a theme toggle) — `EChart` re-derives its option from this and
+  // `theme` alone, so an unstable reference here would re-render the chart
+  // on every unrelated parent render.
+  const buildOption = useCallback(
+    (theme: ChartTheme) =>
+      buildTimeSeriesChart({
+        points,
+        kind: config.kind,
+        timezone,
+        resolution: effectiveResolution,
+        seriesName: config.title,
+        unitLabel: config.unitLabel(units),
+        formatValue: (value) => config.formatValue(value, units),
+      }).buildOption(theme),
+    [points, config, timezone, effectiveResolution, units],
+  );
+
   const titleId = `receiver-chart-${config.metric}`;
 
-  if (isLoading) {
-    return (
-      <ChartCard titleId={titleId} title={config.title}>
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      </ChartCard>
-    );
-  }
-
-  if (isError || data === undefined) {
-    return (
-      <ChartCard titleId={titleId} title={config.title}>
-        <p className="text-sm text-destructive">Could not load this chart.</p>
-      </ChartCard>
-    );
-  }
-
-  const points: ChartPoint[] = data.points.map((point) => ({
-    t: point.t,
-    value: point.value === null ? null : config.convert(point.value, units),
-  }));
-
-  const { option, summary } = buildTimeSeriesChartOption({
-    points,
-    kind: config.kind,
-    timezone,
-    resolution: effectiveResolution,
-    seriesName: config.title,
-    unitLabel: config.unitLabel(units),
-    palette: chartPalette(isDark),
-    formatValue: (value) => config.formatValue(value, units),
-  });
-
   return (
-    <ChartCard titleId={titleId} title={config.title}>
-      <EChart option={option} ariaLabel={`${config.title} chart. ${summary}`} />
-      <p className="mt-2 text-xs text-muted-foreground">{summary}</p>
+    <ChartCard
+      titleId={titleId}
+      title={config.title}
+      isLoading={isLoading}
+      error={isError ? "Could not load this chart." : undefined}
+    >
+      <EChart
+        buildOption={buildOption}
+        ariaLabel={`${config.title} chart`}
+        summary={summary}
+      />
     </ChartCard>
   );
 }

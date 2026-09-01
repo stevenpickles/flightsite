@@ -1,51 +1,39 @@
 /**
  * Pure ECharts `option` builders for the Receiver page (roadmap slice 034).
  *
- * Kept free of React and of `echarts.init` on purpose: every function here
- * takes plain data and a palette and returns a plain object plus a
- * plain-language summary string, so the polar bearing mapping and the
- * empty/loading states can be asserted against fixtures without mounting a
- * chart (`docs/TEST_STRATEGY.md` favors testing logic over rendering where
- * the two can be separated).
+ * Built against the shared `EChart` wrapper's contract (roadmap slice 032,
+ * `features/analytics/components/EChart.tsx`): each builder here returns a
+ * `buildOption(theme) => option | null` closure plus the `summary` text the
+ * wrapper renders as its visually-hidden text alternative and passes through
+ * as the chart's `aria-label` (SPEC §80's accessibility baseline — a chart's
+ * data must be readable without seeing the canvas). Returning `null` is how
+ * a builder asks the wrapper to render its "No data" empty state instead of
+ * an empty canvas, so no chart here owns its own empty-state rendering.
  *
- * Every builder also returns `summary` — the visible text description
- * rendered beside its chart and used as the chart canvas's `aria-label`
- * (SPEC §80's accessibility baseline: a chart's data must be readable
- * without seeing the canvas).
+ * Kept free of React and of `echarts.init` on purpose: every function here
+ * takes plain data and a `ChartTheme` and returns plain objects, so the
+ * polar bearing mapping and the empty-state summaries can be asserted
+ * against fixtures without mounting a chart (`docs/TEST_STRATEGY.md` favors
+ * testing logic over rendering where the two can be separated).
  */
-import type * as echarts from "echarts";
+import type * as echarts from "echarts/core";
 
+import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
 import type { ReceiverSeriesResolution } from "@/lib/api/receiverStats";
 import {
   formatReceiverLocalDate,
   formatReceiverLocalDateTime,
   formatReceiverLocalTime,
 } from "@/features/receiver/lib/format";
-import type { ReceiverChartPalette } from "@/features/receiver/lib/palette";
 
 export interface ChartPoint {
   t: string;
   value: number | null;
 }
 
-export interface ChartBuildResult {
-  option: echarts.EChartsCoreOption;
+export interface ChartResult {
+  buildOption: (theme: ChartTheme) => echarts.EChartsCoreOption | null;
   summary: string;
-}
-
-function emptyOption(
-  palette: ReceiverChartPalette,
-  message: string,
-): echarts.EChartsCoreOption {
-  return {
-    backgroundColor: "transparent",
-    graphic: {
-      type: "text",
-      left: "center",
-      top: "middle",
-      style: { text: message, fill: palette.mutedInk, fontSize: 13 },
-    },
-  };
 }
 
 function axisLabel(
@@ -69,7 +57,6 @@ export interface TimeSeriesChartParams {
   resolution: ReceiverSeriesResolution;
   seriesName: string;
   unitLabel: string;
-  palette: ReceiverChartPalette;
   formatValue: (value: number) => string;
 }
 
@@ -77,9 +64,9 @@ export interface TimeSeriesChartParams {
  * aircraft, maximum range, unique aircraft per day, and daily message/
  * position totals all share this shape — only the metric and its formatting
  * differ (`features/receiver/lib/metricConfig.ts`). */
-export function buildTimeSeriesChartOption(
+export function buildTimeSeriesChart(
   params: TimeSeriesChartParams,
-): ChartBuildResult {
+): ChartResult {
   const {
     points,
     kind,
@@ -87,13 +74,11 @@ export function buildTimeSeriesChartOption(
     resolution,
     seriesName,
     unitLabel,
-    palette,
     formatValue,
   } = params;
 
   if (points.length === 0) {
-    const message = "No data in this window.";
-    return { option: emptyOption(palette, message), summary: message };
+    return { buildOption: () => null, summary: "No data in this window." };
   }
 
   const categories = points.map((point) =>
@@ -110,47 +95,48 @@ export function buildTimeSeriesChartOption(
       : `${seriesName}: ${points.length} points from ${categories[0]} to ${categories[categories.length - 1]}. ` +
         `Latest ${formatValue(latestPresent as number)}, peak ${formatValue(peak as number)}.`;
 
-  const option: echarts.EChartsCoreOption = {
-    backgroundColor: "transparent",
-    textStyle: { color: palette.secondaryInk },
-    grid: { left: 52, right: 16, top: 24, bottom: 40 },
-    tooltip: {
-      trigger: "axis",
-      valueFormatter: (value: unknown) =>
-        typeof value === "number" ? formatValue(value) : "no data",
-    },
-    xAxis: {
-      type: "category",
-      data: categories,
-      axisLine: { lineStyle: { color: palette.axisLine } },
-      axisLabel: { color: palette.mutedInk },
-      splitLine: { show: false },
-    },
-    yAxis: {
-      type: "value",
-      name: unitLabel,
-      nameTextStyle: { color: palette.mutedInk },
-      axisLabel: { color: palette.mutedInk },
-      axisLine: { lineStyle: { color: palette.axisLine } },
-      splitLine: { lineStyle: { color: palette.gridline } },
-    },
-    series: [
-      {
-        name: seriesName,
-        type: kind,
-        data: values,
-        color: palette.series1,
-        lineStyle:
-          kind === "line" ? { width: 2, color: palette.series1 } : undefined,
-        itemStyle: { color: palette.series1 },
-        showSymbol: kind === "line" && points.length <= 60,
-        symbolSize: 8,
-        connectNulls: false,
+  return {
+    summary,
+    buildOption: (theme) => ({
+      backgroundColor: "transparent",
+      textStyle: { color: theme.mutedInk },
+      grid: { left: 52, right: 16, top: 24, bottom: 40 },
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value: unknown) =>
+          typeof value === "number" ? formatValue(value) : "no data",
       },
-    ],
+      xAxis: {
+        type: "category",
+        data: categories,
+        axisLine: { lineStyle: { color: theme.grid } },
+        axisLabel: { color: theme.mutedInk },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: "value",
+        name: unitLabel,
+        nameTextStyle: { color: theme.mutedInk },
+        axisLabel: { color: theme.mutedInk },
+        axisLine: { lineStyle: { color: theme.grid } },
+        splitLine: { lineStyle: { color: theme.grid } },
+      },
+      series: [
+        {
+          name: seriesName,
+          type: kind,
+          data: values,
+          color: theme.series[0],
+          lineStyle:
+            kind === "line" ? { width: 2, color: theme.series[0] } : undefined,
+          itemStyle: { color: theme.series[0] },
+          showSymbol: kind === "line" && points.length <= 60,
+          symbolSize: 8,
+          connectNulls: false,
+        },
+      ],
+    }),
   };
-
-  return { option, summary };
 }
 
 export interface SignalHistogramBucket {
@@ -161,15 +147,16 @@ export interface SignalHistogramBucket {
 
 /** SPEC §62's signal-strength distribution — a histogram bar chart over
  * per-sighting RSSI buckets (`docs/API.md` §3.8). */
-export function buildSignalHistogramOption(params: {
+export function buildSignalHistogramChart(params: {
   buckets: SignalHistogramBucket[];
-  palette: ReceiverChartPalette;
-}): ChartBuildResult {
-  const { buckets, palette } = params;
+}): ChartResult {
+  const { buckets } = params;
 
   if (buckets.length === 0) {
-    const message = "No signal readings in this window.";
-    return { option: emptyOption(palette, message), summary: message };
+    return {
+      buildOption: () => null,
+      summary: "No signal readings in this window.",
+    };
   }
 
   const categories = buckets.map(
@@ -184,37 +171,38 @@ export function buildSignalHistogramOption(params: {
       ? "No signal readings in this window."
       : `Signal strength distribution over ${total} sightings; most common band ${categories[peakIndex]} dB.`;
 
-  const option: echarts.EChartsCoreOption = {
-    backgroundColor: "transparent",
-    textStyle: { color: palette.secondaryInk },
-    grid: { left: 52, right: 16, top: 24, bottom: 56 },
-    tooltip: { trigger: "axis" },
-    xAxis: {
-      type: "category",
-      name: "dB",
-      data: categories,
-      axisLabel: { color: palette.mutedInk, rotate: 45 },
-      axisLine: { lineStyle: { color: palette.axisLine } },
-    },
-    yAxis: {
-      type: "value",
-      name: "Sightings",
-      nameTextStyle: { color: palette.mutedInk },
-      axisLabel: { color: palette.mutedInk },
-      axisLine: { lineStyle: { color: palette.axisLine } },
-      splitLine: { lineStyle: { color: palette.gridline } },
-    },
-    series: [
-      {
-        name: "Sightings",
-        type: "bar",
-        data: counts,
-        itemStyle: { color: palette.series1 },
+  return {
+    summary,
+    buildOption: (theme) => ({
+      backgroundColor: "transparent",
+      textStyle: { color: theme.mutedInk },
+      grid: { left: 52, right: 16, top: 24, bottom: 56 },
+      tooltip: { trigger: "axis" },
+      xAxis: {
+        type: "category",
+        name: "dB",
+        data: categories,
+        axisLabel: { color: theme.mutedInk, rotate: 45 },
+        axisLine: { lineStyle: { color: theme.grid } },
       },
-    ],
+      yAxis: {
+        type: "value",
+        name: "Sightings",
+        nameTextStyle: { color: theme.mutedInk },
+        axisLabel: { color: theme.mutedInk },
+        axisLine: { lineStyle: { color: theme.grid } },
+        splitLine: { lineStyle: { color: theme.grid } },
+      },
+      series: [
+        {
+          name: "Sightings",
+          type: "bar",
+          data: counts,
+          itemStyle: { color: theme.series[0] },
+        },
+      ],
+    }),
   };
-
-  return { option, summary };
 }
 
 export interface BearingSectorPoint {
@@ -231,20 +219,21 @@ export interface BearingSectorPoint {
  * orientation `ever`/`today` arrive in from the API (bucket 0..71 ascending,
  * `docs/DATA_MODEL.md` §6.3). `today` and `ever` are distinguished by more
  * than color (SPEC §80): solid circles vs. a dashed line with diamond
- * markers.
+ * markers, on the theme's first two categorical slots.
  */
-export function buildRangeByBearingOption(params: {
+export function buildRangeByBearingChart(params: {
   today: BearingSectorPoint[];
   ever: BearingSectorPoint[];
   unitLabel: string;
   formatValue: (value: number) => string;
-  palette: ReceiverChartPalette;
-}): ChartBuildResult {
-  const { today, ever, unitLabel, formatValue, palette } = params;
+}): ChartResult {
+  const { today, ever, unitLabel, formatValue } = params;
 
   if (ever.length === 0) {
-    const message = "No range-by-bearing data recorded yet.";
-    return { option: emptyOption(palette, message), summary: message };
+    return {
+      buildOption: () => null,
+      summary: "No range-by-bearing data recorded yet.",
+    };
   }
 
   const categories = ever.map((sector) => `${Math.round(sector.bearing_deg)}°`);
@@ -267,61 +256,62 @@ export function buildRangeByBearingOption(params: {
             : "not set yet"
         }.`;
 
-  const option: echarts.EChartsCoreOption = {
-    backgroundColor: "transparent",
-    textStyle: { color: palette.secondaryInk },
-    legend: {
-      data: ["Ever", "Today"],
-      top: 0,
-      textStyle: { color: palette.secondaryInk },
-    },
-    tooltip: {
-      trigger: "item",
-      valueFormatter: (value: unknown) =>
-        typeof value === "number" ? formatValue(value) : "no data",
-    },
-    polar: { radius: "62%" },
-    angleAxis: {
-      type: "category",
-      data: categories,
-      startAngle: 90,
-      clockwise: true,
-      axisLabel: { color: palette.mutedInk, interval: 5 },
-      axisLine: { lineStyle: { color: palette.axisLine } },
-      splitLine: { lineStyle: { color: palette.gridline } },
-    },
-    radiusAxis: {
-      type: "value",
-      name: unitLabel,
-      nameTextStyle: { color: palette.mutedInk },
-      axisLabel: { color: palette.mutedInk },
-      splitLine: { lineStyle: { color: palette.gridline } },
-    },
-    series: [
-      {
-        name: "Ever",
-        type: "line",
-        coordinateSystem: "polar",
-        data: everValues,
-        lineStyle: { width: 2, color: palette.series1, type: "solid" },
-        itemStyle: { color: palette.series1 },
-        symbol: "circle",
-        symbolSize: 6,
-        connectNulls: false,
+  return {
+    summary,
+    buildOption: (theme) => ({
+      backgroundColor: "transparent",
+      textStyle: { color: theme.mutedInk },
+      legend: {
+        data: ["Ever", "Today"],
+        top: 0,
+        textStyle: { color: theme.mutedInk },
       },
-      {
-        name: "Today",
-        type: "line",
-        coordinateSystem: "polar",
-        data: todayValues,
-        lineStyle: { width: 2, color: palette.series2, type: "dashed" },
-        itemStyle: { color: palette.series2 },
-        symbol: "diamond",
-        symbolSize: 7,
-        connectNulls: false,
+      tooltip: {
+        trigger: "item",
+        valueFormatter: (value: unknown) =>
+          typeof value === "number" ? formatValue(value) : "no data",
       },
-    ],
+      polar: { radius: "62%" },
+      angleAxis: {
+        type: "category",
+        data: categories,
+        startAngle: 90,
+        clockwise: true,
+        axisLabel: { color: theme.mutedInk, interval: 5 },
+        axisLine: { lineStyle: { color: theme.grid } },
+        splitLine: { lineStyle: { color: theme.grid } },
+      },
+      radiusAxis: {
+        type: "value",
+        name: unitLabel,
+        nameTextStyle: { color: theme.mutedInk },
+        axisLabel: { color: theme.mutedInk },
+        splitLine: { lineStyle: { color: theme.grid } },
+      },
+      series: [
+        {
+          name: "Ever",
+          type: "line",
+          coordinateSystem: "polar",
+          data: everValues,
+          lineStyle: { width: 2, color: theme.series[0], type: "solid" },
+          itemStyle: { color: theme.series[0] },
+          symbol: "circle",
+          symbolSize: 6,
+          connectNulls: false,
+        },
+        {
+          name: "Today",
+          type: "line",
+          coordinateSystem: "polar",
+          data: todayValues,
+          lineStyle: { width: 2, color: theme.series[1], type: "dashed" },
+          itemStyle: { color: theme.series[1] },
+          symbol: "diamond",
+          symbolSize: 7,
+          connectNulls: false,
+        },
+      ],
+    }),
   };
-
-  return { option, summary };
 }

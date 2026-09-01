@@ -6,12 +6,16 @@ distribution, and lifetime statistics. :mod:`flightsite.receiver_metrics` owns
 the storage those first four partly read (SPEC §60/§64, ADR-0009); this module
 owns everything that data does not answer on its own:
 
-* **Unique aircraft** (today, since T0) and **total sightings** — the
-  ``aircraft``/``sightings`` tables, not the receiver-metric ones. Roadmap
-  slice 031 ("Analytics backend") is where a general daily-rollup query layer
-  eventually lives; it had not merged as of this slice, so the handful of
-  counts this page needs are queried directly here rather than borrowed from
-  it. A reviewer landing 031 later may want to fold these into its layer.
+* **Unique aircraft** (today, since T0, and per-day for the ``unique_aircraft``
+  chart) is deliberately *not* here — it is read straight from roadmap slice
+  031's daily rollups via :class:`~flightsite.analytics.queries.AnalyticsQueries`
+  (:meth:`~flightsite.api.context.LiveApiContext.receiver_scorecard` and
+  :meth:`~flightsite.api.context.LiveApiContext.receiver_metric_series`), so
+  this figure and the Analytics page's own "unique aircraft" stat tile answer
+  from one query rather than two that could disagree.
+* **Total sightings** and the lifetime "most/common" records below still are —
+  the ``aircraft``/``sightings`` tables, which slice 031's rollups do not
+  cover.
 * **The signal-strength distribution** — per-sighting ``rssi_avg_db``
   (slice 052), explicitly *not* the raw-sample RSSI ``receiver_metrics``
   stores (see the note in ``flightsite.receiver_metrics``'s module docstring
@@ -37,13 +41,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Final
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import ColumnElement, func, select
 
 from flightsite.db import Database
 from flightsite.db.models import Aircraft, AircraftMetadataResolved, Sighting
-from flightsite.receiver_metrics.aggregate import local_day
 from flightsite.receiver_metrics.model import RangeRecord, better_range
 
 #: Default RSSI histogram bucket width, dB. Coarse enough that a receiver's
@@ -54,9 +56,9 @@ MIN_SIGNAL_BUCKET_WIDTH_DB: Final = 0.5
 MAX_SIGNAL_BUCKET_WIDTH_DB: Final = 20.0
 
 #: SPEC §62's v1 chart catalog, minus the two endpoints with their own shape
-#: (range-by-bearing, signal-distribution). ``unique_aircraft`` is daily-only
-#: (see :func:`unique_aircraft_per_day`) and has no entry here because it is
-#: never read from ``receiver_metrics_raw``/``*_summary`` at all.
+#: (range-by-bearing, signal-distribution). ``unique_aircraft`` has no entry
+#: here because it is never read from ``receiver_metrics_raw``/``*_summary``
+#: at all — it comes from the analytics rollups (module docstring).
 RAW_FIELD_FOR_METRIC: Final[Mapping[str, str]] = {
     "messages_per_sec": "messages_per_sec",
     "positions_per_sec": "positions_per_sec",
@@ -133,20 +135,6 @@ def ever_ranges(rows: Iterable[tuple[str, RangeRecord]]) -> dict[int, RangeRecor
         bucket = record.bearing_bucket
         best[bucket] = better_range(best.get(bucket), record)
     return best
-
-
-def unique_aircraft_per_day(rows: Iterable[tuple[int, int]], zone: ZoneInfo) -> dict[str, int]:
-    """Distinct aircraft per receiver-local day, from ``(started_ms, aircraft_id)`` rows.
-
-    A sighting is attributed to the local day it *started* on. Sightings
-    spanning local midnight are rare (they close after a configured absence
-    gap, typically minutes) and this is the same simplification a human
-    skimming "how many different aircraft each day" would make.
-    """
-    per_day: dict[str, set[int]] = {}
-    for started_ms, aircraft_id in rows:
-        per_day.setdefault(local_day(started_ms, zone), set()).add(aircraft_id)
-    return {day: len(ids) for day, ids in per_day.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,52 +236,12 @@ class ReceiverStatsRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
 
-    # ------------------------------------------------------------ scorecard
-
-    async def unique_aircraft_today(self, *, day_start_ms: int, day_end_ms: int) -> int:
-        """Distinct aircraft with sighting activity overlapping the local day.
-
-        A sighting counts if it started before the day ends and either is
-        still open or ended after the day began — the same "was this
-        aircraft seen today" test a person would apply to a sighting spanning
-        local midnight.
-        """
-        statement = select(func.count(func.distinct(Sighting.aircraft_id))).where(
-            Sighting.started_ms < day_end_ms,
-            (Sighting.ended_ms.is_(None)) | (Sighting.ended_ms >= day_start_ms),
-        )
-        async with self._database.read_session() as session:
-            return int(await session.scalar(statement) or 0)
-
-    async def unique_aircraft_since_t0(self) -> int:
-        """Every airframe this receiver has ever sighted — one row per airframe."""
-        async with self._database.read_session() as session:
-            return int(await session.scalar(select(func.count()).select_from(Aircraft)) or 0)
+    # -------------------------------------------------------------- charts
 
     async def total_sightings(self) -> int:
         """Every sighting ever recorded (SPEC §65: retained indefinitely)."""
         async with self._database.read_session() as session:
             return int(await session.scalar(select(func.count()).select_from(Sighting)) or 0)
-
-    # -------------------------------------------------------------- charts
-
-    async def sightings_started_between(
-        self, start_ms: int, end_ms: int
-    ) -> Sequence[tuple[int, int]]:
-        """``(started_ms, aircraft_id)`` for sightings starting in ``[start_ms, end_ms)``.
-
-        Feeds :func:`unique_aircraft_per_day`, which needs the receiver's
-        configured timezone to bucket by local day — a conversion that
-        belongs to the caller, exactly as
-        :meth:`~flightsite.receiver_metrics.repository.MetricsRepository.record`'s
-        module docstring explains for the range-by-bearing writes.
-        """
-        statement = select(Sighting.started_ms, Sighting.aircraft_id).where(
-            Sighting.started_ms >= start_ms, Sighting.started_ms < end_ms
-        )
-        async with self._database.read_session() as session:
-            rows = (await session.execute(statement)).all()
-        return [(int(row.started_ms), int(row.aircraft_id)) for row in rows]
 
     async def signal_values(self, *, from_ms: int | None, to_ms: int | None) -> tuple[float, ...]:
         """Per-sighting ``rssi_avg_db`` readings with ``started_at`` in ``[from_ms, to_ms]``.
@@ -391,5 +339,4 @@ __all__ = [
     "ever_ranges",
     "next_local_day",
     "signal_histogram",
-    "unique_aircraft_per_day",
 ]

@@ -59,7 +59,6 @@ from flightsite.api.receiver_stats import (
     ever_ranges,
     next_local_day,
     signal_histogram,
-    unique_aircraft_per_day,
 )
 from flightsite.api.serializers import (
     aircraft_detail_payload,
@@ -82,7 +81,6 @@ from flightsite.live import LiveAircraft, LiveStore
 from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.receiver_metrics import MetricsRepository, ReceiverMetricsService
 from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
-from flightsite.receiver_metrics.service import MS_PER_DAY
 from flightsite.sightings import PersistenceWorker
 
 logger = structlog.get_logger(__name__)
@@ -458,17 +456,24 @@ class LiveApiContext:
     # ------------------------------------------------------- receiver stats
 
     async def receiver_scorecard(self) -> dict[str, Any]:
-        """The SPEC §61 scorecard — ``docs/API.md`` §3.8."""
+        """The SPEC §61 scorecard — ``docs/API.md`` §3.8.
+
+        "Unique aircraft today"/"since T0" are read from :attr:`analytics`
+        (roadmap slice 031's rollups) rather than computed here: they are
+        exactly :meth:`~flightsite.analytics.queries.AnalyticsQueries.unique_aircraft`
+        over the ``today``/``t0`` presets, and reusing that query is what
+        keeps this figure and the Analytics page's own "unique aircraft"
+        stat tile answering from the same source rather than two independent
+        (and potentially disagreeing) counts.
+        """
         zone = self._receiver_timezone
         now_ms = utc_now_ms()
         today = local_day(now_ms, zone)
+        t0_ms = await self._t0_ms()
 
         metrics = self.metrics
-        stats = self.receiver_stats
         service = self.receiver_metrics_service
-
-        day_start_ms = local_day_start_ms(today, zone)
-        day_end_ms = day_start_ms + MS_PER_DAY
+        analytics = self.analytics
 
         latest_sample = await metrics.latest_sample()
         today_ranges = await metrics.ranges_for_day(today)
@@ -478,10 +483,12 @@ class LiveApiContext:
             else None
         )
         lifetime = await metrics.lifetime()
-        unique_today = await stats.unique_aircraft_today(
-            day_start_ms=day_start_ms, day_end_ms=day_end_ms
+        unique_today = await analytics.unique_aircraft(
+            resolve_window(Preset.TODAY, now_ms=now_ms, zone=zone, t0_ms=t0_ms)
         )
-        unique_since_t0 = await stats.unique_aircraft_since_t0()
+        unique_since_t0 = await analytics.unique_aircraft(
+            resolve_window(Preset.SINCE_T0, now_ms=now_ms, zone=zone, t0_ms=t0_ms)
+        )
 
         latest_stats = service.latest_stats
         app_start_time: float = self._app.state.start_time
@@ -528,10 +535,15 @@ class LiveApiContext:
         metrics = self.metrics
         points: list[tuple[int, float | None]]
         if metric == "unique_aircraft":
-            rows = await self.receiver_stats.sightings_started_between(start_ms, end_ms + 1)
-            per_day = unique_aircraft_per_day(rows, zone)
+            # Roadmap slice 031's daily rollups already answer this exactly —
+            # `daily()` returns one row per local day in the window, zero
+            # included (the same "the zero is the measurement" rule as every
+            # other analytics chart), so there is nothing left for this
+            # endpoint to compute from `sightings` itself.
+            window = explicit_window(start_ms, end_ms, zone=zone, t0_ms=await self._t0_ms())
+            rows = await self.analytics.daily(window)
             points = [
-                (local_day_start_ms(day, zone), float(count)) for day, count in per_day.items()
+                (local_day_start_ms(row.day, zone), float(row.unique_aircraft)) for row in rows
             ]
         elif resolution == "high":
             samples = await metrics.samples_between(start_ms, end_ms + 1)
@@ -579,7 +591,12 @@ class LiveApiContext:
         stats = self.receiver_stats
         lifetime = await metrics.lifetime()
         t0 = await self._t0()
-        unique_aircraft = await stats.unique_aircraft_since_t0()
+        t0_ms = None if t0 is None else to_epoch_ms(t0)
+        unique_aircraft = await self.analytics.unique_aircraft(
+            resolve_window(
+                Preset.SINCE_T0, now_ms=utc_now_ms(), zone=self._receiver_timezone, t0_ms=t0_ms
+            )
+        )
         total_sightings = await stats.total_sightings()
         most_frequent = await stats.most_frequent_aircraft()
         common_type = await stats.common_type()

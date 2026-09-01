@@ -18,7 +18,9 @@ from zoneinfo import ZoneInfo
 
 from httpx import AsyncClient
 
-from flightsite.db import MetaRepository
+from flightsite.analytics.backfill import AnalyticsBackfill
+from flightsite.analytics.repository import AnalyticsRepository
+from flightsite.db import Database, MetaRepository
 from flightsite.db.clock import utc_now_ms
 from flightsite.ingest import AircraftStateUpdate, Position
 from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
@@ -43,6 +45,22 @@ def today_day() -> str:
     to seed a row the scorecard's ``local_day(utc_now_ms(), ...)`` call
     will actually land on."""
     return local_day(utc_now_ms(), UTC_ZONE)
+
+
+async def backfill_day(database: Database, day: str) -> None:
+    """Populate roadmap slice 031's ``daily_stats`` rollup for ``day`` from
+    the ``sightings`` this test just seeded directly.
+
+    ``AnalyticsQueries.daily()`` (which the ``unique_aircraft`` time-series
+    metric reads, ``flightsite.api.context.receiver_metric_series``) answers
+    from that rollup table, not live from ``sightings`` — in production the
+    analytics service keeps it current as sightings close; a test that seeds
+    rows directly, bypassing that service, has to rebuild the day itself.
+    """
+    backfill = AnalyticsBackfill(
+        repository=AnalyticsRepository(database), meta=MetaRepository(database), zone=UTC_ZONE
+    )
+    await backfill.rebuild_day(day, now_ms=utc_now_ms())
 
 
 @dataclass(slots=True)
@@ -165,13 +183,18 @@ async def test_scorecard_max_range_ever_reads_the_lifetime_record(
 async def test_scorecard_unique_aircraft_today_and_since_t0(
     live_app: LiveApp, rest: AsyncClient
 ) -> None:
+    database = live_app.app.state.database
     day_start = local_day_start_ms(today_day(), UTC_ZONE)
+    # "Since T0" is undefined — an empty window, §2.7's "unknown is unknown"
+    # — until T0 is established; a real install sets both together in the
+    # same persistence-worker transaction as the first observation.
+    await MetaRepository(database).set_t0_once(day_start - 172_800_000)
     aircraft = [
         SeedAircraft(icao24="ae1463", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
         SeedAircraft(icao24="bbb222", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
     ]
     await seed_sightings(
-        live_app.app.state.database,
+        database,
         aircraft,
         [
             SeedSighting(icao24="ae1463", started_ms=day_start + 1_000, ended_ms=day_start + 2_000),
@@ -183,6 +206,10 @@ async def test_scorecard_unique_aircraft_today_and_since_t0(
 
     body = (await rest.get("/api/v1/receiver/scorecard")).json()
 
+    # "ae1463" started a sighting today; "bbb222"'s only sighting started (and
+    # ended) two days ago, so — like every analytics window (§58) — it does
+    # not count toward "today" even though its window predates the aircraft
+    # row check for "since T0" (which counts every airframe ever sighted).
     assert body["unique_aircraft_today"] == 1
     assert body["unique_aircraft_since_t0"] == 2
 
@@ -303,19 +330,22 @@ async def test_series_unique_aircraft_ignores_a_non_daily_resolution_with_400(
 async def test_series_unique_aircraft_at_daily_resolution_succeeds(
     live_app: LiveApp, rest: AsyncClient
 ) -> None:
-    day_start = local_day_start_ms(today_day(), UTC_ZONE)
+    database = live_app.app.state.database
+    day = today_day()
+    day_start = local_day_start_ms(day, UTC_ZONE)
     aircraft = [
         SeedAircraft(icao24="ae1463", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
         SeedAircraft(icao24="bbb222", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
     ]
     await seed_sightings(
-        live_app.app.state.database,
+        database,
         aircraft,
         [
             SeedSighting(icao24="ae1463", started_ms=day_start + 1_000, ended_ms=day_start + 2_000),
             SeedSighting(icao24="bbb222", started_ms=day_start + 3_000, ended_ms=day_start + 4_000),
         ],
     )
+    await backfill_day(database, day)
 
     body = (
         await rest.get(
