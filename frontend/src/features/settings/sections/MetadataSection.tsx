@@ -65,6 +65,8 @@ function StatusBadge({ status }: { status: MetadataSourceStatus }) {
   const Icon = meta.icon;
   return (
     <span
+      data-testid="metadata-source-status"
+      data-status={status}
       className={`inline-flex items-center gap-1 text-xs font-medium ${meta.className}`}
     >
       <Icon
@@ -89,7 +91,14 @@ function SourceCard({ source, timezone }: SourceCardProps) {
   const relativeAge = useRelativeAge(lastSuccessIso);
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3">
+    <div
+      // Per-source handle: a card is otherwise reachable only through its
+      // display label, which is derived prose ("Airports" for the `airports`
+      // source) rather than the source name the API speaks in.
+      data-testid="metadata-source-card"
+      data-source={source.name}
+      className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3"
+    >
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-medium">{sourceLabel(source.name)}</p>
         <StatusBadge status={source.status} />
@@ -143,7 +152,10 @@ function MetadataAgeLine({
   const relativeAge = useRelativeAge(ageIso);
 
   return (
-    <p className="text-sm text-muted-foreground">
+    <p
+      data-testid="metadata-age-line"
+      className="text-sm text-muted-foreground"
+    >
       Metadata last updated:{" "}
       {ageIso === null ? (
         <span className="font-medium text-foreground">never</span>
@@ -192,6 +204,10 @@ export function MetadataSection({ timezone }: MetadataSectionProps) {
             type="button"
             variant="outline"
             size="sm"
+            // The label — and therefore the accessible name — changes to
+            // "Updating…" for exactly the stretch a test most wants to hold
+            // on to this button, so it carries a name that does not move.
+            data-testid="metadata-update-button"
             onClick={handleUpdate}
             disabled={isBusy}
           >

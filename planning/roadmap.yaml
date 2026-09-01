@@ -1178,7 +1178,7 @@ slices:
     title: "E2E expansion"
     phase: 8
     branch: "046-e2e-expansion"
-    status: planned
+    status: merged
     depends_on: ["020", "025", "030", "032", "040", "043", "045"]
     objective: "Complete the SPEC.md §82 critical-flow E2E suite."
     scope:

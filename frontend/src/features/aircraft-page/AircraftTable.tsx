@@ -117,6 +117,13 @@ export function AircraftTable({
           {rows.map((row) => (
             <tr
               key={row.icao}
+              // The row carries its own identity for the E2E suite: the whole
+              // row navigates on click, but only the first cell holds an
+              // anchor, so without this a test can address a specific
+              // aircraft's row only through rendered text (registrations
+              // repeat, and every absent field renders the same "Unknown").
+              data-testid="aircraft-row"
+              data-icao={row.icao}
               onClick={() => navigate(`/aircraft/${row.icao}`)}
               className="cursor-pointer border-b border-border/60 hover:bg-secondary/50"
             >

@@ -129,16 +129,25 @@ Flaky tests are treated as defects. Rules:
 E2E is a required CI check from slice 020 onward. Failures produce traces and
 screenshots as CI artifacts.
 
-**Browser notifications.** The permission flow runs in Chromium only: Playwright can
-grant and clear the `notifications` permission there, cannot in Firefox or WebKit, and
-cannot drive a native permission prompt in any of the three — so the other two
-projects skip the spec, the same capability escape hatch aircraft selection uses for
-WebGL. *Delivery* (an alert becoming exactly one notification, plus the allowed
-severity-upgrade extra) is covered by unit tests against the real protocol client
-rather than E2E: a demo alert fires at a fixed phase of the scenario's 30-minute
-rotation, so waiting for one from an arbitrary start time would be a coin toss.
-Making a demo alert observable end to end belongs with the interesting-aircraft alert
-flow above.
+**Browser notifications.** No headless engine presents a real permission prompt, and
+each declines differently — Chromium reports a standing `denied` a Playwright grant
+does not move, Firefox reports `default` and never settles `requestPermission()`. So
+the permission spec splits along what the *browser* decides versus what *FlightSite*
+decides: the unstubbed assertions (loading never asks; Settings reports whatever this
+engine reports) run on all three engines, the ask-and-answer exchange runs everywhere
+against a stub at the `Notification` boundary, and only the real-grant test is
+Chromium-gated — the same capability escape hatch aircraft selection uses for WebGL.
+
+*Delivery* — an alert becoming a browser notification — is covered end to end from
+slice 046, in the interesting-aircraft alert spec rather than the permission spec.
+Slice 040 could not cover it: a demo alert fires at a fixed phase of the scenario's
+30-minute rotation, so waiting for one from an arbitrary start time was a coin toss.
+Slice 046 removes that dependency by arming a real alert rule against aircraft that
+are airborne at that moment (alert evaluation is continuous against live state, so a
+new rule fires on the next update), which makes the whole chain — rule, backend
+verdict, WebSocket activity frame, dispatch — observable on demand. Dedupe (exactly
+one notification per alert) and the allowed severity-upgrade extra remain unit-tested
+against the real protocol client, where the counting is exact.
 
 ---
 
