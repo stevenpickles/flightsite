@@ -1,0 +1,209 @@
+"""Domain records to the JSON shapes ``docs/API.md`` documents.
+
+One function per documented shape, each returning a plain JSON-ready ``dict``.
+Plain dicts rather than Pydantic instances are deliberate: the WebSocket
+broadcaster serializes an aircraft **once per frame** and hands the same bytes
+to every connected client (``docs/ARCHITECTURE.md`` §3.3), so the hot path must
+not pay for model construction per client. The Pydantic models in
+:mod:`flightsite.api.schemas` describe these same shapes for OpenAPI and
+validate them on the REST path, which keeps the published schema and the
+WebSocket payload provably one shape rather than two that drift.
+
+What the aircraft payload does and does not contain
+---------------------------------------------------
+
+``docs/API.md`` §3.3 shows the full v1 aircraft object, which spans several
+slices. This slice owns the live-state half of it — identity, position,
+kinematics, receiver-relative range, lifecycle state and the open sighting id.
+The metadata half (``registration``, ``aircraft_type``, ``model``,
+``operator``, ``operator_group``, ``classification``) arrives with slices
+021-024 and the alert match (``interesting``) with slice 038. Those keys are
+present and ``null`` rather than absent: §2.7 makes ``null`` the honest
+statement of "unknown", and emitting the full key set now means a client
+written against §3.3 needs no change when the values start arriving.
+
+``emergency`` is not a separate decoder field — it is the squawk restated when
+the squawk is one of the three emergency codes (:data:`EMERGENCY_SQUAWKS`), so
+a client does not have to carry the code list to render an emergency.
+
+Provenance
+----------
+
+§2.6: a ``provenance`` entry names the source of a non-decoder field, and
+fields without an entry are decoder-direct. The live record
+(:mod:`flightsite.live.aircraft`) tracks provenance for the three values that
+layer decides — ``distance_nm``, ``bearing_deg`` and ``ground_state`` — and
+this payload publishes the first two, which are the two that appear in it.
+``ground_state`` is deliberately not published: the API field is ``on_ground``,
+which carries the decoder's own determination or ``null``, never the live
+layer's airborne inference, so there is no derived value here to attribute.
+
+Rounding
+--------
+
+``distance_nm`` and ``bearing_deg`` are computed from a great-circle formula
+and arrive with full float precision, which is fifteen significant digits of
+which about five mean anything. They are rounded — to about two metres and to
+a hundredth of a degree respectively — because at 500 aircraft and 1 Hz the
+unrounded digits are pure payload weight. Every other number is passed through
+exactly as the decoder reported it; FlightSite does not re-derive or "tidy"
+decoder values.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any, Final
+
+from flightsite.config import Settings
+from flightsite.ingest import Position
+from flightsite.live import LiveAircraft
+from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
+
+#: Provenance keys from the live record that name a field this payload exposes.
+#: See the module docstring for why ``ground_state`` is not among them.
+EXPOSED_PROVENANCE_FIELDS: Final[frozenset[str]] = frozenset({"distance_nm", "bearing_deg"})
+
+#: Decimal places kept on the two derived receiver-relative values.
+DISTANCE_DECIMALS: Final = 3
+BEARING_DECIMALS: Final = 2
+
+
+def iso_utc(moment: datetime) -> str:
+    """Format an instant as ``docs/API.md`` §2.2 UTC ISO-8601.
+
+    Millisecond precision with a literal ``Z``: ``2026-08-31T14:03:22.418Z``.
+    Naive datetimes are rejected rather than assumed to be UTC — the same rule
+    the storage layer applies (:func:`flightsite.db.clock.to_epoch_ms`), for
+    the same reason.
+    """
+    if moment.tzinfo is None:
+        raise ValueError("refusing to serialize a naive datetime; timestamps must be UTC-aware")
+    utc = moment.astimezone(UTC)
+    return f"{utc.strftime('%Y-%m-%dT%H:%M:%S')}.{utc.microsecond // 1000:03d}Z"
+
+
+def _position(record: LiveAircraft) -> dict[str, float] | None:
+    """The ``{lat, lon}`` block, or ``None`` for a non-positioned aircraft."""
+    position = record.position
+    if position is None:
+        return None
+    return {"lat": position.latitude, "lon": position.longitude}
+
+
+def _emergency(squawk: str | None) -> str | None:
+    """The squawk when it declares an emergency, else ``None`` (§3.3)."""
+    return squawk if squawk in EMERGENCY_SQUAWKS else None
+
+
+def _round(value: float | None, decimals: int) -> float | None:
+    return None if value is None else round(value, decimals)
+
+
+def _provenance(record: LiveAircraft) -> dict[str, str]:
+    """The §2.6 provenance map, restricted to fields this payload publishes."""
+    return {
+        field: provenance.value
+        for field, provenance in record.provenance.items()
+        if field in EXPOSED_PROVENANCE_FIELDS
+    }
+
+
+def aircraft_payload(record: LiveAircraft, *, sighting_id: int | None = None) -> dict[str, Any]:
+    """One live aircraft as the ``docs/API.md`` §3.3 object.
+
+    The same object is served by ``GET /api/v1/aircraft/current`` and carried
+    by every WebSocket ``snapshot`` and ``delta`` frame — §3.3 says "the same
+    shape used by the WebSocket", and one function is how that stays true.
+
+    Args:
+        record: the live registry's current record for the aircraft.
+        sighting_id: the id of its open sighting, or ``None`` when the
+            persistence worker has not committed one yet (the normal state for
+            the first second or so of a new aircraft, and the permanent state
+            when persistence is degraded).
+    """
+    return {
+        "icao": record.icao,
+        "callsign": record.callsign,
+        "registration": None,
+        "position": _position(record),
+        "position_source": record.position_source,
+        "altitude_ft": record.altitude_ft,
+        "ground_speed_kt": record.ground_speed_kt,
+        "track_deg": record.track_deg,
+        "vertical_rate_fpm": record.vertical_rate_fpm,
+        "squawk": record.squawk,
+        "emergency": _emergency(record.squawk),
+        "on_ground": record.on_ground,
+        "distance_nm": _round(record.distance_nm, DISTANCE_DECIMALS),
+        "bearing_deg": _round(record.bearing_deg, BEARING_DECIMALS),
+        "rssi_db": record.rssi_db,
+        "message_count": record.messages,
+        "seen_s": record.seen_s,
+        "seen_pos_s": record.seen_pos_s,
+        "last_seen": iso_utc(record.last_seen),
+        "state": record.state.value,
+        "sighting_id": sighting_id,
+        "aircraft_type": None,
+        "model": None,
+        "operator": None,
+        "operator_group": None,
+        "classification": None,
+        "interesting": None,
+        "provenance": _provenance(record),
+    }
+
+
+def receiver_payload(
+    settings: Settings,
+    *,
+    demo_mode: bool,
+    t0: datetime | None,
+    location: Position | None,
+) -> dict[str, Any]:
+    """The ``docs/API.md`` §3.2 receiver info block.
+
+    Non-secret by construction: every value is read from a named field of the
+    settings model, so no secret can arrive here by accident (SPEC §29). An
+    unconfigured receiver — the first-run state, before the setup wizard of
+    slice 018 — reports ``null`` location fields rather than an error; §2.7
+    makes that the honest answer, and the live picture works without them.
+
+    Args:
+        settings: the running configuration (read from ``app.state`` per
+            request, since ``PUT /api/internal/config`` replaces it).
+        demo_mode: whether this process is serving simulated traffic.
+        t0: the moment FlightSite first persisted an observation (SPEC §16),
+            or ``None`` on an install that has never seen an aircraft.
+        location: the position FlightSite is *actually* measuring from —
+            :attr:`~flightsite.live.store.LiveStore.receiver_location`, not the
+            configured one. The two are the same everywhere except demo mode,
+            which injects a location into an unconfigured install so the
+            simulated sky has ranges (SPEC §76). Reporting the configured
+            ``null`` there would leave a client drawing range rings around
+            nothing while every aircraft carried a ``distance_nm``.
+    """
+    site = settings.location
+    return {
+        "site_name": site.site_name,
+        "latitude": None if location is None else location.latitude,
+        "longitude": None if location is None else location.longitude,
+        "antenna_height_ft": site.antenna_height_ft,
+        "timezone": settings.timezone,
+        "units": settings.units,
+        "display_radius_nm": settings.display_radius_nm,
+        "alert_radius_nm": settings.alert_radius_nm,
+        "demo_mode": demo_mode,
+        "t0": None if t0 is None else iso_utc(t0),
+    }
+
+
+__all__ = [
+    "BEARING_DECIMALS",
+    "DISTANCE_DECIMALS",
+    "EXPOSED_PROVENANCE_FIELDS",
+    "aircraft_payload",
+    "iso_utc",
+    "receiver_payload",
+]

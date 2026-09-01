@@ -11,8 +11,10 @@ import structlog
 from fastapi import FastAPI
 
 from flightsite import __version__
+from flightsite.api.context import LiveApiContext
 from flightsite.api.internal import router as internal_router
 from flightsite.api.v1 import router as v1_router
+from flightsite.api.ws import LiveBroadcaster
 from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
@@ -126,6 +128,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     database: Database = app.state.database
     live: LiveStore = app.state.live
     persistence: PersistenceWorker = app.state.persistence
+    broadcaster: LiveBroadcaster = app.state.broadcaster
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -145,6 +148,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # empty live set costs nothing to sweep, and starting it unconditionally
     # means the store behaves identically the moment ingestion does start.
     await live.start()
+    # Started before ingestion, so the broadcaster's subscription is attached
+    # before the first decoder batch is applied: a client connecting during
+    # startup then gets a snapshot and a continuous delta stream, never a
+    # snapshot followed by a gap.
+    await broadcaster.start()
     app.state.ingestion = await _start_ingestion(app)
     readiness.mark_startup_complete()
     logger.info("app_startup_complete")
@@ -153,13 +161,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Shut down along the direction of data flow, so each stage has
         # already stopped producing before its consumer stops: ingestion, then
-        # the live store's sweep, then the persistence worker — which drains
-        # what those two last emitted and flushes every open sighting before
-        # the engines close.
+        # the live store's sweep, then its two consumers — the WebSocket
+        # broadcaster (which closes every client cleanly) and the persistence
+        # worker, which drains what the first two last emitted and flushes
+        # every open sighting before the engines close.
         service: IngestionService | None = app.state.ingestion
         if service is not None:
             await service.stop()
         await live.stop()
+        await broadcaster.stop()
         await persistence.stop()
         await database.dispose()
         logger.info("app_shutdown")
@@ -194,6 +204,13 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     process's single SQLite writer (ADR-0008); startup attaches it once the
     schema is known good, and shutdown flushes it before the engines close.
 
+    The live API context and the WebSocket broadcaster are constructed here
+    too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
+    broadcaster is the second consumer of the live event stream: startup gives
+    it its subscription and its ~1 Hz task, and shutdown closes every connected
+    client. The context is what makes ``GET /api/v1/aircraft/current`` and the
+    WebSocket snapshot one implementation rather than two.
+
     Args:
         data_dir: overrides data-directory resolution (``FLIGHTSITE_DATA_DIR``,
             then ``/opt/flightsite/data``). Used by tests.
@@ -206,7 +223,18 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # it here keeps the env override winning (SPEC §30).
     configure_logging(level=settings.log_level)
 
-    app = FastAPI(title="FlightSite", version=__version__, lifespan=_lifespan)
+    # docs/API.md §2.10 places the published schema and its interactive docs
+    # under the versioned prefix, not at the server root: the OpenAPI document
+    # describes /api/v1 and nothing else, so it belongs beside what it
+    # describes. The internal router is excluded from it below.
+    app = FastAPI(
+        title="FlightSite",
+        version=__version__,
+        lifespan=_lifespan,
+        openapi_url="/api/v1/openapi.json",
+        docs_url="/api/v1/docs",
+        redoc_url=None,
+    )
     app.state.config_store = store
     app.state.settings = settings
     app.state.readiness = ReadinessRegistry()
@@ -222,6 +250,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
     # while the app is up.
     app.state.demo_enabled = demo_enabled()
+    # One assembler for the live payloads, shared by REST and the WebSocket so
+    # the two cannot describe the same instant differently. It reads app.state
+    # lazily, so it is safe to build before the lifespan hook has started
+    # anything and it follows `PUT /api/internal/config` replacing settings.
+    app.state.api_context = LiveApiContext(app)
+    app.state.broadcaster = LiveBroadcaster(context=app.state.api_context)
 
     app.include_router(v1_router, prefix="/api/v1")
     # /api/internal is an unsupported, unversioned surface (ADR-0007) and is

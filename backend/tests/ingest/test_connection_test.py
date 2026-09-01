@@ -223,6 +223,6 @@ def test_connection_test_is_not_in_the_published_openapi_schema(
     app = create_app()
 
     with TestClient(app) as client:
-        schema = client.get("/openapi.json").json()
+        schema = client.get("/api/v1/openapi.json").json()
 
     assert not any("decoder" in path for path in schema["paths"])
