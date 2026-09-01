@@ -26,6 +26,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from flightsite.activity import (
+    ActivityBatch,
+    ActivityEventType,
+    ActivityRepository,
+    NewActivityEvent,
+)
 from flightsite.analytics.bucketing import day_bounds_ms, local_day, local_hour, shift_days
 from flightsite.analytics.service import AnalyticsService
 from flightsite.api.serializers import iso_utc
@@ -356,6 +362,100 @@ async def test_a_closed_day_takes_its_busiest_hour_from_the_rollup(
 
     assert summary["busiest_hour_source"] == "daily_stats"
     assert summary["busiest_hour"] is not None
+
+
+# ------------------------------------------------------- new_milestones (036)
+
+
+async def test_every_summary_response_carries_a_new_milestones_key(
+    rest: AsyncClient,
+) -> None:
+    """§59's null-stable key: present and zero even on an empty install."""
+    summary = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+
+    assert summary["new_milestones"] == 0
+
+
+async def test_new_milestones_counts_milestone_and_record_events_today(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """Milestone and record event types count; routine ones do not."""
+    await seed(harness)
+    database: Database = harness.database
+    today_ms = harness.inside(harness.today, 0.4)
+    await ActivityRepository(database).record(
+        ActivityBatch(
+            events=(
+                NewActivityEvent(
+                    type=ActivityEventType.FIRST_EVER_AIRCRAFT,
+                    ts_ms=today_ms,
+                    dedupe_key="first_ever_aircraft:a00002",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.NEW_TYPE,
+                    ts_ms=today_ms,
+                    dedupe_key="new_type:C130",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.RANGE_RECORD,
+                    ts_ms=today_ms,
+                    dedupe_key="range_record:205.000",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.RECEIVER_RECORD,
+                    ts_ms=today_ms,
+                    dedupe_key="receiver_record:max_simultaneous:5",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=today_ms,
+                    dedupe_key="unique_aircraft_100",
+                ),
+                # Routine events, and events outside the window: neither counts.
+                NewActivityEvent(
+                    type=ActivityEventType.METADATA_UPDATED,
+                    ts_ms=today_ms,
+                    dedupe_key="metadata_updated:a00001:1",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=harness.inside(harness.yesterday, 0.5),
+                    dedupe_key="unique_aircraft_500",
+                ),
+            )
+        )
+    )
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+
+    assert summary["new_milestones"] == 5
+
+
+async def test_new_milestones_over_a_multi_day_window_counts_every_day(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    await seed(harness)
+    database: Database = harness.database
+    await ActivityRepository(database).record(
+        ActivityBatch(
+            events=(
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=harness.inside(harness.today, 0.2),
+                    dedupe_key="unique_aircraft_100",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=harness.inside(harness.yesterday, 0.2),
+                    dedupe_key="unique_aircraft_500",
+                ),
+            )
+        )
+    )
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset="7d"))["summary"]
+
+    assert summary["new_milestones"] == 2
 
 
 def _local_hour(epoch_ms: int, zone: ZoneInfo) -> int:

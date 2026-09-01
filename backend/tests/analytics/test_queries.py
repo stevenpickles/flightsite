@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from flightsite.activity import ActivityBatch, ActivityEventType, NewActivityEvent
+from flightsite.activity import ActivityRepository as FeedRepository
 from flightsite.analytics.bucketing import Window, day_bounds_ms, local_day, shift_days
 from flightsite.analytics.model import DayRollup
 from flightsite.analytics.queries import AnalyticsQueries
@@ -197,3 +199,77 @@ async def test_the_windowed_group_rankings_report_days_seen_and_true_distincts(
         assert 1 <= row.days_seen <= len(world.days())
         assert 0 < row.unique_aircraft <= row.sightings
     assert all(row.label is not None for row in operators)
+
+
+# ----------------------------------------------------- new_milestones (036)
+
+#: A 23-hour local day in ``NEW_YORK`` — see ``tests.analytics.test_bucketing``.
+SPRING_FORWARD = "2026-03-08"
+
+
+async def test_new_milestones_is_zero_over_an_empty_window(
+    queries: AnalyticsQueries, zone: ZoneInfo
+) -> None:
+    assert await queries.new_milestones(backwards(zone, local_day(BASE_EPOCH_MS, zone))) == 0
+
+
+async def test_new_milestones_counts_only_the_milestone_and_record_types(
+    database: Database, queries: AnalyticsQueries, zone: ZoneInfo
+) -> None:
+    """§59's "new milestones/records" excludes routine operational events."""
+    day = local_day(BASE_EPOCH_MS, zone)
+    inside_ms = day_bounds_ms(day, zone)[0] + 1
+    await FeedRepository(database).record(
+        ActivityBatch(
+            events=(
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=inside_ms,
+                    dedupe_key="unique_aircraft_100",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.RANGE_RECORD,
+                    ts_ms=inside_ms,
+                    dedupe_key="range_record:100.000",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.RECEIVER_OFFLINE,
+                    ts_ms=inside_ms,
+                    dedupe_key="receiver_offline:1",
+                ),
+            )
+        )
+    )
+    span = window(zone, day, day)
+
+    assert await queries.new_milestones(span) == 2
+
+
+async def test_new_milestones_respects_the_spring_forward_days_true_bounds(
+    database: Database, queries: AnalyticsQueries, zone: ZoneInfo
+) -> None:
+    """A milestone struck just inside the 23-hour DST day counts; one struck
+    the instant it ends belongs to the next local day, not this one.
+    """
+    _, end_ms = day_bounds_ms(SPRING_FORWARD, zone)
+    just_inside = end_ms - 1
+    just_outside = end_ms
+    await FeedRepository(database).record(
+        ActivityBatch(
+            events=(
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=just_inside,
+                    dedupe_key="unique_aircraft_100",
+                ),
+                NewActivityEvent(
+                    type=ActivityEventType.MILESTONE,
+                    ts_ms=just_outside,
+                    dedupe_key="unique_aircraft_500",
+                ),
+            )
+        )
+    )
+    span = window(zone, SPRING_FORWARD, SPRING_FORWARD)
+
+    assert await queries.new_milestones(span) == 1

@@ -1,14 +1,19 @@
+import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AnalyticsApiError,
+  analyticsQueryKeys,
   getAnalyticsClassificationActivity,
   getAnalyticsDaily,
   getAnalyticsRarity,
+  getAnalyticsSummary,
   getAnalyticsTopAircraft,
   getAnalyticsTopOperators,
   getAnalyticsTopTypes,
+  useAnalyticsSummaryQuery,
 } from "@/lib/api/analytics";
+import { createQueryWrapper } from "@/test/queryWrapper";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -86,6 +91,79 @@ describe("getAnalyticsDaily", () => {
     expect(error).toBeInstanceOf(AnalyticsApiError);
     expect((error as AnalyticsApiError).status).toBe(500);
     expect((error as AnalyticsApiError).code).toBeNull();
+  });
+});
+
+const EMPTY_SUMMARY_BODY = {
+  window: EMPTY_WINDOW,
+  summary: {
+    unique_aircraft: 0,
+    new_aircraft: 0,
+    sightings: 0,
+    interesting: 0,
+    military: 0,
+    government: 0,
+    law_enforcement: 0,
+    max_range_nm: null,
+    busiest_hour: null,
+    busiest_hour_source: null,
+    first_sighting_at: null,
+    last_sighting_at: null,
+    new_milestones: 0,
+  },
+};
+
+describe("getAnalyticsSummary", () => {
+  it("requests the summary path with the given preset", async () => {
+    const fetchMock = vi.fn((_input?: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse(EMPTY_SUMMARY_BODY)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAnalyticsSummary({ preset: "today" });
+
+    const url = new URL(
+      String(fetchMock.mock.calls[0]?.[0]),
+      "http://localhost",
+    );
+    expect(url.pathname).toBe("/api/v1/analytics/summary");
+    expect(url.searchParams.get("preset")).toBe("today");
+  });
+});
+
+describe("analyticsQueryKeys.summary", () => {
+  it("differs by local date, so a receiver-local day rollover is a different cache entry", () => {
+    const params = { preset: "today" } as const;
+
+    expect(analyticsQueryKeys.summary(params, "2026-08-31")).not.toEqual(
+      analyticsQueryKeys.summary(params, "2026-09-01"),
+    );
+  });
+});
+
+describe("useAnalyticsSummaryQuery", () => {
+  it("fetches again once the local-date key changes, without waiting on staleTime (roadmap slice 036's rollover contract)", async () => {
+    const fetchMock = vi.fn((_input?: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse(EMPTY_SUMMARY_BODY)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ localDate }: { localDate: string }) =>
+        useAnalyticsSummaryQuery({ preset: "today" }, localDate),
+      {
+        wrapper: createQueryWrapper(),
+        initialProps: { localDate: "2026-08-31" },
+      },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A fresh 60 s `staleTime` would ordinarily serve the cache; a changed
+    // local-date key must bypass that and fetch immediately regardless.
+    rerender({ localDate: "2026-09-01" });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });
 
