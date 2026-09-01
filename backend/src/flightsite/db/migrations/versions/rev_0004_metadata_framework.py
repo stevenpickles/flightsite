@@ -25,6 +25,7 @@ Created: 2026-08-31
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
@@ -37,7 +38,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _metadata_columns() -> list[sa.Column[object]]:
+def _metadata_columns() -> list[sa.Column[Any]]:
     """Column set shared by ``aircraft_metadata`` and its staging table.
 
     Rebuilt per call: a :class:`sqlalchemy.Column` object belongs to exactly
@@ -64,9 +65,7 @@ def upgrade() -> None:
         sa.Column("source", sa.Text(), nullable=False),
         sa.Column("last_attempt_ms", sa.Integer(), nullable=True),
         sa.Column("last_success_ms", sa.Integer(), nullable=True),
-        sa.Column(
-            "status", sa.Text(), nullable=False, server_default=sa.text("'never_run'")
-        ),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'never_run'")),
         sa.Column("dataset_version", sa.Text(), nullable=True),
         sa.Column("row_count", sa.Integer(), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),

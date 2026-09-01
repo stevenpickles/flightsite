@@ -528,9 +528,7 @@ class AircraftMetadataResolved(Base):
     operator_src: Mapped[str | None] = mapped_column(Text)
     #: Curated grouping, filled once slice 024 populates ``operators``. The
     #: exact operator string above is always preserved beside it (SPEC §38).
-    operator_group_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("operator_groups.id")
-    )
+    operator_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("operator_groups.id"))
     owner: Mapped[str | None] = mapped_column(Text)
     owner_src: Mapped[str | None] = mapped_column(Text)
     updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -571,9 +569,7 @@ class Operator(Base):
     __table_args__ = ({"sqlite_with_rowid": False},)
 
     name: Mapped[str] = mapped_column(Text, primary_key=True)
-    group_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("operator_groups.id"), nullable=False
-    )
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("operator_groups.id"), nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Operator(name={self.name!r}, group_id={self.group_id!r})"
