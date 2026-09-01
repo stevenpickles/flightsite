@@ -96,6 +96,19 @@ points and thinned by absence where the aircraft left the live set unheard —
 which is the honest record of what happened, and is visible as a gap between
 consecutive timestamps rather than as an invented straight line.
 
+The lifecycle seam
+------------------
+
+:meth:`PersistenceWorker.subscribe_lifecycle` publishes what each *committed*
+cycle opened and closed. It is the mirror image of :meth:`apply_route` and
+:meth:`apply_inferred_airport`, which push values into the cycle: this reports
+what the cycle did, after it has reached the disk, so a listener sees exactly
+the state a query would. Listeners are synchronous and may only touch memory —
+the notification runs inside the cycle — and one that raises is logged and
+skipped, because at that point the transaction has already committed and an
+exception could only make the worker retry writes that already landed. Slice
+031's analytics rollups are the first consumer.
+
 Startup
 -------
 
@@ -116,7 +129,7 @@ import asyncio
 import contextlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Final, NamedTuple
 
 import structlog
 
@@ -169,6 +182,48 @@ DEFAULT_TICK_INTERVAL_S: Final = 1.0
 EpochClock = Callable[[], int]
 
 
+class SightingRef(NamedTuple):
+    """A sighting row that this cycle opened or closed, by identity alone.
+
+    Deliberately ids and instants and nothing else. A listener that wanted the
+    sighting's extremes, its type or its classification would be reading
+    accumulator state mid-flight; the row is already committed when the
+    notification fires, so anything more belongs in a query against it.
+    """
+
+    icao: str
+    aircraft_id: int
+    sighting_id: int
+    started_ms: int
+    #: ``None`` for an open; the moment the aircraft was last heard for a close.
+    ended_ms: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SightingLifecycle:
+    """What one committed cycle did to the sighting lifecycle."""
+
+    at_ms: int
+    opened: tuple[SightingRef, ...] = ()
+    closed: tuple[SightingRef, ...] = ()
+
+    @property
+    def empty(self) -> bool:
+        """True when the cycle opened and closed nothing."""
+        return not self.opened and not self.closed
+
+
+#: Notified **after** a cycle's transaction commits, with the sightings it
+#: opened and closed. The seam slice 031's analytics rollups hang off.
+#:
+#: Synchronous and non-awaiting by contract: a listener runs inside the
+#: worker's cycle, so it may only touch memory. Anything that needs a database
+#: is the listener's own task's problem — which is exactly the shape
+#: :class:`~flightsite.analytics.service.AnalyticsService` takes, marking the
+#: affected days dirty here and rebuilding them on its own cadence.
+SightingLifecycleListener = Callable[[SightingLifecycle], None]
+
+
 @dataclass(frozen=True, slots=True)
 class CycleResult:
     """What one worker cycle did, for tests, logs and later diagnostics."""
@@ -216,6 +271,7 @@ class PersistenceWorker:
         "_counters",
         "_database",
         "_flush_interval_ms",
+        "_lifecycle_listeners",
         "_live",
         "_meta",
         "_pending",
@@ -264,6 +320,50 @@ class PersistenceWorker:
         self._task: asyncio.Task[None] | None = None
         self._t0_established = False
         self._recovery = RecoveryReport()
+        self._lifecycle_listeners: list[SightingLifecycleListener] = []
+
+    # --------------------------------------------------------- the seam out
+
+    def subscribe_lifecycle(self, listener: SightingLifecycleListener) -> None:
+        """Register a listener notified after each committed cycle.
+
+        The observation counterpart of :meth:`apply_route` and
+        :meth:`apply_inferred_airport`, which write *into* the cycle: this
+        reports what the cycle did, once it has actually reached the disk. It
+        is the seam slice 031's analytics rollups hang off, and it is
+        deliberately narrow — see :data:`SightingLifecycleListener`.
+
+        Idempotent per listener object: registering the same callable twice
+        registers it once, so a service restarted against a still-running
+        worker cannot end up notified in duplicate.
+        """
+        if listener not in self._lifecycle_listeners:
+            self._lifecycle_listeners.append(listener)
+
+    def unsubscribe_lifecycle(self, listener: SightingLifecycleListener) -> None:
+        """Remove a listener registered by :meth:`subscribe_lifecycle`."""
+        with contextlib.suppress(ValueError):
+            self._lifecycle_listeners.remove(listener)
+
+    def _notify_lifecycle(self, event: SightingLifecycle) -> None:
+        """Hand a committed cycle to every listener, defensively.
+
+        A listener that raises is logged and skipped rather than allowed to
+        propagate: the transaction has already committed at this point, so an
+        exception here could only turn a *successful* cycle into a failed one
+        and make the worker retry writes that already landed.
+        """
+        if event.empty:
+            return
+        for listener in self._lifecycle_listeners:
+            try:
+                listener(event)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "sighting_lifecycle_listener_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     # ------------------------------------------------------------ inspection
 
@@ -706,6 +806,15 @@ class PersistenceWorker:
                 track_bytes=track.byte_count,
             )
 
+        # After the ids are assigned and the closures are popped, so a listener
+        # sees exactly the state a query against the database would.
+        self._notify_lifecycle(
+            SightingLifecycle(
+                at_ms=now_ms,
+                opened=tuple(self._reference(active) for active in opens),
+                closed=tuple(self._reference(active, ended=True) for active in due),
+            )
+        )
         await self._establish_t0(opens)
         return CycleResult(
             opened=len(opens),
@@ -714,6 +823,18 @@ class PersistenceWorker:
             checkpointed=sum(len(batch.rows) for batch in batches.values()),
             emitted=sum(len(events) for events in queued.values()),
             track_points=sum(track.point_count for track in closed_tracks),
+        )
+
+    @classmethod
+    def _reference(cls, active: ActiveSighting, *, ended: bool = False) -> SightingRef:
+        """The committed identity of an accumulator, for the lifecycle seam."""
+        ids = cls._ids(active)
+        return SightingRef(
+            icao=active.icao,
+            aircraft_id=ids.aircraft_id,
+            sighting_id=ids.sighting_id,
+            started_ms=active.started_ms,
+            ended_ms=active.last_seen_ms if ended else None,
         )
 
     @staticmethod
@@ -778,4 +899,7 @@ __all__ = [
     "CycleResult",
     "EpochClock",
     "PersistenceWorker",
+    "SightingLifecycle",
+    "SightingLifecycleListener",
+    "SightingRef",
 ]
