@@ -1254,7 +1254,7 @@ slices:
     title: "Multi-year storage qualification"
     phase: 8
     branch: "050-storage-qualification"
-    status: planned
+    status: merged
     depends_on: ["031", "043", "044", "049"]
     objective: "Generate a realistic synthetic multi-year dataset and qualify growth, queries, retention, and backup/restore at scale."
     scope:
@@ -1289,6 +1289,34 @@ slices:
     expected_artifacts: [README.md, docs/INSTALL.md, docs/CONFIGURATION.md, docs/API.md refresh]
     preferred_agent: sonnet
     risk_level: low
+
+  - id: "054"
+    title: "Live map motion correctness"
+    phase: 8
+    branch: "054-live-map-motion"
+    status: merged
+    depends_on: ["014", "039"]
+    objective: "Fix live-map markers that creep forward then teleport back, by anchoring dead reckoning to the last position change rather than the last delta."
+    scope:
+      - "store records carry `positionChangedAt`: set only when the reported fix actually moves (lat/lon or position_source), preserved across deltas and snapshots that repeat the same fix"
+      - "`displayPosition` projects from that anchor instead of `receivedAt`, so a delta carrying only rssi/altitude no longer resets elapsed time to zero"
+      - "interpolation bounds re-derived for the new anchor: a fix-age cap sized to the 2-10 s CPR cadence of distant aircraft, plus a stall grace measured from the last delivered frame so a dead stream freezes in place instead of snapping backwards"
+      - interpolation module docstring corrected (it documented the faulty anchor as intentional design)
+    out_of_scope:
+      - "exponential correction blend on new fixes: analysed and rejected in-slice (needs per-aircraft render state in a pure path; residual step is second-order once the anchor is fixed)"
+      - renderer-side smoothing or MapLibre symbol animation (049)
+    acceptance_criteria:
+      - "a delta whose position is unchanged does not reset the projection anchor; the marker keeps advancing instead of snapping back to the stale fix"
+      - "an aircraft on a 2-10 s fix cadence is projected continuously between fixes; a stalled stream freezes at its last projected point and never rewinds"
+      - "500-aircraft frame-cost budget (slice 014 / frame.perf.test.ts) is not regressed"
+    required_tests: [store anchor-preservation tests, displayPosition regression tests for the snap-back, bound tests for fix-age cap and stall grace]
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/interpolation.ts
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/test/liveAircraftFixtures.ts
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #119 (user-reported on a real install; mechanism confirmed). Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

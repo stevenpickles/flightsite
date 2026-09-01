@@ -6,7 +6,7 @@ import {
   useLiveWatchlistCounts,
 } from "@/features/watchlists/lib/liveMatchCounts";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { makeAircraft } from "@/test/liveAircraftFixtures";
+import { makeAircraft, makeRecord } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
   useLiveAircraftStore.getState().reset();
@@ -15,13 +15,7 @@ beforeEach(() => {
 describe("computeLiveMatchCounts", () => {
   it("counts one aircraft toward every watchlist it matches", () => {
     const counts = computeLiveMatchCounts({
-      aaaaaa: {
-        aircraft: makeAircraft({
-          icao: "aaaaaa",
-          watchlists: ["Police", "Rare"],
-        }),
-        receivedAt: 0,
-      },
+      aaaaaa: makeRecord({ icao: "aaaaaa", watchlists: ["Police", "Rare"] }),
     });
 
     expect(counts).toEqual({ Police: 1, Rare: 1 });
@@ -29,14 +23,8 @@ describe("computeLiveMatchCounts", () => {
 
   it("sums across multiple aircraft matching the same watchlist", () => {
     const counts = computeLiveMatchCounts({
-      aaaaaa: {
-        aircraft: makeAircraft({ icao: "aaaaaa", watchlists: ["Police"] }),
-        receivedAt: 0,
-      },
-      bbbbbb: {
-        aircraft: makeAircraft({ icao: "bbbbbb", watchlists: ["Police"] }),
-        receivedAt: 0,
-      },
+      aaaaaa: makeRecord({ icao: "aaaaaa", watchlists: ["Police"] }),
+      bbbbbb: makeRecord({ icao: "bbbbbb", watchlists: ["Police"] }),
     });
 
     expect(counts).toEqual({ Police: 2 });
@@ -48,10 +36,7 @@ describe("computeLiveMatchCounts", () => {
 
   it("omits a watchlist name with no live match rather than reporting zero", () => {
     const counts = computeLiveMatchCounts({
-      aaaaaa: {
-        aircraft: makeAircraft({ icao: "aaaaaa", watchlists: [] }),
-        receivedAt: 0,
-      },
+      aaaaaa: makeRecord({ icao: "aaaaaa", watchlists: [] }),
     });
 
     expect(counts).toEqual({});
