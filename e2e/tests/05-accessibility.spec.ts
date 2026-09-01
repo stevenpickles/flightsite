@@ -133,6 +133,10 @@ test.describe("keyboard-only navigation", () => {
     await expect(skipLink).toBeFocused();
 
     await page.keyboard.press("Enter");
+    // Assert the link actually fired, not merely that <main> exists (it
+    // always does): activating it moves the document to the main-content
+    // fragment, which is the whole point of a skip link.
+    await expect(page).toHaveURL(/#main-content$/);
     await expect(page.locator("#main-content")).toBeVisible();
   });
 
