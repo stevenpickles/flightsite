@@ -1,4 +1,5 @@
 import { requireNavItem } from "@/components/shell/nav-items";
+import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
@@ -11,13 +12,14 @@ const item = requireNavItem("/");
 /**
  * The Live Map route: a full-viewport MapLibre map (dark aviation default,
  * selectable basemaps, range rings, and receiver marker — slice 013) carrying
- * the live aircraft layer (slice 014).
+ * the live aircraft layer (slice 014) and the aircraft detail panel
+ * (slice 016), which opens on selection and reads only the live store.
  *
  * The map configuration still comes from `useMapConfigStore`, which the setup
  * wizard's config sync (slice 018) populates from the server's real receiver
  * location; the live socket supplies aircraft, not map configuration.
  *
- * Labels, filters, and the detail panel arrive in slices 015–017.
+ * Filters arrive in slice 017.
  */
 export function LiveMapPage() {
   const basemapId = useBasemapStore((state) => state.basemapId);
@@ -34,6 +36,7 @@ export function LiveMapPage() {
         <AircraftLayer />
       </MapLibreMap>
       <BasemapSwitcher />
+      <AircraftDetailPanel />
     </div>
   );
 }
