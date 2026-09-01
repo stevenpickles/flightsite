@@ -36,6 +36,11 @@ export class MapLibreMockMap {
   /** Features `queryRenderedFeatures` returns; tests set this to simulate a
    * click landing on an aircraft. */
   renderedFeatures: MockRenderedFeature[] = [];
+  /** `getZoom()`'s return value. Defaults into the "full label stack" band
+   * (`ZOOM_LABELS_FULL` in `features/map/labels/priority.ts`) so a test that
+   * does not care about zoom-driven decluttering sees the full picture;
+   * tests that do care set this directly. */
+  zoom = 10;
   removed = false;
   // Mirrors real MapLibre: false immediately after construction (or after
   // setStyle swaps the style) until a `load`/`style.load` event fires.
@@ -115,6 +120,10 @@ export class MapLibreMockMap {
 
   queryRenderedFeatures(): MockRenderedFeature[] {
     return this.renderedFeatures;
+  }
+
+  getZoom(): number {
+    return this.zoom;
   }
 
   isStyleLoaded(): boolean {

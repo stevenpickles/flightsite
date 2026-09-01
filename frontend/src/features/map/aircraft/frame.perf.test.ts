@@ -37,6 +37,7 @@ const BUDGET_MS = 10;
  * covers FlightSite's code and not a test double's bookkeeping. */
 const NULL_MAP = {
   getSource: () => ({ setData: () => undefined }),
+  getZoom: () => 10,
 } as unknown as MapLibreGlMap;
 
 function fleet(tick: number): LiveAircraft[] {
@@ -118,6 +119,7 @@ describe("500-aircraft frame cost", () => {
             features = data.features?.length ?? 0;
           },
         }),
+        getZoom: () => 10,
       } as unknown as MapLibreGlMap,
       useLiveAircraftStore.getState(),
       now,
