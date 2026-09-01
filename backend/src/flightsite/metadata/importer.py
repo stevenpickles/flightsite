@@ -33,6 +33,14 @@ batches back to the event loop (``docs/ARCHITECTURE.md`` §3.3: "blocking or
 CPU-heavy work runs via ``asyncio.to_thread``"). Staging is loaded in short
 writer transactions between which the writer lock is free, so sighting
 persistence keeps flushing throughout an import.
+
+**Where the rows land** is the source's
+:class:`~flightsite.metadata.sink.ImportSink`, bound at registration. The four
+stages above are identical for every dataset; only the destination differs, so
+the destination — and nothing else — is the seam. Slice 027's ``airports``
+source rides this pipeline whole, which is what gives it an independent
+``metadata_sources`` row and a status the slice-025 update action reports
+beside the aircraft sources'.
 """
 
 from __future__ import annotations
@@ -42,22 +50,20 @@ import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import structlog
 
 from flightsite.db import Database, utc_now_ms
-from flightsite.metadata.provider import MetadataProvider
+from flightsite.metadata.provider import DatasetProvider
 from flightsite.metadata.records import (
     MetadataError,
-    NormalizedAircraftRecord,
-    RecordError,
     SourceArtifact,
     ValidationReport,
-    normalize_record,
 )
 from flightsite.metadata.registry import ImportPhase, SourceRegistry
 from flightsite.metadata.repository import MetadataRepository
+from flightsite.metadata.sink import AircraftMetadataSink, ImportSink
 
 logger = structlog.get_logger(__name__)
 
@@ -143,7 +149,7 @@ class MetadataImporter:
         clock: UTC epoch-millisecond source, injected for tests.
     """
 
-    __slots__ = ("_clock", "_data_dir", "_registry", "_repository")
+    __slots__ = ("_clock", "_data_dir", "_default_sink", "_registry", "_repository")
 
     def __init__(
         self,
@@ -157,6 +163,13 @@ class MetadataImporter:
         self._registry = registry
         self._data_dir = Path(data_dir)
         self._clock = clock
+        # The destination for any source that did not register one of its own,
+        # which is every aircraft-metadata source. Precedence is passed as a
+        # callable because the model must be the one true at *promotion*, built
+        # from whatever is registered then.
+        self._default_sink = AircraftMetadataSink(
+            self._repository, precedence=self._registry.precedence
+        )
 
     async def run(self, sources: Sequence[str] | None = None) -> ImportRun:
         """Import ``sources`` (default: every registered source).
@@ -194,16 +207,17 @@ class MetadataImporter:
         await self._repository.ensure_source(name)
         await self._repository.mark_attempt(name, at_ms=at_ms)
 
+        sink = source.sink if source.sink is not None else self._default_sink
         workdir = self._data_dir / WORK_DIRNAME / name
         try:
-            return await self._import_source(source.name, source.provider, workdir, at_ms)
+            return await self._import_source(source.name, source.provider, sink, workdir, at_ms)
         except ImportFailure as failure:
-            return await self._record_failure(name, failure.phase, str(failure))
+            return await self._record_failure(name, sink, failure.phase, str(failure))
         except Exception as exc:
             # A provider may raise anything at all; whatever it is, it is this
             # source's failure and nothing else's.
             phase = self._registry.run_state(name).phase or ImportPhase.DOWNLOAD
-            return await self._record_failure(name, phase, f"{type(exc).__name__}: {exc}")
+            return await self._record_failure(name, sink, phase, f"{type(exc).__name__}: {exc}")
         finally:
             self._registry.mark_finished(name)
             await asyncio.to_thread(_remove_tree, workdir)
@@ -211,7 +225,8 @@ class MetadataImporter:
     async def _import_source(
         self,
         name: str,
-        provider: MetadataProvider,
+        provider: DatasetProvider,
+        sink: ImportSink,
         workdir: Path,
         at_ms: int,
     ) -> SourceImportResult:
@@ -225,12 +240,11 @@ class MetadataImporter:
             raise ImportFailure(ImportPhase.VALIDATE, report.reason())
 
         self._registry.mark_phase(name, ImportPhase.STAGING)
-        staged, rejected = await self._stage(name, provider, artifact, report, at_ms)
+        staged, rejected = await self._stage(name, provider, sink, artifact, report, at_ms)
 
         self._registry.mark_phase(name, ImportPhase.SWAP, staged_rows=staged)
-        await self._repository.promote(
+        await sink.promote(
             name,
-            precedence=self._registry.precedence(),
             at_ms=at_ms,
             dataset_version=artifact.version,
             row_count=staged,
@@ -257,21 +271,22 @@ class MetadataImporter:
     async def _stage(
         self,
         name: str,
-        provider: MetadataProvider,
+        provider: DatasetProvider,
+        sink: ImportSink,
         artifact: SourceArtifact,
         report: ValidationReport,
         at_ms: int,
     ) -> tuple[int, int]:
         """Stream the provider's records into staging. Returns (staged, rejected)."""
-        await self._repository.clear_staging(name)
+        await sink.clear_staging(name)
 
-        collector = _TransformCollector(provider, artifact)
+        collector = _TransformCollector(provider, sink, artifact)
         accepted = 0
         while True:
             batch = await collector.next_batch()
             if not batch:
                 break
-            accepted += await self._repository.stage_batch(name, batch, updated_ms=at_ms)
+            accepted += await sink.stage_batch(name, batch, updated_ms=at_ms)
             self._registry.mark_phase(name, ImportPhase.STAGING, staged_rows=accepted)
 
         rejected = collector.rejected
@@ -279,7 +294,7 @@ class MetadataImporter:
         # transform's error rate, which is what the tolerance is about;
         # `staged` is distinct addresses after duplicates collapsed, which is
         # what the dataset actually contains.
-        staged = await self._repository.count_staged(name)
+        staged = await sink.count_staged(name)
         yielded = accepted + rejected
 
         if staged == 0:
@@ -301,7 +316,7 @@ class MetadataImporter:
         return staged, rejected
 
     async def _record_failure(
-        self, name: str, phase: ImportPhase, error: str
+        self, name: str, sink: ImportSink, phase: ImportPhase, error: str
     ) -> SourceImportResult:
         """Record a failed run, then leave everything else alone.
 
@@ -309,7 +324,7 @@ class MetadataImporter:
         landing area; the live rows are untouched because nothing outside
         ``promote`` ever writes them.
         """
-        await self._repository.clear_staging(name)
+        await sink.clear_staging(name)
         await self._repository.mark_failure(name, at_ms=self._clock(), error=error)
         logger.warning("metadata_import_failed", source=name, phase=phase.value, error=error)
         return SourceImportResult(source=name, ok=False, phase=phase, error=error)
@@ -324,20 +339,23 @@ class _TransformCollector:
     in a worker thread. The generator stays on one thread at a time: only one
     ``to_thread`` call is ever in flight.
 
-    Every yielded record is re-normalized here rather than trusted. That is the
-    ADR-0006 boundary made real: a provider that forgot to strip a trailing
-    space or upper-case a type designator would otherwise split one airframe or
-    one type into two in the resolved table, and no schema constraint would
-    catch it. Records that cannot be normalized at all are counted and dropped;
-    the caller enforces a tolerance on the ratio, so a handful of bad rows in a
-    real snapshot is survivable while a parser that disagrees with its file is
-    not.
+    Every yielded record is re-normalized here rather than trusted — by the
+    sink, which is the only object that knows what this source's rows are. That
+    is the ADR-0006 boundary made real: a provider that forgot to strip a
+    trailing space or upper-case a designator would otherwise split one entity
+    into two, and no schema constraint would catch it. Records the sink cannot
+    canonicalize are counted and dropped; the caller enforces a tolerance on
+    the ratio, so a handful of bad rows in a real snapshot is survivable while
+    a parser that disagrees with its file is not.
     """
 
-    __slots__ = ("_exhausted", "_records", "_rejected")
+    __slots__ = ("_exhausted", "_records", "_rejected", "_sink")
 
-    def __init__(self, provider: MetadataProvider, artifact: SourceArtifact) -> None:
+    def __init__(
+        self, provider: DatasetProvider, sink: ImportSink, artifact: SourceArtifact
+    ) -> None:
         self._records = provider.transform(artifact)
+        self._sink = sink
         self._rejected = 0
         self._exhausted = False
 
@@ -346,7 +364,7 @@ class _TransformCollector:
         """Rows the provider yielded that could not be normalized."""
         return self._rejected
 
-    async def next_batch(self) -> list[NormalizedAircraftRecord]:
+    async def next_batch(self) -> list[Any]:
         """The next batch of records, or an empty list when exhausted."""
         if self._exhausted:
             return []
@@ -355,38 +373,20 @@ class _TransformCollector:
         self._exhausted = exhausted
         return batch
 
-    def _drain(self) -> tuple[list[NormalizedAircraftRecord], int, bool]:
-        batch: list[NormalizedAircraftRecord] = []
+    def _drain(self) -> tuple[list[Any], int, bool]:
+        batch: list[Any] = []
         rejected = 0
         while len(batch) < TRANSFORM_BATCH:
             try:
                 record = next(self._records)
             except StopIteration:
                 return batch, rejected, True
-            canonical = _canonical(record)
+            canonical = self._sink.canonical(record)
             if canonical is None:
                 rejected += 1
             else:
                 batch.append(canonical)
         return batch, rejected, False
-
-
-def _canonical(record: NormalizedAircraftRecord) -> NormalizedAircraftRecord | None:
-    """``record`` in canonical form, or ``None`` if it cannot be stored."""
-    try:
-        return normalize_record(
-            icao24=record.icao24,
-            registration=record.registration,
-            type_code=record.type_code,
-            model=record.model,
-            manufacture_year=record.manufacture_year,
-            operator_name=record.operator_name,
-            owner=record.owner,
-            military_flag=record.military_flag,
-            flags=record.flags,
-        )
-    except RecordError:
-        return None
 
 
 def _remove_tree(path: Path) -> None:

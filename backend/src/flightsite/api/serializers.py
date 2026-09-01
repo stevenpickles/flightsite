@@ -27,6 +27,17 @@ aircraft's *current* sighting — on the same terms: both keys are always
 present, both are ``null`` until enrichment has something to say, and the
 provenance entry appears only when there is a value to attribute.
 
+Slice 027 adds ``nearest_airport`` beside it, and the two are deliberately
+*not* the same shape. ``route`` is an always-present object of nullable members
+because a route is a thing every flight has, known or not. ``nearest_airport``
+is a nullable object because most aircraft simply do not have one: at cruise
+there is no nearest field in any meaningful sense, and an object of nulls would
+imply a question was asked and came back empty rather than that it was never a
+question at all. The key is always present; its value is ``null`` until an
+aircraft is low near a field. Everything inside it is attributed
+``heuristic`` — SPEC §41 requires the inference to be clearly labeled, and
+§2.6's own example names exactly this provenance key.
+
 The metadata is passed in rather than looked up here. This function is called
 once per aircraft per WebSocket frame and must not touch SQLite
 (``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
@@ -82,6 +93,7 @@ from typing import Any, Final
 
 from sqlalchemy.engine import RowMapping
 
+from flightsite.airports.model import AirportContext
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
 from flightsite.db.clock import from_epoch_ms
@@ -111,6 +123,14 @@ METADATA_PROVENANCE_KEYS: Final[Mapping[str, str]] = {
 #: Decimal places kept on the two derived receiver-relative values.
 DISTANCE_DECIMALS: Final = 3
 BEARING_DECIMALS: Final = 2
+
+#: Provenance value for everything in the ``nearest_airport`` block
+#: (``docs/API.md`` §2.6). One entry covers the block rather than one per
+#: member: the distance is arithmetic and the name is a lookup, but *which*
+#: airport is the nearest one is the judgement being published, and attributing
+#: its parts differently would invite a reader to trust some of it more than
+#: the whole deserves.
+NEAREST_AIRPORT_PROVENANCE: Final = "heuristic"
 
 
 def iso_utc(moment: datetime) -> str:
@@ -158,10 +178,28 @@ def _route(route: SightingRoute | None) -> dict[str, str | None]:
     return {"origin": route.origin_ident, "destination": route.destination_ident}
 
 
+def _nearest_airport(context: AirportContext | None) -> dict[str, Any] | None:
+    """The §3.3 ``nearest_airport`` block, or ``None`` when there is not one.
+
+    Nullable as a whole, unlike ``route`` — see the module docstring. ``phase``
+    is a member rather than a sibling block because it is meaningless without
+    the field it is about: "likely arriving" names nowhere on its own.
+    """
+    if context is None:
+        return None
+    return {
+        "ident": context.ident,
+        "name": context.name,
+        "distance_nm": round(context.distance_nm, DISTANCE_DECIMALS),
+        "phase": None if context.phase is None else context.phase.value,
+    }
+
+
 def _provenance(
     record: LiveAircraft,
     metadata: AircraftMetadataView | None,
     route: SightingRoute | None,
+    airport: AirportContext | None,
 ) -> dict[str, str]:
     """The §2.6 provenance map, restricted to fields this payload publishes."""
     found = {
@@ -180,6 +218,9 @@ def _provenance(
     # vocabulary — ``aerodatabox`` — the provenance map uses.
     if route is not None:
         found["route"] = route.source
+    # Same rule, same reason: no block, nothing to attribute.
+    if airport is not None:
+        found["nearest_airport"] = NEAREST_AIRPORT_PROVENANCE
     return found
 
 
@@ -189,6 +230,7 @@ def aircraft_payload(
     sighting_id: int | None = None,
     metadata: AircraftMetadataView | None = None,
     route: SightingRoute | None = None,
+    airport: AirportContext | None = None,
 ) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
@@ -213,6 +255,11 @@ def aircraft_payload(
             airline-form callsigns are ever looked up, and the answer arrives a
             second or two after the aircraft does. It serializes as a ``route``
             block of nulls, never as a missing key.
+        airport: the nearest-airport context slice 027's heuristic holds for
+            this aircraft *right now*, or ``None``. ``None`` is the normal
+            state for most of the sky: no airport dataset imported, the
+            aircraft is at cruise, or it is nowhere near a field. It serializes
+            as ``nearest_airport: null``, never as a missing key.
     """
     resolved = None if metadata is None else metadata.metadata
     return {
@@ -243,8 +290,9 @@ def aircraft_payload(
         "operator_group": None if metadata is None else metadata.operator_group,
         "classification": None if metadata is None else metadata.classification.payload(),
         "route": _route(route),
+        "nearest_airport": _nearest_airport(airport),
         "interesting": None,
-        "provenance": _provenance(record, metadata, route),
+        "provenance": _provenance(record, metadata, route, airport),
     }
 
 
@@ -461,6 +509,7 @@ __all__ = [
     "DISTANCE_DECIMALS",
     "EXPOSED_PROVENANCE_FIELDS",
     "METADATA_PROVENANCE_KEYS",
+    "NEAREST_AIRPORT_PROVENANCE",
     "aircraft_detail_payload",
     "aircraft_history_row_payload",
     "aircraft_payload",

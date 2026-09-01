@@ -12,8 +12,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 (:class:`MetadataSource`, :class:`AircraftMetadata`,
 :class:`AircraftMetadataStaging`, :class:`AircraftMetadataResolved`,
 :class:`OperatorGroup`, :class:`Operator`) in slice 021,
-:class:`AircraftClassification` in slice 024, and :class:`RouteCache` in
-slice 026.
+:class:`AircraftClassification` in slice 024, :class:`RouteCache` in slice 026,
+and :class:`Airport` in slice 027.
 """
 
 from __future__ import annotations
@@ -716,3 +716,62 @@ class RouteCache(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RouteCache(cache_key={self.cache_key!r}, status={self.status!r})"
+
+
+class Airport(Base):
+    """One airport, heliport or landing field (``docs/DATA_MODEL.md`` §3.6).
+
+    Imported from OurAirports (public domain) by
+    :mod:`flightsite.airports.ourairports` and read exactly twice in a process's
+    life: once at startup and once after an import, both times to build the
+    in-memory grid index :mod:`flightsite.airports.index`. Nothing on the live
+    path queries this table — nearest-airport lookups answer from that index,
+    which is what keeps SQLite off the per-observation path
+    (``docs/ARCHITECTURE.md`` §3.1).
+
+    The surrogate ``id`` is OurAirports' own row id rather than a fresh
+    sequence: it is stable upstream, it makes a re-import diffable, and
+    ``ident`` — the ICAO/GPS identifier everything else joins on — carries the
+    ``UNIQUE`` constraint that actually matters.
+
+    ``ix_airports_lat`` covers ``(lat, lon)`` because §3.6's documented lookup
+    is a **bounding box refined by great-circle in code**: at ~70k rows that
+    needs no R*Tree, and SQLite ships none by default. In practice the index
+    serves the rebuild's ordered scan; the box query itself lives in the
+    in-memory index.
+
+    ``type`` has no ``CHECK``. The vocabulary is upstream's and grows
+    (``balloonport`` postdates the dataset's first release); the *filter* over
+    it is FlightSite's decision and lives in
+    :data:`flightsite.airports.records.IMPORTED_AIRPORT_TYPES`, where it can be
+    changed without rebuilding a table.
+    """
+
+    __tablename__ = "airports"
+    __table_args__ = (
+        Index("ix_airports_lat", "lat", "lon"),
+        # Partial: fewer than one row in seven carries an IATA code, so
+        # indexing only those keeps the by-IATA lookup independent of the
+        # 60k-odd rows that could never answer it.
+        Index("ix_airports_iata", "iata", sqlite_where=text("iata IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ICAO or GPS identifier, e.g. ``KSEA``, ``EGLL``, ``00AK``. Unique.
+    ident: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    iata: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Upstream size class: ``large_airport``/``medium_airport``/
+    #: ``small_airport``/``heliport``. See the class docstring on the absent
+    #: ``CHECK``.
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    lat: Mapped[float] = mapped_column(REAL, nullable=False)
+    lon: Mapped[float] = mapped_column(REAL, nullable=False)
+    #: Field elevation, ``NULL`` for the ~16% of rows upstream has none for.
+    #: The inference treats a missing elevation as sea level rather than
+    #: skipping the field — see :mod:`flightsite.airports.inference`.
+    elevation_ft: Mapped[int | None] = mapped_column(Integer)
+    iso_country: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Airport(ident={self.ident!r}, name={self.name!r})"

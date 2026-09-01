@@ -99,6 +99,12 @@ class OpenSightingRow:
     origin_ident: str | None = None
     destination_ident: str | None = None
     route_source: str | None = None
+    #: Airport inference already recorded for this sighting (slice 027). Comes
+    #: back with the rest for the reason the route columns do: a restart that
+    #: rehydrated without it would blank an inference already written the next
+    #: time the row flushed.
+    inferred_airport_ident: str | None = None
+    inferred_phase: str | None = None
     any_position: bool = False
     mlat_used: bool = False
     ground_seen: bool = False
@@ -157,6 +163,8 @@ class OpenSightingRow:
             origin_ident=self.origin_ident,
             destination_ident=self.destination_ident,
             route_source=self.route_source,
+            inferred_airport_ident=self.inferred_airport_ident,
+            inferred_phase=self.inferred_phase,
             # An emergency squawk still standing at restart is not a second
             # episode: deriving this from the stored squawk is what keeps
             # `emergency_start` exactly-once across a process boundary.
@@ -193,8 +201,7 @@ class OpenSightingRow:
 
 
 #: Columns of ``sightings`` this repository maintains from the accumulator.
-#: Airport inference (027) and alert outcomes (038) own the rest and are never
-#: written here.
+#: Alert outcomes (038) own the rest and are never written here.
 #:
 #: Each name is an attribute of :class:`~flightsite.sightings.state.
 #: ActiveSighting` too — ``rssi_avg_db`` and ``pos_time_pct`` as derived
@@ -224,6 +231,12 @@ _RUNNING_COLUMNS: Final[tuple[str, ...]] = (
     "origin_ident",
     "destination_ident",
     "route_source",
+    # Local airport inference (slice 027). Also not part of the live stream:
+    # the airport context service sets these on the accumulator from its own
+    # task, so like the route columns they ride the ordinary flush. Both stay
+    # ``None`` on an install that has never imported the airport dataset.
+    "inferred_airport_ident",
+    "inferred_phase",
 )
 
 
@@ -290,6 +303,8 @@ class SightingRepository:
                 origin_ident=sighting.origin_ident,
                 destination_ident=sighting.destination_ident,
                 route_source=sighting.route_source,
+                inferred_airport_ident=sighting.inferred_airport_ident,
+                inferred_phase=sighting.inferred_phase,
                 any_position=bool(sighting.any_position),
                 mlat_used=bool(sighting.mlat_used),
                 ground_seen=bool(sighting.ground_seen),

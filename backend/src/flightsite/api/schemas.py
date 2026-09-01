@@ -77,6 +77,36 @@ class RouteView(_Model):
     destination: str | None = None
 
 
+class NearestAirportView(_Model):
+    """Locally inferred airport context — ``docs/API.md`` §3.3, SPEC §41.
+
+    Nullable **as a whole**, unlike :class:`RouteView`. A route is a thing every
+    flight has whether or not FlightSite knows it, so an object of nulls is the
+    honest shape; a nearest airport is something most aircraft genuinely do not
+    have, and an object of nulls there would imply the question was asked and
+    came back empty.
+
+    Everything here is attributed ``heuristic`` in ``provenance`` under the key
+    ``nearest_airport``, and it is deliberately a different field from
+    :class:`RouteView`: SPEC §41 requires arrival/departure status to be clearly
+    labeled as inferred, and keeping what FlightSite guessed structurally apart
+    from what somebody told it is how that survives any later rendering.
+
+    ``phase`` is ``null`` far more often than not — an aircraft can be
+    confidently four miles from a field with its intentions unreadable, which is
+    exactly what an aircraft on the ground is.
+    """
+
+    ident: str
+    name: str
+    #: Great-circle range from the aircraft to the field, nautical miles.
+    distance_nm: float
+    #: ``docs/DATA_MODEL.md`` §2.3's ``inferred_phase`` vocabulary. The UI
+    #: renders these as *likely arriving* / *likely departing*; the hedging is
+    #: display, the value is the enum.
+    phase: Literal["arriving", "departing"] | None = None
+
+
 class InterestingMatch(_Model):
     """An active alert match (slice 038); ``null`` when nothing matches."""
 
@@ -123,6 +153,9 @@ class AircraftView(_Model):
     classification: Classification | None = None
     #: Never ``null`` as a whole — see :class:`RouteView`.
     route: RouteView = Field(default_factory=RouteView)
+    #: ``null`` whenever there is nothing to say — see
+    #: :class:`NearestAirportView`.
+    nearest_airport: NearestAirportView | None = None
     interesting: InterestingMatch | None = None
 
     #: §2.6. Keys name fields; values are the canonical provenance vocabulary.
@@ -265,6 +298,7 @@ __all__ = [
     "InterestingMatch",
     "IsoTimestamp",
     "LifetimeRecord",
+    "NearestAirportView",
     "PositionSourceLiteral",
     "ReceiverInfo",
     "RouteView",

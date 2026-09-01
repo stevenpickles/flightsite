@@ -108,6 +108,24 @@ class SightingRoute(NamedTuple):
     source: str
 
 
+class InferredAirport(NamedTuple):
+    """A locally inferred airport context, with its phase if one was inferred.
+
+    Kept here beside :class:`SightingRoute` and for the same reason — the
+    columns are the sighting's (``docs/DATA_MODEL.md`` §2.3) and the dependency
+    runs one way — but deliberately a *different* type, because SPEC §28 and
+    §41 make the distinction between what somebody told FlightSite and what
+    FlightSite guessed a structural one rather than a matter of presentation.
+
+    ``phase`` is the ``inferred_phase`` vocabulary (``arriving``/``departing``)
+    or ``None``: an aircraft can be confidently *at* a field without its
+    intentions being readable, which is what an aircraft on the ground is.
+    """
+
+    ident: str
+    phase: str | None
+
+
 class CheckpointBatch(NamedTuple):
     """One flush cycle's worth of checkpoint rows, and what producing them ate.
 
@@ -167,6 +185,13 @@ class ActiveSighting:
     origin_ident: str | None = None
     destination_ident: str | None = None
     route_source: str | None = None
+
+    #: Locally inferred airport context (slice 027). Set from the airport
+    #: context service's task, never by :meth:`observe`, and kept in different
+    #: columns from the route above so history can never confuse a guess with a
+    #: report (SPEC §28, §41).
+    inferred_airport_ident: str | None = None
+    inferred_phase: str | None = None
 
     any_position: bool = False
     mlat_used: bool = False
@@ -501,6 +526,59 @@ class ActiveSighting:
                 "destination": route.destination_ident,
             },
         )
+        self.dirty = True
+        self.flush_immediately = True
+        return True
+
+    # --------------------------------------------------- airport inference
+
+    @property
+    def inferred_airport(self) -> InferredAirport | None:
+        """The airport context inference has established, or ``None``.
+
+        ``None`` is the honest answer to "no airport dataset imported", "the
+        aircraft was never low near a field" and "the answer has not arrived
+        yet" alike, and the API renders every one of them the same way
+        (``docs/API.md`` §2.7).
+        """
+        if self.inferred_airport_ident is None:
+            return None
+        return InferredAirport(ident=self.inferred_airport_ident, phase=self.inferred_phase)
+
+    def apply_inferred_airport(self, inferred: InferredAirport, at_ms: int) -> bool:
+        """Record a local airport inference; ``True`` if anything changed.
+
+        Called from the airport context service's task, never from
+        :meth:`observe` — a field is not something a decoder transmits. The
+        write itself still rides the worker's cycle, exactly as a route does,
+        so the row lands in one transaction and a failed cycle retries it.
+
+        No sighting event is emitted, unlike :meth:`apply_route`. The
+        ``sighting_events.type`` vocabulary (``docs/DATA_MODEL.md`` §2.5) is a
+        storage contract fixed at revision 0002 and has no member for this, and
+        an inference that refines itself over an approach would in any case
+        produce a stream of events rather than the transition
+        ``route_enriched`` marks. The columns carry the answer; the timeline
+        does not need a line for each revision of a guess.
+
+        Idempotent by comparison, and monotone in confidence: an inference that
+        *loses* its phase — the aircraft levels off on final — keeps the phase
+        already recorded rather than blanking it, because the sighting's
+        history is "this aircraft was seen arriving at KBFI", and a later
+        ambiguous second does not unmake that. A phase that changes to the
+        other value does replace it: that is a genuinely different reading of
+        the same field, and the newer one is built on more observations.
+        """
+        phase = inferred.phase if inferred.phase is not None else self.inferred_phase
+        if inferred.ident != self.inferred_airport_ident:
+            # A different field: the previous field's phase does not carry over
+            # to it, so an inference about KBFI never leaves a phase attached
+            # to KSEA.
+            phase = inferred.phase
+        if (self.inferred_airport_ident, self.inferred_phase) == (inferred.ident, phase):
+            return False
+        self.inferred_airport_ident = inferred.ident
+        self.inferred_phase = phase
         self.dirty = True
         self.flush_immediately = True
         return True
