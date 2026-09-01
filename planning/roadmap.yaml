@@ -1136,7 +1136,7 @@ slices:
     title: "Database maintenance"
     phase: 7
     branch: "044-db-maintenance"
-    status: planned
+    status: merged
     depends_on: ["005", "009", "033", "053"]
     objective: "Automated conservative maintenance: integrity checks, pruning, optimization, and hardened unclean-shutdown handling."
     scope:
