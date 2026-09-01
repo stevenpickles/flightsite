@@ -80,3 +80,13 @@ describe("useMapViewport", () => {
     expect(mock.handlers.get("move")?.size ?? 0).toBe(0);
   });
 });
+
+describe("dead-GL degradation", () => {
+  it("reports null instead of crashing when getBounds throws", () => {
+    (mock as unknown as { getBounds: () => never }).getBounds = () => {
+      throw new TypeError("can't access property 0, n is undefined");
+    };
+    const { result } = renderHook(() => useMapViewport(map));
+    expect(result.current).toBeNull();
+  });
+});

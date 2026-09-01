@@ -16,15 +16,25 @@ export interface MapViewport {
 /** Idle time after the last `move` event before the viewport is reported. */
 export const VIEWPORT_DEBOUNCE_MS = 300;
 
-function readViewport(map: MapLibreGlMap): MapViewport {
-  const bounds = map.getBounds();
-  const bbox = [
-    bounds.getWest(),
-    bounds.getSouth(),
-    bounds.getEast(),
-    bounds.getNorth(),
-  ].join(",");
-  return { bbox, zoom: map.getZoom() };
+function readViewport(map: MapLibreGlMap): MapViewport | null {
+  // A map whose GL context never came up (headless CI Firefox) throws from
+  // deep inside getBounds() — its projection internals are undefined. That
+  // must degrade to "no viewport" (overlays simply never fetch), not crash
+  // the component tree: this exact throw once looped the Live Map through
+  // the router's error boundary, tearing the WebSocket down mid-connect on
+  // every remount so the connection never reached `live`.
+  try {
+    const bounds = map.getBounds();
+    const bbox = [
+      bounds.getWest(),
+      bounds.getSouth(),
+      bounds.getEast(),
+      bounds.getNorth(),
+    ].join(",");
+    return { bbox, zoom: map.getZoom() };
+  } catch {
+    return null;
+  }
 }
 
 /** The current viewport, or `null` before `map` exists. Reports immediately
