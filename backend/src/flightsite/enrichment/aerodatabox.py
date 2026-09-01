@@ -102,6 +102,18 @@ _NOT_FOUND_STATUSES: Final[frozenset[int]] = frozenset({204, 404})
 _EXTRA_KEYS: Final[tuple[str, ...]] = ("number", "status")
 
 
+def build_client() -> httpx.AsyncClient:
+    """The HTTP client a provider uses when none is injected.
+
+    A module-level seam, mirroring
+    :func:`flightsite.metadata.sources.mictronics.build_client` and
+    :mod:`flightsite.ingest.readsb`'s ``client_factory``: the application does
+    not construct a client, and a test that wants the lazy-construction path to
+    run without a socket replaces this name.
+    """
+    return httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_S, connect=CONNECT_TIMEOUT_S))
+
+
 def _airport_ident(movement: Any) -> str | None:
     """The ICAO ident of a departure/arrival block, falling back to IATA.
 
@@ -252,9 +264,7 @@ class AeroDataBoxProvider:
         """
         client = self._client
         if client is None:
-            client = self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(REQUEST_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
-            )
+            client = self._client = build_client()
             self._owns_client = True
         return await client.get(
             self.url_for(callsign),
@@ -286,5 +296,6 @@ __all__ = [
     "REQUEST_TIMEOUT_S",
     "USER_AGENT",
     "AeroDataBoxProvider",
+    "build_client",
     "parse_route",
 ]

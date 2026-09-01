@@ -93,12 +93,6 @@ class TokenBucket:
         self._tokens = float(burst)
         self._last_s = clock()
 
-    @property
-    def tokens(self) -> float:
-        """Tokens available at this instant, refilled to now."""
-        self._refill()
-        return self._tokens
-
     def take(self) -> bool:
         """Spend one token if one is available; never blocks."""
         self._refill()

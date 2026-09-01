@@ -375,9 +375,16 @@ class EnrichmentService:
         already started, and spending a request on one that has gone is exactly
         the waste the eligibility policy exists to avoid.
 
+        A disabled install considers nothing at all. :meth:`start` already
+        subscribes to no events, so this guard is belt as well as braces — but
+        it makes "no provider, no work" true of the object rather than only of
+        its wiring.
+
         Public because it is the whole of the read side's decision, and tests
         drive it directly rather than through a task.
         """
+        if self._provider is None:
+            return
         if isinstance(event, AircraftAppeared | AircraftUpdated):
             self._enqueue(event.aircraft)
 
