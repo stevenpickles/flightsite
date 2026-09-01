@@ -686,7 +686,7 @@ slices:
     title: "FAA registry importer"
     phase: 4
     branch: "023-faa-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
     scope:
