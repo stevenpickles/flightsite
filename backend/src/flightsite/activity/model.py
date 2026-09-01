@@ -155,9 +155,15 @@ def crossed_threshold(rank: int) -> int | None:
 def _number(value: float) -> str:
     """Format a float for a dedupe key at fixed precision.
 
-    Three decimals is finer than any record this slice compares — a tenth of a
-    metre of range, a thousandth of an aircraft — and pinning it means the key
-    depends on the value rather than on a repr.
+    Pinning the precision is what makes the key depend on the *value* rather
+    than on a repr, which is the whole point of deriving it from stored state.
+
+    Three decimals — for the one float-keyed record, the furthest detection,
+    about two metres — is deliberately coarser than the stored value. A record
+    beaten by less than that reads as the same record and is not announced
+    again, which is the right answer twice over: two metres is inside the noise
+    of a position report, and a feed that reported it would be reporting
+    rounding.
     """
     return f"{value:.3f}"
 
@@ -212,13 +218,6 @@ class ActivityBatch:
     def empty(self) -> bool:
         """True when there is nothing to write."""
         return not self.events and not self.milestones
-
-    def merged(self, other: ActivityBatch) -> ActivityBatch:
-        """This batch followed by ``other``, in order."""
-        return ActivityBatch(
-            events=self.events + other.events,
-            milestones=self.milestones + other.milestones,
-        )
 
 
 @dataclass(frozen=True, slots=True)
