@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { requireNavItem } from "@/components/shell/nav-items";
 import { AlertsSection } from "@/features/settings/sections/AlertsSection";
+import { DangerZoneSection } from "@/features/settings/sections/DangerZoneSection";
 import { DecoderSection } from "@/features/settings/sections/DecoderSection";
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
 import { EnrichmentSection } from "@/features/settings/sections/EnrichmentSection";
@@ -91,6 +92,8 @@ export function SettingsPage() {
         <MetadataSection timezone={config.timezone} />
         <RetentionSection config={config} />
       </div>
+
+      <DangerZoneSection />
     </div>
   );
 }

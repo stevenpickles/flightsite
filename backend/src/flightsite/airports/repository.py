@@ -97,6 +97,22 @@ class AirportRepository:
             total = await session.scalar(select(func.count()).select_from(Airport))
             return int(total or 0)
 
+    async def clear_all(self) -> int:
+        """Delete every row. Returns how many were removed (SPEC §73, slice 045).
+
+        Behind Settings' "Clear Metadata Cache" action
+        (:mod:`flightsite.reset.service`), which is the caller responsible for
+        rebuilding :class:`~flightsite.airports.index.AirportIndex` from the
+        now-empty table afterwards and for resetting the ``airports`` row in
+        ``metadata_sources`` — the same blanket reset
+        :meth:`flightsite.metadata.repository.MetadataRepository.clear_all`
+        already applies to every registered source, this one included.
+        """
+        async with self.database.writer_session() as session:
+            total = await session.scalar(select(func.count()).select_from(Airport))
+            await session.execute(delete(Airport))
+            return int(total or 0)
+
     async def replace_all(
         self,
         records: Sequence[AirportRecord],

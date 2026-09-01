@@ -200,6 +200,26 @@ async def test_a_row_stored_as_error_reads_as_no_route(
     assert found.as_lookup() == RouteNotFound()
 
 
+async def test_clear_all_empties_the_table_regardless_of_expiry(
+    cache: RouteCacheRepository,
+) -> None:
+    """SPEC §73's Clear Metadata Cache: unlike ``prune``, unexpired rows go too."""
+    await cache.store_route(KEY, RouteInfo("KATL", "KSLC"), now_ms=NOW_MS)
+    await cache.store_not_found("still-fresh:2026-08-30", now_ms=NOW_MS)
+
+    removed = await cache.clear_all()
+
+    assert removed == 2
+    assert await cache.size() == 0
+    assert await cache.get(KEY, now_ms=NOW_MS) is None
+
+
+async def test_clear_all_on_an_empty_cache_removes_nothing(cache: RouteCacheRepository) -> None:
+    """Idempotent, and the state of every install that has enriched nothing yet."""
+    assert await cache.clear_all() == 0
+    assert await cache.size() == 0
+
+
 async def test_an_ok_row_with_no_idents_reads_as_no_route(
     cache: RouteCacheRepository, database: Database
 ) -> None:

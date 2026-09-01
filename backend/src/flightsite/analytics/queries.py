@@ -56,8 +56,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from flightsite.activity.model import ActivityEventType
 from flightsite.analytics.bucketing import Window, local_hour
 from flightsite.db import (
+    ActivityEvent,
     Aircraft,
     AircraftClassification,
     AircraftMetadataResolved,
@@ -86,6 +88,21 @@ DEFAULT_RARE_MAX_SIGHTINGS: Final = 2
 
 #: Airframes at or below which a type designator reads as locally rare.
 DEFAULT_RARE_MAX_TYPE_AIRCRAFT: Final = 2
+
+#: SPEC §59's "new milestones/records" — the ``activity_events`` types that
+#: are, per :mod:`flightsite.activity.model`, either a milestone (fires once)
+#: or a rolling record (can be beaten), as opposed to a routine operational
+#: event (``metadata_updated``, ``receiver_offline``/``restored``) or a
+#: phase-6 alert event neither word describes.
+MILESTONE_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        ActivityEventType.FIRST_EVER_AIRCRAFT.value,
+        ActivityEventType.NEW_TYPE.value,
+        ActivityEventType.RANGE_RECORD.value,
+        ActivityEventType.RECEIVER_RECORD.value,
+        ActivityEventType.MILESTONE.value,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +147,11 @@ class Summary:
     busiest_hour_source: str | None = None
     first_sighting_ms: int | None = None
     last_sighting_ms: int | None = None
+    #: Count of ``activity_events`` rows in :data:`MILESTONE_EVENT_TYPES`
+    #: whose ``ts_ms`` falls inside the window (SPEC §59's "new milestones/
+    #: records"). Not derivable from the rollups — milestones and records are
+    #: activity-feed facts, not per-sighting ones — so this is its own count.
+    new_milestones: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +385,7 @@ class AnalyticsQueries:
         unique = await self.unique_aircraft(window)
         busiest, source = await self._busiest_hour(window, rows)
         span = await self._sighting_span(window)
+        milestones = await self.new_milestones(window)
         return Summary(
             unique_aircraft=unique,
             new_aircraft=sum(row.new_aircraft for row in rows),
@@ -378,7 +401,29 @@ class AnalyticsQueries:
             busiest_hour_source=source,
             first_sighting_ms=span[0],
             last_sighting_ms=span[1],
+            new_milestones=milestones,
         )
+
+    async def new_milestones(self, window: Window) -> int:
+        """Count of §59's "new milestones/records" struck inside the window.
+
+        A plain count over ``activity_events`` — the milestone/record vocabulary
+        is small and the table is not the write-heavy one, so this needs no
+        rollup of its own, unlike ``unique_aircraft``'s multi-day case.
+        """
+        if window.empty:
+            return 0
+        statement = (
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(
+                ActivityEvent.type.in_(MILESTONE_EVENT_TYPES),
+                ActivityEvent.ts_ms >= window.start_ms,
+                ActivityEvent.ts_ms < window.end_ms,
+            )
+        )
+        async with self._database.read_session() as session:
+            return int(await session.scalar(statement) or 0)
 
     async def unique_aircraft(self, window: Window) -> int:
         """Distinct airframes with a sighting that started inside the window.
@@ -746,6 +791,7 @@ __all__ = [
     "DEFAULT_RARE_MAX_TYPE_AIRCRAFT",
     "DEFAULT_TOP_LIMIT",
     "MAX_TOP_LIMIT",
+    "MILESTONE_EVENT_TYPES",
     "AircraftRank",
     "AnalyticsQueries",
     "ClassificationActivity",

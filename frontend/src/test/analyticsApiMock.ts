@@ -7,6 +7,7 @@ import type {
   AnalyticsGroupResponse,
   AnalyticsPreset,
   AnalyticsRarityResponse,
+  AnalyticsSummaryResponse,
   AnalyticsWindow,
 } from "@/lib/api/analytics";
 import type { ReceiverInfo } from "@/lib/api/live";
@@ -38,6 +39,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 export interface MockAnalyticsApiOptions {
   receiver?: ReceiverInfo;
+  summary?: AnalyticsSummaryResponse;
+  /** Serve an error envelope from `GET /api/v1/analytics/summary` instead. */
+  summaryStatus?: number;
   daily?: AnalyticsDailyResponse;
   classification?: AnalyticsClassificationResponse;
   topAircraft?: AnalyticsAircraftResponse;
@@ -45,6 +49,51 @@ export interface MockAnalyticsApiOptions {
   topOperators?: AnalyticsGroupResponse;
   rarity?: AnalyticsRarityResponse;
 }
+
+/** A plausible SPEC §59 summary — every key present, matching what a real
+ * response always carries. */
+export function analyticsSummaryResponse(
+  overrides: Partial<AnalyticsSummaryResponse["summary"]> = {},
+): AnalyticsSummaryResponse {
+  return {
+    window: analyticsWindow("today"),
+    summary: {
+      unique_aircraft: 12,
+      new_aircraft: 3,
+      sightings: 18,
+      interesting: 0,
+      military: 1,
+      government: 0,
+      law_enforcement: 0,
+      max_range_nm: 187.4,
+      busiest_hour: 14,
+      busiest_hour_source: "receiver_metrics_hourly",
+      first_sighting_at: "2026-08-31T13:05:00.000Z",
+      last_sighting_at: "2026-08-31T20:41:00.000Z",
+      new_milestones: 2,
+      ...overrides,
+    },
+  };
+}
+
+const EMPTY_SUMMARY: AnalyticsSummaryResponse = {
+  window: analyticsWindow(),
+  summary: {
+    unique_aircraft: 0,
+    new_aircraft: 0,
+    sightings: 0,
+    interesting: 0,
+    military: 0,
+    government: 0,
+    law_enforcement: 0,
+    max_range_nm: null,
+    busiest_hour: null,
+    busiest_hour_source: null,
+    first_sighting_at: null,
+    last_sighting_at: null,
+    new_milestones: 0,
+  },
+};
 
 const EMPTY_DAILY: AnalyticsDailyResponse = {
   window: analyticsWindow(),
@@ -76,8 +125,9 @@ const EMPTY_RARITY: AnalyticsRarityResponse = {
 };
 
 /** Installs a `global.fetch` stub serving `GET /api/v1/receiver` and every
- * `/api/v1/analytics/*` endpoint the Analytics page (roadmap slice 032)
- * queries, so its tests exercise the real API clients and TanStack Query
+ * `/api/v1/analytics/*` endpoint — the six the Analytics page (roadmap slice
+ * 032) queries, plus `/summary` (SPEC §59, roadmap slice 036's Today panel) —
+ * so tests exercise the real API clients and TanStack Query
  * hooks without a running backend. Any other URL throws, surfacing an
  * un-mocked request as a test failure — the same contract
  * `installSightingsApiMock` establishes. */
@@ -90,6 +140,21 @@ export function installAnalyticsApiMock(options: MockAnalyticsApiOptions = {}) {
 
       if (url.pathname === "/api/v1/receiver" && method === "GET") {
         return jsonResponse(options.receiver ?? defaultReceiverInfo());
+      }
+      if (url.pathname === "/api/v1/analytics/summary" && method === "GET") {
+        if (options.summaryStatus !== undefined) {
+          return jsonResponse(
+            {
+              error: {
+                code: "internal_error",
+                message: "The daily summary is unavailable",
+                detail: null,
+              },
+            },
+            options.summaryStatus,
+          );
+        }
+        return jsonResponse(options.summary ?? EMPTY_SUMMARY);
       }
       if (url.pathname === "/api/v1/analytics/daily" && method === "GET") {
         return jsonResponse(options.daily ?? EMPTY_DAILY);

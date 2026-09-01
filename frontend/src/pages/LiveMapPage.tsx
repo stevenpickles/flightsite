@@ -14,6 +14,7 @@ import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { TodayPanel } from "@/features/today/TodayPanel";
 
 const item = requireNavItem("/");
 
@@ -23,9 +24,11 @@ const item = requireNavItem("/");
  * the live aircraft layer (slice 014), the aircraft detail panel (slice
  * 016), the live filters (drawer, quick chips, non-positioned list, and
  * the display-radius cap indicator — slice 017), all of which read and
- * write the same filtered set via `features/filters`, and the activity feed
+ * write the same filtered set via `features/filters`, the activity feed
  * panel (slice 035), which is the one floating control fed by the socket's
- * `activity` frames rather than by the live picture.
+ * `activity` frames rather than by the live picture, and the "Today at a
+ * glance" card (slice 036), a top-center strip fed by the analytics summary
+ * endpoint rather than by anything the live picture or the feed carry.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -56,6 +59,7 @@ export function LiveMapPage() {
       <FilterDrawer />
       <NonPositionedPanel />
       <ActivityPanel />
+      <TodayPanel />
       <DisplayRadiusIndicator />
       <AircraftDetailPanel />
     </div>

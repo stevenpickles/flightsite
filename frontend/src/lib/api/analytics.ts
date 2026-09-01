@@ -1,8 +1,8 @@
 /**
  * Typed client for the Analytics endpoints — `GET /api/v1/analytics/*`
- * (`docs/API.md` §3.7, roadmap slice 031/032). Six of the seven §3.7
- * endpoints are covered here; `/analytics/summary` feeds a separate
- * today-at-a-glance widget (SPEC §59) outside this slice's scope.
+ * (`docs/API.md` §3.7, roadmap slice 031/032/036). All seven §3.7 endpoints
+ * are covered here; `/analytics/summary` (SPEC §59) is roadmap slice 036's —
+ * the Live Map's "Today at a glance" widget in `features/today/`.
  *
  * Every endpoint takes the same window parameters and echoes back the
  * `AnalyticsWindow` it actually resolved (§3.7: presets resolve against the
@@ -135,6 +135,40 @@ export interface AnalyticsRarityResponse {
   rare_types: AnalyticsRareType[];
 }
 
+/** SPEC §59's at-a-glance block. Every key here is always present — `null`
+ * only where a figure genuinely has nothing to report (`max_range_nm` with
+ * no positioned sighting yet, `busiest_hour` before any traffic) — so a
+ * client never has to guess whether a stat has "not started counting" versus
+ * "counted zero". `interesting` is real and live today, but reads `0` on
+ * every install until roadmap slice 038's alert engine starts setting
+ * `sightings.max_alert_severity` — the key itself never disappears. */
+export interface AnalyticsSummary {
+  unique_aircraft: number;
+  new_aircraft: number;
+  sightings: number;
+  interesting: number;
+  military: number;
+  government: number;
+  law_enforcement: number;
+  max_range_nm: number | null;
+  busiest_hour: number | null;
+  /** `"daily_stats"` for a closed day's finalized value, or
+   * `"receiver_metrics_hourly"` for the in-progress day (`docs/DATA_MODEL.md`
+   * §6.5's dual source) — `null` only alongside a `null` `busiest_hour`. */
+  busiest_hour_source: "daily_stats" | "receiver_metrics_hourly" | null;
+  first_sighting_at: string | null;
+  last_sighting_at: string | null;
+  /** SPEC §59's "new milestones/records": `activity_events` rows of type
+   * `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record` or
+   * `milestone` whose moment falls inside the window. */
+  new_milestones: number;
+}
+
+export interface AnalyticsSummaryResponse {
+  window: AnalyticsWindow;
+  summary: AnalyticsSummary;
+}
+
 interface ApiV1ErrorBody {
   error?: { code?: string; message?: string; detail?: unknown };
 }
@@ -195,6 +229,14 @@ function topQuery(params: AnalyticsTopParams): URLSearchParams {
   return search;
 }
 
+export function getAnalyticsSummary(
+  params: AnalyticsWindowParams,
+): Promise<AnalyticsSummaryResponse> {
+  return apiV1Fetch<AnalyticsSummaryResponse>(
+    `/api/v1/analytics/summary?${windowQuery(params).toString()}`,
+  );
+}
+
 export function getAnalyticsDaily(
   params: AnalyticsWindowParams,
 ): Promise<AnalyticsDailyResponse> {
@@ -248,6 +290,13 @@ export function getAnalyticsRarity(
 }
 
 export const analyticsQueryKeys = {
+  /** `localDate` (the receiver-local `YYYY-MM-DD` "today") is part of the
+   * key so a day rollover — computed client-side by
+   * `features/today/lib/localDay.ts` against the receiver's zone — forces a
+   * fresh fetch instead of serving yesterday's cached figures past midnight,
+   * the same way `params` already forces one on a preset change. */
+  summary: (params: AnalyticsWindowParams, localDate: string) =>
+    ["analytics", "summary", params, localDate] as const,
   daily: (params: AnalyticsWindowParams) =>
     ["analytics", "daily", params] as const,
   classification: (params: AnalyticsWindowParams) =>
@@ -261,6 +310,23 @@ export const analyticsQueryKeys = {
   rarity: (params: AnalyticsRarityParams) =>
     ["analytics", "rarity", params] as const,
 };
+
+/** `staleTime`/`refetchOnWindowFocus` are overridden past the app-wide
+ * defaults (`lib/queryClient.ts`'s 30 s, no focus refetch): the Live Map's
+ * "Today at a glance" card is meant to look current when a user tabs back to
+ * it, and 60 s keeps a floating card that is visible far more often than the
+ * Analytics page from re-requesting on every render. */
+export function useAnalyticsSummaryQuery(
+  params: AnalyticsWindowParams,
+  localDate: string,
+): UseQueryResult<AnalyticsSummaryResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.summary(params, localDate),
+    queryFn: () => getAnalyticsSummary(params),
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+}
 
 export function useAnalyticsDailyQuery(
   params: AnalyticsWindowParams,

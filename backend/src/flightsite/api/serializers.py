@@ -985,6 +985,7 @@ def analytics_summary_payload(summary: Summary) -> dict[str, Any]:
         "busiest_hour_source": summary.busiest_hour_source,
         "first_sighting_at": _at(summary.first_sighting_ms),
         "last_sighting_at": _at(summary.last_sighting_ms),
+        "new_milestones": summary.new_milestones,
     }
 
 
