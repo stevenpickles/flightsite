@@ -18,7 +18,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`ReceiverMetricDaily`, :class:`RangeByBearingDaily`,
 :class:`LifetimeStat`) in slice 033, and the analytics rollup group
 (:class:`DailyStats`, :class:`DailyTypeStats`, :class:`DailyOperatorStats`,
-:class:`TypeStats`) in slice 031.
+:class:`TypeStats`) in slice 031, and the activity group
+(:class:`ActivityEvent`, :class:`Milestone`) in slice 035.
 """
 
 from __future__ import annotations
@@ -65,6 +66,12 @@ INFERRED_PHASE_CHECK: Final[str] = "inferred_phase IN ('arriving', 'departing')"
 ALERT_SEVERITY_CHECK: Final[str] = (
     "max_alert_severity IN ('info', 'interesting', 'high', 'critical')"
 )
+
+#: The same §2.8 ladder on ``activity_events.severity`` (``docs/DATA_MODEL.md``
+#: §5), where the column is named ``severity`` rather than
+#: ``max_alert_severity``. Constrained — unlike ``activity_events.type``,
+#: which stays open — because the ladder is fixed and shared.
+ACTIVITY_SEVERITY_CHECK: Final[str] = "severity IN ('info', 'interesting', 'high', 'critical')"
 
 #: SPEC §39's mission/use categories, spelled as ``docs/DATA_MODEL.md`` §3.4's
 #: ``CHECK`` predicate.
@@ -1064,3 +1071,88 @@ class TypeStats(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"TypeStats(type_code={self.type_code!r}, unique={self.unique_aircraft!r})"
+
+
+class ActivityEvent(Base):
+    """One thing worth telling the user about (§5, SPEC §55, slice 035).
+
+    The activity feed's storage. Two columns carry the whole design:
+
+    * ``type`` has **no** ``CHECK``. ``docs/DATA_MODEL.md`` §5 names its values
+      in a comment rather than a constraint, and it deliberately lists more
+      than slice 035 emits — the alert and emergency events belong to phase 6,
+      ``maintenance_issue`` and ``data_reset`` to later slices still. Widening
+      a ``CHECK`` on SQLite means rebuilding the table, so the vocabulary stays
+      open and lives in :class:`flightsite.activity.model.ActivityEventType`,
+      with a test asserting it covers what ``docs/API.md`` §3.9 publishes.
+    * ``dedupe_key`` is ``UNIQUE``, and it is the restart/replay idempotency
+      guarantee at the storage layer. Every producer derives it from *stored
+      state* rather than from the moment it ran, so re-observing the same fact
+      after a restart, a catch-up scan or an event replay computes the same
+      string and the insert becomes a no-op. It is nullable because SQLite
+      treats each ``NULL`` as distinct, which is the shape a future genuinely
+      repeatable event would want; slice 035 fills it on every row it writes.
+
+    ``severity`` does carry a ``CHECK``: it is the fixed four-value ladder of
+    ``docs/API.md`` §2.8, shared with ``alert_rules`` and ``alert_matches``.
+    """
+
+    __tablename__ = "activity_events"
+    __table_args__ = (
+        CheckConstraint(ACTIVITY_SEVERITY_CHECK, name="ck_activity_events_severity"),
+        # Newest-first is the feed's only ordering, so migration 0010 creates
+        # this index `ON activity_events (ts_ms DESC)` exactly as §5 spells it.
+        # It is declared here as a plain column index on purpose: SQLite's
+        # index reflection cannot report a column's sort direction, so
+        # declaring the expression would make every autogenerate run report a
+        # phantom drop-and-recreate of an index that never changed.
+        Index("ix_activity_ts", "ts_ms"),
+        Index("ix_activity_type_ts", "type", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: UTC epoch milliseconds — when the thing described happened, which is not
+    #: the moment the row was written: a producer runs on its own pass.
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(
+        Text, nullable=False, default="info", server_default=text("'info'")
+    )
+    aircraft_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("aircraft.id"))
+    sighting_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sightings.id"))
+    #: The renderable detail as JSON; the shape is per event type and lives in
+    #: :mod:`flightsite.activity.model`.
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    dedupe_key: Mapped[str | None] = mapped_column(Text, unique=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"ActivityEvent(id={self.id!r}, type={self.type!r})"
+
+
+class Milestone(Base):
+    """One achievement that can happen only once (§5, SPEC §54, slice 035).
+
+    The primary key **is** the fire-once guarantee: ``first_military``,
+    ``unique_aircraft_1000``, ``first_type_B52``. A producer inserts with
+    ``ON CONFLICT DO NOTHING``, so a restart, a catch-up scan or two passes
+    racing the same fact all leave exactly one milestone row and exactly one
+    activity event announcing it.
+
+    Rolling records — the furthest detection ever, the busiest day, the highest
+    simultaneous count — deliberately do *not* live here: they can be beaten,
+    which a natural-key table cannot express. They live in ``lifetime_stats``
+    (§6.4) and announce themselves as ``activity_events`` whose ``dedupe_key``
+    names the record value they describe.
+    """
+
+    __tablename__ = "milestones"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    achieved_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    aircraft_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("aircraft.id"))
+    value_num: Mapped[float | None] = mapped_column(REAL)
+    payload_json: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"Milestone(key={self.key!r}, achieved_ms={self.achieved_ms!r})"
