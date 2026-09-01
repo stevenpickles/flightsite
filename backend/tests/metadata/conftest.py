@@ -181,7 +181,7 @@ async def resolved_rows(
     resolution alone read more clearly through this.
     """
     view = await repository.load_live_view(icaos)
-    return {icao: metadata for icao, (metadata, _) in view.items() if metadata is not None}
+    return {icao: lookup.metadata for icao, lookup in view.items() if lookup.metadata is not None}
 
 
 def dump(path: Path, tables: Sequence[str]) -> dict[str, list[tuple[object, ...]]]:

@@ -13,14 +13,24 @@ What the aircraft payload does and does not contain
 ---------------------------------------------------
 
 ``docs/API.md`` §3.3 shows the full v1 aircraft object, which spans several
-slices. This slice owns the live-state half of it — identity, position,
-kinematics, receiver-relative range, lifecycle state and the open sighting id.
-The metadata half (``registration``, ``aircraft_type``, ``model``,
-``operator``, ``operator_group``, ``classification``) arrives with slices
-021-024 and the alert match (``interesting``) with slice 038. Those keys are
-present and ``null`` rather than absent: §2.7 makes ``null`` the honest
-statement of "unknown", and emitting the full key set now means a client
-written against §3.3 needs no change when the values start arriving.
+slices. Slice 010 built the live-state half of it — identity, position,
+kinematics, receiver-relative range, lifecycle state and the open sighting id —
+with the metadata half (``registration``, ``aircraft_type``, ``model``,
+``operator``, ``operator_group``, ``classification``) present and ``null``.
+Slice 024 fills those in from the metadata cache, and the shape did not have to
+change to accommodate it: §2.7 makes ``null`` the honest statement of
+"unknown", so emitting the full key set from the start meant a client written
+against §3.3 needed no change when the values began arriving.
+
+The metadata is passed in rather than looked up here. This function is called
+once per aircraft per WebSocket frame and must not touch SQLite
+(``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
+:class:`~flightsite.metadata.cache.AircraftMetadataView`, which is a pure
+in-memory read, or ``None`` for an aircraft the cache has not resolved yet.
+``None`` and "resolved to nothing" both serialize as ``null`` fields — the
+difference matters to the cache, not to a client.
+
+The alert match (``interesting``) still arrives with slice 038.
 
 ``emergency`` is not a separate decoder field — it is the squawk restated when
 the squawk is one of the three emergency codes (:data:`EMERGENCY_SQUAWKS`), so
@@ -38,6 +48,15 @@ this payload publishes the first two, which are the two that appear in it.
 which carries the decoder's own determination or ``null``, never the live
 layer's airborne inference, so there is no derived value here to attribute.
 
+The metadata half contributes the rest. Two rules govern it. **Entries name
+payload fields**, so the resolved type's provenance key is ``aircraft_type``
+(what §3.3 calls the field) rather than ``type_code`` (what the resolved table
+calls the column) — :data:`METADATA_PROVENANCE_KEYS` is that translation.
+**Only published fields get an entry**: the resolved row also carries
+``manufacture_year`` and ``owner``, which this payload does not show, and a
+provenance entry for a field that is not there would name the source of
+nothing.
+
 Rounding
 --------
 
@@ -52,17 +71,32 @@ decoder values.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Final
 
 from flightsite.config import Settings
 from flightsite.ingest import Position
 from flightsite.live import LiveAircraft
+from flightsite.metadata.cache import AircraftMetadataView
 from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
 
 #: Provenance keys from the live record that name a field this payload exposes.
 #: See the module docstring for why ``ground_state`` is not among them.
 EXPOSED_PROVENANCE_FIELDS: Final[frozenset[str]] = frozenset({"distance_nm", "bearing_deg"})
+
+#: Metadata provenance keys (``docs/API.md`` §2.6, as
+#: :data:`~flightsite.metadata.precedence.PROVENANCE_KEYS` produces them) mapped
+#: to the §3.3 payload field they describe. A key absent from this map names a
+#: resolved field this payload does not publish, and is dropped.
+METADATA_PROVENANCE_KEYS: Final[Mapping[str, str]] = {
+    "registration": "registration",
+    "type_code": "aircraft_type",
+    "model": "model",
+    "operator": "operator",
+    "operator_group": "operator_group",
+    "classification": "classification",
+}
 
 #: Decimal places kept on the two derived receiver-relative values.
 DISTANCE_DECIMALS: Final = 3
@@ -100,16 +134,27 @@ def _round(value: float | None, decimals: int) -> float | None:
     return None if value is None else round(value, decimals)
 
 
-def _provenance(record: LiveAircraft) -> dict[str, str]:
+def _provenance(record: LiveAircraft, metadata: AircraftMetadataView | None) -> dict[str, str]:
     """The §2.6 provenance map, restricted to fields this payload publishes."""
-    return {
+    found = {
         field: provenance.value
         for field, provenance in record.provenance.items()
         if field in EXPOSED_PROVENANCE_FIELDS
     }
+    if metadata is not None:
+        for key, source in metadata.provenance().items():
+            published = METADATA_PROVENANCE_KEYS.get(key)
+            if published is not None:
+                found[published] = source
+    return found
 
 
-def aircraft_payload(record: LiveAircraft, *, sighting_id: int | None = None) -> dict[str, Any]:
+def aircraft_payload(
+    record: LiveAircraft,
+    *,
+    sighting_id: int | None = None,
+    metadata: AircraftMetadataView | None = None,
+) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
     The same object is served by ``GET /api/v1/aircraft/current`` and carried
@@ -122,11 +167,17 @@ def aircraft_payload(record: LiveAircraft, *, sighting_id: int | None = None) ->
             persistence worker has not committed one yet (the normal state for
             the first second or so of a new aircraft, and the permanent state
             when persistence is degraded).
+        metadata: the metadata cache's entry for the aircraft, or ``None`` when
+            it has not been resolved yet — which is the normal state for the
+            first sub-second of a new aircraft's life, and the permanent state
+            on an install with no metadata database. Every metadata field is
+            ``null`` in that case, per §2.7.
     """
+    resolved = None if metadata is None else metadata.metadata
     return {
         "icao": record.icao,
         "callsign": record.callsign,
-        "registration": None,
+        "registration": None if resolved is None else resolved.registration,
         "position": _position(record),
         "position_source": record.position_source,
         "altitude_ft": record.altitude_ft,
@@ -145,13 +196,13 @@ def aircraft_payload(record: LiveAircraft, *, sighting_id: int | None = None) ->
         "last_seen": iso_utc(record.last_seen),
         "state": record.state.value,
         "sighting_id": sighting_id,
-        "aircraft_type": None,
-        "model": None,
-        "operator": None,
-        "operator_group": None,
-        "classification": None,
+        "aircraft_type": None if resolved is None else resolved.type_code,
+        "model": None if resolved is None else resolved.model,
+        "operator": None if resolved is None else resolved.operator_name,
+        "operator_group": None if metadata is None else metadata.operator_group,
+        "classification": None if metadata is None else metadata.classification.payload(),
         "interesting": None,
-        "provenance": _provenance(record),
+        "provenance": _provenance(record, metadata),
     }
 
 
@@ -203,6 +254,7 @@ __all__ = [
     "BEARING_DECIMALS",
     "DISTANCE_DECIMALS",
     "EXPOSED_PROVENANCE_FIELDS",
+    "METADATA_PROVENANCE_KEYS",
     "aircraft_payload",
     "iso_utc",
     "receiver_payload",

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import gzip
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from flightsite.app import create_app
+from flightsite.ingest import AircraftStateUpdate, Position
 from flightsite.metadata import MetadataService, SourceStatus
 from flightsite.metadata.sources import mictronics
+from tests.metadata.conftest import settle
 
 #: A tiny real-format snapshot: one ordinary airframe, one military one.
 #: Compressed fresh per test so nothing here depends on network access.
@@ -139,3 +143,64 @@ def test_starting_and_stopping_repeatedly_is_clean(
         with TestClient(app):
             assert app.state.metadata.cache.running
         assert not app.state.metadata.cache.running
+
+
+async def test_the_live_api_publishes_metadata_and_classification_end_to_end(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The slice's activation, through the real app rather than a harness.
+
+    An import runs, the live store hears the two airframes the snapshot
+    describes, the cache resolves and classifies them on its own task, and
+    ``GET /api/v1/aircraft/current`` serves the ``docs/API.md`` §3.3 object with
+    its metadata half filled in. Nothing between the decoder and the response
+    reads the database.
+    """
+    _mock_mictronics(monkeypatch)
+    app = create_app(isolated_data_dir)
+
+    async with app.router.lifespan_context(app):
+        service: MetadataService = app.state.metadata
+        run = await service.update(["mictronics"])
+        assert run.failed == ()
+
+        app.state.live.apply_updates(
+            [
+                AircraftStateUpdate(
+                    icao=icao,
+                    timestamp=datetime.now(tz=UTC),
+                    position_source="adsb",
+                    position=Position(latitude=47.6, longitude=-122.3),
+                    callsign=callsign,
+                )
+                for icao, callsign in (("a1bcca", "N21065"), ("006015", None))
+            ]
+        )
+        await settle(service.cache)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            body = (await client.get("/api/v1/aircraft/current")).json()
+
+    aircraft = {item["icao"]: item for item in body["items"]}
+
+    civil = aircraft["a1bcca"]
+    assert civil["registration"] == "N21065"
+    assert civil["aircraft_type"] == "P28A"
+    assert civil["operator"] == "OMNI MANAGEMENT LLC"
+    assert civil["operator_group"] is None
+    assert civil["classification"]["mission"] == "general_aviation"
+    assert civil["classification"]["icon_category"] == "light_aircraft"
+    assert civil["provenance"]["aircraft_type"] == "mictronics"
+
+    military = aircraft["006015"]
+    assert military["classification"] == {
+        "military": True,
+        "government": False,
+        "law_enforcement": False,
+        "mission": "military",
+        "icon_category": "military",
+        "confidence": "high",
+    }
+    assert military["provenance"]["classification"] == "mictronics"

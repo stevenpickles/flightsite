@@ -12,11 +12,16 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
+from flightsite.classification.operators import default_directory
 from flightsite.db import Database
 from flightsite.metadata import MetadataImporter, SourceRegistry
 from flightsite.metadata.importer import TRANSFORM_BATCH
 from flightsite.metadata.precedence import PrecedenceModel, SourceClaim
-from flightsite.metadata.repository import REBUILD_PAGE_ROWS, MetadataRepository
+from flightsite.metadata.repository import (
+    REBUILD_PAGE_ROWS,
+    AircraftLookup,
+    MetadataRepository,
+)
 from tests.metadata.conftest import IMPORT_MS, record, resolved_rows, seed_aircraft
 from tests.metadata.provider import InMemoryMetadataProvider
 
@@ -96,19 +101,17 @@ async def test_resolution_survives_more_airframes_than_fit_one_page(
 
 
 async def test_a_curated_operator_group_is_attached_when_one_exists(
-    database: Database,
     importer: MetadataImporter,
     registry: SourceRegistry,
     repository: MetadataRepository,
 ) -> None:
-    """Slice 024 populates these tables; the FK and the join work from 021."""
-    async with database.writer_session() as session:
-        await session.execute(
-            text("INSERT INTO operator_groups (id, slug, name) VALUES (1, 'delta', 'Delta')")
-        )
-        await session.execute(
-            text("INSERT INTO operators (name, group_id) VALUES ('Delta Air Lines', 1)")
-        )
+    """Slice 021 built the FK and the join; slice 024 supplies the data.
+
+    The group id is read back from the directory rather than written into the
+    test: ids are assigned from the curated slugs, so adding an airline to the
+    data file legitimately moves them.
+    """
+    directory = default_directory()
 
     registry.register(
         "mictronics",
@@ -122,7 +125,7 @@ async def test_a_curated_operator_group_is_attached_when_one_exists(
     await importer.run()
 
     resolved = await resolved_rows(repository, ["a00001", "a00002"])
-    assert resolved["a00001"].operator_group_id == 1
+    assert resolved["a00001"].operator_group_id == directory.group_id("delta")
     # Grouping is additive: the exact operator string is preserved either way.
     assert resolved["a00001"].operator_name == "Delta Air Lines"
     assert resolved["a00002"].operator_group_id is None
@@ -180,9 +183,9 @@ async def test_a_lookup_reports_every_requested_address(
     view = await repository.load_live_view(["a00001", "beef01"])
 
     assert set(view) == {"a00001", "beef01"}
-    assert view["beef01"] == (None, None)
-    assert view["a00001"][0] is not None
-    assert view["a00001"][1] is None
+    assert view["beef01"] == AircraftLookup()
+    assert view["a00001"].metadata is not None
+    assert view["a00001"].sighting_count is None
 
 
 async def test_a_lookup_chunks_past_the_bound_parameter_limit(

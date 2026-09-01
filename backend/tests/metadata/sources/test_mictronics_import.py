@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from flightsite.metadata import MetadataImporter, SourceRegistry
-from flightsite.metadata.repository import MetadataRepository
+from flightsite.metadata.repository import AircraftLookup, MetadataRepository
 from flightsite.metadata.sources import mictronics
 from flightsite.metadata.sources.mictronics import MictronicsProvider
 from tests.metadata.conftest import record, resolved_rows
@@ -68,7 +68,7 @@ async def test_a_real_snapshot_imports_with_mictronics_provenance(
 
     # ICAO-block bookkeeping rows are not aircraft and never reach the resolved table.
     marker_view = await repository.load_live_view([icao.lower() for icao in SAMPLE_MARKER_ICAOS])
-    assert all(entry == (None, None) for entry in marker_view.values())
+    assert all(entry == AircraftLookup() for entry in marker_view.values())
 
 
 async def test_mictronics_and_faa_resolve_per_field_precedence(
