@@ -258,16 +258,6 @@ class ClientConnection:
         """Human-readable close reason, sent alongside the code."""
         return self._close_reason
 
-    @property
-    def pending(self) -> int:
-        """Frames queued and not yet written to the socket."""
-        return self._queue.qsize()
-
-    @property
-    def capacity(self) -> int:
-        """Bound on :attr:`pending` before this client is dropped."""
-        return self._queue.maxsize
-
     def deliver(self, frame: Frame) -> bool:
         """Queue ``frame`` for this connection.
 

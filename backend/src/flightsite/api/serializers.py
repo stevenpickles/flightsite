@@ -56,6 +56,7 @@ from datetime import UTC, datetime
 from typing import Any, Final
 
 from flightsite.config import Settings
+from flightsite.ingest import Position
 from flightsite.live import LiveAircraft
 from flightsite.sightings.vocabulary import EMERGENCY_SQUAWKS
 
@@ -154,7 +155,13 @@ def aircraft_payload(record: LiveAircraft, *, sighting_id: int | None = None) ->
     }
 
 
-def receiver_payload(settings: Settings, *, demo_mode: bool, t0: datetime | None) -> dict[str, Any]:
+def receiver_payload(
+    settings: Settings,
+    *,
+    demo_mode: bool,
+    t0: datetime | None,
+    location: Position | None,
+) -> dict[str, Any]:
     """The ``docs/API.md`` §3.2 receiver info block.
 
     Non-secret by construction: every value is read from a named field of the
@@ -169,13 +176,20 @@ def receiver_payload(settings: Settings, *, demo_mode: bool, t0: datetime | None
         demo_mode: whether this process is serving simulated traffic.
         t0: the moment FlightSite first persisted an observation (SPEC §16),
             or ``None`` on an install that has never seen an aircraft.
+        location: the position FlightSite is *actually* measuring from —
+            :attr:`~flightsite.live.store.LiveStore.receiver_location`, not the
+            configured one. The two are the same everywhere except demo mode,
+            which injects a location into an unconfigured install so the
+            simulated sky has ranges (SPEC §76). Reporting the configured
+            ``null`` there would leave a client drawing range rings around
+            nothing while every aircraft carried a ``distance_nm``.
     """
-    location = settings.location
+    site = settings.location
     return {
-        "site_name": location.site_name,
-        "latitude": location.latitude,
-        "longitude": location.longitude,
-        "antenna_height_ft": location.antenna_height_ft,
+        "site_name": site.site_name,
+        "latitude": None if location is None else location.latitude,
+        "longitude": None if location is None else location.longitude,
+        "antenna_height_ft": site.antenna_height_ft,
         "timezone": settings.timezone,
         "units": settings.units,
         "display_radius_nm": settings.display_radius_nm,

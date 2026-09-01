@@ -122,8 +122,20 @@ class LiveApiContext:
         return payloads
 
     async def receiver(self) -> dict[str, Any]:
-        """The §3.2 receiver info block, including T0."""
-        return receiver_payload(self.settings, demo_mode=self.demo_mode, t0=await self._t0())
+        """The §3.2 receiver info block, including T0.
+
+        The location comes from the live store rather than from settings: it
+        is the position distances and bearings are actually measured from, so
+        it is the one a client should draw its receiver marker and range rings
+        at. They differ only in demo mode, which injects a location into an
+        otherwise unconfigured install.
+        """
+        return receiver_payload(
+            self.settings,
+            demo_mode=self.demo_mode,
+            t0=await self._t0(),
+            location=self.live.receiver_location,
+        )
 
     async def _t0(self) -> datetime | None:
         """T0 as an aware UTC datetime, or ``None`` if it is unavailable.
