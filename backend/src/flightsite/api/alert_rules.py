@@ -50,6 +50,8 @@ from flightsite.alerts import (
     AlertRuleWriteRequest,
     AlertService,
     AlertTemplate,
+    AlertTemplateConflictError,
+    AlertTemplateNotFoundError,
 )
 from flightsite.api.serializers import iso_utc
 from flightsite.db import from_epoch_ms
@@ -117,6 +119,33 @@ async def list_alert_templates() -> dict[str, Any]:
     below, where a shipped rule carries its ``template_key``.
     """
     return {"templates": [_template_payload(template) for template in SHIPPED_TEMPLATES]}
+
+
+@router.post("/alert-templates/{key}/rules", status_code=status.HTTP_201_CREATED)
+async def instantiate_alert_template(request: Request, key: str) -> dict[str, Any]:
+    """Turn one shipped template into a rule (SPEC §45, slice 041's gallery).
+
+    A ``POST`` to the template's *rules* collection rather than to the template
+    itself, because what this creates is a rule — the response is the same rule
+    payload the list returns, carrying ``template_key`` so provenance is
+    readable from the moment it exists.
+
+    The body is empty on purpose: everything the rule says comes from the
+    catalogue. Letting a client supply conditions here would be
+    ``POST /alert-rules`` with a provenance claim attached, which is the one
+    thing provenance must not be.
+
+    Statuses: ``404`` for a key this build does not ship, and ``409`` when the
+    template has no rule left to create — either because it is built in and
+    always on (SPEC §47) or because one already exists.
+    """
+    try:
+        record = await _service(request).instantiate_template(key)
+    except AlertTemplateNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AlertTemplateConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _rule_payload(record)
 
 
 @router.get("/alert-rules")

@@ -480,7 +480,7 @@ config/domain models the backend uses.
 | Config | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`), `PUT /config` (masked values ignored unless replaced; secrets never echoed back) | 004/019 |
 | Connection test | `POST /decoder/test` → reachability, parse result, sample aircraft count | 007/018 |
 | Watchlists | `GET/POST /watchlists`, `PUT/DELETE /watchlists/{id}`, entries CRUD | 037 |
-| Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates` | 038/041 |
+| Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates`, `POST /alert-templates/{key}/rules` (instantiates a shipped template as a rule carrying its `template_key`; empty body — the conditions come from the catalogue, never from the caller; `404` unknown key, `409` built-in or already instantiated) | 038/041 |
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
 | Backup status | `GET /backup/info` (last backup manifest summary; backup/restore themselves are CLI operations) | 043 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |

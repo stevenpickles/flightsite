@@ -164,6 +164,21 @@ Reference hardware: Raspberry Pi 4. CI runs the harness on dev-class runners wit
 calibrated budgets; Pi 4 qualification is a documented procedure executed for releases
 (slice 049 establishes baselines).
 
+**`docs/PERFORMANCE.md` is the canonical budget table**, rendered from
+`backend/src/flightsite/perf/budgets.py`, which is what the harness actually enforces.
+The lists below are the strategy those budgets implement; the numbers live there.
+
+How the harness runs:
+
+- **Hard gates run on every PR.** A short smoke run of the whole pipeline at 500
+  aircraft lives in `backend/tests/perf/` and executes as part of the ordinary backend
+  suite, so a regression fails the required check on the PR that causes it.
+- **The sustained run is behind the `load` marker**, which — uniquely among this repo's
+  markers — is *excluded* from the default suite (`-m 'not load'` in `addopts`). A
+  sustained run is minutes of wall clock. `.github/workflows/perf.yml` runs it on a
+  schedule and on demand, and is deliberately not a required check.
+- **`flightsite-perf`** is the same harness standalone, for qualifying real hardware.
+
 **Hard gates (fail CI/release):**
 
 - Ingestion keeps up with a sustained 500-aircraft, 1 Hz workload
