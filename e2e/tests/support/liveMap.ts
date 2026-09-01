@@ -28,8 +28,13 @@ interface CurrentAircraftResponse {
 export async function fetchPositionedAircraft(
   request: APIRequestContext,
 ): Promise<CurrentAircraft[]> {
-  const response = await request.get("/api/v1/aircraft/current?positioned=true");
-  expect(response.ok(), `GET /api/v1/aircraft/current failed: ${response.status()}`).toBeTruthy();
+  const response = await request.get(
+    "/api/v1/aircraft/current?positioned=true",
+  );
+  expect(
+    response.ok(),
+    `GET /api/v1/aircraft/current failed: ${response.status()}`,
+  ).toBeTruthy();
   const body = (await response.json()) as CurrentAircraftResponse;
   return body.items;
 }
@@ -50,13 +55,23 @@ export function connectionStatusChip(page: Page) {
  * Demo mode staggers aircraft spawn ticks, so this can take longer than a
  * typical UI wait, hence the generous timeout.
  */
-export async function waitForLiveAircraft(page: Page, timeoutMs = 45_000): Promise<void> {
-  await expect(connectionStatusChip(page)).toHaveAttribute("data-status", "live", {
-    timeout: timeoutMs,
-  });
-  await expect(page.getByTestId("live-aircraft-count")).toHaveText(/[1-9]\d* aircraft/, {
-    timeout: timeoutMs,
-  });
+export async function waitForLiveAircraft(
+  page: Page,
+  timeoutMs = 45_000,
+): Promise<void> {
+  await expect(connectionStatusChip(page)).toHaveAttribute(
+    "data-status",
+    "live",
+    {
+      timeout: timeoutMs,
+    },
+  );
+  await expect(page.getByTestId("live-aircraft-count")).toHaveText(
+    /[1-9]\d* aircraft/,
+    {
+      timeout: timeoutMs,
+    },
+  );
 }
 
 /** Mirrors `AIRCRAFT_SOURCE_ID` in
@@ -68,11 +83,17 @@ const AIRCRAFT_SOURCE_ID = "flightsite-aircraft";
 
 /** Waits until the map's aircraft source (and therefore its symbol layer)
  * exists, via the `window.__flightsiteMap` E2E hook (`MapLibreMap.tsx`). */
-export async function waitForAircraftLayer(page: Page, timeoutMs = 30_000): Promise<void> {
+export async function waitForAircraftLayer(
+  page: Page,
+  timeoutMs = 30_000,
+): Promise<void> {
   await page.waitForFunction(
     (sourceId) => {
-      const map = (window as unknown as { __flightsiteMap?: { getSource: (id: string) => unknown } })
-        .__flightsiteMap;
+      const map = (
+        window as unknown as {
+          __flightsiteMap?: { getSource: (id: string) => unknown };
+        }
+      ).__flightsiteMap;
       return !!map && !!map.getSource(sourceId);
     },
     AIRCRAFT_SOURCE_ID,
@@ -106,7 +127,9 @@ export async function clickAircraftOnMap(
     ({ lon, lat }) => {
       const map = (
         window as unknown as {
-          __flightsiteMap?: { project: (lngLat: [number, number]) => { x: number; y: number } };
+          __flightsiteMap?: {
+            project: (lngLat: [number, number]) => { x: number; y: number };
+          };
         }
       ).__flightsiteMap;
       if (!map) {
@@ -158,10 +181,15 @@ export function pickStableAircraft(
   exclude: ReadonlySet<string> = new Set(),
 ): CurrentAircraft {
   const positioned = items.filter(
-    (item) => item.position !== null && item.state === "live" && !exclude.has(item.icao),
+    (item) =>
+      item.position !== null &&
+      item.state === "live" &&
+      !exclude.has(item.icao),
   );
   if (positioned.length === 0) {
-    throw new Error("no positioned, live, non-excluded aircraft available to select");
+    throw new Error(
+      "no positioned, live, non-excluded aircraft available to select",
+    );
   }
 
   const ranked = positioned
@@ -170,7 +198,9 @@ export function pickStableAircraft(
       const nearestDistanceDeg =
         others.length > 0
           ? Math.min(
-              ...others.map((other) => approxDegreeDistance(item.position!, other.position!)),
+              ...others.map((other) =>
+                approxDegreeDistance(item.position!, other.position!),
+              ),
             )
           : Number.POSITIVE_INFINITY;
       return { item, nearestDistanceDeg };
@@ -179,8 +209,38 @@ export function pickStableAircraft(
       if (a.nearestDistanceDeg !== b.nearestDistanceDeg) {
         return b.nearestDistanceDeg - a.nearestDistanceDeg;
       }
-      return (a.item.ground_speed_kt ?? Infinity) - (b.item.ground_speed_kt ?? Infinity);
+      return (
+        (a.item.ground_speed_kt ?? Infinity) -
+        (b.item.ground_speed_kt ?? Infinity)
+      );
     });
 
   return ranked[0]!.item;
+}
+
+/**
+ * True when the page's MapLibre instance came up — i.e. the browser has a
+ * working WebGL context. On WebGL-less browsers (headless CI Firefox) the
+ * app degrades to its "map unavailable" notice instead of a canvas, and
+ * map-interaction tests skip honestly rather than failing on a map that
+ * can never render (the degradation itself is unit-tested).
+ */
+export async function mapIsAvailable(page: Page): Promise<boolean> {
+  const result = await Promise.race([
+    page
+      .waitForFunction(
+        () =>
+          "__flightsiteMap" in (window as unknown as Record<string, unknown>),
+        undefined,
+        { timeout: 15_000 },
+      )
+      .then(() => true)
+      .catch(() => false),
+    page
+      .getByTestId("map-unsupported")
+      .waitFor({ state: "visible", timeout: 15_000 })
+      .then(() => false)
+      .catch(() => false),
+  ]);
+  return result;
 }

@@ -17,6 +17,7 @@
 import {
   clickAircraftOnMap,
   fetchPositionedAircraft,
+  mapIsAvailable,
   pickStableAircraft,
   waitForAircraftLayer,
   waitForLiveAircraft,
@@ -29,6 +30,10 @@ test.describe("aircraft selection + detail panel", () => {
     request,
   }) => {
     await page.goto("/");
+    test.skip(
+      !(await mapIsAvailable(page)),
+      "browser has no WebGL — canvas selection cannot render; degradation is unit-tested",
+    );
     await waitForLiveAircraft(page);
     await waitForAircraftLayer(page);
 

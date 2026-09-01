@@ -181,3 +181,35 @@ describe("MapLibreMap", () => {
     expect(map.removed).toBe(true);
   });
 });
+
+describe("WebGL-unavailable degradation", () => {
+  const renderMap = () =>
+    render(<MapLibreMap config={config} basemap={basemap} />);
+
+  it("renders the unsupported notice instead of crashing when the map cannot construct", () => {
+    MapLibreMockMap.throwOnNextConstruct = true;
+    const { unmount } = renderMap();
+
+    expect(screen.getByTestId("map-unsupported")).toBeInTheDocument();
+    expect(
+      screen.getByText(/cannot render in this browser/i),
+    ).toBeInTheDocument();
+    // No half-constructed instance was recorded, and unmounting the failed
+    // map must not throw either.
+    expect(MapLibreMockMap.instances).toHaveLength(0);
+    expect(() => unmount()).not.toThrow();
+  });
+
+  it("survives a map whose teardown throws (dead GL context)", () => {
+    const { unmount } = renderMap();
+    const map = getLastMockMap();
+    map.remove = vi.fn(() => {
+      throw new Error(
+        'can\'t access property "destroy", this.painter is undefined',
+      );
+    });
+
+    expect(() => unmount()).not.toThrow();
+    expect(map.remove).toHaveBeenCalled();
+  });
+});

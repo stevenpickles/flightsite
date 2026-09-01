@@ -116,6 +116,12 @@ export function MapLibreMap({
   const isInitialConfigRef = useRef(true);
   const hasRecenteredOnceRef = useRef(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
+  // True when MapLibre itself cannot run here at all (no WebGL context —
+  // headless browsers, remote desktops, ancient GPUs). Distinct from
+  // `tilesUnavailable`: that is a working renderer with no basemap, this is
+  // no renderer. The rest of the app (panels, lists, live data) keeps
+  // working either way.
+  const [mapUnsupported, setMapUnsupported] = useState(false);
 
   // Keeps the click handler current without the mount effect depending on
   // it (a new function identity every render must never tear down and
@@ -138,13 +144,23 @@ export function MapLibreMap({
       return undefined;
     }
 
-    const map = new MapLibreGlMap({
-      container,
-      style: basemap.style,
-      center: [config.receiver.lon, config.receiver.lat],
-      zoom: INITIAL_ZOOM,
-      attributionControl: false,
-    });
+    let map: MapLibreGlMap;
+    try {
+      map = new MapLibreGlMap({
+        container,
+        style: basemap.style,
+        center: [config.receiver.lon, config.receiver.lat],
+        zoom: INITIAL_ZOOM,
+        attributionControl: false,
+      });
+    } catch {
+      // No WebGL context available: MapLibre throws (or half-constructs)
+      // rather than rendering. Crashing here previously took down the whole
+      // route into the router's error page — the degraded-mode requirement
+      // covers the renderer itself, not just the tiles.
+      setMapUnsupported(true);
+      return undefined;
+    }
     mapRef.current = map;
     setInstance(map);
 
@@ -182,7 +198,14 @@ export function MapLibreMap({
     });
 
     return () => {
-      map.remove();
+      try {
+        map.remove();
+      } catch {
+        // remove() dereferences this.painter, which is undefined when the
+        // GL context died after construction (seen on WebGL-less CI
+        // Firefox). A failed teardown of an already-dead map must never
+        // crash the unmounting route.
+      }
       mapRef.current = null;
       setInstance(null);
       if (
@@ -282,12 +305,24 @@ export function MapLibreMap({
           role="application"
           aria-label={`Live map centered on ${config.receiver.label}`}
         />
-        {tilesUnavailable && (
+        {tilesUnavailable && !mapUnsupported && (
           <div
             role="status"
             className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm"
           >
             Basemap unavailable — rings and receiver position still shown.
+          </div>
+        )}
+        {mapUnsupported && (
+          <div
+            role="status"
+            data-testid="map-unsupported"
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+          >
+            <p className="max-w-sm rounded-md border border-border bg-card/90 px-4 py-3 text-center text-sm text-muted-foreground shadow-sm">
+              The map cannot render in this browser (WebGL unavailable). Live
+              aircraft data still updates in the panels.
+            </p>
           </div>
         )}
         {children}

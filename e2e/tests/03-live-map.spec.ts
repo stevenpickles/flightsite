@@ -7,7 +7,11 @@
  * the same live registry the REST API reads.
  */
 
-import { fetchPositionedAircraft, waitForLiveAircraft } from "./support/liveMap";
+import {
+  fetchPositionedAircraft,
+  mapIsAvailable,
+  waitForLiveAircraft,
+} from "./support/liveMap";
 import { expect, test } from "./support/fixtures";
 
 test.describe("demo-mode live map", () => {
@@ -24,7 +28,15 @@ test.describe("demo-mode live map", () => {
     // stale or fabricated count.
     const positioned = await fetchPositionedAircraft(request);
     expect(positioned.length).toBeGreaterThan(0);
+  });
 
+  test("the aircraft layer paints onto the map canvas", async ({ page }) => {
+    await page.goto("/");
+    test.skip(
+      !(await mapIsAvailable(page)),
+      "browser has no WebGL — the app shows its map-unavailable notice instead (unit-tested)",
+    );
+    await waitForLiveAircraft(page);
     // The aircraft layer actually renders onto the canvas, not just into
     // the store.
     await expect(
