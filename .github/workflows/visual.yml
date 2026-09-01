@@ -1,0 +1,100 @@
+name: visual
+
+# Visual regression (roadmap slice 047, SPEC §83, docs/TEST_STRATEGY.md §5).
+#
+# Separate from e2e.yml on purpose, and not just for tidiness. The e2e job
+# runs browsers installed directly on the ubuntu-latest runner; this job runs
+# INSIDE mcr.microsoft.com/playwright, because screenshot baselines are a
+# function of the container's font rendering and the runner image's fonts
+# are neither pinned nor reproducible on a developer's machine. Running the
+# suite in the same image a developer regenerates baselines with
+# (`e2e/scripts/visual-docker.mjs` derives the identical tag from
+# e2e/package.json) is what makes a local `npm run visual:update` and this
+# job byte-comparable — see docs/TEST_STRATEGY.md §5, "font rendering pinned
+# by running in the CI container image".
+#
+# There is no Docker Compose stack and no backend here. The suite replays a
+# committed HAR for every API response and serves one frozen WebSocket
+# snapshot (e2e/visual/support/replay.ts), so all it needs is the built SPA
+# behind `vite preview`. That is also why this job can run in a `container:`
+# at all — it needs no Docker-in-Docker.
+#
+# Trigger note (mirroring the other workflows): `pull_request` has no path
+# filter, so the check reports on every PR and can be a required status
+# check without permanently blocking PRs that touch nothing relevant.
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Required status check name (once wired into branch protection): visual
+  # ---------------------------------------------------------------------------
+  visual:
+    name: visual
+    runs-on: ubuntu-latest
+    # Must stay in lockstep with `@playwright/test` in e2e/package.json —
+    # scripts/visual-docker.mjs derives its tag from that field, and a
+    # mismatch would mean local regeneration and CI comparison used
+    # different browser builds. scripts/visual.mjs fails the run if the
+    # installed Playwright and this image disagree.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      # Chromium's default 64 MB /dev/shm is too small for the full-page
+      # screenshots of the Analytics and Receiver pages.
+      options: --ipc=host
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The container already carries Node 22 and the matching browsers, so
+      # there is no setup-node and no `playwright install` step. Caching npm
+      # is still worth it: this job installs two workspaces (e2e and
+      # frontend) on every run.
+      - name: Cache npm
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.npm
+          key: npm-visual-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json', 'frontend/package-lock.json') }}
+          restore-keys: npm-visual-${{ runner.os }}-
+
+      # scripts/visual.mjs installs both workspaces if needed, builds
+      # frontend/dist, and runs the suite. `visual:in-container` is the
+      # entry point that skips the docker wrapper — this job IS the
+      # container.
+      - name: Run visual regression suite
+        working-directory: e2e
+        env:
+          # The handshake `assertPinnedRenderer()` checks. Set only here and
+          # in scripts/visual-docker.mjs, so a run outside the pinned image
+          # stops with an actionable message rather than writing baselines
+          # that can never match.
+          FLIGHTSITE_VISUAL_CONTAINER: "1"
+        run: npm run visual:in-container
+
+      # The review-friendly half of the diff workflow (roadmap slice 047:
+      # "intentional UI changes produce reviewable diffs"). Playwright writes
+      # expected/actual/diff PNGs for every failed comparison; uploading them
+      # means a reviewer can look at what changed instead of guessing from a
+      # pixel count, and the PR author can tell an intended restyle from a
+      # regression before deciding to regenerate.
+      - name: Upload screenshot diffs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-diff
+          path: |
+            e2e/playwright-report-visual/
+            e2e/test-results-visual/
+          retention-days: 7
