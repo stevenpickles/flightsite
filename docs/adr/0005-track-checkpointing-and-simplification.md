@@ -47,10 +47,18 @@ for Pi-class storage — while a packed per-sighting encoding keeps the same dat
   by construction of Douglas-Peucker. `encoding_version` makes format evolution an
   additive migration.
 - Crash recovery has a defined contract: bounded loss (one checkpoint batch), and
-  recovery closes orphaned sightings from their checkpointed points. Because
-  checkpoints are lightly thinned, **a recovered sighting's path is pre-thinned** —
-  slightly lower fidelity than a normally closed one — which is accepted and visible
-  via `closure_reason = shutdown_recovery`.
+  recovery closes orphaned sightings from their checkpointed points.
+- **Amendment (slice 052):** the close path simplifies the union of the persisted
+  checkpoint rows plus only the un-checkpointed in-memory tail, rather than a second
+  full-resolution in-memory copy of the whole track. Keeping a full duplicate resident
+  per open sighting would cost tens of MB at the SPEC §5 envelope and would have to
+  outlive the live record. Consequence: every closed sighting's path passes through
+  the lightly-thinned checkpoint representation (a normally-closed and a recovered
+  sighting now differ only by the final un-checkpointed batch). This is acceptable
+  because the checkpoint thinning tolerance is set an order of magnitude tighter than
+  the close-time simplification epsilon, and a test asserts simplify(raw) ==
+  simplify(thinned) on representative tracks. It also makes slice 053's recovery the
+  same code path as a normal close.
 - SQL cannot query individual track points (no per-point WHERE clauses). No v1
   feature needs that: every read is "the whole path for one sighting". A future
   feature needing point-level queries would require a superseding ADR.
