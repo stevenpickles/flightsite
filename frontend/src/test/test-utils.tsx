@@ -13,6 +13,7 @@ import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { ReceiverPage } from "@/pages/ReceiverPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SightingDetailPage } from "@/pages/SightingDetailPage";
 import { SightingsPage } from "@/pages/SightingsPage";
 
 /** Renders the full route tree (same shape as src/routes.tsx) starting at
@@ -35,6 +36,7 @@ export function renderApp(initialPath = "/") {
               { path: "aircraft", element: <AircraftPage /> },
               { path: "aircraft/:icao", element: <AircraftDetailPage /> },
               { path: "sightings", element: <SightingsPage /> },
+              { path: "sightings/:id", element: <SightingDetailPage /> },
               { path: "analytics", element: <AnalyticsPage /> },
               { path: "receiver", element: <ReceiverPage /> },
               { path: "alerts", element: <AlertsPage /> },

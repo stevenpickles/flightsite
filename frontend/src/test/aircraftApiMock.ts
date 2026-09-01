@@ -6,6 +6,7 @@ import type {
   AircraftListRow,
 } from "@/lib/api/aircraft";
 import type { ReceiverInfo } from "@/lib/api/live";
+import type { SightingListResponse } from "@/lib/api/sightings";
 
 /** An `AircraftListRow`, defaulting to a fully-resolved example — override
  * just the fields a test cares about. */
@@ -93,6 +94,11 @@ export interface MockAircraftApiOptions {
   /** `icao -> AircraftDetail`; an address with no entry 404s the same way
    * the real endpoint does for an address never sighted. */
   detail?: Record<string, AircraftDetail>;
+  /** Response `GET /api/v1/aircraft/{icao}/sightings` returns, keyed by
+   * icao — the aircraft detail page's "recent sightings" section (roadmap
+   * slice 030). An icao with no entry answers an empty list, the same as
+   * the real endpoint for an address with no sightings. */
+  aircraftSightings?: Record<string, SightingListResponse>;
   receiver?: ReceiverInfo;
 }
 
@@ -103,12 +109,20 @@ const EMPTY_LIST: AircraftListResponse = {
   offset: 0,
 };
 
+const EMPTY_SIGHTINGS_LIST: SightingListResponse = {
+  items: [],
+  total: null,
+  limit: 5,
+  offset: 0,
+};
+
 /** Installs a `global.fetch` stub serving `GET /api/v1/aircraft`,
- * `GET /api/v1/aircraft/{icao}` and `GET /api/v1/receiver` so Aircraft
- * page/detail tests can exercise the real `lib/api/aircraft` +
- * `lib/api/receiver` clients and TanStack Query hooks without a running
- * backend. Any other URL throws, surfacing an un-mocked request as a test
- * failure instead of a silent network error. */
+ * `GET /api/v1/aircraft/{icao}`, `GET /api/v1/aircraft/{icao}/sightings`
+ * and `GET /api/v1/receiver` so Aircraft page/detail tests can exercise the
+ * real `lib/api/aircraft` + `lib/api/sightings` + `lib/api/receiver`
+ * clients and TanStack Query hooks without a running backend. Any other URL
+ * throws, surfacing an un-mocked request as a test failure instead of a
+ * silent network error. */
 export function installAircraftApiMock(options: MockAircraftApiOptions = {}) {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -126,6 +140,15 @@ export function installAircraftApiMock(options: MockAircraftApiOptions = {}) {
             ? options.list(url)
             : (options.list ?? EMPTY_LIST);
         return jsonResponse(body);
+      }
+
+      const sightingsMatch =
+        /^\/api\/v1\/aircraft\/([0-9a-f]{6})\/sightings$/.exec(url.pathname);
+      if (sightingsMatch && method === "GET") {
+        const icao = sightingsMatch[1] as string;
+        return jsonResponse(
+          options.aircraftSightings?.[icao] ?? EMPTY_SIGHTINGS_LIST,
+        );
       }
 
       const detailMatch = /^\/api\/v1\/aircraft\/([0-9a-f]{6})$/.exec(
