@@ -233,7 +233,9 @@ export function installAlertsApiMock(
     body: Record<string, unknown> | undefined,
     base: Partial<AlertRule>,
   ): AlertRule {
-    const conditions = (body?.conditions ?? { version: 1 }) as AlertRuleConditions;
+    const conditions = (body?.conditions ?? {
+      version: 1,
+    }) as AlertRuleConditions;
     return {
       id: base.id ?? nextRuleId++,
       name: String(body?.name ?? ""),

@@ -81,7 +81,11 @@ export function RuleCard({ rule, templateName }: RuleCardProps) {
   function handleSave(input: AlertRuleWriteInput): void {
     updateMutation.mutate(
       { ruleId: rule.id, input },
-      { onSuccess: () => { setEditing(false); } },
+      {
+        onSuccess: () => {
+          setEditing(false);
+        },
+      },
     );
   }
 

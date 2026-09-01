@@ -59,7 +59,9 @@ describe("AlertHistorySection", () => {
     const row = within(list).getByRole("listitem");
     // The stored reason, never one recomposed from the rule as it stands
     // now: the history says what the user was actually shown.
-    expect(within(row).getByText("Rule: Military aircraft")).toBeInTheDocument();
+    expect(
+      within(row).getByText("Rule: Military aircraft"),
+    ).toBeInTheDocument();
     expect(within(row).getByText("High")).toBeInTheDocument();
     expect(within(row).getByRole("link", { name: "AE1463" })).toHaveAttribute(
       "href",

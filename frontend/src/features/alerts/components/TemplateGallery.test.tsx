@@ -70,7 +70,9 @@ describe("TemplateGallery", () => {
     // Not from local state: a template is added exactly when a rule with its
     // key exists, which is what makes a first-run instantiation show here too.
     installAlertsApiMock({
-      rules: [alertRule({ name: "Watchlist match", template_key: "watchlist" })],
+      rules: [
+        alertRule({ name: "Watchlist match", template_key: "watchlist" }),
+      ],
     });
 
     renderWithProviders(<TemplateGallery />);
@@ -117,9 +119,7 @@ describe("TemplateGallery", () => {
           );
         }
         if (url === "/api/internal/alert-rules" && method === "GET") {
-          const rules = served
-            ? [alertRule({ template_key: "military" })]
-            : [];
+          const rules = served ? [alertRule({ template_key: "military" })] : [];
           return json({ rules }, 200);
         }
         served = true;

@@ -525,7 +525,10 @@ export function documentToConditions(conditions: AlertRuleConditions): {
       maxSightings: String(conditions.rare_type.max_sightings),
     });
   }
-  if (conditions.min_distance_nm != null || conditions.max_distance_nm != null) {
+  if (
+    conditions.min_distance_nm != null ||
+    conditions.max_distance_nm != null
+  ) {
     drafts.push({
       kind: "distance",
       min: numericText(conditions.min_distance_nm),

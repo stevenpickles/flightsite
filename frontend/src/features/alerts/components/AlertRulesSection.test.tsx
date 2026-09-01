@@ -17,9 +17,7 @@ describe("AlertRulesSection", () => {
 
     renderWithProviders(<AlertRulesSection />);
 
-    expect(
-      await screen.findByText(/no alert rules yet/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/no alert rules yet/i)).toBeInTheDocument();
   });
 
   it("lists a rule with its severity, status and conditions", async () => {
@@ -48,7 +46,9 @@ describe("AlertRulesSection", () => {
 
   it("names the template a shipped rule came from", async () => {
     installAlertsApiMock({
-      rules: [alertRule({ name: "Military aircraft", template_key: "military" })],
+      rules: [
+        alertRule({ name: "Military aircraft", template_key: "military" }),
+      ],
     });
 
     renderWithProviders(<AlertRulesSection />);
@@ -85,7 +85,9 @@ describe("AlertRulesSection", () => {
       within(card).getByText("seen at most 2 time(s) here"),
     ).toBeInTheDocument();
     // The builder closes once the rule exists.
-    expect(screen.getByRole("button", { name: "New rule" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "New rule" }),
+    ).toBeInTheDocument();
   });
 
   it("turns a rule off and on again", async () => {
@@ -188,7 +190,9 @@ describe("AlertRulesSection", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         if (url === "/api/internal/alert-rules" && method === "GET") {
           return new Response(
-            JSON.stringify({ rules: [alertRule({ name: "Military aircraft" })] }),
+            JSON.stringify({
+              rules: [alertRule({ name: "Military aircraft" })],
+            }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }

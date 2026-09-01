@@ -76,7 +76,9 @@ describe("conditionsToDocument", () => {
   it("writes applies_on_ground only when it is asked for", () => {
     const drafts: ConditionDraft[] = [{ kind: "watchlist_any" }];
 
-    expect(conditionsToDocument(drafts, false).applies_on_ground).toBeUndefined();
+    expect(
+      conditionsToDocument(drafts, false).applies_on_ground,
+    ).toBeUndefined();
     expect(conditionsToDocument(drafts, true).applies_on_ground).toBe(true);
   });
 });
@@ -147,7 +149,10 @@ describe("documentToConditions", () => {
       type_code: "C17",
     });
 
-    expect(drafts.map((draft) => draft.kind)).toEqual(["type_code", "altitude"]);
+    expect(drafts.map((draft) => draft.kind)).toEqual([
+      "type_code",
+      "altitude",
+    ]);
   });
 
   it("reads an absent watchlist_any as no condition", () => {

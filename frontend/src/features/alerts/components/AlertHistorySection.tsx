@@ -4,7 +4,10 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
-import { builtinKeyLabel, SEVERITY_OPTIONS } from "@/features/alerts/lib/vocabulary";
+import {
+  builtinKeyLabel,
+  SEVERITY_OPTIONS,
+} from "@/features/alerts/lib/vocabulary";
 import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { useAlertMatchesQuery, type AlertMatch } from "@/lib/api/alertMatches";
 import { useConfigQuery } from "@/lib/api/config";

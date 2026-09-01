@@ -82,8 +82,8 @@ function TemplateCard({
 
       {!template.builtin && instantiated && (
         <p className="text-xs text-muted-foreground">
-          A rule from this template is on the Rules tab, where it can be
-          retuned or turned off.
+          A rule from this template is on the Rules tab, where it can be retuned
+          or turned off.
         </p>
       )}
 

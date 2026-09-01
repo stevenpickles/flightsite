@@ -92,9 +92,7 @@ describe("RuleBuilderForm", () => {
     await user.click(screen.getByRole("button", { name: "Create rule" }));
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/can never match/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/can never match/i)).toBeInTheDocument();
   });
 
   it("stays quiet about errors until the first submit attempt", async () => {

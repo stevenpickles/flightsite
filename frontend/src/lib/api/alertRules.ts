@@ -163,7 +163,9 @@ export function getAlertTemplates(): Promise<AlertTemplatesListResponse> {
   return apiFetch<AlertTemplatesListResponse>(TEMPLATES_PATH);
 }
 
-export function createAlertRule(input: AlertRuleWriteInput): Promise<AlertRule> {
+export function createAlertRule(
+  input: AlertRuleWriteInput,
+): Promise<AlertRule> {
   return apiFetch<AlertRule>(RULES_PATH, {
     method: "POST",
     headers: JSON_HEADERS,

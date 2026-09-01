@@ -134,8 +134,7 @@ export function RuleBuilderForm({
     }
     onSubmit({
       name: name.trim(),
-      description:
-        description.trim().length > 0 ? description.trim() : null,
+      description: description.trim().length > 0 ? description.trim() : null,
       severity,
       conditions: conditionsToDocument(drafts, appliesOnGround),
       enabled,
@@ -201,10 +200,7 @@ export function RuleBuilderForm({
             setDescription(event.target.value);
           }}
         />
-        <FieldError
-          id={`${descriptionId}-error`}
-          message={descriptionError}
-        />
+        <FieldError id={`${descriptionId}-error`} message={descriptionError} />
       </div>
 
       <div className="flex flex-col gap-3">
@@ -281,9 +277,8 @@ export function RuleBuilderForm({
           Also alert for aircraft on the ground
         </label>
         <p className="text-xs text-muted-foreground">
-          Off by default: a rule about military aircraft usually means ones
-          that are flying, not one parked on a ramp the receiver hears all
-          day.
+          Off by default: a rule about military aircraft usually means ones that
+          are flying, not one parked on a ramp the receiver hears all day.
         </p>
 
         <label className="flex items-center gap-2 text-sm text-foreground">

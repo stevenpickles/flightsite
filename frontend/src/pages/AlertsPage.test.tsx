@@ -5,7 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AlertsPage } from "@/pages/AlertsPage";
-import { alertMatch, alertRule, installAlertsApiMock } from "@/test/alertsApiMock";
+import {
+  alertMatch,
+  alertRule,
+  installAlertsApiMock,
+} from "@/test/alertsApiMock";
 import { watchlist } from "@/test/watchlistsApiMock";
 
 afterEach(() => {
@@ -48,9 +52,12 @@ describe("AlertsPage", () => {
     renderPage();
 
     expect(screen.getByRole("tablist")).toBeInTheDocument();
-    expect(
-      screen.getAllByRole("tab").map((tab) => tab.textContent),
-    ).toEqual(["Watchlists", "Rules", "Templates", "History"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Watchlists",
+      "Rules",
+      "Templates",
+      "History",
+    ]);
   });
 
   it("switches to the rule builder's area", async () => {
