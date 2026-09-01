@@ -43,7 +43,7 @@ export function SettingsPage() {
           onClick={() => {
             void configQuery.refetch();
           }}
-          className="text-sm font-medium text-accent-foreground underline"
+          className="text-sm font-medium text-accent underline"
         >
           Retry
         </button>

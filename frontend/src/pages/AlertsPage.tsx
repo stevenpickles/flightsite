@@ -1,10 +1,11 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { requireNavItem } from "@/components/shell/nav-items";
 import { AlertHistorySection } from "@/features/alerts/components/AlertHistorySection";
 import { AlertRulesSection } from "@/features/alerts/components/AlertRulesSection";
 import { TemplateGallery } from "@/features/alerts/components/TemplateGallery";
 import { WatchlistsSection } from "@/features/watchlists/components/WatchlistsSection";
+import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 
 const item = requireNavItem("/alerts");
 
@@ -48,6 +49,11 @@ export function AlertsPage() {
   const [activeTabId, setActiveTabId] = useState(WATCHLISTS_TAB.id);
   const active = TABS.find((tab) => tab.id === activeTabId) ?? WATCHLISTS_TAB;
   const tablistId = useId();
+  // The tabs use a roving `tabIndex` (one tab stop for the whole tablist), so
+  // the arrow keys are the *only* way to reach an unselected tab — without
+  // this handler Rules/Templates/History were keyboard-unreachable entirely.
+  const tablistRef = useRef<HTMLDivElement>(null);
+  const onTablistKeyDown = useRovingFocus(tablistRef, { itemRole: "tab" });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-8">
@@ -61,6 +67,8 @@ export function AlertsPage() {
           role="tablist"
           aria-label="Alerts sections"
           id={tablistId}
+          ref={tablistRef}
+          onKeyDown={onTablistKeyDown}
           className="flex gap-1 border-b border-border"
         >
           {TABS.map((tab) => {

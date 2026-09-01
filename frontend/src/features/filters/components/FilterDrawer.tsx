@@ -28,6 +28,8 @@ import type {
   ClassificationFlag,
   GroundTrafficMode,
 } from "@/features/filters/types";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
+import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { cn } from "@/lib/utils";
 
 const CLASSIFICATION_OPTIONS: { value: ClassificationFlag; label: string }[] = [
@@ -102,7 +104,14 @@ export function FilterDrawer() {
   const clearAll = useFilterStore((state) => state.clearAll);
 
   const [missionDraft, setMissionDraft] = useState("");
-  const panelRef = useRef<HTMLDivElement>(null);
+  // Non-modal drawer: focus moves in on open and back to the trigger on
+  // close, but Tab is deliberately NOT trapped — the map behind stays
+  // interactive by design.
+  const panelRef = useDialogFocus<HTMLDivElement>({ open: isOpen });
+  const groundGroupRef = useRef<HTMLDivElement>(null);
+  const onGroundKeyDown = useRovingFocus(groundGroupRef, {
+    itemRole: "radio",
+  });
   const headingId = useId();
   const activeCount = countActiveFilters(filters);
 
@@ -123,7 +132,7 @@ export function FilterDrawer() {
     if (isOpen) {
       panelRef.current?.focus();
     }
-  }, [isOpen]);
+  }, [isOpen, panelRef]);
 
   function addMissionCategory() {
     const value = missionDraft.trim();
@@ -147,7 +156,7 @@ export function FilterDrawer() {
           "absolute right-3 top-40 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
           "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
           activeCount > 0
-            ? "text-accent-foreground"
+            ? "text-accent"
             : "text-foreground hover:bg-secondary",
         )}
       >
@@ -380,6 +389,8 @@ export function FilterDrawer() {
               <div
                 role="radiogroup"
                 aria-label="Ground traffic"
+                ref={groundGroupRef}
+                onKeyDown={onGroundKeyDown}
                 className="flex gap-1"
               >
                 {GROUND_OPTIONS.map((option) => {
@@ -390,9 +401,11 @@ export function FilterDrawer() {
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      tabIndex={selected ? 0 : -1}
                       onClick={() => setGroundTraffic(option.value)}
                       className={cn(
-                        "flex-1 rounded-md px-2 py-1 text-xs transition-colors",
+                        "flex-1 rounded-md px-2 py-1 text-xs outline-none transition-colors",
+                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                         selected
                           ? "bg-accent text-accent-foreground"
                           : "border border-border text-foreground hover:bg-secondary",

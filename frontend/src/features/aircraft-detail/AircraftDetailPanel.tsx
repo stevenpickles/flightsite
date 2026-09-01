@@ -19,7 +19,7 @@
  */
 
 import { X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
@@ -48,6 +48,7 @@ import {
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { cn } from "@/lib/utils";
 
 /** Vertical-rate direction glyph. Text/symbol-first (▲/▼/—), not a bare
@@ -70,8 +71,11 @@ export function AircraftDetailPanel() {
   const track = useLiveAircraftStore((state) => state.track);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
 
-  const panelRef = useRef<HTMLDivElement>(null);
   const isOpen = selectedIcao !== null;
+  // Non-modal (`aria-modal="false"`): the map behind stays interactive, so
+  // Tab is not trapped — but closing still returns focus to whatever opened
+  // the panel (e.g. the interesting-aircraft row that was activated).
+  const panelRef = useDialogFocus<HTMLDivElement>({ open: isOpen });
 
   useEffect(() => {
     if (!isOpen) {
@@ -90,7 +94,7 @@ export function AircraftDetailPanel() {
     if (isOpen) {
       panelRef.current?.focus();
     }
-  }, [isOpen, selectedIcao]);
+  }, [isOpen, selectedIcao, panelRef]);
 
   const aircraft = record?.aircraft ?? departing?.aircraft ?? null;
   const units = receiver?.units ?? "aviation";
