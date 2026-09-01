@@ -1,4 +1,4 @@
-import { Wand2 } from "lucide-react";
+import { Stethoscope, Wand2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { requireNavItem } from "@/components/shell/nav-items";
@@ -72,13 +72,25 @@ export function SettingsPage() {
           </h1>
           <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
-        <Link
-          to="/setup"
-          className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
-        >
-          <Wand2 className="size-4" aria-hidden="true" />
-          Re-run setup wizard
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {/* The health area (SPEC §67) has no sidebar entry of its own —
+              SPEC §10 fixes that at seven sections — so Settings and
+              Receiver are the two places a user looks for it. */}
+          <Link
+            to="/health"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
+          >
+            <Stethoscope className="size-4" aria-hidden="true" />
+            Health &amp; diagnostics
+          </Link>
+          <Link
+            to="/setup"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
+          >
+            <Wand2 className="size-4" aria-hidden="true" />
+            Re-run setup wizard
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">
