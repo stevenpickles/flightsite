@@ -20,7 +20,7 @@ const LABELS: Record<AlertSeverity, string> = {
 const TONE_CLASSES: Record<AlertSeverity, string> = {
   info: "border-border text-muted-foreground",
   interesting: "border-accent/60 text-accent",
-  high: "border-amber-500/60 text-amber-600 dark:text-amber-400",
+  high: "border-warning/60 text-warning",
   critical: "border-destructive text-destructive",
 };
 
