@@ -37,7 +37,7 @@ export function SectionSaveBar({
           <p className="text-muted-foreground">Unsaved changes</p>
         )}
         {!errorMessage && !isDirty && justSaved && (
-          <p className="text-accent-foreground">Saved</p>
+          <p className="text-accent">Saved</p>
         )}
       </div>
       <Button

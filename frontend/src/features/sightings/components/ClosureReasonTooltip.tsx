@@ -25,12 +25,16 @@ export function ClosureReasonTooltip({ reason }: ClosureReasonTooltipProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          tabIndex={0}
-          className="cursor-help text-sm underline decoration-dotted decoration-muted-foreground/60 underline-offset-2 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        {/* A real <button>, not a `tabIndex={0}` <span> (slice 048, SPEC
+         * §80): the span was focusable but carried no role, so assistive
+         * tech announced the label with no indication it could be acted on
+         * to reveal the explanation. */}
+        <button
+          type="button"
+          className="cursor-help text-left text-sm underline decoration-dotted decoration-muted-foreground/60 underline-offset-2 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           {info.label}
-        </span>
+        </button>
       </TooltipTrigger>
       <TooltipContent>
         <p className="max-w-64 text-xs">{info.description}</p>
