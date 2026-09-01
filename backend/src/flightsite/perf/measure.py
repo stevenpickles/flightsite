@@ -5,17 +5,20 @@ samples in a stated unit, summarized the same way every time. Reporting the
 whole distribution rather than a single number is deliberate: a budget that is
 crossed by a p99 while the median sits at a tenth of it is a scheduling
 artefact, and a budget crossed by the median is a regression. The harness
-prints both, and :meth:`Measurement.verdict` gates on whichever statistic the
-budget names.
+prints the whole summary, and :class:`~.harness.Verdict` gates on whichever
+statistic the budget names.
 
 Memory is measured without adding a dependency. ``docs/ARCHITECTURE.md`` §6
 bounds the *process* at 1 GB, so resident set size is the honest quantity, and
 it is read straight from the platform: ``/proc/self/statm`` on Linux (the
 reference target and CI), ``GetProcessMemoryInfo`` through ``ctypes`` on
-Windows, ``getrusage`` elsewhere. :func:`rss_bytes` returns ``None`` when no
-source is available rather than guessing, and the harness degrades to the
-Python-heap figure from :mod:`tracemalloc`, which is portable but measures only
-what Python allocated.
+Windows, ``getrusage`` elsewhere.
+
+:func:`rss_bytes` returns ``None`` when no source is available, and the harness
+reports that budget as *not measured*. There is deliberately no fallback to a
+Python-heap figure: :mod:`tracemalloc` counts only what Python allocated, which
+is a different quantity from the one the budget is stated against, and
+reporting it under the same name would be worse than reporting nothing.
 """
 
 from __future__ import annotations
@@ -23,7 +26,6 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-import tracemalloc
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -116,19 +118,6 @@ class Measurement:
             f"max {self.statistic(Statistic.MAX):.3g} {self.unit} "
             f"(n={self.count})"
         )
-
-
-def python_heap_bytes() -> int:
-    """Currently traced Python allocations, in bytes.
-
-    Requires :func:`tracemalloc.start` to have been called; returns ``0``
-    otherwise, which the caller distinguishes from a real reading by having
-    started tracing itself.
-    """
-    if not tracemalloc.is_tracing():
-        return 0
-    current, _peak = tracemalloc.get_traced_memory()
-    return current
 
 
 def rss_bytes() -> int | None:
@@ -232,6 +221,5 @@ __all__ = [
     "Measurement",
     "Statistic",
     "percentile",
-    "python_heap_bytes",
     "rss_bytes",
 ]

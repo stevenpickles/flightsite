@@ -54,11 +54,20 @@ SUSTAINED = WorkloadConfig(
 #: deliberately: it is looking for a leak, not measuring an allocator.
 DRIFT_WINDOW = 5
 
-#: How much the late memory window may exceed the early one. A real leak under
-#: this workload grows without bound and blows straight through it; ordinary
-#: steady-state growth — caches populating, the live set turning over — is well
-#: inside it.
-DRIFT_ALLOWANCE = 1.5
+#: How much the late memory window may exceed the early one.
+#:
+#: Generous on purpose, because a large part of the growth across a run is
+#: real and expected: the live store keeps an aircraft for 60 s after it stops
+#: transmitting, so the resident population climbs from the batch size (~520)
+#: towards ~790 and then plateaus, and the per-aircraft tracks and metadata
+#: cache grow with it. Memory tracking a live set that is still filling is not
+#: a leak.
+#:
+#: What this bound is for is unbounded growth, which by definition does not
+#: plateau and blows through any constant factor. The *absolute* ceiling —
+#: 1 GB, a hard gate — is what actually protects the budget; this is the
+#: coarse shape check beside it.
+DRIFT_ALLOWANCE = 2.5
 
 
 @pytest.fixture(scope="module")
@@ -102,18 +111,37 @@ def test_memory_does_not_drift_across_the_run(report: HarnessReport) -> None:
     )
 
 
-def test_the_pipeline_never_spends_a_whole_poll_on_one_tick(report: HarnessReport) -> None:
-    """The strictest reading of "ingestion keeps up": not the p95, the worst tick.
+def test_the_live_path_never_spends_a_whole_poll_on_one_tick(report: HarnessReport) -> None:
+    """The "no live-state stalls" gate, read at the worst tick rather than the p95.
 
-    The gate itself is a p95, because one scheduling hiccup on a shared runner
-    is not a regression. Over a sustained run there are enough ticks that the
-    *maximum* is worth asserting too — a pipeline that occasionally takes a
-    whole second is one that occasionally drops a poll.
+    Deliberately asserted against the *live* stages — the batch apply and the
+    lifecycle sweep — and not against ``ingest_duty_cycle``, which would be the
+    obvious choice and would be wrong.
+
+    The duty cycle sums every stage because this harness drives them serially,
+    and one tick in thirty includes the persistence worker's periodic flush
+    (``flush_interval_s`` is 30 s), which rewrites several hundred sightings and
+    on a dev machine takes well over a second. In the running product that work
+    is on a separate task and cannot block ``live.apply`` (ADR-0008,
+    ``docs/ARCHITECTURE.md`` §3.1), so it delays the next *write*, not the next
+    *observation*. Asserting the summed maximum under a poll would therefore be
+    asserting something the architecture does not claim, and it would fail on a
+    healthy system.
+
+    What must hold at every tick, with no exceptions and no averaging, is that
+    the memory-only live path keeps up: if applying a batch and ageing the live
+    set ever took a whole poll, the live picture really would be a backlog.
     """
-    duty = report.measurement("ingest_duty_cycle")
-    assert duty is not None
-    worst = duty.statistic(Statistic.MAX)
-    assert worst < 1.0, f"a tick consumed {worst:.2f} of its poll interval; {duty.summary}"
+    apply_ms = report.measurement("ingest_apply_ms")
+    sweep_ms = report.measurement("live_sweep_ms")
+    assert apply_ms is not None and sweep_ms is not None
+
+    poll_ms = report.config.tick_interval_s * 1_000.0
+    worst = apply_ms.statistic(Statistic.MAX) + sweep_ms.statistic(Statistic.MAX)
+    assert worst < poll_ms, (
+        f"the live path's worst tick cost {worst:.0f} ms of a {poll_ms:.0f} ms poll; "
+        f"apply {apply_ms.summary}; sweep {sweep_ms.summary}"
+    )
 
 
 def test_the_reference_budgets_were_all_collected(report: HarnessReport) -> None:
