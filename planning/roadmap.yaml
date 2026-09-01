@@ -416,7 +416,7 @@ slices:
     title: "Demo mode"
     phase: 2
     branch: "011-demo-mode"
-    status: planned
+    status: merged
     depends_on: ["007", "008"]
     objective: "Provide a deterministic demo adapter simulating rich traffic for development, tests, and visual regression."
     scope:
@@ -575,7 +575,7 @@ slices:
     title: "First-run setup wizard"
     phase: 3
     branch: "018-setup-wizard"
-    status: planned
+    status: merged
     depends_on: ["002", "004", "007", "013"]
     objective: "Guide a new install through receiver, decoder, units, timezone, and notification/alert preferences, landing on the Live Map."
     scope:

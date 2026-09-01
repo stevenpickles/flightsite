@@ -16,6 +16,7 @@ from flightsite.api.v1 import router as v1_router
 from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
+from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
@@ -79,6 +80,12 @@ async def _start_ingestion(app: FastAPI) -> IngestionService | None:
     setup wizard has even been opened, so ingestion is skipped and starts on
     the next boot after a configuration is saved.
 
+    Demo mode (``FLIGHTSITE_DEMO=1``, slice 011) is the one exception: it
+    starts :class:`~flightsite.demo.DemoAdapter` regardless of first-run
+    state, because demo mode's whole purpose is a full stack with zero
+    configuration (SPEC §76). A receiver location is injected into the live
+    store when none is configured, so distance and bearing still compute.
+
     The live store is the sole consumer: every normalized batch goes straight
     into the in-memory registry, and nothing on this path touches the database
     (``docs/ARCHITECTURE.md`` §3.1).
@@ -86,12 +93,24 @@ async def _start_ingestion(app: FastAPI) -> IngestionService | None:
     Decoder health deliberately never affects ``/ready``; the reasoning is in
     :mod:`flightsite.ingest.service`.
     """
+    live: LiveStore = app.state.live
+
+    if demo_enabled():
+        if live.receiver_location is None:
+            live.set_receiver_location(DEFAULT_CENTER)
+        service = IngestionService(
+            DemoAdapter(center=live.receiver_location),
+            readiness=app.state.readiness,
+            consumers=(live.apply,),
+        )
+        await service.start()
+        return service
+
     store: ConfigStore = app.state.config_store
     if store.first_run:
         logger.info("ingestion_skipped", reason="first_run")
         return None
 
-    live: LiveStore = app.state.live
     service = build_ingestion_service(
         _decoder_endpoint(app.state.settings),
         readiness=app.state.readiness,
@@ -199,6 +218,10 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     app.state.live = _build_live_store(settings)
     app.state.persistence = _build_persistence_worker(app, settings)
     app.state.start_time = time.monotonic()
+    # Read once at app-construction time, not per-request: demo mode is a
+    # process-level run mode (FLIGHTSITE_DEMO), not something that changes
+    # while the app is up.
+    app.state.demo_enabled = demo_enabled()
 
     app.include_router(v1_router, prefix="/api/v1")
     # /api/internal is an unsupported, unversioned surface (ADR-0007) and is
