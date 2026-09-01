@@ -37,12 +37,13 @@ from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
+from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository
 from flightsite.enrichment.service import build_provider
 from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
-from flightsite.logging import configure_logging
+from flightsite.logging import DEFAULT_LOG_DIR, configure_logging, install_error_capture
 from flightsite.maintenance import MaintenanceService, RouteCachePruner
 from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
@@ -621,7 +622,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # settings.log_level already reflects FLIGHTSITE_LOG_LEVEL when set — the
     # environment outranks config.yaml inside the settings model — so passing
     # it here keeps the env override winning (SPEC §30).
-    configure_logging(level=settings.log_level)
+    #
+    # Rotating file logs live beside the data they describe (SPEC §68), which
+    # keeps them inside the one directory backup and restore already cover.
+    configure_logging(
+        level=settings.log_level,
+        log_dir=store.data_dir / DEFAULT_LOG_DIR,
+        file_logging_enabled=settings.log_file_enabled,
+    )
 
     # SPEC §73's "Reset FlightSite Data" is mark-and-restart (slice 045,
     # flightsite.reset.marker): POST /api/internal/reset/data only writes a
@@ -645,6 +653,15 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     )
     app.state.config_store = store
     app.state.settings = settings
+    # Tee WARNING-and-above into the diagnostics ring (SPEC §67). The provider
+    # reads `app.state.settings` per record rather than closing over the object
+    # loaded above, because PUT /api/internal/config replaces it in place — so
+    # a key saved through the Settings UI is redacted from captured errors
+    # immediately, not at the next restart.
+    install_error_capture(
+        error_ring,
+        lambda: secrets_from_settings(getattr(app.state, "settings", None)),
+    )
     # True exactly on the first create_app() call after a reset marker was
     # written; tests and startup logging read it, nothing else depends on it.
     app.state.data_reset_applied = reset_applied

@@ -400,6 +400,30 @@ health/size/row counts, free disk space, backend uptime, versions, metadata sour
 ages, recent error ring buffers (ingestion/db/enrichment/websocket), WebSocket client
 count. **Never contains secrets** (tested requirement).
 
+Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health banner
+renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`, `database`
+(`quick_check`, `storage`, `row_counts`, `maintenance`, `recovery`), `metadata`,
+`notifications`, `enrichment`, `websocket`, `counters`, `recent_errors`.
+
+Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
+pragma takes the writer lock, so the endpoint reports the result the maintenance
+scheduler already computed rather than imposing a file walk on a running receiver.
+
+Two contract details worth knowing:
+
+- `decoder.state` distinguishes `unconfigured` (a first-run install with no receiver
+  yet) from `down` (a receiver that should be answering and is not). Rendering the
+  first as an outage would be wrong.
+- `notifications` carries only what the server can know — the configured severities —
+  and `permission_known_by` is always `"client"`. Browser permission is unobservable
+  from the backend, so the health page joins this with the frontend notification store
+  (slice 040) to show the permission the user actually granted.
+
+Secrets are redacted twice on the way out: once as each error is captured into the
+ring buffer, and once over the whole assembled payload, both against the configured
+`SecretStr` values discovered by type. A secret that reached a log record by mistake
+still cannot reach this response.
+
 ---
 
 ## 4. WebSocket Protocol — `/api/v1/ws/live` (slice 010)

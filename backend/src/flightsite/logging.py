@@ -6,7 +6,14 @@ uvicorn or third-party libraries) — is rendered as a single JSON line with an
 ISO-8601 UTC timestamp. The log level is configurable via the
 ``FLIGHTSITE_LOG_LEVEL`` environment variable (default ``INFO``).
 
-A rotating-file handler scaffold is included but disabled by default.
+A rotating-file handler writes the same JSON lines under the data directory
+(SPEC §68's "rotating local logs"), so an installation the user cannot SSH into
+still keeps a local history that survives a container restart.
+
+:func:`install_error_capture` additionally tees WARNING-and-above records into
+the diagnostics ring buffer (SPEC §67), which is how the health area shows
+recent ingestion, database, enrichment and WebSocket errors without any
+subsystem having to report them a second time.
 
 :func:`flightsite.app.create_app` passes ``settings.log_level``, which the
 settings model has already resolved through the config.yaml / secrets.yaml /
@@ -23,6 +30,8 @@ import os
 from pathlib import Path
 
 import structlog
+
+from flightsite.diagnostics.errors import ErrorRing, ErrorRingHandler, SecretsProvider
 
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_LOG_DIR = "logs"
@@ -104,3 +113,30 @@ def configure_logging(
         )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
+
+
+def install_error_capture(
+    ring: ErrorRing,
+    secrets_provider: SecretsProvider | None = None,
+    level: int = logging.WARNING,
+) -> ErrorRingHandler:
+    """Attach the diagnostics error-capture handler to the root logger.
+
+    Separate from :func:`configure_logging` because the two run at different
+    moments: logging is configured before the application object exists, while
+    the secrets provider has to read ``app.state.settings``, which is replaced
+    in place when the Settings UI saves a new key. Calling this after the app
+    is built lets the handler follow that replacement.
+
+    Any handler a previous call installed is removed first, so building several
+    applications in one process — which the test suite does constantly — leaves
+    one handler rather than a growing stack of them.
+    """
+    root_logger = logging.getLogger()
+    for existing in list(root_logger.handlers):
+        if isinstance(existing, ErrorRingHandler):
+            root_logger.removeHandler(existing)
+
+    handler = ErrorRingHandler(ring, secrets_provider, level)
+    root_logger.addHandler(handler)
+    return handler

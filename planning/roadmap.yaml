@@ -1094,7 +1094,7 @@ slices:
     title: "Health & diagnostics"
     phase: 7
     branch: "042-health-diagnostics"
-    status: planned
+    status: merged
     depends_on: ["010", "019", "025", "026", "033", "040"]
     objective: "Comprehensive health/diagnostics UI and API so users never need SSH to assess FlightSite."
     scope:

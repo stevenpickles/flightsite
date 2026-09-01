@@ -11,6 +11,7 @@ import pytest
 
 from flightsite.config import ConfigStore
 from flightsite.counters import counters
+from flightsite.diagnostics.errors import error_ring
 
 SECRET_SENTINEL = "sentinel-aerodatabox-key-9c1f4a"
 """A recognisable fake secret. Secret-leak tests search serialized output,
@@ -47,6 +48,19 @@ def _reset_counters() -> Iterator[None]:
     counters.reset()
     yield
     counters.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_error_ring() -> Iterator[None]:
+    """Empty the process-global diagnostics ring around every test.
+
+    Same reasoning as the counters registry: any test that provokes a warning
+    files a record into the shared ring, so without this an assertion about
+    "recent errors" would depend on which tests ran first.
+    """
+    error_ring.clear()
+    yield
+    error_ring.clear()
 
 
 @pytest.fixture(autouse=True)
