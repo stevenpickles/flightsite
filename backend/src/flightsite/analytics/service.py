@@ -246,7 +246,7 @@ class AnalyticsService:
         self._startup = await self._repair(now_ms)
 
         if self._persistence is not None:
-            self._persistence.subscribe_lifecycle(self._on_lifecycle)
+            self._persistence.subscribe_lifecycle(self.record_lifecycle)
         self._task = asyncio.create_task(self._loop(), name="flightsite-analytics")
         logger.info(
             "analytics_started",
@@ -272,7 +272,7 @@ class AnalyticsService:
                 await task
 
         if self._persistence is not None:
-            self._persistence.unsubscribe_lifecycle(self._on_lifecycle)
+            self._persistence.unsubscribe_lifecycle(self.record_lifecycle)
 
         result = await self.flush()
         logger.info("analytics_stopped", flushed=result.rebuilt, pending=len(self._dirty))
@@ -295,7 +295,7 @@ class AnalyticsService:
 
     # -------------------------------------------------------------- the seam
 
-    def _on_lifecycle(self, event: SightingLifecycle) -> None:
+    def record_lifecycle(self, event: SightingLifecycle) -> None:
         """Mark the days a committed cycle touched as needing a rebuild.
 
         Synchronous, allocation-light and never raising: it runs inside the
