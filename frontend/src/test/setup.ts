@@ -3,8 +3,17 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+import { initMock, resetEchartsMock } from "@/test/echartsMock";
 import { AttributionControlMock, MapLibreMockMap } from "@/test/maplibreGlMock";
 import { FakeWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
+
+/**
+ * ECharts draws to a `<canvas>`, which jsdom does not implement — the same
+ * class of problem `maplibre-gl` is mocked for below. See
+ * `@/test/echartsMock` for what the mock records and why chart tests assert
+ * against the pure option builders instead of a rendered canvas.
+ */
+vi.mock("echarts", () => ({ init: initMock }));
 
 /**
  * MapLibre GL JS requires a real WebGL context, which jsdom does not
@@ -113,4 +122,5 @@ Object.defineProperty(globalThis, "Image", {
 afterEach(() => {
   cleanup();
   resetWebSocketMock();
+  resetEchartsMock();
 });

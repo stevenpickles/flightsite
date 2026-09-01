@@ -90,6 +90,29 @@ async def test_the_raw_span_reports_the_retained_extremes(
     assert await repository.raw_span() == (samples[0].ts_ms, samples[-1].ts_ms)
 
 
+async def test_latest_sample_is_none_before_anything_is_recorded(
+    repository: MetricsRepository,
+) -> None:
+    """Slice 034's scorecard reads this for "current" messages/positions per
+    second; an install with no samples yet must answer "no data", not a 500."""
+    assert await repository.latest_sample() is None
+
+
+async def test_latest_sample_is_the_most_recently_retained_row(
+    repository: MetricsRepository,
+) -> None:
+    samples = steady_samples(count=5)
+    await repository.record(samples, {}, LifetimeDelta(), at_ms=BASE_EPOCH_MS)
+
+    assert await repository.latest_sample() == samples[-1]
+
+    # A later flush with an earlier ts_ms still leaves the highest ts_ms "latest".
+    earlier = MetricSample(ts_ms=samples[0].ts_ms - 15_000, messages_per_sec=1.0)
+    await repository.record((earlier,), {}, LifetimeDelta(), at_ms=BASE_EPOCH_MS)
+
+    assert await repository.latest_sample() == samples[-1]
+
+
 # --------------------------------------------------------- range by bearing
 
 
@@ -156,6 +179,40 @@ async def test_a_day_with_no_observations_writes_no_row(
     await repository.record((), {DAY: []}, LifetimeDelta(), at_ms=1)
 
     assert await repository.ranges_for_day(DAY) == {}
+
+
+async def test_ranges_all_returns_every_day_oldest_first(
+    repository: MetricsRepository,
+) -> None:
+    """Slice 034's all-time polar plot reduces this via
+    :func:`~flightsite.api.receiver_stats.ever_ranges`, which relies on
+    oldest-day-first ordering to break a tie in favour of the earlier day."""
+    await repository.record(
+        (),
+        group_by_day(
+            [
+                ("2026-09-02", observation(90.0, bucket=8, at_ms=2)),
+                (DAY, observation(180.0, bucket=8, at_ms=1)),
+                (DAY, observation(40.0, bucket=9, at_ms=1)),
+            ]
+        ),
+        LifetimeDelta(),
+        at_ms=1,
+    )
+
+    rows = await repository.ranges_all()
+
+    assert [day for day, _record in rows] == [DAY, DAY, "2026-09-02"]
+    by_bucket = {(day, record.bearing_bucket): record for day, record in rows}
+    assert by_bucket[(DAY, 8)].max_range_nm == 180.0
+    assert by_bucket[(DAY, 9)].max_range_nm == 40.0
+    assert by_bucket[("2026-09-02", 8)].max_range_nm == 90.0
+
+
+async def test_ranges_all_is_empty_before_anything_is_recorded(
+    repository: MetricsRepository,
+) -> None:
+    assert await repository.ranges_all() == ()
 
 
 # ----------------------------------------------------------------- lifetime
@@ -278,6 +335,27 @@ async def test_writing_no_summaries_at_all_is_a_no_op(
     await repository.write_summaries({}, {}, at_ms=1)
 
     assert await repository.daily_all() == {}
+
+
+async def test_daily_between_is_bounded_like_hourly_between(
+    repository: MetricsRepository,
+) -> None:
+    """Slice 034's time-series endpoint reads this for ``resolution=daily`` —
+    the daily counterpart of :meth:`~MetricsRepository.hourly_between`."""
+    await repository.write_summaries(
+        {},
+        {
+            "2026-08-30": MetricSummary(sample_count=1, messages_total=10),
+            "2026-08-31": MetricSummary(sample_count=1, messages_total=20),
+            "2026-09-01": MetricSummary(sample_count=1, messages_total=30),
+        },
+        at_ms=1,
+    )
+
+    stored = await repository.daily_between("2026-08-31", "2026-09-01")
+
+    assert set(stored) == {"2026-08-31"}
+    assert stored["2026-08-31"].messages_total == 20
 
 
 # ------------------------------------------------------------------ pruning

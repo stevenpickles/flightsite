@@ -428,6 +428,169 @@ class ReceiverInfo(_Model):
     t0: IsoTimestamp | None = None
 
 
+#: ``docs/API.md`` §3.8's receiver-health summary. Deliberately coarse — full
+#: diagnostics (decoder connection detail, error ring buffers) is slice 042's
+#: scope, out of this slice's per the roadmap; this is only what the SPEC §61
+#: scorecard needs to render one health cue.
+ReceiverHealthLiteral = Literal["ok", "no_stats", "unknown", "demo"]
+
+
+class ReceiverScorecard(_Model):
+    """``GET /api/v1/receiver/scorecard`` — SPEC §61."""
+
+    current_visible: int
+    current_positioned: int
+    #: The most recent raw sample's own rate — not a windowed average.
+    messages_per_sec: float | None = None
+    positions_per_sec: float | None = None
+    max_range_today_nm: float | None = None
+    max_range_ever_nm: float | None = None
+    unique_aircraft_today: int
+    unique_aircraft_since_t0: int
+    #: The decoder's own reported uptime, ``null`` when it reports no
+    #: statistics (SPEC §60).
+    decoder_uptime_s: float | None = None
+    flightsite_uptime_s: float
+    health: ReceiverHealthLiteral
+
+
+#: SPEC §62 v1 chart catalog for ``GET /api/v1/receiver/metrics``, minus the
+#: two endpoints with their own shape (range-by-bearing, signal-distribution).
+ReceiverSeriesMetric = Literal[
+    "messages_per_sec",
+    "positions_per_sec",
+    "aircraft_count",
+    "max_range_nm",
+    "messages_total",
+    "positions_total",
+    "unique_aircraft",
+]
+
+#: ``docs/DATA_MODEL.md`` §6's three storage tiers (ADR-0009).
+ReceiverSeriesResolution = Literal["high", "hourly", "daily"]
+
+
+class ReceiverSeriesPoint(_Model):
+    """One point of a receiver time-series chart."""
+
+    t: IsoTimestamp
+    value: float | None = None
+
+
+class ReceiverMetricSeries(_Model):
+    """``GET /api/v1/receiver/metrics`` — one SPEC §62 chart's data."""
+
+    metric: ReceiverSeriesMetric
+    #: The resolution actually used — always ``"daily"`` for
+    #: ``metric="unique_aircraft"`` regardless of what was requested.
+    resolution: ReceiverSeriesResolution
+    points: list[ReceiverSeriesPoint] = Field(default_factory=list)
+
+
+class ReceiverBearingSector(_Model):
+    """One 5° sector of the range-by-bearing polar plot (§6.3)."""
+
+    #: The sector's midpoint, degrees true — ``0`` is North, increasing
+    #: clockwise, matching ``docs/DATA_MODEL.md`` §6.3's bucket convention.
+    bearing_deg: float
+    max_range_nm: float | None = None
+    at: IsoTimestamp | None = None
+    icao: str | None = None
+
+
+class ReceiverRangeByBearing(_Model):
+    """``GET /api/v1/receiver/range-by-bearing`` — SPEC §62's polar plot.
+
+    Always 72 sectors in each of ``today`` and ``ever``, in bucket order —
+    :data:`~flightsite.receiver_metrics.model.BEARING_BUCKETS` many, covering
+    the full compass regardless of how much of it the receiver has actually
+    heard from.
+    """
+
+    sector_width_deg: float
+    today: list[ReceiverBearingSector]
+    ever: list[ReceiverBearingSector]
+
+
+class ReceiverSignalBucket(_Model):
+    """One bar of the signal-strength distribution."""
+
+    min_db: float
+    max_db: float
+    count: int
+
+
+class ReceiverSignalDistribution(_Model):
+    """``GET /api/v1/receiver/signal-distribution`` — SPEC §62.
+
+    Built from per-sighting ``rssi_avg_db`` (slice 052), not raw receiver
+    metric samples — see ``flightsite.receiver_metrics``'s module docstring.
+    """
+
+    #: The requested window bounds, echoed back; ``null`` means unbounded on
+    #: that side (§2.7) — the default when a client omits ``from``/``to``.
+    from_ts: IsoTimestamp | None = None
+    to_ts: IsoTimestamp | None = None
+    bucket_width_db: float
+    buckets: list[ReceiverSignalBucket] = Field(default_factory=list)
+    sample_count: int
+    min_db: float | None = None
+    max_db: float | None = None
+    avg_db: float | None = None
+
+
+class ReceiverMaxRangeRecord(_Model):
+    """The furthest detection ever — one entry of SPEC §63's lifetime block."""
+
+    nm: float
+    at: IsoTimestamp
+    bearing_deg: float
+    icao: str | None = None
+
+
+class ReceiverBusiestDay(_Model):
+    """The receiver-local day with the greatest message total — SPEC §63."""
+
+    day: str
+    message_count: int
+
+
+class ReceiverFrequentAircraft(_Model):
+    """The most-sighted airframe — one entry of SPEC §63's lifetime block."""
+
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    registration: str | None = None
+    sighting_count: int
+
+
+class ReceiverCommonRecord(_Model):
+    """One "most common X" record — SPEC §63's type/model/operator entries."""
+
+    value: str
+    aircraft_count: int
+
+
+class ReceiverLifetimeStats(_Model):
+    """``GET /api/v1/receiver/lifetime`` — SPEC §63, since T0 where possible."""
+
+    #: T0 (SPEC §16); ``null`` on an install that has never persisted an
+    #: observation.
+    since: IsoTimestamp | None = None
+    unique_aircraft: int
+    total_sightings: int
+    total_positions: int | None = None
+    total_messages: int | None = None
+    max_range: ReceiverMaxRangeRecord | None = None
+    peak_message_rate_per_sec: float | None = None
+    peak_position_rate_per_sec: float | None = None
+    max_simultaneous_aircraft: int | None = None
+    busiest_day: ReceiverBusiestDay | None = None
+    most_frequent_aircraft: ReceiverFrequentAircraft | None = None
+    common_type: ReceiverCommonRecord | None = None
+    common_model: ReceiverCommonRecord | None = None
+    common_operator: ReceiverCommonRecord | None = None
+
+
 #: The overlay's size-class vocabulary — mirrors
 #: :data:`flightsite.airports.overlay.AirportSizeClass` exactly; duplicated
 #: rather than imported so this module (the published-schema boundary) never
@@ -513,7 +676,22 @@ __all__ = [
     "LifetimeRecord",
     "NearestAirportView",
     "PositionSourceLiteral",
+    "ReceiverBearingSector",
+    "ReceiverBusiestDay",
+    "ReceiverCommonRecord",
+    "ReceiverFrequentAircraft",
+    "ReceiverHealthLiteral",
     "ReceiverInfo",
+    "ReceiverLifetimeStats",
+    "ReceiverMaxRangeRecord",
+    "ReceiverMetricSeries",
+    "ReceiverRangeByBearing",
+    "ReceiverScorecard",
+    "ReceiverSeriesMetric",
+    "ReceiverSeriesPoint",
+    "ReceiverSeriesResolution",
+    "ReceiverSignalBucket",
+    "ReceiverSignalDistribution",
     "ReceptionStats",
     "RouteView",
     "SightingDetail",
