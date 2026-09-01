@@ -1,9 +1,10 @@
 import { AttributionControl, Map as MapLibreGlMap } from "maplibre-gl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import type { BasemapDefinition } from "@/features/map/basemaps";
+import { MapInstanceContext } from "@/features/map/MapInstanceContext";
 import { ensureOverlayLayers } from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,10 @@ export interface MapLibreMapProps {
    * ref internally so passing a new function each render never tears
    * down and recreates the map (see the mount effect's `[]` deps). */
   onMapClick?: (position: { lat: number; lon: number }) => void;
+  /** Overlays that attach to the map imperatively (the aircraft layer) and
+   * chrome positioned over it. Rendered inside the map's relative wrapper
+   * and given the instance through `MapInstanceContext`. */
+  children?: ReactNode;
 }
 
 /** Zoom level that keeps a receiver's full 250 nm default display radius
@@ -48,10 +53,16 @@ export function MapLibreMap({
   basemap,
   className,
   onMapClick,
+  children,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreGlMap | null>(null);
   const onMapClickRef = useRef(onMapClick);
+  const [instance, setInstance] = useState<MapLibreGlMap | null>(null);
+  // Bumped on every completed style load so overlays re-attach after a
+  // basemap switch discards the style's custom layers — see
+  // MapInstanceContext.
+  const [styleEpoch, setStyleEpoch] = useState(0);
   // The map is already constructed with `basemap.style` (see the mount
   // effect below), so the basemap-switch effect — which also runs once on
   // mount, like every effect — must skip that first run or it would
@@ -85,12 +96,14 @@ export function MapLibreMap({
       attributionControl: false,
     });
     mapRef.current = map;
+    setInstance(map);
 
     map.addControl(new AttributionControl({ compact: false }), "bottom-right");
 
     map.on("load", () => {
       ensureOverlayLayers(map, config);
       setTilesUnavailable(false);
+      setStyleEpoch((epoch) => epoch + 1);
     });
 
     map.on("error", () => {
@@ -104,6 +117,7 @@ export function MapLibreMap({
     return () => {
       map.remove();
       mapRef.current = null;
+      setInstance(null);
     };
     // Deliberately created once — see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +138,7 @@ export function MapLibreMap({
     const handleStyleLoad = () => {
       ensureOverlayLayers(map, config);
       setTilesUnavailable(false);
+      setStyleEpoch((epoch) => epoch + 1);
     };
     map.once("style.load", handleStyleLoad);
     return () => {
@@ -146,23 +161,31 @@ export function MapLibreMap({
     ensureOverlayLayers(map, config);
   }, [config]);
 
+  const mapInstance = useMemo(
+    () => ({ map: instance, styleEpoch }),
+    [instance, styleEpoch],
+  );
+
   return (
-    <div className={cn("relative", className)}>
-      <div
-        ref={containerRef}
-        className="h-full w-full"
-        data-testid="maplibre-container"
-        role="application"
-        aria-label={`Live map centered on ${config.receiver.label}`}
-      />
-      {tilesUnavailable && (
+    <MapInstanceContext.Provider value={mapInstance}>
+      <div className={cn("relative", className)}>
         <div
-          role="status"
-          className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm"
-        >
-          Basemap unavailable — rings and receiver position still shown.
-        </div>
-      )}
-    </div>
+          ref={containerRef}
+          className="h-full w-full"
+          data-testid="maplibre-container"
+          role="application"
+          aria-label={`Live map centered on ${config.receiver.label}`}
+        />
+        {tilesUnavailable && (
+          <div
+            role="status"
+            className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm"
+          >
+            Basemap unavailable — rings and receiver position still shown.
+          </div>
+        )}
+        {children}
+      </div>
+    </MapInstanceContext.Provider>
   );
 }

@@ -1,0 +1,273 @@
+import { describe, expect, it } from "vitest";
+
+import type { AircraftFrameInput } from "@/features/map/aircraft/geojson";
+import {
+  buildAircraftFeatureCollection,
+  buildTrackFeatureCollection,
+  STALE_OPACITY,
+} from "@/features/map/aircraft/geojson";
+import { iconImageId } from "@/features/map/aircraft/icons/silhouettes";
+import type {
+  DepartingRecord,
+  LiveAircraftRecord,
+} from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { LiveAircraft } from "@/lib/api/live";
+import { makeAircraft } from "@/test/liveAircraftFixtures";
+
+const NOW = 1_800_000_000_000;
+
+function records(
+  ...entries: Partial<LiveAircraft>[]
+): Record<string, LiveAircraftRecord> {
+  const map: Record<string, LiveAircraftRecord> = {};
+  for (const entry of entries) {
+    const aircraft = makeAircraft(entry);
+    map[aircraft.icao] = { aircraft, receivedAt: NOW };
+  }
+  return map;
+}
+
+function input(
+  overrides: Partial<AircraftFrameInput> = {},
+): AircraftFrameInput {
+  return {
+    aircraft: {},
+    departing: {},
+    selectedIcao: null,
+    now: NOW,
+    ...overrides,
+  };
+}
+
+function propertiesByIcao(
+  collection: ReturnType<typeof buildAircraftFeatureCollection>,
+) {
+  return Object.fromEntries(
+    collection.features.map((feature) => [
+      feature.properties.icao,
+      feature.properties,
+    ]),
+  );
+}
+
+describe("buildAircraftFeatureCollection", () => {
+  it("emits a point per positioned aircraft at lon/lat order", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({
+          icao: "aaaaaa",
+          position: { lat: 47.6, lon: -122.3 },
+          ground_speed_kt: null,
+        }),
+      }),
+    );
+    expect(collection.type).toBe("FeatureCollection");
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.geometry.coordinates).toEqual([
+      -122.3, 47.6,
+    ]);
+  });
+
+  it("omits non-positioned aircraft", () => {
+    // Mode S only: part of the live picture (SPEC §20), not of the map layer.
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({
+          icao: "aaaaaa",
+          position: null,
+          position_source: "none",
+        }),
+      }),
+    );
+    expect(collection.features).toHaveLength(0);
+  });
+
+  it("publishes the reported track for icon-rotate", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft: records({ icao: "aaaaaa", track_deg: 217 }) }),
+    );
+    expect(collection.features[0]?.properties.track).toBe(217);
+  });
+
+  it("draws an aircraft with no reported track unrotated", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft: records({ icao: "aaaaaa", track_deg: null }) }),
+    );
+    expect(collection.features[0]?.properties.track).toBe(0);
+  });
+
+  it("resolves the icon through the hierarchy", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records(
+          { icao: "aaaaaa", on_ground: false },
+          { icao: "bbbbbb", on_ground: true, ground_speed_kt: 8 },
+        ),
+      }),
+    );
+    const properties = propertiesByIcao(collection);
+    expect(properties.aaaaaa?.icon).toBe(iconImageId("airliner"));
+    expect(properties.bbbbbb?.icon).toBe(iconImageId("ground"));
+    expect(properties.bbbbbb?.onGround).toBe(true);
+  });
+
+  it("fades stale aircraft instead of hiding them", () => {
+    // SPEC §36: stale aircraft visually fade.
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft: records({ icao: "aaaaaa", state: "stale" }) }),
+    );
+    expect(collection.features[0]?.properties.stale).toBe(true);
+    expect(collection.features[0]?.properties.opacity).toBe(STALE_OPACITY);
+  });
+
+  it("flags MLAT positions so the dashed ring layer can filter on them", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records(
+          { icao: "aaaaaa", position_source: "mlat" },
+          { icao: "bbbbbb", position_source: "adsb" },
+        ),
+      }),
+    );
+    const properties = propertiesByIcao(collection);
+    expect(properties.aaaaaa?.mlat).toBe(true);
+    expect(properties.bbbbbb?.mlat).toBe(false);
+  });
+
+  it("marks exactly the selected aircraft", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({ icao: "aaaaaa" }, { icao: "bbbbbb" }),
+        selectedIcao: "bbbbbb",
+      }),
+    );
+    const properties = propertiesByIcao(collection);
+    expect(properties.aaaaaa?.selected).toBe(false);
+    expect(properties.bbbbbb?.selected).toBe(true);
+  });
+
+  it("carries the callsign through for later label slices", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft: records({ icao: "aaaaaa", callsign: "BAW123" }) }),
+    );
+    expect(collection.features[0]?.properties.callsign).toBe("BAW123");
+  });
+
+  it("interpolates a moving aircraft forward from its last report", () => {
+    const aircraft = records({
+      icao: "aaaaaa",
+      position: { lat: 0, lon: 0 },
+      track_deg: 0,
+      ground_speed_kt: 360,
+    });
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft, now: NOW + 1000 }),
+    );
+    const [lon, lat] = collection.features[0]?.geometry.coordinates ?? [];
+    expect(lon).toBeCloseTo(0, 9);
+    expect(lat).toBeCloseTo(0.1 / 60, 9);
+  });
+
+  it("does not interpolate a stale aircraft", () => {
+    const aircraft = records({
+      icao: "aaaaaa",
+      state: "stale",
+      position: { lat: 0, lon: 0 },
+      track_deg: 0,
+      ground_speed_kt: 360,
+    });
+    const collection = buildAircraftFeatureCollection(
+      input({ aircraft, now: NOW + 3000 }),
+    );
+    expect(collection.features[0]?.geometry.coordinates).toEqual([0, 0]);
+  });
+
+  describe("removal fade", () => {
+    const departing = (removedAt: number): Record<string, DepartingRecord> => ({
+      aaaaaa: {
+        aircraft: makeAircraft({
+          icao: "aaaaaa",
+          position: { lat: 1, lon: 2 },
+        }),
+        removedAt,
+      },
+    });
+
+    it("keeps a removed aircraft on the map while it fades", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          departing: departing(NOW - REMOVAL_FADE_MS / 2),
+        }),
+      );
+      expect(collection.features).toHaveLength(1);
+      expect(collection.features[0]?.properties.opacity).toBeCloseTo(
+        STALE_OPACITY / 2,
+        6,
+      );
+      expect(collection.features[0]?.properties.stale).toBe(true);
+    });
+
+    it("drops it once the fade has finished", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({ departing: departing(NOW - REMOVAL_FADE_MS) }),
+      );
+      expect(collection.features).toHaveLength(0);
+    });
+
+    it("never moves a removed aircraft", () => {
+      // The fixture reports 450 kt on a 090 track, so an interpolated feature
+      // would have moved east. The server has said it is gone; projecting it
+      // would be invention.
+      const collection = buildAircraftFeatureCollection(
+        input({ departing: departing(NOW - 400) }),
+      );
+      expect(collection.features[0]?.geometry.coordinates).toEqual([2, 1]);
+    });
+
+    it("skips a removed aircraft that never had a position", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          departing: {
+            aaaaaa: {
+              aircraft: makeAircraft({ icao: "aaaaaa", position: null }),
+              removedAt: NOW,
+            },
+          },
+        }),
+      );
+      expect(collection.features).toHaveLength(0);
+    });
+  });
+});
+
+describe("buildTrackFeatureCollection", () => {
+  it("is empty with no selection", () => {
+    expect(buildTrackFeatureCollection(null).features).toHaveLength(0);
+  });
+
+  it("is empty until two positions have been observed", () => {
+    expect(
+      buildTrackFeatureCollection({
+        icao: "aaaaaa",
+        points: [{ lat: 1, lon: 2, at: NOW }],
+      }).features,
+    ).toHaveLength(0);
+  });
+
+  it("emits one LineString in observation order", () => {
+    const collection = buildTrackFeatureCollection({
+      icao: "aaaaaa",
+      points: [
+        { lat: 1, lon: 2, at: NOW },
+        { lat: 3, lon: 4, at: NOW + 1000 },
+      ],
+    });
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.geometry.coordinates).toEqual([
+      [2, 1],
+      [4, 3],
+    ]);
+    expect(collection.features[0]?.properties.icao).toBe("aaaaaa");
+  });
+});

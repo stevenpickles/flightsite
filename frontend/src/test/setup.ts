@@ -4,6 +4,7 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 import { AttributionControlMock, MapLibreMockMap } from "@/test/maplibreGlMock";
+import { FakeWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 
 /**
  * MapLibre GL JS requires a real WebGL context, which jsdom does not
@@ -61,6 +62,51 @@ Object.defineProperty(window, "localStorage", {
   configurable: true,
 });
 
+/**
+ * jsdom's `WebSocket` is real and would open a network connection as soon as
+ * anything renders the Live Map, so the live socket gets the same treatment as
+ * MapLibre: one scripted stand-in, installed once, globally. Tests that care
+ * about the protocol drive it through `@/test/webSocketMock`.
+ */
+Object.defineProperty(globalThis, "WebSocket", {
+  value: FakeWebSocket,
+  writable: true,
+  configurable: true,
+});
+
+/**
+ * jsdom parses `<img>` but never decodes one — no `load` and no `error` fires,
+ * so a promise awaiting an image would simply hang. The aircraft icons are SVG
+ * data URIs built in-process, with nothing to fetch and nothing that can fail,
+ * so a stub that reports a successful decode on the next microtask is a
+ * faithful stand-in for the only outcome a browser can produce here.
+ */
+class StubImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  width = 64;
+  height = 64;
+  private value = "";
+
+  get src(): string {
+    return this.value;
+  }
+
+  set src(next: string) {
+    this.value = next;
+    queueMicrotask(() => {
+      this.onload?.();
+    });
+  }
+}
+
+Object.defineProperty(globalThis, "Image", {
+  value: StubImage,
+  writable: true,
+  configurable: true,
+});
+
 afterEach(() => {
   cleanup();
+  resetWebSocketMock();
 });
