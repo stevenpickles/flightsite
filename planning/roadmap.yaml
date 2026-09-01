@@ -982,7 +982,7 @@ slices:
     title: "Watchlists"
     phase: 6
     branch: "037-watchlists"
-    status: planned
+    status: merged
     depends_on: ["009", "024"]
     objective: "User-defined watchlists with CRUD UI and live matching."
     scope:

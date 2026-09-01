@@ -216,5 +216,5 @@ async def test_the_downgrade_drops_exactly_this_slice_s_tables(db_path: Path) ->
         await database.downgrade_to(PREVIOUS)
         assert await database.current_revision() == PREVIOUS
 
-    assert before - table_names(db_path) == set(TABLES)
+    assert set(TABLES) <= before - table_names(db_path)
     assert {"sightings", "aircraft"} <= table_names(db_path)

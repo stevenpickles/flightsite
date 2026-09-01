@@ -157,6 +157,9 @@ class AircraftView(_Model):
     #: :class:`NearestAirportView`.
     nearest_airport: NearestAirportView | None = None
     interesting: InterestingMatch | None = None
+    #: Watchlist names this aircraft currently matches (SPEC §42, slice 037).
+    #: Always present; ``[]`` when nothing matches — never a missing key.
+    watchlists: list[str] = Field(default_factory=list)
 
     #: §2.6. Keys name fields; values are the canonical provenance vocabulary.
     #: A field with no entry is decoder-direct.

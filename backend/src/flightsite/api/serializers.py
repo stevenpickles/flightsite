@@ -38,6 +38,14 @@ aircraft is low near a field. Everything inside it is attributed
 ``heuristic`` — SPEC §41 requires the inference to be clearly labeled, and
 §2.6's own example names exactly this provenance key.
 
+Slice 037 adds ``watchlists``: always a list, ``[]`` when nothing matches,
+never absent — the same always-present, empty-when-none shape §2.7's null
+pattern takes for a list rather than a scalar. ``docs/API.md`` §5 notes an
+``interesting``/``watchlist`` linkage arriving with slice 038's alert engine;
+this field is additive on purpose so that slice can read watchlist membership
+(:meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches`) as one of
+several conditions without this payload's shape changing under it.
+
 The metadata is passed in rather than looked up here. This function is called
 once per aircraft per WebSocket frame and must not touch SQLite
 (``docs/ARCHITECTURE.md`` §3.1); the caller supplies an
@@ -256,6 +264,7 @@ def aircraft_payload(
     metadata: AircraftMetadataView | None = None,
     route: SightingRoute | None = None,
     airport: AirportContext | None = None,
+    watchlists: Sequence[str] = (),
 ) -> dict[str, Any]:
     """One live aircraft as the ``docs/API.md`` §3.3 object.
 
@@ -285,6 +294,15 @@ def aircraft_payload(
             state for most of the sky: no airport dataset imported, the
             aircraft is at cruise, or it is nowhere near a field. It serializes
             as ``nearest_airport: null``, never as a missing key.
+        watchlists: the names of every watchlist (SPEC §42, roadmap slice 037)
+            this aircraft currently matches, from
+            :meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches` —
+            a pure in-memory lookup, so this never costs the aircraft path a
+            database read. Always present and ``[]`` when there is no match,
+            per §2.7's null-stable pattern extended to a list field: an empty
+            list, not a missing key, is "no watchlist matches this", and a
+            client never has to tell that apart from "watchlists is not a
+            thing this build carries".
     """
     resolved = None if metadata is None else metadata.metadata
     return {
@@ -317,6 +335,7 @@ def aircraft_payload(
         "route": _route(route),
         "nearest_airport": _nearest_airport(airport),
         "interesting": None,
+        "watchlists": list(watchlists),
         "provenance": _provenance(record, metadata, route, airport),
     }
 

@@ -124,6 +124,19 @@ def test_metadata_fields_are_null_when_the_cache_has_not_resolved_the_aircraft()
     assert payload["interesting"] is None
 
 
+def test_watchlists_defaults_to_an_empty_list_not_a_missing_key() -> None:
+    """§2.7's null-stable pattern extended to a list field (slice 037)."""
+    payload = aircraft_payload(positioned_record())
+
+    assert payload["watchlists"] == []
+
+
+def test_watchlists_carries_whatever_the_matcher_reports() -> None:
+    payload = aircraft_payload(positioned_record(), watchlists=("Police Helicopters", "Rare Types"))
+
+    assert payload["watchlists"] == ["Police Helicopters", "Rare Types"]
+
+
 def test_decoder_values_are_passed_through_unrounded() -> None:
     record = positioned_record(altitude_ft=24_975.0, ground_speed_kt=442.0, rssi_db=-12.1)
     payload = aircraft_payload(record)

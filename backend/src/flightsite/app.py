@@ -43,6 +43,7 @@ from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 from flightsite.sightings import PersistenceWorker
+from flightsite.watchlists import WatchlistService
 
 logger = structlog.get_logger(__name__)
 
@@ -274,6 +275,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     airports: AirportContextService = app.state.airports
     receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
     analytics: AnalyticsService = app.state.analytics
+    watchlists: WatchlistService = app.state.watchlists
     activity: ActivityService = app.state.activity
     maintenance: MaintenanceService = app.state.maintenance
 
@@ -290,6 +292,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # only thing degraded, which is exactly what the readiness flag says.
     if database_ready:
         await persistence.start()
+        # Same condition, same reason: the watchlist match index is loaded
+        # from tables the failed migration may not have created. It starts
+        # before the metadata cache, deliberately: the cache's own start()
+        # synchronously visits the current live set and notifies the matcher
+        # for each one, so the matcher needs real entries loaded before that
+        # happens — otherwise the first population round would compute every
+        # aircraft's matches against an empty index. Skipping this leaves
+        # `watchlists: []` on every aircraft, which is the same honest empty
+        # answer an install with no watchlists configured shows.
+        await watchlists.start()
         # Same condition, same reason: the metadata cache reads the schema the
         # migration just failed to create. Skipping it leaves every live
         # aircraft's metadata `null` — the documented unknown state — while
@@ -449,6 +461,14 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     request that started it; shutdown cancels one still in flight before the
     cache and the writer stop underneath it.
 
+    User-defined watchlists (SPEC §42) are constructed as
+    ``app.state.watchlists``. Startup loads its in-memory match index from the
+    database before the metadata cache's own startup visits the live set, and
+    every CRUD mutation (``docs/API.md`` §5's ``/api/internal/watchlists*``)
+    rebuilds that index before answering — so "matching updates without
+    restart" is true of the surface, not merely eventually consistent with
+    it. It holds no background task of its own and needs no shutdown step.
+
     Nearest-airport context (SPEC §41) is constructed as ``app.state.airports``
     — a fourth consumer of the live event stream. Startup loads the whole
     ``airports`` table into an in-memory grid index so no live request ever
@@ -551,6 +571,13 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         persistence=app.state.persistence,
         repository=airport_repository,
     )
+    # Watchlists (SPEC §42, roadmap slice 037): CRUD plus the in-memory match
+    # index. Constructed before the metadata service because that service's
+    # cache takes the index's `on_resolved` observer — see the metadata
+    # cache's own docstring ("Observing resolved views") for why matching by
+    # registration/type/operator/category piggy-backs on the cache's
+    # population pipeline instead of a second live-event subscription.
+    app.state.watchlists = WatchlistService(database=app.state.database)
     app.state.metadata = MetadataService(
         database=app.state.database,
         live=app.state.live,
@@ -560,6 +587,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         # over an object, so registering them here — before the services they
         # reach for even exist — is safe and keeps the wiring in one place.
         listeners=(_rebuild_airport_index(app), _record_activity(app)),
+        on_resolved=app.state.watchlists.matcher.on_resolved,
     )
     # Optional route enrichment (SPEC §28). `build_provider` returns None
     # unless the flag is set *and* a key is present, and a service with no

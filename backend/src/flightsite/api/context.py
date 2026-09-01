@@ -84,6 +84,8 @@ from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.receiver_metrics import MetricsRepository, ReceiverMetricsService
 from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
 from flightsite.sightings import PersistenceWorker
+from flightsite.watchlists import WatchlistService
+from flightsite.watchlists.matcher import WatchlistMatcher
 
 logger = structlog.get_logger(__name__)
 
@@ -138,6 +140,17 @@ class LiveApiContext:
         """
         service: MetadataService = self._app.state.metadata
         return service.cache
+
+    @property
+    def watchlist_matches(self) -> WatchlistMatcher:
+        """The in-memory watchlist match index (SPEC §42, roadmap slice 037).
+
+        Read on the aircraft path for the same reason the metadata *cache*
+        is: :meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches`
+        is a dict lookup with no ``await`` and no session.
+        """
+        service: WatchlistService = self._app.state.watchlists
+        return service.matcher
 
     @property
     def airports(self) -> AirportContextService:
@@ -200,6 +213,7 @@ class LiveApiContext:
         worker: PersistenceWorker = self._app.state.persistence
         cache = self.metadata
         airports = self.airports
+        watchlists = self.watchlist_matches
         records = sorted(self.live.snapshot(), key=lambda record: record.icao)
         return [
             aircraft_payload(
@@ -208,6 +222,7 @@ class LiveApiContext:
                 metadata=cache.get(record.icao),
                 route=worker.route_for(record.icao),
                 airport=airports.context_for(record.icao),
+                watchlists=watchlists.matches(record.icao),
             )
             for record in records
             if _wanted(record, positioned)
@@ -228,6 +243,7 @@ class LiveApiContext:
         live = self.live
         cache = self.metadata
         airports = self.airports
+        watchlists = self.watchlist_matches
         payloads: list[dict[str, Any]] = []
         for icao in icaos:
             record = live.get(icao)
@@ -239,6 +255,7 @@ class LiveApiContext:
                         metadata=cache.get(icao),
                         route=worker.route_for(icao),
                         airport=airports.context_for(icao),
+                        watchlists=watchlists.matches(icao),
                     )
                 )
         return payloads
