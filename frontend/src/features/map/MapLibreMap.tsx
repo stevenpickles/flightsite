@@ -157,7 +157,10 @@ export function MapLibreMap({
       // No WebGL context available: MapLibre throws (or half-constructs)
       // rather than rendering. Crashing here previously took down the whole
       // route into the router's error page — the degraded-mode requirement
-      // covers the renderer itself, not just the tiles.
+      // covers the renderer itself, not just the tiles. This one-shot branch
+      // renders the static notice and schedules nothing else, so the sync
+      // set cannot cascade.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMapUnsupported(true);
       return undefined;
     }

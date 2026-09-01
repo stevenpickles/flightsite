@@ -219,28 +219,22 @@ export function pickStableAircraft(
 }
 
 /**
- * True when the page's MapLibre instance came up — i.e. the browser has a
- * working WebGL context. On WebGL-less browsers (headless CI Firefox) the
- * app degrades to its "map unavailable" notice instead of a canvas, and
- * map-interaction tests skip honestly rather than failing on a map that
- * can never render (the degradation itself is unit-tested).
+ * Capability probe: can this browser create a WebGL context at all?
+ *
+ * Headless CI Firefox has no GL — MapLibre half-constructs and its render
+ * pipeline never comes up, so map-paint/interaction tests would fail on a
+ * map that can never work there (the app's own degradation for that case is
+ * unit-tested). A capability probe, rather than an app-behavior signal,
+ * keeps the guard from masking real regressions: on any browser where this
+ * returns true, the full assertions run and genuinely fail on breakage.
  */
-export async function mapIsAvailable(page: Page): Promise<boolean> {
-  const result = await Promise.race([
-    page
-      .waitForFunction(
-        () =>
-          "__flightsiteMap" in (window as unknown as Record<string, unknown>),
-        undefined,
-        { timeout: 15_000 },
-      )
-      .then(() => true)
-      .catch(() => false),
-    page
-      .getByTestId("map-unsupported")
-      .waitFor({ state: "visible", timeout: 15_000 })
-      .then(() => false)
-      .catch(() => false),
-  ]);
-  return result;
+export async function browserHasWebGl(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    try {
+      const canvas = document.createElement("canvas");
+      return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl"));
+    } catch {
+      return false;
+    }
+  });
 }

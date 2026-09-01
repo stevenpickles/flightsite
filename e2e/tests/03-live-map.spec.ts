@@ -9,7 +9,7 @@
 
 import {
   fetchPositionedAircraft,
-  mapIsAvailable,
+  browserHasWebGl,
   waitForLiveAircraft,
 } from "./support/liveMap";
 import { expect, test } from "./support/fixtures";
@@ -33,7 +33,7 @@ test.describe("demo-mode live map", () => {
   test("the aircraft layer paints onto the map canvas", async ({ page }) => {
     await page.goto("/");
     test.skip(
-      !(await mapIsAvailable(page)),
+      !(await browserHasWebGl(page)),
       "browser has no WebGL — the app shows its map-unavailable notice instead (unit-tested)",
     );
     await waitForLiveAircraft(page);
