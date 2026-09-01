@@ -34,7 +34,14 @@ export function AnalyticsCard({
       <header>
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         {window !== undefined && (
-          <p className="text-xs text-muted-foreground">
+          // The echoed window is the one place the page states, in the user's
+          // own view, which range it is actually showing — so it is what the
+          // E2E preset flow asserts changed, rather than trusting that a
+          // clicked button re-queried anything.
+          <p
+            data-testid="analytics-card-window"
+            className="text-xs text-muted-foreground"
+          >
             {formatWindowLabel(window)}
           </p>
         )}
