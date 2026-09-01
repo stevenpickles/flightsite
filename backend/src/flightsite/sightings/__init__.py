@@ -75,6 +75,9 @@ from flightsite.sightings.worker import (
     CycleResult,
     EpochClock,
     PersistenceWorker,
+    SightingLifecycle,
+    SightingLifecycleListener,
+    SightingRef,
 )
 
 __all__ = [
@@ -102,6 +105,9 @@ __all__ = [
     "ShutdownRecovery",
     "SightingEventType",
     "SightingIds",
+    "SightingLifecycle",
+    "SightingLifecycleListener",
+    "SightingRef",
     "SightingRepository",
     "SightingRoute",
     "TrackSample",

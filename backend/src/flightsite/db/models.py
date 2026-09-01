@@ -16,7 +16,9 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 :class:`Airport` in slice 027, and the receiver-metric group
 (:class:`ReceiverMetricRaw`, :class:`ReceiverMetricHourly`,
 :class:`ReceiverMetricDaily`, :class:`RangeByBearingDaily`,
-:class:`LifetimeStat`) in slice 033.
+:class:`LifetimeStat`) in slice 033, and the analytics rollup group
+(:class:`DailyStats`, :class:`DailyTypeStats`, :class:`DailyOperatorStats`,
+:class:`TypeStats`) in slice 031.
 """
 
 from __future__ import annotations
@@ -928,3 +930,137 @@ class LifetimeStat(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"LifetimeStat(key={self.key!r}, value_num={self.value_num!r})"
+
+
+class DailyStats(Base):
+    """One receiver-local calendar day of analytics rollup (§6.5, slice 031).
+
+    The row a chart reads instead of aggregating a year of ``sightings``. Every
+    figure on it is a **total function of the sightings that started that local
+    day** (``docs/DATA_MODEL.md`` §10 fixes the bucket to the receiver-local
+    date), so the row can be rebuilt from ground truth at any time and the
+    rebuild always produces the same values — which is what makes the
+    incremental maintenance in :mod:`flightsite.analytics.service` and the
+    repair job in :mod:`flightsite.analytics.backfill` two callers of one
+    fold rather than two implementations that have to be kept in step.
+
+    ``busiest_hour`` is deliberately ``NULL`` while the day is still in
+    progress: §6.5 makes this column the finalized **closed-day** value, and
+    the in-progress day's busiest hour is served from slice 033's
+    ``receiver_metrics_hourly`` instead. A number here always means "this day
+    is over and this was its busiest local hour".
+
+    ``WITHOUT ROWID`` on the ``day`` text key: every read is either a point
+    lookup or an ordered range over that key (a preset's window is a
+    contiguous run of days), so the clustered b-tree is the access path.
+    """
+
+    __tablename__ = "daily_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    #: Receiver-local ``YYYY-MM-DD`` (``docs/DATA_MODEL.md`` §10).
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    unique_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    #: Aircraft whose first-ever sighting fell on this day.
+    new_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    sightings: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    #: Sightings carrying a non-null ``max_alert_severity`` (slice 038 fills it).
+    interesting: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    military: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    government: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    law_enforcement: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    max_range_nm: Mapped[float | None] = mapped_column(REAL)
+    #: 0-23 receiver-local; ``NULL`` until the day has closed (see above).
+    busiest_hour: Mapped[int | None] = mapped_column(Integer)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyStats(day={self.day!r}, sightings={self.sightings!r})"
+
+
+class DailyTypeStats(Base):
+    """Per-day counts for one ICAO type designator (§6.5, slice 031).
+
+    Written only for sightings whose airframe has a *resolved* type
+    (``aircraft_metadata_resolved.type_code``): an aircraft nobody has metadata
+    for contributes to :class:`DailyStats` and to nothing here, which is
+    ``docs/API.md`` §2.7's rule that unknown is unknown rather than a bucket.
+    """
+
+    __tablename__ = "daily_type_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    type_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    sightings: Mapped[int] = mapped_column(Integer, nullable=False)
+    unique_aircraft: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyTypeStats(day={self.day!r}, type_code={self.type_code!r})"
+
+
+class DailyOperatorStats(Base):
+    """Per-day counts for one curated operator group (§6.5, slice 031).
+
+    Keyed by the *group* rather than by the exact operator string: SPEC §38
+    keeps the exact string on the metadata row and the grouping beside it, and
+    "most common operators" is a question about the group. An airframe whose
+    operator no group claims contributes nowhere here, for the same reason
+    :class:`DailyTypeStats` skips an unresolved type.
+    """
+
+    __tablename__ = "daily_operator_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    operator_group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sightings: Mapped[int] = mapped_column(Integer, nullable=False)
+    unique_aircraft: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"DailyOperatorStats(day={self.day!r}, group={self.operator_group_id!r})"
+
+
+class TypeStats(Base):
+    """Since-T0 totals for one ICAO type designator (§6.5, slice 031).
+
+    The **receiver-relative** rarity source: "how unusual is a B738 *here*" is
+    a statement about what this receiver has heard since T0, not about the
+    world's fleet. Slice 038's rarity alert conditions read it, and slice 031's
+    ``GET /api/v1/analytics/rarity`` already does.
+
+    Re-derived in full from ``aircraft`` joined to the resolved metadata rather
+    than accumulated: that join is bounded by *airframes ever heard* (thousands
+    at multi-year scale), and re-deriving is what makes a type resolved late —
+    the ordinary case, since metadata imports land hours after a first sighting
+    — correct the moment it resolves, with no backfill of its own.
+    """
+
+    __tablename__ = "type_stats"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    type_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    unique_aircraft: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    total_sightings: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    first_seen_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_seen_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"TypeStats(type_code={self.type_code!r}, unique={self.unique_aircraft!r})"

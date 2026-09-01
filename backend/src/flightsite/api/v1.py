@@ -8,8 +8,8 @@ application state, it never returns a secret, and its shapes are the ones
 This slice adds the live picture — ``GET /aircraft/current`` (§3.3), ``GET
 /receiver`` (§3.2) and the ``ws/live`` WebSocket (§4, documented in
 :mod:`flightsite.api.ws`) — on top of the health and readiness endpoints from
-slice 001. The remainder (history, sightings, analytics, diagnostics) arrives
-in later slices.
+slice 001. Later slices add the history (§3.5), sightings (§3.6) and analytics
+(§3.7) surfaces; diagnostics (§3.10) is still to come.
 
 The REST endpoints declare Pydantic response models, so the OpenAPI document
 served at ``/api/v1/openapi.json`` (§2.10) describes them exactly and every
@@ -19,14 +19,21 @@ response is validated against the shape that was published.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Path, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from flightsite import __version__
 from flightsite.airports.overlay import BboxError, parse_bbox
+from flightsite.analytics.bucketing import Preset, Window
+from flightsite.analytics.queries import (
+    DEFAULT_RARE_MAX_SIGHTINGS,
+    DEFAULT_TOP_LIMIT,
+    MAX_TOP_LIMIT,
+)
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
 from flightsite.api.receiver_stats import (
@@ -42,6 +49,13 @@ from flightsite.api.schemas import (
     AirportFeatureCollection,
     AirportSizeClassLiteral,
     AirspaceFeatureCollection,
+    AnalyticsAircraftResponse,
+    AnalyticsClassificationResponse,
+    AnalyticsDailyResponse,
+    AnalyticsGroupResponse,
+    AnalyticsPresetLiteral,
+    AnalyticsRarityResponse,
+    AnalyticsSummaryResponse,
     CurrentAircraftResponse,
     ReceiverInfo,
     ReceiverLifetimeStats,
@@ -56,7 +70,14 @@ from flightsite.api.schemas import (
     SightingSortKey,
     SortOrder,
 )
-from flightsite.api.serializers import airport_feature_collection_payload
+from flightsite.api.serializers import (
+    airport_feature_collection_payload,
+    analytics_aircraft_payload,
+    analytics_daily_row_payload,
+    analytics_group_payload,
+    analytics_rare_type_payload,
+    analytics_summary_payload,
+)
 from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
 from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
@@ -73,6 +94,9 @@ ICAO_PATTERN = r"^[0-9a-f]{6}$"
 #: §2.4 pagination bounds.
 DEFAULT_LIMIT: Final = 50
 MAX_LIMIT: Final = 500
+
+#: §3.7's documented default preset.
+DEFAULT_PRESET: Final = Preset.TODAY.value
 
 router = APIRouter()
 router.include_router(ws_router)
@@ -591,3 +615,221 @@ async def sighting_detail(
             },
         )
     return detail
+
+
+# ---------------------------------------------------------------- analytics
+#
+# ``docs/API.md`` §3.7's seven endpoints (slice 031). Every one of them takes
+# the same window parameters, so they share one dependency for it: ``_window``
+# resolves ``preset`` or an explicit ``from``/``to`` pair against the
+# *receiver's* local calendar and returns both the UTC bounds and the local day
+# range, which each response echoes back. A client never has to re-derive what
+# "today" meant, and cannot get it wrong from a browser in another zone.
+#
+# An explicit range longer than
+# :data:`~flightsite.analytics.bucketing.MAX_WINDOW_DAYS` is clamped to its
+# most recent days rather than materialized — client input is the only way
+# these endpoints can be asked for something unbounded, and the echoed window
+# block says exactly what was covered.
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedWindow:
+    """A resolved analytics window, with the block every response echoes."""
+
+    window: Window
+    preset: str | None
+    block: dict[str, Any]
+
+
+async def _window(
+    request: Request,
+    preset: Annotated[
+        AnalyticsPresetLiteral | None,
+        Query(
+            description=(
+                "Time preset resolved in receiver-local time (§3.7). Ignored "
+                "when explicit `from`/`to` bounds are given."
+            )
+        ),
+    ] = None,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="Inclusive lower bound, UTC (§2.2)."),
+    ] = None,
+    to: Annotated[
+        datetime | None,
+        Query(description="Exclusive upper bound, UTC (§2.2)."),
+    ] = None,
+) -> _ResolvedWindow:
+    """Resolve §3.7's window parameters once, for every analytics endpoint."""
+    context = _context(request)
+    explicit = from_ is not None or to is not None
+    named = None if explicit else (preset or DEFAULT_PRESET)
+    window = await context.analytics_window(
+        preset=named,
+        from_ms=_bound_ms(from_),
+        to_ms=_bound_ms(to),
+    )
+    return _ResolvedWindow(
+        window=window,
+        preset=named,
+        block=context.analytics_window_block(window, preset=named),
+    )
+
+
+WindowParams = Annotated[_ResolvedWindow, Depends(_window)]
+TopLimit = Annotated[
+    int,
+    Query(ge=1, le=MAX_TOP_LIMIT, description="Rows in the ranking (§3.7)."),
+]
+
+
+@router.get(
+    "/analytics/summary",
+    response_model=AnalyticsSummaryResponse,
+    tags=["analytics"],
+    summary="Today-at-a-glance block",
+)
+async def analytics_summary(request: Request, window: WindowParams) -> dict[str, Any]:
+    """SPEC §59's block over the selected window — ``docs/API.md`` §3.7.
+
+    ``busiest_hour`` has two sources by time range (``docs/DATA_MODEL.md``
+    §6.5): a closed day's finalized value from ``daily_stats``, and the
+    in-progress day's from slice 033's hourly receiver metrics. The response
+    names which one answered, so a client is never left guessing whether the
+    figure it is showing is final.
+    """
+    summary = await _context(request).analytics.summary(window.window)
+    return {"window": window.block, "summary": analytics_summary_payload(summary)}
+
+
+@router.get(
+    "/analytics/daily",
+    response_model=AnalyticsDailyResponse,
+    tags=["analytics"],
+    summary="Daily aircraft, sighting, new-aircraft and range counts",
+)
+async def analytics_daily(request: Request, window: WindowParams) -> dict[str, Any]:
+    """Per-day counts, joined to slice 033's receiver activity — §3.7.
+
+    One row per receiver-local day in the window, including days with no
+    traffic: a zero is a measurement, and a series with holes in it would read
+    as missing data rather than as a quiet Tuesday.
+    """
+    rows = await _context(request).analytics.daily(window.window)
+    return {"window": window.block, "items": [analytics_daily_row_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/classification-activity",
+    response_model=AnalyticsClassificationResponse,
+    tags=["analytics"],
+    summary="Military / government / police activity over time",
+)
+async def analytics_classification_activity(
+    request: Request, window: WindowParams
+) -> dict[str, Any]:
+    """SPEC §58's mil/gov/police view — totals plus the per-day series."""
+    activity = await _context(request).analytics.classification_activity(window.window)
+    return {
+        "window": window.block,
+        "military": activity.military,
+        "government": activity.government,
+        "law_enforcement": activity.law_enforcement,
+        "interesting": activity.interesting,
+        "series": [analytics_daily_row_payload(row) for row in activity.series],
+    }
+
+
+@router.get(
+    "/analytics/top-aircraft",
+    response_model=AnalyticsAircraftResponse,
+    tags=["analytics"],
+    summary="Most frequently seen aircraft",
+)
+async def analytics_top_aircraft(
+    request: Request, window: WindowParams, limit: TopLimit = DEFAULT_TOP_LIMIT
+) -> dict[str, Any]:
+    """The window's most frequently seen airframes, with first/last seen — §3.7.
+
+    ``sightings`` counts the window; ``first_seen_at``/``last_seen_at`` are the
+    airframe's lifetime records (SPEC §53), which is what makes this list
+    answer SPEC §58's "first-seen/last-seen information" as well as its
+    ranking.
+    """
+    rows = await _context(request).analytics.top_aircraft(window.window, limit=limit)
+    return {"window": window.block, "items": [analytics_aircraft_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/top-types",
+    response_model=AnalyticsGroupResponse,
+    tags=["analytics"],
+    summary="Most frequently seen types and models",
+)
+async def analytics_top_types(
+    request: Request, window: WindowParams, limit: TopLimit = DEFAULT_TOP_LIMIT
+) -> dict[str, Any]:
+    """The window's most frequent ICAO type designators — §3.7."""
+    rows = await _context(request).analytics.top_types(window.window, limit=limit)
+    return {"window": window.block, "items": [analytics_group_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/top-operators",
+    response_model=AnalyticsGroupResponse,
+    tags=["analytics"],
+    summary="Most common operators",
+)
+async def analytics_top_operators(
+    request: Request, window: WindowParams, limit: TopLimit = DEFAULT_TOP_LIMIT
+) -> dict[str, Any]:
+    """The window's most common curated operator groups — §3.7.
+
+    Keyed by the *group* rather than by the exact operator string: SPEC §38
+    keeps the exact string on the aircraft and the grouping beside it, and
+    "most common operators" is a question about the group.
+    """
+    rows = await _context(request).analytics.top_operators(window.window, limit=limit)
+    return {"window": window.block, "items": [analytics_group_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/rarity",
+    response_model=AnalyticsRarityResponse,
+    tags=["analytics"],
+    summary="Never-seen-before counts and locally rare aircraft and types",
+)
+async def analytics_rarity(
+    request: Request,
+    window: WindowParams,
+    limit: TopLimit = DEFAULT_TOP_LIMIT,
+    max_sightings: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=MAX_TOP_LIMIT,
+            description="Lifetime sightings at or below which an airframe reads as rare.",
+        ),
+    ] = DEFAULT_RARE_MAX_SIGHTINGS,
+) -> dict[str, Any]:
+    """Never-seen-before counts and the locally rare lists — §3.7, SPEC §44.
+
+    Rare is **receiver-relative and since T0**: "how unusual is this here",
+    read from the airframe's own lifetime sighting count and from
+    ``type_stats``, never from a global fleet census. Both lists are restricted
+    to what the window actually contained, so they describe observations rather
+    than a catalogue.
+    """
+    rarity = await _context(request).analytics.rarity(
+        window.window, limit=limit, max_sightings=max_sightings
+    )
+    return {
+        "window": window.block,
+        "never_seen_before": rarity.never_seen_before,
+        "rare_max_sightings": rarity.rare_max_sightings,
+        "rare_max_type_aircraft": rarity.rare_max_type_aircraft,
+        "rare_aircraft": [analytics_aircraft_payload(row) for row in rarity.rare_aircraft],
+        "rare_types": [analytics_rare_type_payload(row) for row in rarity.rare_types],
+    }

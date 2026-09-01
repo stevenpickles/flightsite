@@ -654,6 +654,182 @@ class AirspaceFeatureCollection(_Model):
     features: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------- analytics
+
+
+#: ``docs/API.md`` §3.7's time presets, spelled as the query values.
+AnalyticsPresetLiteral = Literal["today", "7d", "30d", "ytd", "t0"]
+
+
+class AnalyticsWindow(_Model):
+    """The window an analytics response was actually computed over.
+
+    Returned on every §3.7 payload rather than left implicit, because a preset
+    resolves against the *receiver's* local calendar and its own clock: a
+    client that assumed UTC midnights, or that resolved "today" from a browser
+    in another zone, would mislabel every chart. ``first_day``/``last_day`` are
+    the receiver-local dates the rollup rows were read for.
+    """
+
+    preset: AnalyticsPresetLiteral | None = None
+    from_: IsoTimestamp = Field(alias="from")
+    to: IsoTimestamp
+    first_day: str
+    last_day: str
+    timezone: str
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class AnalyticsDailyRow(_Model):
+    """One receiver-local day of the §3.7 ``daily`` series.
+
+    ``busiest_hour`` is ``null`` for the day still in progress: it is
+    ``docs/DATA_MODEL.md`` §6.5's finalized closed-day value, and the
+    in-progress day's is served on the summary block from slice 033's hourly
+    metrics instead.
+
+    The ``receiver_*`` fields are slice 033's activity for the same day (SPEC
+    §58's "receiver activity over time"), ``null`` where that slice recorded
+    none.
+    """
+
+    day: str
+    unique_aircraft: int
+    new_aircraft: int
+    sightings: int
+    interesting: int
+    military: int
+    government: int
+    law_enforcement: int
+    max_range_nm: float | None = None
+    busiest_hour: int | None = None
+    receiver_messages: int | None = None
+    receiver_positions: int | None = None
+    receiver_aircraft_max: int | None = None
+    receiver_max_range_nm: float | None = None
+
+
+class AnalyticsDailyResponse(_Model):
+    """``GET /api/v1/analytics/daily``."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsDailyRow] = Field(default_factory=list)
+
+
+class AnalyticsSummary(_Model):
+    """SPEC §59's at-a-glance block over the selected window."""
+
+    unique_aircraft: int
+    new_aircraft: int
+    sightings: int
+    interesting: int
+    military: int
+    government: int
+    law_enforcement: int
+    max_range_nm: float | None = None
+    busiest_hour: int | None = None
+    #: ``daily_stats`` (a closed day) or ``receiver_metrics_hourly`` (the day
+    #: in progress) — ``docs/DATA_MODEL.md`` §6.5's dual source, named so a
+    #: client can say where the figure came from.
+    busiest_hour_source: str | None = None
+    first_sighting_at: IsoTimestamp | None = None
+    last_sighting_at: IsoTimestamp | None = None
+
+
+class AnalyticsSummaryResponse(_Model):
+    """``GET /api/v1/analytics/summary``."""
+
+    window: AnalyticsWindow
+    summary: AnalyticsSummary
+
+
+class AnalyticsAircraftRow(_Model):
+    """One airframe in a §3.7 ranking or rarity list."""
+
+    icao: str
+    registration: str | None = None
+    type: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    operator_group: str | None = None
+    classification: str | None = None
+    military: bool = False
+    government: bool = False
+    law_enforcement: bool = False
+    #: Sightings inside the window; the lifetime total for a since-T0 window.
+    sightings: int
+    first_seen_at: IsoTimestamp
+    last_seen_at: IsoTimestamp
+    max_range_nm: float | None = None
+
+
+class AnalyticsAircraftResponse(_Model):
+    """``GET /api/v1/analytics/top-aircraft``."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsAircraftRow] = Field(default_factory=list)
+
+
+class AnalyticsGroupRow(_Model):
+    """One type designator or operator group in a §3.7 ranking.
+
+    ``key`` is the stable identifier a client filters by (the ICAO type
+    designator, or the operator group id as a string); ``label`` is what to
+    display. ``days_seen`` is how many days of the window the group appeared
+    on, and is ``0`` for a since-T0 type ranking, which is read from the
+    ``type_stats`` totals rather than from daily rows.
+    """
+
+    key: str
+    label: str | None = None
+    sightings: int
+    unique_aircraft: int
+    days_seen: int
+    first_seen_at: IsoTimestamp | None = None
+    last_seen_at: IsoTimestamp | None = None
+
+
+class AnalyticsGroupResponse(_Model):
+    """``GET /api/v1/analytics/top-types`` and ``/top-operators``."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsGroupRow] = Field(default_factory=list)
+
+
+class AnalyticsClassificationResponse(_Model):
+    """``GET /api/v1/analytics/classification-activity``."""
+
+    window: AnalyticsWindow
+    military: int
+    government: int
+    law_enforcement: int
+    interesting: int
+    series: list[AnalyticsDailyRow] = Field(default_factory=list)
+
+
+class AnalyticsRareType(_Model):
+    """One locally rare type designator (receiver-relative, since T0)."""
+
+    type: str
+    unique_aircraft: int
+    total_sightings: int
+    first_seen_at: IsoTimestamp
+    last_seen_at: IsoTimestamp
+
+
+class AnalyticsRarityResponse(_Model):
+    """``GET /api/v1/analytics/rarity``."""
+
+    window: AnalyticsWindow
+    #: Airframes whose first-ever observation fell inside the window.
+    never_seen_before: int
+    rare_max_sightings: int
+    rare_max_type_aircraft: int
+    rare_aircraft: list[AnalyticsAircraftRow] = Field(default_factory=list)
+    rare_types: list[AnalyticsRareType] = Field(default_factory=list)
+
+
 __all__ = [
     "AircraftDetail",
     "AircraftHistoryListResponse",
@@ -667,6 +843,19 @@ __all__ = [
     "AirportSizeClassLiteral",
     "AirspaceFeatureCollection",
     "AlertSeverityLiteral",
+    "AnalyticsAircraftResponse",
+    "AnalyticsAircraftRow",
+    "AnalyticsClassificationResponse",
+    "AnalyticsDailyResponse",
+    "AnalyticsDailyRow",
+    "AnalyticsGroupResponse",
+    "AnalyticsGroupRow",
+    "AnalyticsPresetLiteral",
+    "AnalyticsRareType",
+    "AnalyticsRarityResponse",
+    "AnalyticsSummary",
+    "AnalyticsSummaryResponse",
+    "AnalyticsWindow",
     "Classification",
     "ClosureReasonLiteral",
     "CurrentAircraftResponse",
