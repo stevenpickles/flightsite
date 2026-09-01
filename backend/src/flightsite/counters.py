@@ -22,11 +22,18 @@ from typing import Final
 #: visible rather than silent.
 LIVE_EVENTS_DROPPED: Final = "live_events_dropped"
 
+#: WebSocket clients the server had to abandon: a slow consumer whose outbound
+#: queue overflowed, or one that ignored two consecutive pings
+#: (``docs/API.md`` §4.5). A clean disconnect — the client closing, or the
+#: process shutting down — is not counted here, so a rising value always means
+#: distribution shed a client rather than stalling for it.
+WS_DISCONNECTS: Final = "ws_disconnects"
+
 KNOWN_COUNTERS: Final[tuple[str, ...]] = (
     "ingestion_failures",
     "db_errors",
     "enrichment_failures",
-    "ws_disconnects",
+    WS_DISCONNECTS,
     LIVE_EVENTS_DROPPED,
 )
 
