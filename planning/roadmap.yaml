@@ -664,7 +664,7 @@ slices:
     title: "Mictronics/tar1090 importer"
     phase: 4
     branch: "022-mictronics-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the Mictronics/tar1090 aircraft database as the primary offline metadata source."
     scope:
@@ -686,7 +686,7 @@ slices:
     title: "FAA registry importer"
     phase: 4
     branch: "023-faa-import"
-    status: planned
+    status: merged
     depends_on: ["021"]
     objective: "Import the FAA releasable aircraft registry as an optional supplemental source for U.S. aircraft."
     scope:
