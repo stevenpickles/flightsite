@@ -55,15 +55,23 @@ def _write_garbage(path: Path) -> None:
 
 
 def _smash_data_pages(path: Path) -> None:
-    """Overwrite everything after page 2 of an existing database file.
+    """Overwrite the back half of an existing database file.
 
-    Page 1 (the schema) and the ``alembic_version`` row stay readable, so the
-    migration step still succeeds and it is the integrity check that catches
-    the damage — the failure mode this slice exists to surface.
+    The schema and the ``alembic_version`` row live in the file's first pages
+    and stay readable, so the migration step still succeeds and it is the
+    integrity check that catches the damage — the failure mode this slice
+    exists to surface.
+
+    The boundary is a *fraction* of the file rather than a fixed page number so
+    that it keeps clearing the schema as slices add tables. A hardcoded
+    page-2 boundary stopped clearing it once slice 052's three tables landed,
+    which broke the migration instead and left the test asserting the wrong
+    failure mode. The filler rows are what make the back half worth corrupting.
     """
     raw = bytearray(path.read_bytes())
-    assert len(raw) > SQLITE_PAGE_SIZE * 4, "fixture database is too small to corrupt"
-    for offset in range(SQLITE_PAGE_SIZE * 2, len(raw)):
+    pages = len(raw) // SQLITE_PAGE_SIZE
+    assert pages >= 8, f"fixture database is {pages} pages, too small to corrupt safely"
+    for offset in range(SQLITE_PAGE_SIZE * (pages // 2), len(raw)):
         raw[offset] = CORRUPTION_BYTE
     path.write_bytes(bytes(raw))
 

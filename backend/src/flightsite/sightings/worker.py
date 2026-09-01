@@ -65,6 +65,37 @@ transaction. Ids are assigned to accumulators only *after* the transaction
 commits, so a failed cycle leaves in-memory state that knows it still needs
 writing instead of state pointing at rolled-back rows.
 
+Tracks, statistics and events
+-----------------------------
+
+Three more things ride that same cycle and that same transaction (ADR-0005,
+SPEC §51 and §52):
+
+* **Track checkpoints.** Each accumulator harvests new points from the live
+  aircraft's :class:`~flightsite.live.track.CurrentTrack` as it observes it, and
+  the cycle appends the thinned tail to ``sighting_track_checkpoints``. What a
+  power cut costs an open sighting is therefore one flush interval of path, and
+  no more.
+* **Reception statistics** are running sums on the accumulator, written into
+  the ``sightings`` row by the same flush that writes its extremes.
+* **Sighting events** are queued as the transitions happen and written in the
+  cycle that follows, after the sighting's own row exists. They are cleared
+  only once the transaction commits, so a failed cycle retries them rather than
+  losing them, and the accumulator's known-last values keep a resync or a
+  restart from emitting a second copy of a change already recorded.
+
+Overflow, and what a gap means for a track
+------------------------------------------
+
+When the queue overflows, the shed events' observations are simply absent: the
+worker resyncs from the live snapshot, and the *next* harvest takes everything
+the live track has accumulated in the meantime, because the harvest is keyed on
+the track's own high-water mark rather than on having seen every event. The
+recovered track is therefore complete wherever the live track still held the
+points and thinned by absence where the aircraft left the live set unheard —
+which is the honest record of what happened, and is visible as a gap between
+consecutive timestamps rather than as an invented straight line.
+
 Startup
 -------
 
@@ -85,7 +116,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final
 
 import structlog
@@ -106,7 +137,7 @@ from flightsite.live import (
     LiveEvent,
     LiveStore,
 )
-from flightsite.sightings.repository import SightingIds, SightingRepository
+from flightsite.sightings.repository import ClosedTrack, SightingIds, SightingRepository
 from flightsite.sightings.state import ActiveSighting, open_from
 from flightsite.sightings.vocabulary import ClosureReason
 
@@ -141,13 +172,19 @@ class CycleResult:
     opened: int = 0
     flushed: int = 0
     closed: int = 0
+    #: Track points written to ``sighting_track_checkpoints`` this cycle.
+    checkpointed: int = 0
+    #: ``sighting_events`` rows written this cycle.
+    emitted: int = 0
+    #: Track points retained across every sighting closed this cycle.
+    track_points: int = 0
     resynced: bool = False
     failed: bool = False
 
     @property
     def wrote(self) -> bool:
         """True if the cycle opened a transaction at all."""
-        return bool(self.opened or self.flushed or self.closed)
+        return bool(self.opened or self.flushed or self.closed or self.emitted)
 
 
 class PersistenceWorker:
@@ -347,14 +384,7 @@ class PersistenceWorker:
             self._resync(subscription)
 
         result = await self._commit(force_flush=force_flush)
-        return CycleResult(
-            events=len(events),
-            opened=result.opened,
-            flushed=result.flushed,
-            closed=result.closed,
-            resynced=resynced,
-            failed=result.failed,
-        )
+        return replace(result, events=len(events), resynced=resynced)
 
     # --------------------------------------------------------- event handling
 
@@ -455,7 +485,14 @@ class PersistenceWorker:
         yield from self._pending.values()
 
     async def _commit(self, *, force_flush: bool) -> CycleResult:
-        """Write this cycle's opens, flushes and closes in one transaction."""
+        """Write this cycle's opens, flushes, checkpoints, events and closes.
+
+        One transaction for all of it. The in-memory bookkeeping that says
+        "this reached the disk" — ids, flush marks, checkpoint high-water
+        marks, event queues — is applied only after the commit returns, so a
+        failed cycle leaves every accumulator ready to write the same work
+        again rather than believing it already did.
+        """
         now_ms = self._clock()
         due = [
             active
@@ -473,23 +510,54 @@ class PersistenceWorker:
             and active.sighting_id is not None
             and active.needs_flush(now_ms, self._flush_interval_ms, force=force_flush)
         ]
+        # Checkpoints ride the writes that are already happening. A closing
+        # sighting is excluded because its close packs the same points and then
+        # deletes the rows this would have written.
+        batches = {
+            active.icao: batch
+            for active in [*opens, *flushes]
+            if active.icao not in closing and (batch := active.checkpoint_batch()) is not None
+        }
+        # Events are written for every accumulator holding any, including one
+        # closing this cycle: the transition happened inside the sighting and
+        # belongs to its timeline.
+        queued = {
+            active.icao: active.take_events()
+            for active in self._accumulators()
+            if active.pending_events
+        }
 
-        if not (opens or flushes or due):
+        if not (opens or flushes or due or queued):
             return CycleResult()
 
         opened_ids: dict[str, SightingIds] = {}
+        closed_tracks: list[ClosedTrack] = []
         try:
             async with self._database.writer_session() as session:
                 for active in opens:
                     opened_ids[active.icao] = await self._repository.open_sighting(session, active)
                 for active in flushes:
                     await self._repository.flush_sighting(session, self._ids(active), active)
+                for active in [*opens, *flushes]:
+                    batch = batches.get(active.icao)
+                    if batch is not None:
+                        await self._repository.append_checkpoints(
+                            session, self._resolved(active, opened_ids).sighting_id, batch.rows
+                        )
+                for active in self._accumulators():
+                    events = queued.get(active.icao)
+                    if events:
+                        await self._repository.append_events(
+                            session, self._resolved(active, opened_ids).sighting_id, events
+                        )
                 for active in due:
-                    await self._repository.close_sighting(
-                        session,
-                        opened_ids.get(active.icao) or self._ids(active),
-                        active,
-                        reason=ClosureReason.GAP_TIMEOUT,
+                    closed_tracks.append(
+                        await self._repository.close_sighting(
+                            session,
+                            self._resolved(active, opened_ids),
+                            active,
+                            reason=ClosureReason.GAP_TIMEOUT,
+                        )
                     )
         except Exception as exc:
             # The accumulators are untouched, so the next cycle retries the
@@ -511,7 +579,12 @@ class PersistenceWorker:
             active.mark_flushed(now_ms)
         for active in flushes:
             active.mark_flushed(now_ms)
-        for active in due:
+        for active in self._accumulators():
+            batch = batches.get(active.icao)
+            if batch is not None:
+                active.mark_checkpointed(batch)
+            active.mark_events_written(len(queued.get(active.icao, ())))
+        for active, track in zip(due, closed_tracks, strict=True):
             self._pending.pop(active.icao, None)
             logger.info(
                 "sighting_closed",
@@ -519,10 +592,19 @@ class PersistenceWorker:
                 sighting_id=active.sighting_id,
                 duration_ms=active.duration_ms,
                 closure_reason=ClosureReason.GAP_TIMEOUT.value,
+                track_points=track.point_count,
+                track_bytes=track.byte_count,
             )
 
         await self._establish_t0(opens)
-        return CycleResult(opened=len(opens), flushed=len(flushes), closed=len(due))
+        return CycleResult(
+            opened=len(opens),
+            flushed=len(flushes),
+            closed=len(due),
+            checkpointed=sum(len(batch.rows) for batch in batches.values()),
+            emitted=sum(len(events) for events in queued.values()),
+            track_points=sum(track.point_count for track in closed_tracks),
+        )
 
     @staticmethod
     def _ids(active: ActiveSighting) -> SightingIds:
@@ -530,6 +612,16 @@ class PersistenceWorker:
         if aircraft_id is None or sighting_id is None:  # pragma: no cover - guarded by callers
             raise LookupError(f"sighting for {active.icao} has not been inserted yet")
         return SightingIds(aircraft_id=aircraft_id, sighting_id=sighting_id)
+
+    @classmethod
+    def _resolved(cls, active: ActiveSighting, opened_ids: dict[str, SightingIds]) -> SightingIds:
+        """Ids for an accumulator, including one inserted earlier this cycle.
+
+        The accumulator does not learn its own id until the transaction
+        commits, so anything written *after* the insert and *before* the commit
+        — checkpoints, events, the close itself — has to read it from here.
+        """
+        return opened_ids.get(active.icao) or cls._ids(active)
 
     async def _establish_t0(self, opens: list[ActiveSighting]) -> None:
         """Record T0 the first time an observation is actually persisted.

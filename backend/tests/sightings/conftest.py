@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from math import cos, radians
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flightsite.db import Aircraft, Database, Sighting, database_path
+from flightsite.db import (
+    Aircraft,
+    Database,
+    Sighting,
+    SightingEvent,
+    SightingTrack,
+    SightingTrackCheckpoint,
+    database_path,
+)
 from flightsite.db.clock import to_epoch_ms
 from flightsite.ingest import AircraftStateBatch, AircraftStateUpdate, Position
 from flightsite.live import LiveStore
@@ -137,6 +146,51 @@ async def worker(
         await instance.stop()
 
 
+class FailingOnceDatabase(Database):
+    """A database whose next writer transaction fails, then behaves normally.
+
+    The persistence worker's whole contract under a database error is "leave
+    the in-memory state as it was and retry next cycle", so several tests need
+    exactly one failed transaction at a chosen instant.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.fail_next = False
+
+    @asynccontextmanager
+    async def writer_session(self) -> AsyncIterator[AsyncSession]:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("simulated writer failure")
+        async with super().writer_session() as session:
+            yield session
+
+
+@asynccontextmanager
+async def worker_on(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> AsyncIterator[PersistenceWorker]:
+    """A second worker over the same database and live store, stopped on exit.
+
+    Used by the restart tests, which need a *new* process's view of sightings a
+    previous one left open.
+    """
+    instance = PersistenceWorker(
+        database=database,
+        live=live,
+        close_s=CLOSE_S,
+        flush_interval_s=FLUSH_INTERVAL_S,
+        tick_interval_s=3_600.0,
+        clock=clock.epoch_ms,
+    )
+    await instance.start()
+    try:
+        yield instance
+    finally:
+        await instance.stop()
+
+
 def make_update(
     icao: str = ICAO, *, at: datetime, position: Position | None = None, **fields: Any
 ) -> AircraftStateUpdate:
@@ -179,6 +233,75 @@ def north_of(receiver: Position, nm: float) -> Position:
     distance readable in the test rather than hidden in a coordinate.
     """
     return Position(latitude=receiver.latitude + nm / 60.0, longitude=receiver.longitude)
+
+
+def offset_from(receiver: Position, north_nm: float, east_nm: float) -> Position:
+    """A position ``north_nm`` / ``east_nm`` nautical miles from ``receiver``.
+
+    Longitude is scaled by the cosine of the receiver's latitude so that the
+    two arguments mean the same distance — which matters for the track tests,
+    where the shape of the flown path is the thing under test.
+    """
+    return Position(
+        latitude=receiver.latitude + north_nm / 60.0,
+        longitude=receiver.longitude + east_nm / (60.0 * cos(radians(receiver.latitude))),
+    )
+
+
+def fly(
+    live: LiveStore,
+    clock: SimulatedTime,
+    legs: Sequence[tuple[float, float]],
+    *,
+    icao: str = ICAO,
+    step_s: float = 5.0,
+    **fields: Any,
+) -> None:
+    """Observe one position per ``(north_nm, east_nm)`` leg point, ``step_s`` apart.
+
+    The clock advances *before* each observation, because the live track only
+    accepts points that are strictly newer than the last one it holds — two
+    positions stamped at the same instant are one observation as far as the
+    track is concerned.
+    """
+    for north_nm, east_nm in legs:
+        clock.advance(step_s)
+        observe(live, clock, icao, position=offset_from(SEATTLE, north_nm, east_nm), **fields)
+
+
+def straight_leg(
+    points: int, *, start_nm: float = 5.0, step_nm: float = 0.5
+) -> list[tuple[float, float]]:
+    """A due-north leg: the cruise case simplification is expected to collapse."""
+    return [(start_nm + index * step_nm, 0.0) for index in range(points)]
+
+
+async def checkpoints_of(database: Database, sighting_id: int) -> list[SightingTrackCheckpoint]:
+    """Every checkpoint row of a sighting, in ``seq`` order."""
+    statement = (
+        select(SightingTrackCheckpoint)
+        .where(SightingTrackCheckpoint.sighting_id == sighting_id)
+        .order_by(SightingTrackCheckpoint.seq)
+    )
+    async with reading(database) as session:
+        return list((await session.scalars(statement)).all())
+
+
+async def packed_track_of(database: Database, sighting_id: int) -> SightingTrack | None:
+    """The ``sighting_tracks`` row of a closed sighting, if it kept a path."""
+    async with reading(database) as session:
+        return await session.get(SightingTrack, sighting_id)
+
+
+async def events_of(database: Database, sighting_id: int) -> list[SightingEvent]:
+    """Every ``sighting_events`` row of a sighting, oldest first."""
+    statement = (
+        select(SightingEvent)
+        .where(SightingEvent.sighting_id == sighting_id)
+        .order_by(SightingEvent.ts_ms, SightingEvent.id)
+    )
+    async with reading(database) as session:
+        return list((await session.scalars(statement)).all())
 
 
 @asynccontextmanager
