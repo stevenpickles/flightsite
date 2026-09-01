@@ -36,6 +36,7 @@ from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
 from flightsite.logging import configure_logging
+from flightsite.maintenance import MaintenanceService, RouteCachePruner
 from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
 from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
@@ -274,6 +275,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     receiver_metrics: ReceiverMetricsService = app.state.receiver_metrics
     analytics: AnalyticsService = app.state.analytics
     activity: ActivityService = app.state.activity
+    maintenance: MaintenanceService = app.state.maintenance
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -324,6 +326,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # truth. A failed migration leaves the feed empty and nothing else
         # degraded — the same shape as every subsystem above it.
         await activity.start()
+        # Same condition once more, and last of the database-dependent
+        # subsystems: maintenance verifies, prunes and optimizes the very
+        # schema the migration may have failed to create, so there is nothing
+        # for it to do until that succeeds. Started after every other
+        # subsystem so its first cycle — an hour away — cannot overlap the
+        # backfills and recoveries startup is still running.
+        await maintenance.start()
 
     # The lifecycle sweep runs whether or not a decoder is configured: an
     # empty live set costs nothing to sweep, and starting it unconditionally
@@ -340,6 +349,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Maintenance stops first, ahead of the data-flow order below, because
+        # it is the one subsystem whose in-flight work is entirely
+        # discardable: no job holds buffered state, and a cancelled cycle
+        # simply leaves its remaining jobs for the next process. Stopping it
+        # here means no housekeeping statement is holding the writer lock when
+        # the persistence worker takes its final transactions.
+        await maintenance.stop()
         # Shut down along the direction of data flow, so each stage has
         # already stopped producing before its consumer stops: ingestion, then
         # the live store's sweep, then its two consumers — the WebSocket
@@ -468,6 +484,15 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     through a listener wired here. It also reads decoder health for the
     offline/restored events and takes metadata import results through the same
     post-import listener list the airport index rebuild uses.
+    Database maintenance (SPEC §70) is constructed as ``app.state.maintenance``:
+    the seventh low-frequency background task, running an integrity check,
+    retention pruning, ``PRAGMA optimize``, WAL checkpoint management and a
+    guarded ``VACUUM`` on their own cadences. It adds no configuration key —
+    every threshold is a module constant — and its
+    :attr:`~flightsite.maintenance.MaintenanceService.report` is what slice
+    042's diagnostics surface reads. Startup starts it last, so its first cycle
+    cannot overlap the backfills and recoveries; shutdown stops it first,
+    because a cancelled cycle loses nothing.
 
     The live API context and the WebSocket broadcaster are constructed here
     too, as ``app.state.api_context`` and ``app.state.broadcaster``. The
@@ -540,11 +565,26 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # unless the flag is set *and* a key is present, and a service with no
     # provider starts nothing and subscribes to nothing — so a stock install
     # cannot make an external call, whatever else happens at runtime.
+    route_cache = RouteCacheRepository(app.state.database)
     app.state.enrichment = EnrichmentService(
         live=app.state.live,
         persistence=app.state.persistence,
-        cache=RouteCacheRepository(app.state.database),
+        cache=route_cache,
         provider=build_provider(settings),
+    )
+    # Database maintenance (SPEC §70, slice 044): a sixth low-frequency task
+    # running the integrity check, retention pruning, `PRAGMA optimize`, WAL
+    # checkpoint management and a heavily guarded VACUUM on their own cadences.
+    # It is handed the one prunable domain that has no owner of its own —
+    # `route_cache`, whose expired rows were previously ignored on read but
+    # never deleted; the receiver metrics and the track checkpoints prune
+    # themselves, and `flightsite.maintenance.retention` documents why. The
+    # live store is read only for the VACUUM pressure heuristic. Constructing
+    # it opens nothing and starts no task.
+    app.state.maintenance = MaintenanceService(
+        database=app.state.database,
+        retention=(RouteCachePruner(route_cache),),
+        live=app.state.live,
     )
     # Receiver metrics (SPEC §60/§64, ADR-0009): the decoder's own statistics
     # plus FlightSite's, on a rolling high-resolution window with permanent
