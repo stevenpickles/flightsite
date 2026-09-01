@@ -100,11 +100,6 @@ SUSTAINED_TICKS: Final = 600
 #: describes fan-out to "multiple clients" rather than to many.
 DEFAULT_WS_CLIENTS: Final = 4
 
-#: Scheduling rounds yielded after each tick so the per-client reader tasks can
-#: drain what the broadcast queued. Not a timeout: ``asyncio.sleep(0)`` waits
-#: on nothing but the loop running work that is already ready.
-SETTLE_ROUNDS: Final = 4
-
 
 @dataclass(frozen=True, slots=True)
 class WorkloadConfig:
@@ -197,7 +192,10 @@ class Workload:
         self._broadcaster: LiveBroadcaster | None = None
         self._clients: list[ClientConnection] = []
         self._readers: list[asyncio.Task[None]] = []
+        self._receiver: dict[str, Any] = {}
         self._frames_read = 0
+        self._reconnects = 0
+        self._running = False
         self._lifespan: Any = None
         self._tick = 0
 
@@ -257,6 +255,18 @@ class Workload:
         return self._frames_read
 
     @property
+    def reconnects(self) -> int:
+        """Times a simulated client was closed and came back.
+
+        A real signal rather than harness bookkeeping: each one is the
+        broadcaster shedding a consumer that could not keep up with a burst,
+        which ``docs/API.md`` §4.5 makes a resync rather than a stall. Reported
+        alongside the fan-out figure so a run with many of them is not read as
+        a quiet one.
+        """
+        return self._reconnects
+
+    @property
     def clients_connected(self) -> int:
         """Clients the broadcaster still has. Drops mean a consumer fell behind.
 
@@ -306,17 +316,42 @@ class Workload:
         await engine.stop()
         engine.attach()
 
-        receiver = await app.state.api_context.receiver()
+        # Clients are NOT connected here; :meth:`warm_up` attaches them once
+        # the system is running. See :meth:`connect_clients`.
+        self._tick = 0
+        return self
+
+    async def connect_clients(self) -> None:
+        """Attach the simulated WebSocket clients and start their readers.
+
+        Deliberately *after* warm-up rather than at startup, and the reason is
+        a first-run artefact rather than a preference. On an empty database
+        every one of 500 aircraft is a first-ever sighting, so the activity
+        service's first pass publishes a burst of ~500 events — and
+        ``LiveBroadcaster.publish_activity`` sends one frame per event with no
+        await between them. That burst overflows every client's 32-frame queue
+        in a single call and the broadcaster evicts the lot as slow consumers,
+        which is the documented behaviour (``docs/API.md`` §4.5) and not a
+        product fault.
+
+        It is, however, not the load this harness is trying to measure. A
+        browser connects to a system that is already running; it does not sit
+        through an install's first-ever backlog. So warm-up drains that backlog
+        with nobody connected — ``publish_activity`` is a no-op with no clients
+        — and the clients arrive afterwards, to steady-state traffic.
+        """
+        if self._clients:
+            return
+        self._receiver = dict(await self.app.state.api_context.receiver())
+        self._running = True
         self._clients = [
-            broadcaster.connect(dict(receiver)) for _ in range(self._config.ws_clients)
+            self.broadcaster.connect(dict(self._receiver)) for _ in range(self._config.ws_clients)
         ]
         self._readers = [
             asyncio.create_task(self._read_client(client), name=f"flightsite-perf-{client.name}")
             for client in self._clients
         ]
-
-        self._tick = 0
-        return self
+        await self._drain_clients()
 
     async def _read_client(self, client: ClientConnection) -> None:
         """Consume everything the broadcaster queues for one client.
@@ -332,12 +367,39 @@ class Workload:
         steadily behind until the queue overflows and every simulated client is
         evicted. The fan-out figure then quietly becomes a measurement of
         delivering to nobody.
+
+        The reader also marks the client alive on every frame it takes, which
+        is what production's ``_read_from_client`` does for any inbound client
+        text — a real browser answers each keepalive ping with a pong
+        (``docs/API.md`` §4.5). Without it a simulated client accumulates
+        unanswered pings and is dropped as unresponsive after
+        ``MISSED_PING_LIMIT``, which a ``--realtime`` run longer than a couple
+        of ping intervals would hit every time.
+
+        When the server does end the connection, the reader reconnects and
+        carries on, which is the last piece of modelling a real client. The
+        broadcaster closes a slow consumer with code 1013 — "try again later" —
+        precisely so the client comes back and takes a fresh snapshot, and a
+        browser does exactly that. Demo traffic on a new database produces
+        activity bursts larger than a client's 32-frame queue as the roster
+        keeps introducing first-ever aircraft, so a harness that did not
+        reconnect would slowly lose every client and end up timing delivery to
+        nobody.
         """
         while True:
             frame = await client.next_frame()
-            if frame is None:
+            if frame is not None:
+                self._frames_read += 1
+                client.note_client_message()
+                continue
+
+            # The server closed this connection. Come back, as a browser would.
+            if not self._running:
                 return
-            self._frames_read += 1
+            self._reconnects += 1
+            client = self.broadcaster.connect(dict(self._receiver))
+            self._clients = [existing for existing in self._clients if not existing.closed]
+            self._clients.append(client)
 
     async def __aexit__(
         self,
@@ -345,6 +407,7 @@ class Workload:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        self._running = False
         readers, self._readers = self._readers, []
         for reader in readers:
             reader.cancel()
@@ -404,14 +467,7 @@ class Workload:
         await self.broadcaster.broadcast_once()
         broadcast_ms = (time.perf_counter() - started) * 1_000.0
 
-        # Let the reader tasks drain what this tick queued, outside the
-        # measured window: fan-out cost is what the broadcaster spends, and a
-        # client's consumption belongs to the client. A few scheduling rounds
-        # are enough — nothing here waits on time passing, only on tasks that
-        # are already runnable (the technique tests/api/conftest.py calls
-        # `settle`).
-        for _ in range(SETTLE_ROUNDS):
-            await asyncio.sleep(0)
+        await self._drain_clients()
 
         cost = TickCost(
             apply_ms=apply_ms,
@@ -429,10 +485,42 @@ class Workload:
                 await asyncio.sleep(remaining)
         return cost
 
+    async def _drain_clients(self) -> None:
+        """Yield until every reader task has consumed everything queued.
+
+        Outside the measured window: fan-out cost is what the broadcaster
+        spends, and a client's consumption belongs to the client.
+
+        Yielding a *fixed* number of scheduling rounds is not enough, which is
+        the second way this harness got client draining wrong. Each round lets
+        one reader take one frame, so a tick that queues more frames than the
+        fixed count leaves a remainder — and a remainder of even one frame per
+        tick overflows a 32-frame queue within a couple of minutes and evicts
+        every client.
+
+        Yielding until a full round passes in which nobody consumed anything is
+        exact instead of approximate, and it is still bounded: nothing produces
+        frames between ticks, so the loop drains what is there and stops.
+        Nothing here waits on time passing, only on tasks already runnable.
+        """
+        previous = -1
+        while self._frames_read != previous:
+            previous = self._frames_read
+            await asyncio.sleep(0)
+
     async def warm_up(self) -> None:
-        """Run the configured warm-up ticks, discarding their cost."""
+        """Reach steady state, then attach the clients. Costs are discarded.
+
+        Three things have to happen before a measured tick is representative:
+        the live set has to fill (the first tick into an empty store is all
+        appearances, the cheap case), the activity service's first-ever backlog
+        has to drain, and only then may the clients connect — see
+        :meth:`connect_clients` for why that order matters.
+        """
         for _ in range(self._config.warmup_ticks):
             await self.run_tick()
+        await self.app.state.activity.flush()
+        await self.connect_clients()
 
     @asynccontextmanager
     async def http(self) -> AsyncIterator[AsyncClient]:

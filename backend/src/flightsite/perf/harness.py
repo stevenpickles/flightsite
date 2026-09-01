@@ -273,9 +273,22 @@ async def run_load(
                     if resident is not None:
                         rss_mib.append(resident / MIB)
         # Read inside the context manager: leaving it tears the components down.
-        clients = len(workload.clients)
+        wanted = config.ws_clients
         still_connected = workload.clients_connected
         frames_read = workload.frames_read
+        reconnects = workload.reconnects
+
+    # Fan-out timed against nobody looks *better* than the truth -- a failure
+    # mode this harness hit twice before the clients learned to reconnect -- so
+    # ending the run short of the clients it claims is an error rather than a
+    # footnote. Reconnects along the way are fine and are reported; ending
+    # without a full set is not.
+    if still_connected < wanted:
+        raise RuntimeError(
+            f"the run ended with {still_connected} of {wanted} simulated WebSocket clients "
+            f"({frames_read} frames consumed, {reconnects} reconnects); the fan-out "
+            "measurement would be for fewer clients than the report claims"
+        )
 
     measurements = [
         Measurement(
@@ -313,8 +326,8 @@ async def run_load(
             unit="ms",
             samples=tuple(cost.broadcast_ms for cost in costs),
             note=(
-                f"{still_connected}/{clients} clients still connected, "
-                f"{frames_read} frames consumed"
+                f"{still_connected} clients, {frames_read} frames consumed, "
+                f"{reconnects} resync reconnects"
             ),
         ),
     ]

@@ -117,17 +117,27 @@ async def test_the_simulated_clients_keep_up_and_stay_connected(tmp_path: Path) 
     looked healthy precisely because there was no longer anything to deliver
     to.
 
+    The second way it went wrong survived that fix: demo traffic on a new
+    database keeps introducing first-ever aircraft, and the activity service
+    publishes one frame per event with no await between them, so a burst larger
+    than the queue evicts every client at once however promptly they drain.
+    That is the broadcaster behaving as documented (``docs/API.md`` §4.5), so
+    the clients now reconnect the way a browser does on a 1013 close.
+
     So: after enough ticks to have overflowed a 32-frame queue several times
-    over, every client must still be connected and must have consumed frames.
+    over, the workload must still hold its full complement of clients and they
+    must be consuming — whether or not any of them had to come back.
     """
-    config = WorkloadConfig(ticks=TICKS_PAST_THE_QUEUE_BOUND, warmup_ticks=0, ws_clients=3)
+    config = WorkloadConfig(ticks=TICKS_PAST_THE_QUEUE_BOUND, warmup_ticks=2, ws_clients=3)
     async with Workload(config, data_dir=tmp_path / "data") as workload:
+        await workload.warm_up()
         for _ in range(config.ticks):
             await workload.run_tick()
 
         assert workload.clients_connected == config.ws_clients, (
-            "the broadcaster evicted a simulated client, so the fan-out figure "
-            "is for fewer clients than the report claims"
+            f"ended with {workload.clients_connected} of {config.ws_clients} clients "
+            f"after {workload.reconnects} reconnects, so the fan-out figure would be "
+            "for fewer clients than the report claims"
         )
         assert workload.frames_read >= config.ticks, (
             f"clients consumed only {workload.frames_read} frames across "
