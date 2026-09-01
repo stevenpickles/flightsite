@@ -23,6 +23,7 @@ dependencies = [
 flightsite-serve = "flightsite.__main__:main"
 flightsite-capture = "flightsite.devtools.capture:main"
 flightsite-backup = "flightsite.backup.cli:main"
+flightsite-perf = "flightsite.perf.cli:main"
 
 [build-system]
 requires = ["hatchling"]
