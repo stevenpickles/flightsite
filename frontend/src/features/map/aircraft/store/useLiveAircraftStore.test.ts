@@ -302,6 +302,140 @@ describe("selection and track accumulation", () => {
   });
 });
 
+describe("backfillTrack", () => {
+  beforeEach(() => {
+    store().applySnapshot(
+      {
+        aircraft: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.5, lon: -122 } }),
+        ],
+        receiver: null,
+      },
+      T0,
+    );
+  });
+
+  const history = [
+    { lat: 47.1, lon: -122, at: T0 - 300_000 },
+    { lat: 47.3, lon: -122, at: T0 - 150_000 },
+  ];
+
+  it("merges the sighting's history under the points seen since selection", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", history);
+
+    expect(store().track?.points).toEqual([
+      ...history,
+      { lat: 47.5, lon: -122, at: T0 },
+    ]);
+  });
+
+  it("keeps extending the track live after a backfill", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", history);
+    store().applyDelta(
+      {
+        updated: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.6, lon: -122 } }),
+        ],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(store().track?.points).toHaveLength(4);
+    expect(store().track?.points.at(-1)).toEqual({
+      lat: 47.6,
+      lon: -122,
+      at: T0 + 1000,
+    });
+  });
+
+  it("discards a response that arrives after the aircraft was deselected", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().selectAircraft(null, T0 + 10);
+    store().backfillTrack("aaaaaa", history);
+
+    expect(store().track).toBeNull();
+  });
+
+  it("discards a response for an aircraft the selection has moved on from", () => {
+    store().applySnapshot(
+      {
+        aircraft: [
+          makeAircraft({ icao: "bbbbbb", position: { lat: 10, lon: 10 } }),
+        ],
+        receiver: null,
+      },
+      T0,
+    );
+    store().selectAircraft("bbbbbb", T0);
+    store().backfillTrack("aaaaaa", history);
+
+    expect(store().track).toEqual({
+      icao: "bbbbbb",
+      points: [{ lat: 10, lon: 10, at: T0 }],
+    });
+  });
+
+  it("leaves the track alone when the aircraft has no open sighting", () => {
+    store().selectAircraft("aaaaaa", T0);
+    const before = store().track;
+    store().backfillTrack("aaaaaa", []);
+
+    expect(store().track).toBe(before);
+  });
+
+  it("does not notify subscribers when the backfill adds nothing", () => {
+    // The layer redraws on every store notification; a redundant backfill must
+    // not cost one.
+    store().selectAircraft("aaaaaa", T0);
+    let notifications = 0;
+    const unsubscribe = useLiveAircraftStore.subscribe(() => {
+      notifications += 1;
+    });
+    store().backfillTrack("aaaaaa", [{ lat: 47.5, lon: -122, at: T0 }]);
+    store().backfillTrack("aaaaaa", []);
+    store().backfillTrack("bbbbbb", history);
+    unsubscribe();
+
+    expect(notifications).toBe(0);
+  });
+
+  it("re-backfills after a deselect and reselect", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", history);
+    store().selectAircraft(null, T0 + 10);
+    store().selectAircraft("aaaaaa", T0 + 20);
+    expect(store().track?.points).toHaveLength(1);
+
+    store().backfillTrack("aaaaaa", history);
+    expect(store().track?.points).toHaveLength(3);
+  });
+
+  it("caps the merged track at the retention limit", () => {
+    store().selectAircraft("aaaaaa", T0);
+    const long = Array.from(
+      { length: TRACK_MAX_POINTS + 100 },
+      (_u, index) => ({
+        lat: 47 + index / 100_000,
+        lon: -122,
+        at: T0 - (TRACK_MAX_POINTS + 100 - index) * 1000,
+      }),
+    );
+    store().backfillTrack("aaaaaa", long);
+
+    expect(store().track?.points).toHaveLength(TRACK_MAX_POINTS);
+    // The newest end is kept: the live-accumulated point is still last.
+    expect(store().track?.points.at(-1)).toEqual({
+      lat: 47.5,
+      lon: -122,
+      at: T0,
+    });
+  });
+});
+
 describe("connection status", () => {
   it("starts connecting and follows the socket", () => {
     expect(store().connection).toBe("connecting");

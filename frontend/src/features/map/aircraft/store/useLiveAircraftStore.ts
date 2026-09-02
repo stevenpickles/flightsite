@@ -35,7 +35,10 @@
 import { create } from "zustand";
 
 import type { SelectedTrack, TrackPoint } from "@/features/map/aircraft/track";
-import { appendTrackPoint } from "@/features/map/aircraft/track";
+import {
+  appendTrackPoint,
+  mergeTrackPoints,
+} from "@/features/map/aircraft/track";
 import type { LiveAircraft, ReceiverInfo } from "@/lib/api/live";
 import type { ConnectionStatus } from "@/lib/ws/liveSocket";
 import type { DeltaData, SnapshotData } from "@/lib/ws/protocol";
@@ -71,7 +74,9 @@ export interface LiveAircraftState {
   departing: Record<string, DepartingRecord>;
   receiver: ReceiverInfo | null;
   selectedIcao: string | null;
-  /** Positions observed for the selected aircraft since it was selected. */
+  /** The selected aircraft's track: positions observed since it was selected,
+   * under the current sighting's history once `backfillTrack` has merged it
+   * in. */
   track: SelectedTrack | null;
   connection: ConnectionStatus;
 
@@ -81,6 +86,11 @@ export interface LiveAircraftState {
   /** Selects an aircraft (or clears the selection with `null`), restarting
    * track accumulation from the aircraft's current position. */
   selectAircraft: (icao: string | null, now?: number) => void;
+  /** Merges the selected aircraft's fetched history under the points watched
+   * since selection (issue #133). A no-op unless `icao` is still the aircraft
+   * the current track belongs to, which is what discards a response that
+   * arrives after the selection moved on. */
+  backfillTrack: (icao: string, points: readonly TrackPoint[]) => void;
   /** Returns the store to its initial state — used when the socket is torn
    * down so a remount never renders a picture from a dead connection. */
   reset: () => void;
@@ -88,7 +98,12 @@ export interface LiveAircraftState {
 
 function initialState(): Omit<
   LiveAircraftState,
-  "applySnapshot" | "applyDelta" | "setConnection" | "selectAircraft" | "reset"
+  | "applySnapshot"
+  | "applyDelta"
+  | "setConnection"
+  | "selectAircraft"
+  | "backfillTrack"
+  | "reset"
 > {
   return {
     aircraft: {},
@@ -252,6 +267,26 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
         selectedIcao: icao,
         track: extendTrack(null, icao, state.aircraft, now),
       };
+    });
+  },
+
+  backfillTrack: (icao, points) => {
+    set((state) => {
+      const track = state.track;
+      // The track is keyed by ICAO, so a response for an aircraft the
+      // selection has since moved away from finds nothing to merge into and is
+      // dropped. Reselecting the *same* aircraft restarts accumulation and
+      // does take the backfill again, which is what makes a reselect redraw
+      // the whole sighting rather than a single point.
+      if (points.length === 0 || !track || track.icao !== icao) {
+        return state;
+      }
+      const merged = mergeTrackPoints(points, track.points);
+      // Returning `state` itself, not an empty patch: an unchanged track must
+      // not notify the layer's subscription into a pointless redraw.
+      return merged === track.points
+        ? state
+        : { track: { icao, points: merged } };
     });
   },
 
