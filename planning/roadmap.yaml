@@ -79,6 +79,10 @@ releases:
       real deployment: first-run ingestion hot-start, activity WS batching,
       quick-wins bundle, OpenSky metadata source, Pi 4 baseline, selected-track
       backfill, live-set ghost expiry (slices 056-062). Recorded 2026-09-02."
+  - version: "v0.3.1"
+    after_phase: 8
+    theme: "Same-day patch: aircraft label stability (hysteresis + relocate-before-hide)
+      and the honest position-fix anchor (slices 063-064). Recorded 2026-09-02."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
