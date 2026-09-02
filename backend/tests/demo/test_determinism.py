@@ -12,6 +12,7 @@ import pytest
 
 from flightsite.demo import build_roster
 from flightsite.demo.adapter import DEFAULT_CENTER, DemoAdapter
+from flightsite.demo.scenario import SCENARIO_EPOCH
 from flightsite.ingest.types import Position
 
 SEATTLE = Position(latitude=47.4502, longitude=-122.3088)
@@ -41,15 +42,23 @@ def test_roster_icaos_are_unique() -> None:
 
 @pytest.mark.parametrize("tick", [0, 1, 59, 300, 419, 900, 1799, 1800, 5000])
 def test_two_adapters_same_seed_produce_identical_batches(tick: int) -> None:
-    first = DemoAdapter(seed=42, population=60)
-    second = DemoAdapter(seed=42, population=60)
+    # The epoch is pinned because it now defaults to the wall clock (issue
+    # #107): two adapters built microseconds apart would otherwise differ by
+    # a constant offset on every timestamp, which is exactly the property
+    # being asserted and would make this pass or fail on construction timing
+    # rather than on determinism.
+    first = DemoAdapter(seed=42, population=60, epoch=SCENARIO_EPOCH)
+    second = DemoAdapter(seed=42, population=60, epoch=SCENARIO_EPOCH)
 
     assert first.batch_for_tick(tick) == second.batch_for_tick(tick)
 
 
 def test_two_adapters_different_seed_diverge_somewhere_in_the_first_period() -> None:
-    first = DemoAdapter(seed=1, population=60)
-    second = DemoAdapter(seed=2, population=60)
+    # Pinned for the same reason, and here it matters more: with differing
+    # epochs every batch would differ by timestamp alone, so this would pass
+    # without the seeds diverging at all.
+    first = DemoAdapter(seed=1, population=60, epoch=SCENARIO_EPOCH)
+    second = DemoAdapter(seed=2, population=60, epoch=SCENARIO_EPOCH)
 
     batches = [
         (first.batch_for_tick(tick), second.batch_for_tick(tick)) for tick in range(0, 900, 30)

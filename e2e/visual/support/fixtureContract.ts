@@ -71,12 +71,20 @@ export const SITE_NAME = "FlightSite Demo";
  * at.
  *
  * `t0` — "since the first sighting" — rather than the page's default
- * `today`. Demo sightings are stamped from the scenario epoch
- * (2026-01-01, `backend/src/flightsite/demo/scenario.py`) while the backend
- * resolves `today` against the real wall clock, so on a demo stack `today`
- * is genuinely empty and every card renders "No data for this window."
- * `t0` spans the epoch, so the charts and tables have real content — which
- * is the thing worth having a baseline of.
+ * `today`.
+ *
+ * Originally that was forced: demo sightings were stamped from a fixed
+ * scenario epoch (2026-01-01) while the backend resolved `today` against the
+ * real wall clock, so `today` was genuinely empty on a demo stack and every
+ * card rendered "No data for this window." Slice 058 fixed that (issue #107)
+ * — the demo scenario now anchors to the wall clock, so `today` is populated
+ * and would make a perfectly good baseline.
+ *
+ * It stays `t0` because changing it means re-capturing the HAR and every
+ * analytics baseline, which needs a live demo stack (`npm run visual:capture`)
+ * and is not something to do as a side effect. `t0` spans the whole scenario
+ * either way, so the charts and tables have real content — which is the thing
+ * worth having a baseline of.
  */
 export const ANALYTICS_PRESET = "t0";
 
