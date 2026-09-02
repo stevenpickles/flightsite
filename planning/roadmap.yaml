@@ -1619,6 +1619,50 @@ slices:
     risk_level: medium
     notes: "Owner measured 80 shown against 59 audible on the Pi at v0.2.0. Fixes GitHub issue #134. Added by Fable outside the phase plan."
 
+  - id: "063"
+    title: "Aircraft label stability"
+    phase: 8
+    branch: "063-label-stability"
+    status: merged
+    depends_on: ["014", "015"]
+    objective: "Stop aircraft labels blinking on a busy picture: give slice 015's density tier a hysteresis band so a live count sitting on the threshold cannot toggle the label content every frame, and let a colliding non-selected label try other placements before MapLibre hides it (issue #143)."
+    scope:
+      - "`labels/priority.ts` replaces the single `DENSITY_CALLSIGN_THRESHOLD` with a documented band — `DENSITY_CALLSIGN_ENTER` (60) to enter callsign-only, `DENSITY_CALLSIGN_EXIT` (50) to return to the full stack — resolved by a pure `nextDensityLatched(previous, liveCount)`"
+      - "`deriveLabelTier` stays pure by taking the resolved `densityLatched` boolean instead of the raw count; the zoom edges (7/10) keep no band, because zoom only moves when the viewer moves it"
+      - "`labels/densityLatch.ts` holds the one latch bit for the frame loop, module-level in the shape `filteredLiveAircraftCache` already uses, with an explicit reset"
+      - "`aircraft/frame.ts` advances the latch once per frame on the same post-filter count and passes it into the GeoJSON builder, which keeps its own count-only fallback for callers that draw a single frame"
+      - "`useLiveConnection` clears the latch alongside the store resets on teardown; an empty picture unlatches on its own regardless"
+      - "the non-selected label layer swaps its fixed `text-anchor`/`text-offset` for `text-variable-anchor` (top, bottom, right, left) plus `text-radial-offset`, so a label that loses the collision contest relocates around its aircraft and is hidden only when no candidate fits"
+    out_of_scope:
+      - "the selected-aircraft label layer, which keeps its fixed anchor and its always-visible `text-allow-overlap`/`text-ignore-placement` pair (slice 015's acceptance criterion)"
+      - "the `symbol-sort-key` collision priorities and the label content builder, both unchanged"
+      - "the zoom tier boundaries and the tier ladder itself"
+      - "backend changes; the live count this reads is slice 062's, already honest"
+      - "visual-regression baselines: the live-map baseline hides the MapLibre canvas, so no placement change can reach it"
+    acceptance_criteria:
+      - "a live count oscillating across 60 does not toggle label content; the tier changes only after the count clears the far edge of the band"
+      - "a count rising 59 -> 61 latches to callsign-only, falling back to 55 stays latched, and only below 50 returns to the full stack"
+      - "selected and interesting aircraft keep the full stack at any count, latched or not"
+      - "the non-selected label layer offers more than one placement, leads with the placement it used before, and sets neither `text-anchor` nor `text-offset` (which MapLibre ignores under variable anchoring)"
+      - "the selected label layer still uses the fixed anchor/offset pair and no variable anchoring"
+      - "a store reset or a dropped connection leaves the latch cleared, so a reconnect is judged on its own picture"
+    required_tests:
+      - hysteresis band unit tests over the rising, falling, in-band and empty-picture cases, plus a churning-count sequence that must not oscillate
+      - latch module tests for carry-across-calls and reset
+      - frame-loop tests drawing a sequence of frames and asserting the drawn label text through the real frame -> geojson path
+      - geojson tests for an explicitly latched and an explicitly cleared frame
+      - layer tests pinning variable anchoring on the non-selected label layer and its absence on the selected one
+    expected_artifacts:
+      - frontend/src/features/map/labels/priority.ts
+      - frontend/src/features/map/labels/densityLatch.ts
+      - frontend/src/features/map/aircraft/geojson.ts
+      - frontend/src/features/map/aircraft/frame.ts
+      - frontend/src/features/map/aircraft/aircraftLayers.ts
+      - frontend/src/features/map/aircraft/useLiveConnection.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner-reported on the Pi at v0.3.0; slice 062's honester live count made the threshold flapping more visible. Fixes GitHub issue #143. Frontend-only. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
