@@ -140,6 +140,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 057 | Activity WebSocket batching | 012, 035, 049 | opus | medium | Batch a detector pass's activity events into one WebSocket frame so a fresh install's backlog stops evicting every client (issue #99) |
 | 058 | Quick wins bundle | 031, 042, 043, 050 | opus | low | Six small tracked fixes on one branch: max-range sort index, FAA User-Agent, VACUUM refusal surfaced, backup gzip 6, pagination noun, demo-mode "today" (issues #107, #112, #115, #116, #117, #121) |
 | 059 | OpenSky metadata source | 021, 022, 023, 042 | opus | medium | Opt-in, default-off OpenSky aircraft database as a fill-gaps-only source under an ambiguous license (ADR-0013) |
+| 062 | Live-set ghost expiry | 007, 008, 009 | opus | medium | Age live records by the decoder's own "last heard" report so dump1090's ~5-minute retention window stops inflating the live count and the 15 s / 60 s thresholds fire on time (issue #134) |
 
 ## Parallelization Guide
 
