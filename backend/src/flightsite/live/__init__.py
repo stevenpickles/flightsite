@@ -30,6 +30,7 @@ from flightsite.live.aircraft import (
     appear,
     mark_stale,
     merge,
+    reported_silence_s,
 )
 from flightsite.live.events import (
     DEFAULT_QUEUE_SIZE,
@@ -83,4 +84,5 @@ __all__ = [
     "distance_nm",
     "mark_stale",
     "merge",
+    "reported_silence_s",
 ]

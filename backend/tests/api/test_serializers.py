@@ -18,7 +18,14 @@ from flightsite.api.schemas import AircraftView, ReceiverInfo
 from flightsite.api.serializers import aircraft_payload, iso_utc, receiver_payload
 from flightsite.config import ConfigStore, LocationSettings, Settings
 from flightsite.ingest import Position
-from flightsite.live import LiveAircraft, LiveState, appear, mark_stale, merge
+from flightsite.live import (
+    DEFAULT_STALE_S,
+    LiveAircraft,
+    LiveState,
+    appear,
+    mark_stale,
+    merge,
+)
 
 from ..live.conftest import SEATTLE, ManualClock, make_update
 
@@ -244,6 +251,7 @@ def test_a_merged_record_serializes_its_latest_values() -> None:
         first,
         make_update(offset_s=1.0, position=NEARBY, squawk="4521"),
         now=clock.advance(1.0),
+        stale_s=DEFAULT_STALE_S,
         receiver=SEATTLE,
     )
     payload = aircraft_payload(second)

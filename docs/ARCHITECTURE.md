@@ -152,7 +152,11 @@ Asyncio tasks in one process:
   applies the batch to the live store. Budget: apply-500-aircraft-batch well under one
   polling interval.
 - **Lifecycle timer** — drives stale (15 s), live-removal (60 s), and sighting-close
-  (10 min) transitions from a monotonic clock (configurable values).
+  (10 min) transitions from a monotonic clock (configurable values). The silence those
+  thresholds measure runs from the decoder's own report of when it last heard the
+  aircraft, not from the last poll that listed it: both supported decoders keep a dead
+  aircraft in their output for minutes, so an entry appearing in a poll is not an
+  observation.
 - **Persistence worker** — drains bounded queues of domain events into batched
   transactions. Backpressure policy: queues are bounded; on overflow, coalescible
   items (track points) are thinned first and a counter + diagnostic records the
