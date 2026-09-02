@@ -63,6 +63,7 @@ from typing import Final
 import httpx
 import structlog
 
+from flightsite import __version__
 from flightsite.metadata.records import (
     NormalizedAircraftRecord,
     RecordError,
@@ -85,6 +86,22 @@ ACFTREF_MEMBER: Final = "ACFTREF.txt"
 
 #: The archive is tens of megabytes; the FAA server is not always fast.
 DEFAULT_TIMEOUT_S: Final = 120.0
+
+#: ``registry.faa.gov`` sits behind Akamai bot management, which answers any
+#: request it reads as automated with ``403 Access Denied`` from the edge — the
+#: origin IIS server is never reached. httpx's default ``python-httpx/x.y``
+#: identifier is one of those, which is why the download failed outright
+#: (issue #121) rather than for any reason to do with the archive.
+#:
+#: Measured against the live endpoint, the filter keys on bot *markers* rather
+#: than on the absence of a UA: no UA, ``curl/8.4.0`` and ``Wget/1.21`` are all
+#: refused, as is any string carrying the conventional ``(+https://...)``
+#: contact-URL token or a ``(compatible; ...)`` clause. A ``Mozilla/5.0``
+#: prefix with our own product token appended is served (206/200), so this
+#: still says truthfully what is calling and at what version; the contact URL
+#: that would normally accompany it is exactly the token that gets us blocked,
+#: and lives in this comment instead.
+USER_AGENT: Final = f"Mozilla/5.0 FlightSite/{__version__}"
 
 #: A floor ``validate()`` holds ``MASTER.txt`` to. The real file has run
 #: ~290,000-300,000+ rows for years; this is set well below that so ordinary
@@ -110,8 +127,16 @@ ClientFactory = Callable[[], httpx.AsyncClient]
 
 
 def build_client(timeout_s: float = DEFAULT_TIMEOUT_S) -> httpx.AsyncClient:
-    """Build the default HTTP client for the FAA download."""
-    return httpx.AsyncClient(timeout=timeout_s, follow_redirects=True)
+    """Build the default HTTP client for the FAA download.
+
+    Carries :data:`USER_AGENT`, without which the FAA's edge refuses the
+    download with ``403`` before it reaches the origin.
+    """
+    return httpx.AsyncClient(
+        timeout=timeout_s,
+        follow_redirects=True,
+        headers={"User-Agent": USER_AGENT},
+    )
 
 
 class FaaRegistryProvider:
@@ -327,6 +352,7 @@ __all__ = [
     "DEFAULT_URL",
     "MASTER_MEMBER",
     "MIN_MASTER_ROWS",
+    "USER_AGENT",
     "ClientFactory",
     "FaaRegistryProvider",
     "build_client",
