@@ -262,6 +262,54 @@ describe("selection and track accumulation", () => {
     expect(store().track).toBeNull();
   });
 
+  it("preserves the track when the already-selected aircraft is selected again", () => {
+    // A second click on the same aircraft — or a panel row, jump link, or
+    // notification naming the one already selected — must not restart
+    // accumulation: it would throw away the backfilled history with nothing
+    // to rebuild it (issue #133).
+    store().selectAircraft("aaaaaa", T0);
+    store().applyDelta(
+      {
+        updated: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.1, lon: -122 } }),
+        ],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+    const before = store().track;
+
+    store().selectAircraft("aaaaaa", T0 + 2000);
+
+    expect(store().selectedIcao).toBe("aaaaaa");
+    expect(store().track).toBe(before);
+    expect(store().track?.points).toHaveLength(2);
+  });
+
+  it("does not notify subscribers when the selection does not change", () => {
+    store().selectAircraft("aaaaaa", T0);
+    let notifications = 0;
+    const unsubscribe = useLiveAircraftStore.subscribe(() => {
+      notifications += 1;
+    });
+    store().selectAircraft("aaaaaa", T0 + 10);
+    unsubscribe();
+
+    expect(notifications).toBe(0);
+  });
+
+  it("does not notify subscribers when nothing was selected and null is passed", () => {
+    let notifications = 0;
+    const unsubscribe = useLiveAircraftStore.subscribe(() => {
+      notifications += 1;
+    });
+    store().selectAircraft(null, T0);
+    unsubscribe();
+
+    expect(notifications).toBe(0);
+  });
+
   it("keeps the track when the selected aircraft reports no position", () => {
     store().selectAircraft("aaaaaa", T0);
     store().applyDelta(
@@ -302,6 +350,232 @@ describe("selection and track accumulation", () => {
   });
 });
 
+describe("backfillTrack", () => {
+  beforeEach(() => {
+    store().applySnapshot(
+      {
+        aircraft: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.5, lon: -122 } }),
+        ],
+        receiver: null,
+      },
+      T0,
+    );
+  });
+
+  const SIGHTING = 91_001;
+  const NEXT_SIGHTING = 91_002;
+
+  const history = [
+    { lat: 47.1, lon: -122, at: T0 - 300_000 },
+    { lat: 47.3, lon: -122, at: T0 - 150_000 },
+  ];
+
+  it("merges the sighting's history under the points seen since selection", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+
+    expect(store().track?.points).toEqual([
+      ...history,
+      { lat: 47.5, lon: -122, at: T0 },
+    ]);
+    expect(store().trackBackfilledFrom).toBe(SIGHTING);
+  });
+
+  it("keeps extending the track live after a backfill", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    store().applyDelta(
+      {
+        updated: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.6, lon: -122 } }),
+        ],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+
+    expect(store().track?.points).toHaveLength(4);
+    expect(store().track?.points.at(-1)).toEqual({
+      lat: 47.6,
+      lon: -122,
+      at: T0 + 1000,
+    });
+  });
+
+  it("keeps the backfilled history when the aircraft is clicked again", () => {
+    // The regression this pairs with: a re-click used to restart accumulation
+    // while the backfill's inputs stayed unchanged, so nothing re-fetched and
+    // the trail collapsed to a dot for the rest of the selection.
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    store().selectAircraft("aaaaaa", T0 + 5000);
+
+    expect(store().track?.points).toHaveLength(3);
+  });
+
+  it("discards a response that arrives after the aircraft was deselected", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().selectAircraft(null, T0 + 10);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+
+    expect(store().track).toBeNull();
+    expect(store().trackLive).toEqual([]);
+    expect(store().trackBackfilledFrom).toBeNull();
+  });
+
+  it("discards a response for an aircraft the selection has moved on from", () => {
+    store().applySnapshot(
+      {
+        aircraft: [
+          makeAircraft({ icao: "bbbbbb", position: { lat: 10, lon: 10 } }),
+        ],
+        receiver: null,
+      },
+      T0,
+    );
+    store().selectAircraft("bbbbbb", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+
+    expect(store().track?.icao).toBe("bbbbbb");
+    expect(store().track?.points).toEqual([{ lat: 10, lon: 10, at: T0 }]);
+  });
+
+  it("leaves the track alone when the aircraft has no open sighting", () => {
+    store().selectAircraft("aaaaaa", T0);
+    const before = store().track;
+    store().backfillTrack("aaaaaa", SIGHTING, []);
+
+    expect(store().track).toBe(before);
+  });
+
+  it("does not notify subscribers when the backfill adds nothing", () => {
+    // The layer redraws on every store notification; a redundant backfill must
+    // not cost one.
+    store().selectAircraft("aaaaaa", T0);
+    let notifications = 0;
+    const unsubscribe = useLiveAircraftStore.subscribe(() => {
+      notifications += 1;
+    });
+    store().backfillTrack("aaaaaa", SIGHTING, [
+      { lat: 47.5, lon: -122, at: T0 },
+    ]);
+    store().backfillTrack("aaaaaa", SIGHTING, []);
+    store().backfillTrack("bbbbbb", SIGHTING, history);
+    unsubscribe();
+
+    expect(notifications).toBe(0);
+  });
+
+  it("re-backfills after a deselect and reselect", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    store().selectAircraft(null, T0 + 10);
+    store().selectAircraft("aaaaaa", T0 + 20);
+    expect(store().track?.points).toHaveLength(1);
+    expect(store().trackBackfilledFrom).toBeNull();
+
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    expect(store().track?.points).toHaveLength(3);
+  });
+
+  it("stays idempotent when the same sighting is backfilled again", () => {
+    // The refetch `staleTime: 0` provokes returns the same open sighting with
+    // its path grown at the newest end — ground the live points already cover,
+    // so the drawn track must simply not move.
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    const afterFirst = store().track;
+
+    store().backfillTrack("aaaaaa", SIGHTING, [
+      ...history,
+      { lat: 47.45, lon: -122, at: T0 - 1000 },
+    ]);
+
+    expect(store().track).toBe(afterFirst);
+    expect(store().track?.points).toHaveLength(3);
+  });
+
+  it("replaces a closed sighting's path when the next sighting backfills", () => {
+    // Issue #136: sighting N closes and N+1 opens for the same aircraft while
+    // N's row is still in the query cache, so N's path is merged first. The
+    // correction has to *remove* N's points, which no additive merge can do —
+    // the rebuild runs against the live record instead.
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    store().applyDelta(
+      {
+        updated: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.6, lon: -122 } }),
+        ],
+        stale: [],
+        removed: [],
+      },
+      T0 + 1000,
+    );
+    expect(store().track?.points).toHaveLength(4);
+
+    const reopened = [{ lat: 48.9, lon: -122, at: T0 - 20_000 }];
+    store().backfillTrack("aaaaaa", NEXT_SIGHTING, reopened);
+
+    // The closed sighting's two points are gone, the new sighting's one point
+    // is drawn, and both live positions survived untouched.
+    expect(store().track?.points).toEqual([
+      { lat: 48.9, lon: -122, at: T0 - 20_000 },
+      { lat: 47.5, lon: -122, at: T0 },
+      { lat: 47.6, lon: -122, at: T0 + 1000 },
+    ]);
+    expect(store().trackBackfilledFrom).toBe(NEXT_SIGHTING);
+  });
+
+  it("keeps accumulating live positions after a sighting replacement", () => {
+    store().selectAircraft("aaaaaa", T0);
+    store().backfillTrack("aaaaaa", SIGHTING, history);
+    store().backfillTrack("aaaaaa", NEXT_SIGHTING, [
+      { lat: 48.9, lon: -122, at: T0 - 20_000 },
+    ]);
+    store().applyDelta(
+      {
+        updated: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47.7, lon: -122 } }),
+        ],
+        stale: [],
+        removed: [],
+      },
+      T0 + 2000,
+    );
+
+    expect(store().track?.points).toHaveLength(3);
+    expect(store().track?.points.at(-1)).toEqual({
+      lat: 47.7,
+      lon: -122,
+      at: T0 + 2000,
+    });
+  });
+
+  it("caps the merged track at the retention limit", () => {
+    store().selectAircraft("aaaaaa", T0);
+    const long = Array.from(
+      { length: TRACK_MAX_POINTS + 100 },
+      (_u, index) => ({
+        lat: 47 + index / 100_000,
+        lon: -122,
+        at: T0 - (TRACK_MAX_POINTS + 100 - index) * 1000,
+      }),
+    );
+    store().backfillTrack("aaaaaa", SIGHTING, long);
+
+    expect(store().track?.points).toHaveLength(TRACK_MAX_POINTS);
+    // The newest end is kept: the live-accumulated point is still last.
+    expect(store().track?.points.at(-1)).toEqual({
+      lat: 47.5,
+      lon: -122,
+      at: T0,
+    });
+  });
+});
+
 describe("connection status", () => {
   it("starts connecting and follows the socket", () => {
     expect(store().connection).toBe("connecting");
@@ -324,6 +598,8 @@ describe("reset", () => {
     expect(store().departing).toEqual({});
     expect(store().selectedIcao).toBeNull();
     expect(store().track).toBeNull();
+    expect(store().trackLive).toEqual([]);
+    expect(store().trackBackfilledFrom).toBeNull();
     expect(store().receiver).toBeNull();
     expect(store().connection).toBe("connecting");
   });

@@ -68,7 +68,9 @@ export function AircraftDetailPanel() {
     state.selectedIcao ? state.departing[state.selectedIcao] : undefined,
   );
   const receiver = useLiveAircraftStore((state) => state.receiver);
-  const track = useLiveAircraftStore((state) => state.track);
+  // `trackLive`, not `track`: the mini stats report what has been watched
+  // arriving since selection, which the backfilled drawn track no longer is.
+  const trackLive = useLiveAircraftStore((state) => state.trackLive);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
 
   const isOpen = selectedIcao !== null;
@@ -304,7 +306,7 @@ export function AircraftDetailPanel() {
               </DetailSection>
 
               <div className="px-4 py-3">
-                <TrackStats track={track} />
+                <TrackStats points={trackLive} />
               </div>
             </>
           )}

@@ -1501,7 +1501,6 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Owner-approved opt-in source. Licensing is ambiguous rather than clean, so the posture matches the Mictronics row (fetch-on-demand only) and adds default-off on top; contact@opensky-network.org is recorded in ADR-0013 as the route to firmer ground. Added by Fable outside the phase plan."
-
   - id: "060"
     title: "Raspberry Pi 4 performance baseline"
     phase: 8
@@ -1532,6 +1531,43 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Closes slice 049's second acceptance criterion (issue #101) with a provisional, honestly-caveated figure. Measurement was run by Fable on the owner's production Pi over SSH; the JSON report is at /opt/flightsite/data/perf-baseline/report.json on that machine. Added by Fable outside the phase plan."
+  - id: "061"
+    title: "Selected aircraft track backfill"
+    phase: 8
+    branch: "061-track-backfill"
+    status: merged
+    depends_on: ["014", "052"]
+    objective: "Fill the backfill seam slice 014 left open: draw the selected aircraft's track back to the start of its current sighting on selection, instead of accumulating a trail only from the moment of the click."
+    scope:
+      - "`useTrackBackfill` chains the two slice-052 history reads on selection — `GET /api/v1/sightings?icao=<hex>&open=true&limit=1` for the open sighting, then `GET /api/v1/sightings/{id}` for its checkpointed `path` — through TanStack Query, mounted beside the other aircraft-layer hooks"
+      - "`mergeTrackPoints` merges the fetched history under the live-accumulated points: two ascending-`at` lists, strictly increasing timestamps only, live wins a tie, capped at `TRACK_MAX_POINTS` keeping the newest"
+      - "`backfillTrack` store action applies the merge only while the track still belongs to the ICAO the response was requested for, discarding a response that lands after the selection moved on, and returns the store unchanged when nothing was added so the layer does not redraw"
+      - "no open sighting, a closed row, a 404, or a dead backend backfills nothing and leaves selection, the detail panel and the live trail exactly as they were"
+      - "the `track.ts` seam docstring records what now fills it"
+    out_of_scope:
+      - "the renderer, the track layer, `SelectedTrack`'s shape, or the `TRACK_MAX_POINTS` retention rule (the slice-014 contract exists so this slice needs none of them)"
+      - "the slice-054 interpolation and position-anchor behaviour"
+      - "backend changes: slice 052's endpoints already serve everything this needs"
+      - "historical playback of closed sightings on the live map (a v1 non-goal; the sighting detail page owns closed-sighting paths)"
+    acceptance_criteria:
+      - "clicking an airborne aircraft immediately draws its track back to the start of the current sighting as checkpointed"
+      - "the trail keeps extending live after the backfill, and a deselect/reselect backfills again"
+      - "a response for an aircraft that is no longer selected never reaches the drawn track"
+      - "an aircraft with no open sighting, and a failing history read, both leave the pre-slice behaviour intact"
+    required_tests:
+      - merge unit tests (empty accumulation, checkpoint overlap, tie-breaking, out-of-order guards, retention cap, identity return)
+      - store tests for backfill application, the ICAO guard on deselect and reselect, and the no-notification path
+      - hook tests for the two chained reads, the no-open-sighting and closed-row paths, fetch failure, and a late response landing after deselect
+      - a Live Map page test asserting a click draws the backfilled track oldest-first
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/useTrackBackfill.ts
+      - frontend/src/features/map/aircraft/track.ts
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/features/map/aircraft/AircraftLayer.tsx
+      - frontend/src/test/overlaysApiMock.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Unplanned fix slice for GitHub issue #133, the seam `frontend/src/features/map/aircraft/track.ts` has documented since slice 014. Frontend-only. Added by Fable outside the phase plan."
 
   - id: "062"
     title: "Live-set ghost expiry"
