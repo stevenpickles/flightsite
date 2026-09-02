@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { INTERPOLATION_MAX_FIX_AGE_MS } from "@/features/map/aircraft/interpolation";
 import {
   REMOVAL_FADE_MS,
   useLiveAircraftStore,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { TRACK_MAX_POINTS } from "@/features/map/aircraft/track";
+import type { LiveAircraft } from "@/lib/api/live";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
 const T0 = 1_800_000_000_000;
@@ -639,7 +641,14 @@ describe("batching", () => {
 });
 
 describe("positionChangedAt", () => {
-  const AT = { icao: "aaaaaa", position: { lat: 47, lon: -122 } } as const;
+  // `seen_pos_s: 0` throughout: these cases are about *which* frame re-anchors,
+  // and pinning the reported age at zero keeps every expectation below the
+  // exact pre-#144 dating. Back-dating a nonzero age is the next block.
+  const AT = {
+    icao: "aaaaaa",
+    position: { lat: 47, lon: -122 },
+    seen_pos_s: 0,
+  } as const;
 
   function anchor(): number | undefined {
     return store().aircraft.aaaaaa?.positionChangedAt;
@@ -760,5 +769,125 @@ describe("positionChangedAt", () => {
     );
 
     expect(anchor()).toBe(T0 + 1000);
+  });
+});
+
+describe("positionChangedAt back-dating (issue #144)", () => {
+  const AT = { icao: "aaaaaa", position: { lat: 47, lon: -122 } } as const;
+  const MOVED = { ...AT, position: { lat: 47.01, lon: -122 } } as const;
+
+  function anchor(): number | undefined {
+    return store().aircraft.aaaaaa?.positionChangedAt;
+  }
+
+  function snapshot(overrides: Partial<LiveAircraft>, now: number): void {
+    store().applySnapshot(
+      { aircraft: [makeAircraft({ ...AT, ...overrides })], receiver: null },
+      now,
+    );
+  }
+
+  function delta(overrides: Partial<LiveAircraft>, now: number): void {
+    store().applyDelta(
+      {
+        updated: [makeAircraft({ ...AT, ...overrides })],
+        stale: [],
+        removed: [],
+      },
+      now,
+    );
+  }
+
+  it("dates a first fix at the age the decoder reports", () => {
+    // The frame landed at T0, but the CPR solution behind it is 3 s old.
+    snapshot({ seen_pos_s: 3 }, T0);
+
+    expect(anchor()).toBe(T0 - 3000);
+  });
+
+  it("dates a new fix on the delta path by the same rule", () => {
+    // Both application paths must date a position identically; a snapshot
+    // arriving mid-stream must not shift a marker the deltas were placing.
+    snapshot({ seen_pos_s: 0 }, T0);
+    delta({ ...MOVED, seen_pos_s: 2.5 }, T0 + 4000);
+
+    expect(anchor()).toBe(T0 + 1500);
+  });
+
+  it("dates the same fix identically whichever path delivers it", () => {
+    snapshot({ seen_pos_s: 0 }, T0);
+    delta({ ...MOVED, seen_pos_s: 2.5 }, T0 + 4000);
+    const viaDelta = anchor();
+
+    store().reset();
+    snapshot({ seen_pos_s: 0 }, T0);
+    snapshot({ ...MOVED, seen_pos_s: 2.5 }, T0 + 4000);
+
+    expect(anchor()).toBe(viaDelta);
+  });
+
+  it("falls back to the arrival instant when no age is reported", () => {
+    // §2.7 makes `null` the representation of "unknown"; without an age the
+    // arrival instant is the best available guess, exactly as before #144.
+    snapshot({ seen_pos_s: null }, T0);
+
+    expect(anchor()).toBe(T0);
+  });
+
+  it("dates a zero-age fix at the arrival instant", () => {
+    snapshot({ seen_pos_s: 0 }, T0);
+
+    expect(anchor()).toBe(T0);
+  });
+
+  it.each([
+    ["negative", -5],
+    ["not a number", Number.NaN],
+    ["infinite", Number.POSITIVE_INFINITY],
+  ])("falls back to the arrival instant for a %s age", (_label, seen) => {
+    // A nonsense age must not throw the anchor anywhere; under-projecting is
+    // the safe direction.
+    snapshot({ seen_pos_s: seen }, T0);
+
+    expect(anchor()).toBe(T0);
+  });
+
+  it("clamps an outlier age to the fix-age cap", () => {
+    // Five minutes: the decoder reporting something the interpolator has long
+    // given up projecting. Clamped, so the anchor lands at the cap rather than
+    // minutes into the past.
+    snapshot({ seen_pos_s: 300 }, T0);
+
+    expect(anchor()).toBe(T0 - INTERPOLATION_MAX_FIX_AGE_MS);
+  });
+
+  it("keeps the anchor when a repeated fix reports a growing age", () => {
+    // The aircraft has not been placed anywhere new, so the moment it was
+    // placed has not changed. The ages below outrun wall time — the decoder's
+    // age is sampled afresh each poll and need not track the gap between the
+    // frames that carry it — so re-dating each repeat would walk the anchor
+    // backwards frame by frame, which is #119 inverted.
+    snapshot({ seen_pos_s: 1 }, T0);
+    delta({ seen_pos_s: 2.5 }, T0 + 1000);
+    delta({ seen_pos_s: 4.5 }, T0 + 2000);
+    delta({ seen_pos_s: 12 }, T0 + 8000);
+
+    expect(anchor()).toBe(T0 - 1000);
+    expect(store().aircraft.aaaaaa?.receivedAt).toBe(T0 + 8000);
+  });
+
+  it("keeps the anchor when a snapshot repeats a fix with a growing age", () => {
+    snapshot({ seen_pos_s: 1 }, T0);
+    snapshot({ seen_pos_s: 9 }, T0 + 5000);
+
+    expect(anchor()).toBe(T0 - 1000);
+  });
+
+  it("re-dates only once the fix itself moves", () => {
+    snapshot({ seen_pos_s: 1 }, T0);
+    delta({ seen_pos_s: 6 }, T0 + 3000);
+    delta({ ...MOVED, seen_pos_s: 1 }, T0 + 4000);
+
+    expect(anchor()).toBe(T0 + 3000);
   });
 });

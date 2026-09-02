@@ -17,6 +17,28 @@
  * crept forward again. Elapsed time has to be measured from the moment the
  * position was *fixed*, which is what the store now records.
  *
+ * **And the fix was already old when it arrived** — issue #144. The store dates
+ * a new fix at `receivedAt - seen_pos_s`, the decoder's own age for the CPR
+ * solution, rather than at the instant the frame landed; see
+ * `useLiveAircraftStore` for the dating rules and why a *repeated* fix is never
+ * re-dated. That is what makes this projection continuous across fixes. With
+ * both anchors honest, the projection running from fix N at the moment fix N+1
+ * lands and the projection starting from fix N+1 are the same point for an
+ * aircraft flying straight: N+1's coordinates sit behind N's projection by
+ * exactly the travel N+1's own age immediately adds back. Whatever poll and
+ * socket latency the frames share cancels in the subtraction, so it need not be
+ * known — only the part of the delay the decoder measures differs between
+ * fixes, and that is the part `seen_pos_s` reports. Dating both fixes at
+ * arrival instead dropped the age term from one side only, which is why the
+ * marker stepped back by (fix age × ground speed) on every decode.
+ *
+ * A back-dated fix is therefore projected forward the moment it arrives, with
+ * `elapsed` already positive. That is the intent, not an edge case: `elapsed`
+ * asks how long the aircraft has been flying since it was placed, and the
+ * answer at arrival is `seen_pos_s`, not zero. The `elapsed === 0` shortcut
+ * below still covers what it always covered — no time to project, so nothing
+ * to compute.
+ *
  * **Why dead reckoning rather than tweening between the last two positions.**
  * Tweening is smooth but wrong twice over: it renders the aircraft a full
  * update *behind* where it was last reported, and it needs two positions, which
@@ -45,13 +67,20 @@
  * has stopped hearing them, so their last known position is the honest thing to
  * draw.
  *
- * **No correction blend on a new fix**, considered and declined in slice 054. A
- * new fix still moves the marker by however far the projection had drifted, and
- * easing into it instead of snapping was the obvious next refinement. It is not
- * worth it: with the anchor correct that step is the dead-reckoning error over
- * one fix interval — metres for an aircraft flying straight, against the ~0.8 nm
- * the mis-anchored version jumped — so the blend would smooth something already
- * near the noise floor. The cost is real, though. This function is pure and
+ * **No correction blend on a new fix**, considered and declined in slice 054
+ * and re-examined in 064. A new fix still moves the marker by however far the
+ * projection had drifted, and easing into it instead of snapping is the obvious
+ * next refinement. Slice 054 declined it on the grounds that the step is only
+ * the dead-reckoning error over one fix interval — metres for an aircraft
+ * flying straight, against the ~0.8 nm the #119 anchor jumped. That was the
+ * right conclusion from a premise that was not yet true: the anchor was still
+ * late by the fix's own age, leaving a systematic step of (fix age × ground
+ * speed), ~0.1-0.3 nm at jet speeds and reliably backwards, which is the
+ * oscillation issue #144 reported. Back-dating removes that term rather than
+ * masking it, and what remains is the error the paragraph always claimed —
+ * genuine manoeuvring between fixes, near the noise floor for straight flight,
+ * and not systematically signed. So the blend stays declined, now on its stated
+ * grounds. The cost is real, too. This function is pure and
  * called once per aircraft per frame; a blend needs the previously *drawn*
  * position kept per aircraft between frames, which means mutable render state
  * with its own eviction, reset-on-reconnect and store-reset invalidation. And
@@ -82,6 +111,14 @@ import type { GeoPosition } from "@/lib/api/live";
  * per-delta anchor and far too short against this one: it would re-freeze a
  * distant aircraft for most of every gap between fixes, reintroducing the
  * stutter from the other side.
+ *
+ * Since slice 064 this measures the fix's *true* age — the store's anchor now
+ * includes the decode age the frame arrived with (issue #144) — which is what
+ * the bound always meant. It reads a few seconds sooner in wall-clock terms
+ * than it used to, and correctly so: an aircraft last placed 15 s ago is
+ * equally unfit to project whether the client learned that 15 s ago or 5 s ago.
+ * The same constant doubles as the store's clamp on a reported age, since a fix
+ * older than this is not projected anyway.
  */
 export const INTERPOLATION_MAX_FIX_AGE_MS = 15_000;
 
