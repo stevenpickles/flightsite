@@ -93,6 +93,29 @@ class QuickCheckOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class VacuumRefusal:
+    """Why the last ``VACUUM`` attempt declined to run, with its measurements.
+
+    The guard's verdict has always been in the job's diagnostics detail, but as
+    a bare word: an operator asking "why has this never vacuumed?" read
+    ``insufficient_free_space`` and had no way to see whether the shortfall was
+    a gigabyte or a hundred. That matters because ``VACUUM`` builds a complete
+    second copy, so the requirement scales with the database — on a multi-year
+    history it can exceed anything the card will ever have free, and the one
+    mechanism that reclaims freelist space is then refused permanently rather
+    than until tonight (``docs/PERFORMANCE.md`` §7.7, issue #116).
+
+    Reported for every refusal, not only the free-space one, so the Health page
+    always has an answer; ``required_free_bytes`` and ``available_free_bytes``
+    are what make the free-space case actionable.
+    """
+
+    reason: str
+    required_free_bytes: int
+    available_free_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class DatabaseStats:
     """A point-in-time measurement of the database file and its free pages.
 
@@ -142,6 +165,9 @@ class MaintenanceReport:
     jobs: Mapping[str, JobReport] = field(default_factory=dict)
     quick_check: QuickCheckOutcome | None = None
     stats: DatabaseStats | None = None
+    #: The last ``VACUUM`` refusal, or ``None`` if the guard has not refused
+    #: since the last one ran (and ``None`` before the job has ever been due).
+    vacuum_refusal: VacuumRefusal | None = None
 
     @property
     def healthy(self) -> bool:
@@ -167,4 +193,5 @@ __all__ = [
     "JobResult",
     "MaintenanceReport",
     "QuickCheckOutcome",
+    "VacuumRefusal",
 ]

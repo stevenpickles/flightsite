@@ -36,6 +36,7 @@ from flightsite.maintenance.model import (
 from flightsite.maintenance.policy import (
     VACUUM_MAX_LIVE_AIRCRAFT,
     VACUUM_MIN_DB_BYTES,
+    VACUUM_MIN_FREE_SPACE_FACTOR,
     VACUUM_MIN_RECLAIMABLE_RATIO,
     WAL_CHECKPOINT_THRESHOLD_BYTES,
     VacuumVerdict,
@@ -422,6 +423,58 @@ async def test_a_justified_vacuum_runs_and_reports_its_duration(
     assert vacuum.detail["verdict"] == VacuumVerdict.RUN.value
     assert isinstance(vacuum.detail["duration_ms"], int)
     assert "db_bytes_after" in vacuum.detail
+
+
+async def test_a_full_card_refusal_reaches_the_report_with_its_numbers(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    """Issue #116: the refusal was structurally silent outside the job detail.
+
+    ``MaintenanceReport`` is what diagnostics and the Health page read, so a
+    guard that can be permanently unsatisfiable has to say so there — with the
+    gap, since the requirement scales with the database and an operator cannot
+    otherwise tell "never" from "not tonight".
+    """
+    db_bytes = 4 * VACUUM_MIN_DB_BYTES
+    available = int(db_bytes * VACUUM_MIN_FREE_SPACE_FACTOR) - 1
+    stats = make_stats(
+        db_bytes=db_bytes,
+        reclaimable_ratio=VACUUM_MIN_RECLAIMABLE_RATIO + 0.1,
+        free_bytes=available,
+    )
+    service = build(database, clock, counters, stats=_fixed(stats))
+
+    report = await service.run_cycle()
+
+    assert report.jobs[VACUUM_JOB].outcome is JobOutcome.SKIPPED
+    refusal = report.vacuum_refusal
+    assert refusal is not None
+    assert refusal.reason == VacuumVerdict.INSUFFICIENT_FREE_SPACE.value
+    assert refusal.required_free_bytes == int(db_bytes * VACUUM_MIN_FREE_SPACE_FACTOR)
+    assert refusal.available_free_bytes == available
+    # A skip is still a success: declining to rewrite is the policy working.
+    assert report.healthy is True
+
+
+async def test_a_vacuum_that_runs_clears_a_previous_refusal(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    """The field describes the present, not the worst moment in history."""
+    service = build(database, clock, counters, stats=_fixed(QUIET))
+    assert (await service.run_cycle()).vacuum_refusal is not None
+
+    service = build(database, clock, counters, stats=_fixed(VACUUM_READY))
+
+    assert (await service.run_cycle()).vacuum_refusal is None
+
+
+async def test_a_never_evaluated_vacuum_reports_no_refusal(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    """Before the job has been due there is nothing to say, and nothing is said."""
+    service = build(database, clock, counters, stats=_fixed(QUIET))
+
+    assert service.report.vacuum_refusal is None
 
 
 async def test_a_busy_live_set_defers_a_justified_vacuum(

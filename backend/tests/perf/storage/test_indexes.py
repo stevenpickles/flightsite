@@ -6,13 +6,17 @@ which makes it the honest way to answer SPEC §86's "index behavior" item.
 
 The distinction these tests draw is between a read whose cost is bounded by an
 index and one whose cost grows with the table. Both exist in the documented
-API, deliberately: `docs/DATA_MODEL.md` §2.3 declares three indexes on
-``sightings`` and no more, so the sorts on ``closest_approach_nm`` and
-``max_range_nm`` that `docs/API.md` §3.6 publishes are served by reading and
-ordering every matching row. That is a legitimate design choice — an index per
-sort column is written on every sighting close for a sort few users pick — but
-it is one that has to be *known*, because it is the difference between a read
-that is flat in history and one that is linear in it.
+API, deliberately: `docs/DATA_MODEL.md` §2.3 declares a bounded set of indexes
+on ``sightings``, so the ``closest_approach_nm`` sort that `docs/API.md` §3.6
+publishes is still served by reading and ordering every matching row. That is a
+legitimate design choice — an index per sort column is rewritten on every flush
+of an open sighting for a sort few users pick — but it is one that has to be
+*known*, because it is the difference between a read that is flat in history
+and one that is linear in it.
+
+Slice 058 moved ``max_range_nm`` across that line (rev 0013), on the strength
+of slice 050's 8.0 s measurement; its sibling stayed behind on measured write
+cost. Both sides are pinned below.
 
 So: the reads a browser issues by default must be index-driven, asserted here;
 the ones that are not are asserted to be exactly the ones the documents say,
@@ -123,33 +127,66 @@ async def test_a_sightings_track_is_fetched_by_primary_key(database: Database) -
     assert "scan" not in rendered, rendered
 
 
+@pytest.mark.parametrize("order", ["desc", "asc"])
+async def test_the_max_range_sort_reads_its_index(database: Database, order: str) -> None:
+    """Slice 058 indexed ``max_range_nm``; this pins that it stays indexed.
+
+    ``ix_sightings_max_range`` is ``(max_range_nm, id)`` — the sort key plus
+    the list endpoint's pagination tiebreaker — and both documented directions
+    read it, forward for ``asc`` and backward for ``desc``.
+
+    The descending plan legitimately still names a temporary B-tree, as "USE
+    TEMP B-TREE FOR **LAST TERM OF** ORDER BY": ``id`` breaks ties ascending in
+    both directions, so a reverse walk hands it back descending and SQLite
+    re-sorts within each group of equal ranges. That is a partial sort over
+    ties on a REAL column, not a sort of the table, which is why this asserts
+    on the index and on the absence of an unindexed scan rather than on the
+    absence of a temp B-tree.
+    """
+    rendered = await plan(
+        database, f"SELECT * FROM sightings ORDER BY max_range_nm {order.upper()}, id ASC LIMIT 50"
+    )
+    assert "ix_sightings_max_range" in rendered, (
+        f"the {order} max_range sort no longer uses its index: {rendered}"
+    )
+    assert not scans_without_an_index(rendered, "sightings"), (
+        f"the {order} max_range sort reads every row: {rendered}"
+    )
+    if order == "asc":
+        assert "temp b-tree" not in rendered, (
+            f"the ascending max_range sort matches the index exactly and should "
+            f"need no sort at all: {rendered}"
+        )
+
+
 async def test_the_unindexed_sorts_are_exactly_the_documented_ones(
     database: Database,
 ) -> None:
     """The known slow paths, pinned so a new one cannot appear quietly.
 
-    Both of these sort columns are published in ``docs/API.md`` §3.6 and
-    neither is indexed, so SQLite must materialize and sort. That is recorded
-    as a finding in ``docs/PERFORMANCE.md`` §7.7 rather than fixed here — the
-    fix is a design decision about write cost against a rare read, and it is
-    not slice 050's to make.
+    ``closest_approach_nm`` is published in ``docs/API.md`` §3.6 and is not
+    indexed, so SQLite must materialize and sort. Slice 058 indexed its sibling
+    ``max_range_nm`` and deliberately left this one alone: every index on
+    ``sightings`` is rewritten on each 30-second flush of an open sighting, and
+    a second sort index measured ~2.6x the baseline per-sighting write cost
+    again (issue #115, and rev 0013's docstring). That trade is recorded in
+    ``docs/PERFORMANCE.md`` §7.7.
 
-    The assertion is that these two sorts *do* scan-and-sort, which is what
-    makes the finding true; if someone adds the indexes, this test fails and
-    points at the finding that should then be removed.
+    The assertion is that this sort *does* scan-and-sort, which is what makes
+    the finding true; if someone adds the index, this test fails and points at
+    the finding that should then be removed.
     """
-    for column in ("closest_approach_nm", "max_range_nm"):
-        rendered = await plan(
-            database, f"SELECT * FROM sightings ORDER BY {column} DESC, id ASC LIMIT 50"
-        )
-        assert scans_without_an_index(rendered, "sightings"), (
-            f"sort by {column} no longer reads every row: {rendered}. If an index was "
-            "added, docs/PERFORMANCE.md §7.7's finding about unindexed sorts is now stale "
-            "and should be removed."
-        )
-        assert "temp b-tree" in rendered, (
-            f"sort by {column} no longer materializes a sort: {rendered}"
-        )
+    rendered = await plan(
+        database, "SELECT * FROM sightings ORDER BY closest_approach_nm DESC, id ASC LIMIT 50"
+    )
+    assert scans_without_an_index(rendered, "sightings"), (
+        f"sort by closest_approach_nm no longer reads every row: {rendered}. If an index "
+        "was added, docs/PERFORMANCE.md §7.7's remaining finding about the unindexed sort "
+        "is now stale and should be removed."
+    )
+    assert "temp b-tree" in rendered, (
+        f"sort by closest_approach_nm no longer materializes a sort: {rendered}"
+    )
 
 
 async def test_the_interesting_filter_has_no_index_either(database: Database) -> None:

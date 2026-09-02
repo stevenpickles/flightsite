@@ -677,10 +677,12 @@ would hold after three weeks, because it is a fixed window. Its hourly and
 daily summaries, retained indefinitely, cost 3 MB for the whole period. That is
 ADR-0009 doing precisely what it was designed to do.
 
-**The unindexed sorts are three orders of magnitude slower than the indexed
+**The unindexed sorts were three orders of magnitude slower than the indexed
 reads.** 8.0 s against 2 ms, on the same table, in the same run. This is what
-drives the `history_query_ms` overrun and it is the whole of it: every other
-history read is single-digit milliseconds. See §7.7.
+drove the `history_query_ms` overrun and it was the whole of it: every other
+history read is single-digit milliseconds. Slice 058 indexed `max_range_nm`,
+the worse of the two, in rev 0013; `closest_approach_nm` is still unindexed.
+See §7.7.
 
 **`rarity_query_ms` lands within 3% of its budget.** 514 ms against 500, on a
 developer machine, for a query whose cost grows with distinct airframes —
@@ -723,7 +725,9 @@ not comfortably fit the card §9 recommends. With the page size corrected as
 years, back inside §9's figure and back inside its sizing advice.
 
 The unindexed sorts behave as expected at this scale too: 3.8 s over 541,980
-sightings, against 8.0 s over the 1,642,500 of the Scenario A run.
+sightings, against 8.0 s over the 1,642,500 of the Scenario A run. Both figures
+predate rev 0013, which indexed `max_range_nm`; re-running this scenario should
+now show that sort flat and only `closest_approach_nm` scaling.
 
 #### 7.6.3 What was not measured
 
@@ -832,14 +836,13 @@ should weigh, in the order they seem cheapest:
 Each needs an ADR and a re-run of this qualification; the first two also need a
 migration story for existing installs. Worth a roadmap entry against storage.
 
-**Two documented sort options have no index and take eight seconds on a
-three-year database.** This is the `history_query_ms` overrun in §7.6, and it
-is the whole of it.
+**Two documented sort options had no index and took eight seconds on a
+three-year database.** This was the `history_query_ms` overrun in §7.6, and it
+was the whole of it. *Half-resolved by slice 058 — see below.*
 
 `/api/v1/sightings?sort=closest_approach_nm` and `sort=max_range_nm` are
-published in `docs/API.md` §3.6, and `sightings` carries no index on either
-column (`docs/DATA_MODEL.md` §2.3 declares `aircraft_id+started_ms`,
-`started_ms`, and the partial open-sighting index). Those sorts therefore read
+published in `docs/API.md` §3.6, and at the time of this qualification
+`sightings` carried no index on either column. Those sorts therefore read
 every matching row and sort them in a temporary B-tree, so their cost grows
 linearly with history while every indexed read stays flat:
 
@@ -851,16 +854,38 @@ linearly with history while every indexed read stays flat:
 
 The indexed read does not care how much history exists; the unindexed ones are
 about 3,500 times slower than it at three years, and would be near a hundred
-seconds on Scenario B's 20M sightings. `tests/perf/storage/test_indexes.py`
-pins both plans, so the day an index is added, that test fails and points here.
+seconds on Scenario B's 20M sightings.
 
-The fix is not obviously "add two indexes": each is written on every sighting
-close, for a sort few users choose, trading ingestion cost and disk against a
-rare read. `?interesting=true` has the same shape and would be served by a
-cheap partial index. The honest options are an index, a cap on the range such a
-sort may cover, or keeping it as a documented slow path with the UI saying so.
+**Resolution (slice 058, issue #115).** `max_range_nm` — the worse of the two,
+and the one driving the overrun — is indexed as of rev 0013:
+`ix_sightings_max_range` on `(max_range_nm, id)`, the sort key plus the list
+endpoint's pagination tiebreaker. Measured over a synthetic 1M-row table, the
+first page goes from 91.6 ms to 0.1 ms and a 5,000-row-deep page from 111.2 ms
+to 21.1 ms, at a disk cost of 21 B/row. The descending plan still names a
+temporary B-tree "for last term of order by" — `id` ties break ascending in
+both directions, so a reverse walk re-sorts *within* each group of equal
+ranges, not across the table.
 
-Worth a roadmap entry against the sightings API.
+`closest_approach_nm` was deliberately left unindexed, on measurement rather
+than on symmetry. The write cost is not "one index per sighting close" as this
+finding originally assumed: `_RUNNING_COLUMNS` in
+`flightsite.sightings.repository` rewrites both extremes on the INSERT *and* on
+every 30-second flush of an open sighting, so each index is maintained roughly
+eight times per sighting. Replaying that write shape against a 1M-row table:
+
+| Indexes on the sort columns | Per-sighting write | vs. baseline |
+|---|---|---|
+| none | 0.256 ms | — |
+| `max_range_nm` only | 0.769 ms | 3.0x |
+| both | 1.437 ms | 5.6x |
+
+The second index costs about 2.6x the baseline write cost again, plus another
+21 B/row, to speed a sort with no evidence of use — so it stays a documented
+slow path until there is. `?interesting=true` has the same shape and would be
+served by a cheap partial index, and `duration_s` is unindexed for the same
+reason. `tests/perf/storage/test_indexes.py` pins both sides: that
+`max_range_nm` reads its index, and that `closest_approach_nm` still does not,
+so the day someone indexes it this finding is flagged as stale.
 
 **`VACUUM`'s free-space guard makes it unreachable on a full disk.**
 `maintenance.policy` requires free space of at least twice the database size
@@ -872,6 +897,13 @@ damaged, but the one mechanism that reclaims freelist space is permanently
 refused, and the diagnostics report `insufficient_free_space` without saying
 that it will never clear on its own. Worth surfacing in the health area, and
 worth a note in the install sizing guidance.
+
+**Surfaced by slice 058 (issue #116).** The refusal and its reason now travel on
+`MaintenanceReport.vacuum_refusal` and out through
+`database.maintenance.vacuum_refusal` in diagnostics, carrying
+`required_free_bytes` against `available_free_bytes`; the Health page renders
+the gap. The guard's threshold is unchanged — this makes the condition legible,
+it does not make it go away, and the install sizing note is still outstanding.
 
 **Backup is dominated by gzip, at a compression level that buys nothing.**
 `archive.write_archive` opens the tar with `w:gz`, taking tarfile's default
@@ -895,9 +927,12 @@ level 6. Setting `compresslevel=6` would cut roughly 200 s from a 5 GB backup
 and change the archive size by nothing measurable; level 1 would cut ~290 s for
 0.9 percentage points of ratio.
 
-Worth a roadmap entry against backup. `docs/BACKUP.md` currently promises
-nothing about duration and says only that a large backup "takes a while", which
-is the right place to state a real figure once the level is chosen.
+**Resolved by slice 058 (issue #117).** `archive.write_archive` now passes
+`compresslevel=6` explicitly, as `archive.COMPRESS_LEVEL`. The level is
+asserted through the container's gzip `XFL` header byte rather than by reading
+the constant back, so a drift to 9 by any route fails a test. The 406.9 s
+figure above predates the change; re-running §7.8 should show roughly 200 s of
+it gone at an unchanged archive size.
 
 ### 7.8 Raspberry Pi storage qualification procedure
 

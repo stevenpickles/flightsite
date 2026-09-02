@@ -1419,6 +1419,50 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Unplanned fix slice for GitHub issue #99 (observed by the slice-049 harness and recorded in docs/PERFORMANCE.md §6). Added by Fable outside the phase plan."
+  - id: "058"
+    title: "Quick wins bundle"
+    phase: 8
+    branch: "058-quick-wins"
+    status: merged
+    depends_on: ["031", "042", "043", "050"]
+    objective: "Clear six small tracked defects found by the phase-8 qualification slices in one branch, each as its own single-concern commit."
+    scope:
+      - "#115: index `(max_range_nm, id)` on `sightings` (migration 0013) so the documented max-range sort stops full-scanning; retire the slice-050 finding"
+      - "#121: send a real User-Agent from the FAA metadata source client, which the registry rejects with 403 when absent"
+      - "#116: surface the maintenance VACUUM free-space refusal (required vs available bytes) in the MaintenanceReport and through diagnostics, so the Health UI shows why it never runs"
+      - "#117: drop backup gzip compression from level 9 to 6 — slice 050 measured an identical ratio at 2.7x the speed"
+      - "#112: give the shared pagination footer a noun prop so /sightings counts sightings, not aircraft"
+      - "#107: make demo mode's 'today' non-empty by reconciling the demo scenario epoch with the range the UI asks for"
+    out_of_scope:
+      - "index coverage for the `duration_s` and `interesting` sorts/filters (no measured need; write cost unjustified)"
+      - "metadata Settings UI surfaces (slice 059 owns them; #116/#121 stay backend + Health UI)"
+      - "any change to the VACUUM guard's threshold or to the backup format itself"
+      - "reworking demo scenario content, or the demo data generator's shape"
+    acceptance_criteria:
+      - "`ORDER BY max_range_nm` on `/api/v1/sightings` uses the new index, pinned by a query-plan test; `alembic heads` shows exactly one head (0013)"
+      - "the FAA source fetches the releasable-aircraft archive without a 403"
+      - "a refused VACUUM reports the refusal and its required/available bytes in the maintenance report and in the diagnostics response"
+      - "backups are written at gzip level 6"
+      - "the /sightings pagination footer reads 'sightings'"
+      - "in demo mode the Live Map Today panel and the Analytics 'today' preset are non-empty"
+    required_tests:
+      - query-plan test asserting the max-range sort uses `ix_sightings_max_range`
+      - FAA client test asserting the User-Agent header is sent
+      - maintenance refusal test plus a diagnostics passthrough test
+      - backup compression-level test
+      - pagination footer noun tests
+      - demo-mode 'today' non-empty test
+    expected_artifacts:
+      - backend/alembic/versions/ (rev 0013)
+      - backend/src/flightsite/db/models.py
+      - backend/src/flightsite/metadata/sources/faa.py
+      - backend/src/flightsite/maintenance/
+      - backend/src/flightsite/diagnostics/
+      - backend/src/flightsite/backup/
+      - frontend/src/components/
+    preferred_agent: opus
+    risk_level: low
+    notes: "Bundle slice for GitHub issues #107, #112, #115, #116, #117, #121 (raised by slices 042/043/047/050). One commit per issue. Added by Fable outside the phase plan."
   - id: "059"
     title: "OpenSky metadata source"
     phase: 8

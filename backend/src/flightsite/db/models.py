@@ -279,6 +279,13 @@ class Sighting(Base):
         # history, so indexing only them keeps "is this aircraft already
         # sighted?" and startup recovery independent of table size.
         Index("ix_sightings_open", "ended_ms", sqlite_where=text("ended_ms IS NULL")),
+        # `docs/API.md` §3.6's `sort=max_range_nm`, which was a full scan and
+        # sort until rev 0013 — 8.0 s over 1.64M sightings. `id` rides along as
+        # the list endpoint's pagination tiebreaker. `closest_approach_nm` is
+        # deliberately *not* given a sibling: every index here is rewritten on
+        # each 30-second flush of an open sighting, and a second one measured
+        # ~2.6x the baseline per-sighting write cost again (issue #115).
+        Index("ix_sightings_max_range", "max_range_nm", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

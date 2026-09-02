@@ -27,6 +27,7 @@ from flightsite.maintenance.model import (
     JobReport,
     MaintenanceReport,
     QuickCheckOutcome,
+    VacuumRefusal,
 )
 from flightsite.metadata.registry import SourceRunState, SourceStatus, SourceStatusRecord
 from flightsite.sightings.recovery import RecoveryReport
@@ -214,6 +215,44 @@ class TestDatabaseHealth:
         assert maintenance["jobs"]["retention"]["outcome"] == "failed"
         assert maintenance["jobs"]["retention"]["detail"] == {"error": "disk full"}
         assert payload["database"]["status"] == STATUS_DEGRADED
+
+    @pytest.mark.asyncio
+    async def test_a_vacuum_refusal_reaches_diagnostics_with_its_numbers(self) -> None:
+        """Issue #116: the Health page's only route to "why has this never run?".
+
+        The gap travels with the reason because the free-space requirement
+        scales with the database — without both numbers an operator cannot see
+        that this particular refusal will never clear on its own.
+        """
+        report = MaintenanceReport(
+            cycles=9,
+            last_cycle_ms=int(NOW.timestamp() * 1000),
+            vacuum_refusal=VacuumRefusal(
+                reason="insufficient_free_space",
+                required_free_bytes=9_000_000_000,
+                available_free_bytes=3_100_000_000,
+            ),
+        )
+        payload = await _collect(maintenance=SimpleNamespace(report=report, running=True))
+
+        refusal = payload["database"]["maintenance"]["vacuum_refusal"]
+        assert refusal == {
+            "reason": "insufficient_free_space",
+            "required_free_bytes": 9_000_000_000,
+            "available_free_bytes": 3_100_000_000,
+        }
+        # Declining to rewrite a healthy database is the policy working, so it
+        # informs without degrading the database's status.
+        assert payload["database"]["status"] == STATUS_OK
+
+    @pytest.mark.asyncio
+    async def test_no_vacuum_refusal_is_reported_as_null_not_omitted(self) -> None:
+        """The key set stays stable; ``null`` is how "nothing to report" is said."""
+        payload = await _collect(
+            maintenance=SimpleNamespace(report=MaintenanceReport(cycles=1), running=True)
+        )
+
+        assert payload["database"]["maintenance"]["vacuum_refusal"] is None
 
     @pytest.mark.asyncio
     async def test_recovery_anomalies_are_surfaced(self) -> None:

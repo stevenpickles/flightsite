@@ -334,6 +334,12 @@ Variables that are **not** configuration keys:
 seed, roughly 110 aircraft, 1 Hz updates, covering commercial, military, government,
 police, MLAT, non-positioned, rare, first-ever, ground and emergency-squawk traffic.
 
+The scenario is anchored to the clock at startup, so demo observations carry real
+times and "today" on the Live Map and Analytics shows the traffic you are watching.
+What is deterministic is the *content* — the same seed always produces the same
+aircraft doing the same things on the same tick — not the timestamps, which advance
+with the wall clock as a real receiver's would.
+
 It is deliberately an environment switch rather than a configuration key, because it
 has to work before any `config.yaml` exists. Unlike a real decoder, demo ingestion
 starts at boot **regardless** of first-run state, so it needs no restart. The UI still

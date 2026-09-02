@@ -141,6 +141,48 @@ describe("HealthPage degraded states", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains a VACUUM blocked on free space, with both numbers", async () => {
+    // Issue #116: the guard needs free space of twice the database, so on a
+    // large history it can be refused permanently. The page has to say so, and
+    // has to give the gap — "blocked" alone reads like a transient state.
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        database: database({
+          maintenance: {
+            cycles: 42,
+            last_cycle_at: "2026-08-31T13:00:00.000Z",
+            healthy: true,
+            running: true,
+            jobs: {},
+            vacuum_refusal: {
+              reason: "insufficient_free_space",
+              required_free_bytes: 9_000_000_000,
+              available_free_bytes: 3_100_000_000,
+            },
+          },
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    expect(
+      await screen.findByText("Blocked — not enough free space"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Needs 8\.4 GB free, has 2\.9 GB/),
+    ).toBeInTheDocument();
+    // A refusal is the policy working, so it must not read as a failure.
+    expect(screen.getByText("Running cleanly")).toBeInTheDocument();
+  });
+
+  it("says nothing about compaction when no VACUUM has been refused", async () => {
+    installDiagnosticsApiMock();
+    renderApp("/health");
+
+    await screen.findByRole("group", { name: "Health summary" });
+    expect(screen.queryByText("Compaction")).not.toBeInTheDocument();
+  });
+
   it("says an integrity check has not run rather than claiming health", async () => {
     installDiagnosticsApiMock({
       diagnostics: diagnostics({

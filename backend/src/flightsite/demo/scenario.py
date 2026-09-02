@@ -25,13 +25,22 @@ from flightsite.demo.motion import altitude_at, position_at
 from flightsite.demo.roster import PERIOD_S, AircraftProfile
 from flightsite.ingest.types import AircraftStateBatch, AircraftStateUpdate
 
-#: Fixed reference instant every batch's timestamp is computed from
-#: (``SCENARIO_EPOCH + tick_index`` seconds). A demo scenario is defined
-#: purely in terms of elapsed ticks, so timestamps are pinned to a constant
-#: rather than derived from wall-clock "now" — that is precisely what makes
-#: two runs with the same seed produce byte-identical update sequences
-#: (roadmap slice 011 acceptance criterion), independent of when either run
-#: happened to start.
+#: Default reference instant a batch's timestamp is computed from
+#: (``epoch + tick_index`` seconds). A demo scenario is defined purely in terms
+#: of elapsed ticks, and the functions here are pure in ``(roster, tick_index,
+#: epoch)`` — that is what makes two runs with the same seed and the same epoch
+#: produce byte-identical update sequences (roadmap slice 011 acceptance
+#: criterion), independent of when either run happened to start.
+#:
+#: It is a *default*, not the value a running demo stack uses.
+#: :class:`~flightsite.demo.adapter.DemoAdapter` anchors to the wall clock
+#: instead, because these timestamps become real stored data: they are what
+#: :mod:`flightsite.live.aircraft` records as ``first_seen``/``last_seen`` and
+#: what the sighting worker writes as ``started_ms``. Anchored here, every demo
+#: sighting landed on 2026-01-01 while the analytics rollups, receiver metrics
+#: and the ``today`` window all resolve against the real clock, so the Live Map
+#: Today panel and the Analytics ``today`` preset read zero forever on a demo
+#: install (issue #107). See :class:`~flightsite.demo.adapter.DemoAdapter`.
 SCENARIO_EPOCH: Final = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -57,18 +66,25 @@ def _squawk_at(profile: AircraftProfile, age_s: float) -> str:
     return profile.squawk
 
 
-def update_at(profile: AircraftProfile, tick_index: int) -> AircraftStateUpdate | None:
+def update_at(
+    profile: AircraftProfile,
+    tick_index: int,
+    *,
+    epoch: datetime = SCENARIO_EPOCH,
+) -> AircraftStateUpdate | None:
     """The one observation ``profile`` produces at ``tick_index``, or ``None``.
 
     ``None`` means the aircraft is not transmitting this tick — either it has
     not spawned yet, has fallen silent, or (for ``rare``/``first_ever``
     profiles) this period is one it sits out entirely.
+
+    ``epoch`` is the instant tick 0 is stamped at; see :data:`SCENARIO_EPOCH`.
     """
     age_s = _active_age_s(profile, tick_index)
     if age_s is None:
         return None
 
-    timestamp = SCENARIO_EPOCH + timedelta(seconds=tick_index)
+    timestamp = epoch + timedelta(seconds=tick_index)
 
     position = None
     track_deg = None
@@ -115,20 +131,29 @@ def update_at(profile: AircraftProfile, tick_index: int) -> AircraftStateUpdate 
     )
 
 
-def batch_at(roster: tuple[AircraftProfile, ...], tick_index: int) -> AircraftStateBatch:
+def batch_at(
+    roster: tuple[AircraftProfile, ...],
+    tick_index: int,
+    *,
+    epoch: datetime = SCENARIO_EPOCH,
+) -> AircraftStateBatch:
     """The full decoder batch at ``tick_index`` — one update per active aircraft.
 
-    A pure function of ``(roster, tick_index)``; since ``roster`` is itself a
-    pure function of the seed (:func:`flightsite.demo.roster.build_roster`),
-    this is the ``(seed, tick_index) -> batch`` determinism the roadmap
-    requires.
+    A pure function of ``(roster, tick_index, epoch)``; since ``roster`` is
+    itself a pure function of the seed
+    (:func:`flightsite.demo.roster.build_roster`), this is the
+    ``(seed, tick_index, epoch) -> batch`` determinism the roadmap requires.
+    ``epoch`` only shifts every timestamp by a constant: it changes *when* the
+    scenario is said to have happened, never what happens in it.
     """
     if tick_index < 0:
         raise ValueError("tick_index must be non-negative")
     updates = tuple(
-        update for profile in roster if (update := update_at(profile, tick_index)) is not None
+        update
+        for profile in roster
+        if (update := update_at(profile, tick_index, epoch=epoch)) is not None
     )
-    timestamp = SCENARIO_EPOCH + timedelta(seconds=tick_index)
+    timestamp = epoch + timedelta(seconds=tick_index)
     return AircraftStateBatch(timestamp=timestamp, updates=updates)
 
 

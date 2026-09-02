@@ -30,6 +30,17 @@ from flightsite.backup.errors import ArchiveValidationError
 #: Streaming chunk size for hashing and extraction.
 CHUNK_BYTES = 1024 * 1024
 
+#: gzip level for the container, chosen against measurement rather than taken
+#: from tarfile's default of 9. On a 419 MB slab of a real database
+#: (``docs/PERFORMANCE.md`` §7.7) level 6 and level 9 both compress to a ratio
+#: of 0.188, but level 6 runs at 41.0 MB/s against level 9's 15.2 MB/s — 2.7x
+#: faster for an identical archive size, because SQLite pages of packed integer
+#: blobs give deflate nothing more to find above 6. Backup is gzip-dominated
+#: (about 330 s of a 406.9 s backup of a 5.03 GB database), so this is worth
+#: roughly 200 s per 5 GB and costs nothing measurable in size. Level 1 would
+#: save a further ~290 s but widens the ratio to 0.197.
+COMPRESS_LEVEL = 6
+
 #: Everything a damaged container can raise on the way out of tarfile/gzip.
 #: ``zlib.error`` is not an ``OSError``, so it has to be named explicitly —
 #: without it a flipped byte inside the deflate stream would escape as an
@@ -153,6 +164,9 @@ def write_archive(destination: Path, sources: dict[str, Path], *, mtime: int) ->
     Ownership and timestamps are normalized so two backups of identical bytes
     differ only by their creation time, and so an archive never carries the
     uid/gid of whoever happened to run the command.
+
+    Compressed at :data:`COMPRESS_LEVEL` rather than tarfile's default; see the
+    constant for why.
     """
 
     def normalize(info: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -164,7 +178,7 @@ def write_archive(destination: Path, sources: dict[str, Path], *, mtime: int) ->
         info.mode = 0o600
         return info
 
-    with tarfile.open(destination, "w:gz") as archive:
+    with tarfile.open(destination, "w:gz", compresslevel=COMPRESS_LEVEL) as archive:
         for name, path in sources.items():
             archive.add(path, arcname=name, filter=normalize)
 

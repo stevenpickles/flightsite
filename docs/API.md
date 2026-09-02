@@ -504,6 +504,13 @@ Two contract details worth knowing:
   and `permission_known_by` is always `"client"`. Browser permission is unobservable
   from the backend, so the health page joins this with the frontend notification store
   (slice 040) to show the permission the user actually granted.
+- `database.maintenance.vacuum_refusal` is `null` unless the guarded `VACUUM` last
+  declined to run, and otherwise carries `reason` plus `required_free_bytes` and
+  `available_free_bytes`. The free-space guard wants twice the database size, so on a
+  multi-year history it can be refused permanently rather than until tonight — the two
+  byte counts are what let the Health page say which (issue #116). A refusal does not
+  move `database.status`: declining to rewrite a healthy database is the policy
+  working, not a degradation.
 
 Secrets are redacted twice on the way out: once as each error is captured into the
 ring buffer, and once over the whole assembled payload, both against the configured

@@ -95,7 +95,11 @@ async def _timed_get(rest: AsyncClient, path: str) -> tuple[float, dict[str, obj
         "/api/v1/sightings?sort=started_at&order=asc&limit=50&offset=11950",
         # An unindexed sort — the module docstring's documented cost.
         "/api/v1/sightings?sort=closest_approach_nm&order=asc&limit=50",
+        # Indexed since rev 0013 (`ix_sightings_max_range`), in both
+        # directions: descending reads the index backward and sorts only
+        # within groups of equal ranges.
         "/api/v1/sightings?sort=max_range_nm&order=desc&limit=50",
+        "/api/v1/sightings?sort=max_range_nm&order=asc&limit=50",
         # The icao filter, which leans on `ix_sightings_aircraft`.
         "/api/v1/sightings?icao=000010&sort=started_at&limit=50",
         # The open-sightings partial index.

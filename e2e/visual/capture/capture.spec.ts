@@ -250,12 +250,13 @@ test("capture visual fixtures from a seeded demo stack", async ({
   // 5. Analytics.
   //
   // Captured at the `t0` ("since first sighting") preset rather than the
-  // default `today`. Demo sightings are stamped from the scenario epoch
-  // (2026-01-01, `demo/scenario.py`) while the server computes `today`
-  // against the real wall clock, so `today` is legitimately empty on a demo
-  // stack — a baseline of eight "No data for this window." cards would lock
-  // nothing worth locking. `t0` spans the epoch and renders populated
-  // charts and tables, which is the view worth regression-testing.
+  // default `today`. That used to be forced — demo sightings were stamped
+  // from a fixed 2026-01-01 epoch while the server computed `today` against
+  // the wall clock, so `today` was legitimately empty on a demo stack —
+  // until slice 058 anchored the scenario to the wall clock (issue #107).
+  // It stays `t0` because moving it re-captures every analytics baseline;
+  // `t0` spans the whole scenario and renders populated charts and tables,
+  // which is the view worth regression-testing. See `fixtureContract.ts`.
   // ---------------------------------------------------------------------
   await page.goto(`/analytics?preset=${ANALYTICS_PRESET}`);
   await expect(page.getByRole("heading", { level: 1, name: "Analytics" })).toBeVisible();

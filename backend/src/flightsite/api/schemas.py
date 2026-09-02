@@ -1077,6 +1077,21 @@ class DiagnosticsMaintenanceJob(_Model):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class DiagnosticsVacuumRefusal(_Model):
+    """Why the guarded ``VACUUM`` last declined to run (SPEC §70).
+
+    ``required_free_bytes`` against ``available_free_bytes`` is the point:
+    ``VACUUM`` builds a complete second copy, so the requirement scales with
+    the database and on a multi-year history can exceed anything the card will
+    ever have free — a refusal that never clears rather than one that clears
+    tonight (issue #116).
+    """
+
+    reason: str
+    required_free_bytes: int = 0
+    available_free_bytes: int = 0
+
+
 class DiagnosticsMaintenance(_Model):
     """Maintenance outcomes surfaced into diagnostics (SPEC §70)."""
 
@@ -1085,6 +1100,9 @@ class DiagnosticsMaintenance(_Model):
     healthy: bool | None = None
     running: bool = False
     jobs: dict[str, DiagnosticsMaintenanceJob] = Field(default_factory=dict)
+    #: ``None`` when the last evaluation let a ``VACUUM`` run, or before the
+    #: job has ever been due.
+    vacuum_refusal: DiagnosticsVacuumRefusal | None = None
 
 
 class DiagnosticsRecovery(_Model):
@@ -1265,6 +1283,7 @@ __all__ = [
     "DiagnosticsStatusLiteral",
     "DiagnosticsStorage",
     "DiagnosticsUptime",
+    "DiagnosticsVacuumRefusal",
     "DiagnosticsVersions",
     "DiagnosticsWebSocket",
     "GeoPosition",

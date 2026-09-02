@@ -108,6 +108,25 @@ def test_a_full_card_stops_a_vacuum_that_would_otherwise_run() -> None:
     )
 
 
+def test_a_refusal_states_the_gap_not_only_its_name() -> None:
+    """Issue #116: ``insufficient_free_space`` alone is not an answer.
+
+    ``VACUUM`` builds a complete second copy, so the requirement scales with
+    the database: on a multi-year history it can exceed anything the card will
+    ever have free, and the operator cannot tell that apart from a shortfall
+    that clears overnight unless both numbers are reported.
+    """
+    available = int(BIG * VACUUM_MIN_FREE_SPACE_FACTOR) - 1
+    stats = make_stats(db_bytes=BIG, reclaimable_ratio=WASTEFUL, free_bytes=available)
+
+    decision = vacuum_decision(stats, under_pressure=False)
+
+    assert decision.verdict is VacuumVerdict.INSUFFICIENT_FREE_SPACE
+    assert decision.required_free_bytes == int(BIG * VACUUM_MIN_FREE_SPACE_FACTOR)
+    assert decision.free_bytes == available
+    assert decision.free_bytes < decision.required_free_bytes
+
+
 def test_exactly_the_required_free_space_is_enough() -> None:
     stats = make_stats(
         db_bytes=BIG, reclaimable_ratio=WASTEFUL, free_bytes=int(BIG * VACUUM_MIN_FREE_SPACE_FACTOR)
