@@ -12,7 +12,7 @@ thirty seconds and between them account for most first-install failures.
 - [3. Install Docker](#3-install-docker)
 - [4. Create the data directory](#4-create-the-data-directory)
 - [5. Get FlightSite and start it](#5-get-flightsite-and-start-it)
-- [6. First-run setup](#6-first-run-setup-and-the-one-restart-you-need)
+- [6. First-run setup](#6-first-run-setup)
 - [7. Verify the install](#7-verify-the-install)
 - [8. Upgrading](#8-upgrading)
 - [9. Troubleshooting](#9-troubleshooting)
@@ -250,39 +250,25 @@ data in your real database (see `FLIGHTSITE_HOST_DATA_DIR` in
 
 ---
 
-## 6. First-run setup, and the one restart you need
+## 6. First-run setup
 
 On first load FlightSite redirects you to the setup wizard at `/setup`. It collects
 your site name and location, your decoder endpoint (with a live connection test),
 units and timezone, aircraft metadata, alert templates and notification preference.
 
-> ### After you finish the wizard, restart the backend once.
->
-> ```bash
-> docker compose restart flightsite-backend
-> ```
->
-> **Aircraft will not appear until you do.** This is expected in the current release,
-> not a fault in your setup.
+**Finishing the wizard is the whole of setup — no restart needed.** Saving starts the
+decoder connection in the running backend and anchors distance and bearing at the
+location you entered, so aircraft begin appearing on the Live Map within seconds. The
+alert templates you chose are created on the same save.
 
-**Why:** ingestion is started once, during backend startup, and only when a saved
-configuration already exists. On a genuinely fresh install there is no configuration
-at that moment, so the backend deliberately starts without a decoder connection
-(`backend/src/flightsite/app.py`, `_start_ingestion`). Saving the wizard writes your
-configuration to disk but does not start the ingestion loop in the already-running
-process. One restart picks it up, and it never applies again — subsequent restarts and
-reboots start ingestion normally.
+If the map stays empty, the decoder endpoint is the thing to check rather than the
+restart: the Health page (§7 below) reports the decoder connection state directly, and
+the wizard's connection test is available again from **Settings → Decoder**.
 
-The same applies to the alert templates you chose in the wizard: they are instantiated
-at startup, so they also arrive with that restart
-([issue #110](https://github.com/stevenpickles/flightsite/issues/110)).
-
-This is a known first-run wart
-([issue #122](https://github.com/stevenpickles/flightsite/issues/122)); the restart
-requirement goes away once a configuration save can start ingestion in place.
-
-Settings changed later behave the same way for decoder and receiver-location fields —
-the Settings UI marks those sections **"Applies on next restart"**. See
+Settings changed *later* are a different matter for two sections: the decoder endpoint
+and the receiver location are read when ingestion starts, so changing either one after
+setup does need a backend restart, and the Settings UI marks those sections **"Applies
+on next restart"**. See
 [CONFIGURATION.md](CONFIGURATION.md#which-settings-need-a-restart) for the full list
 of which settings apply live and which wait for a restart.
 
@@ -290,7 +276,7 @@ of which settings apply live and which wait for a restart.
 
 ## 7. Verify the install
 
-Give it a minute after the restart, then check, in order:
+Give it a minute after finishing the wizard, then check, in order:
 
 1. **The Live Map** at `http://<host-ip>:8090/` shows aircraft.
 2. **The Health page** at `http://<host-ip>:8090/health` — reachable from the
