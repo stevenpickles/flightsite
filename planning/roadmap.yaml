@@ -1545,6 +1545,7 @@ slices:
       - "the wall-clock `position_seen` is dated by the same offset as its monotonic companion, so the two never disagree"
       - "`merge()` takes the store's `stale_s` and revives a STALE record only on an observation younger than it; a re-polled entry the decoder has not actually heard leaves the state alone, and marking stale stays the sweep's job along with its event"
       - "`live/store.py` passes its configured threshold and documents the two-place ownership of the live/stale boundary"
+      - "`live/store.py` refuses to admit an observation the decoder already reports as silent for at least `remove_s`: no record, no event. Without it a removal is undone by the next poll and the appear/remove pair repeats at the poll rate for the rest of the decoder's retention window"
     out_of_scope:
       - "the thresholds themselves, the sweep, and the sighting-close rule, all unchanged"
       - "filtering high-age entries in the ingest adapter — the store's thresholds stay the single lifecycle authority"
@@ -1554,6 +1555,9 @@ slices:
       - "an entry the decoder re-delivers every second with a growing reported age goes STALE at 15 s and is removed at 60 s of real silence, not when the decoder finally drops it"
       - "a STALE record is revived only by an observation younger than `stale_s`; a re-polled ghost never flips it back to LIVE"
       - "an aircraft the decoder is still hearing at 1 Hz stays LIVE indefinitely"
+      - "a removed ghost the decoder keeps listing is not re-admitted by the polls that follow: exactly one appear and one removal across the retention window"
+      - "an aircraft first reported as already expired is never admitted, while one first reported between `stale_s` and `remove_s` is admitted live and then ages out normally"
+      - "the live total is the audible total whether it is sampled just after a poll or just after a sweep"
       - "the removal event carries the last record, dated at the aircraft's last transmission rather than the last poll"
       - "no regression in the sighting lifecycle suite or the slice-049 perf harness scenarios"
     required_tests:
@@ -1561,6 +1565,8 @@ slices:
       - position ageing tests for `seen_pos_s`, present and absent
       - revival tests: fresh observation revives STALE, re-polled ghost does not, threshold boundary does not
       - store-level integration test re-delivering one ghost per second and asserting the STALE and removal seconds plus the removal event's record
+      - admission tests: an already-expired first report is refused, a report inside the removal window is admitted, a removed ghost is not re-admitted over 12 further poll+sweep cycles, and a genuinely re-heard aircraft appears again
+      - live-count test asserting the total at both sampling phases across 120 poll+sweep cycles
       - regression test that an aircraft reporting a sub-second age never expires
     expected_artifacts:
       - backend/src/flightsite/live/aircraft.py
