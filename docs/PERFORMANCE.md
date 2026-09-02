@@ -366,6 +366,12 @@ reconnect as a browser would. This is first-run behaviour that decays as
 aircraft stop being novel, but it is worth knowing that a fresh install with a
 busy receiver will resync its clients every few seconds for a while; see §6.
 
+> **Fixed by slice 057.** The run above predates it. A detector pass is now one
+> `activity_batch` frame rather than one frame per event (`docs/API.md` §4.4),
+> so the burst cannot exceed the queue; the same run on the same machine goes
+> from 20 resync reconnects to 0. The reading is left as recorded, because a
+> baseline that gets edited is not a baseline.
+
 ---
 
 ## 6. Observations for later slices
@@ -374,20 +380,28 @@ Findings the harness surfaced that are outside slice 049's scope. Recorded here
 rather than acted on, because measuring is this slice's job and changing what
 it measures is not.
 
-**Activity bursts overflow WebSocket client queues on a fresh install.** The
-activity service publishes one frame per event, synchronously, with no await
-between them (`LiveBroadcaster.publish_activity`). A pass that detects more
-events than a client's outbound queue holds — 32 by default — evicts every
-connected client in a single call. On a new database at 500 aircraft this
-happens on essentially every 5-second pass, because every aircraft is a
-first-ever sighting.
+**Activity bursts overflow WebSocket client queues on a fresh install.**
+*(Resolved by slice 057 — issue #99. Kept as the record of what the harness
+found and what was done about it.)* The activity service published one frame
+per event, synchronously, with no await between them
+(`LiveBroadcaster.publish_activity`). A pass that detects more events than a
+client's outbound queue holds — 32 by default — evicted every connected client
+in a single call. On a new database at 500 aircraft this happened on
+essentially every 5-second pass, because every aircraft is a first-ever
+sighting.
 
-The behaviour is correct in the sense that it is the documented slow-consumer
-rule and the client is told to resync rather than left stalled. Whether it is
-*desirable* on a first run is a product question: a browser reconnecting every
-five seconds for the first hours of an install is not a good first impression,
-and coalescing a pass's events into fewer frames, or capping the burst, would
-avoid it. Worth a roadmap entry against the activity or WebSocket slice.
+The behaviour was correct in the sense that it was the documented slow-consumer
+rule and the client is told to resync rather than left stalled. Whether it was
+*desirable* on a first run was the product question: a browser reconnecting
+every five seconds for the first hours of an install is not a good first
+impression.
+
+Slice 057 took the first of the two options named here — coalescing a pass's
+events into fewer frames. `publish_activity` now sends one `activity_batch`
+frame per pass (`docs/API.md` §4.4), capped at 128 events per frame, so the
+frame count follows the detector's 5-second cadence rather than the size of the
+backlog. Re-running §5.5's command on a fresh database takes the reconnect
+count to zero.
 
 ---
 

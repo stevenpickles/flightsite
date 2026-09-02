@@ -34,8 +34,8 @@ function renderPanel() {
  */
 function openSocket(): LiveSocket {
   const socket = new LiveSocket({
-    onActivity: (event) => {
-      useActivityFeedStore.getState().addEvent(event);
+    onActivityBatch: (events) => {
+      useActivityFeedStore.getState().addEvents(events);
     },
   });
   socket.start();
@@ -107,7 +107,7 @@ describe("ActivityPanel", () => {
     expect(screen.queryByTestId("activity-row")).not.toBeInTheDocument();
   });
 
-  it("appends an event delivered over the activity frame", async () => {
+  it("appends an event delivered over the activity_batch frame", async () => {
     installActivityApiMock({
       list: activityList([
         activityEvent({ id: 1, at: "2026-08-31T13:00:00.000Z" }),
@@ -128,17 +128,19 @@ describe("ActivityPanel", () => {
         data: { aircraft: [], receiver: null },
       });
       ws.emitFrame({
-        type: "activity",
+        type: "activity_batch",
         seq: 2,
-        data: {
-          id: 9,
-          type: "range_record",
-          severity: "interesting",
-          at: "2026-08-31T15:00:00.000Z",
-          icao: null,
-          sighting_id: null,
-          payload: { range_nm: 412.75, previous_nm: 401.2 },
-        },
+        data: [
+          {
+            id: 9,
+            type: "range_record",
+            severity: "interesting",
+            at: "2026-08-31T15:00:00.000Z",
+            icao: null,
+            sighting_id: null,
+            payload: { range_nm: 412.75, previous_nm: 401.2 },
+          },
+        ],
       });
     });
 
@@ -164,7 +166,7 @@ describe("ActivityPanel", () => {
     );
 
     act(() => {
-      useActivityFeedStore.getState().addEvent(duplicate);
+      useActivityFeedStore.getState().addEvents([duplicate]);
     });
     await expand();
 

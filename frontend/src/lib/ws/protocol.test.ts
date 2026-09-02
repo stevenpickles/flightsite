@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  asActivityBatch,
   asActivityEvent,
   asDeltaData,
   asSnapshotData,
@@ -169,6 +170,61 @@ describe("asActivityEvent", () => {
     // feed dedupes on and `type` is what decides the rendering, so an event
     // missing either could only ever be a blank row.
     expect(asActivityEvent(data)).toBeNull();
+  });
+});
+
+describe("asActivityBatch", () => {
+  it("narrows the array of §3.9 events one pass recorded", () => {
+    const events = asActivityBatch([
+      { id: 1, type: "milestone" },
+      { id: 2, type: "range_record" },
+    ]);
+    expect(events?.map((event) => event.id)).toEqual([1, 2]);
+  });
+
+  it("keeps the order the frame carries, oldest first", () => {
+    // The store reverses a batch to stay newest-first, so this narrowing must
+    // not quietly reorder it first.
+    const events = asActivityBatch([
+      { id: 7, type: "milestone" },
+      { id: 8, type: "milestone" },
+      { id: 9, type: "milestone" },
+    ]);
+    expect(events?.map((event) => event.id)).toEqual([7, 8, 9]);
+  });
+
+  it("narrows a single-event batch, the common steady-state case", () => {
+    const events = asActivityBatch([{ id: 4021, type: "range_record" }]);
+    expect(events).toHaveLength(1);
+  });
+
+  it("accepts an empty array", () => {
+    // The server does not send one, but an empty pass is legible rather than
+    // corrupt: the caller has nothing to ingest, not a frame to distrust.
+    expect(asActivityBatch([])).toEqual([]);
+  });
+
+  it("drops a malformed entry without discarding the rest of the pass", () => {
+    // One unreadable event costs one row, not the whole batch — which is the
+    // difference batching makes to the blast radius of a bad entry.
+    const events = asActivityBatch([
+      { id: 1, type: "milestone" },
+      { id: "2", type: "milestone" },
+      null,
+      { type: "milestone" },
+      { id: 5, type: "milestone" },
+    ]);
+    expect(events?.map((event) => event.id)).toEqual([1, 5]);
+  });
+
+  it.each([
+    ["a non-array object", { id: 1, type: "milestone" }],
+    ["a bare string", "activity_batch"],
+    ["null", null],
+    ["undefined", undefined],
+  ])("returns null for %s", (_label, data) => {
+    // Not an array is not a batch: §6 says ignore the frame.
+    expect(asActivityBatch(data)).toBeNull();
   });
 });
 
