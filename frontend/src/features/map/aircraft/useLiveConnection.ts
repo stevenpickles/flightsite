@@ -26,6 +26,7 @@ import { useEffect } from "react";
 
 import { useActivityFeedStore } from "@/features/activity/store/useActivityFeedStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { resetDensityLatch } from "@/features/map/labels/densityLatch";
 import { dispatchAlertNotification } from "@/features/notifications/lib/dispatch";
 import { LiveSocket } from "@/lib/ws/liveSocket";
 
@@ -58,6 +59,12 @@ export function useLiveConnection(): void {
       socket.stop();
       store().reset();
       activity().reset();
+      // The label-density latch (issue #143) is memory *about* the picture
+      // the store just dropped, so it is cleared with it. It would clear
+      // itself on the next drawn frame anyway — an empty picture is a count
+      // of zero — but a remount should not have to spend a frame in the
+      // dead connection's tier to get there.
+      resetDensityLatch();
     };
   }, []);
 }
