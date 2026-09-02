@@ -58,8 +58,14 @@ This preserves the store's monotonic-only discipline (see
 decoder, not a wall-clock instant read from a machine whose clock may jump.
 Subtracting it from the injected monotonic reading yields a monotonic instant.
 
-The wall-clock companions agree by construction, because the ingest adapter
-already dates ``update.timestamp`` at ``reference minus seen_s``.
+The wall-clock companions are aged the same way and by the same amount: the
+ingest adapter already dates ``update.timestamp`` at ``reference minus
+seen_s``. The two are not derived from the same instant, though —
+``update.timestamp`` counts back from the fetch, ``observed_at`` from a clock
+read after parsing — so expect a small, consistent sub-second offset between a
+record's wall-clock and monotonic views of the same observation. Nothing in
+this codebase compares them across that boundary, and no threshold here is
+fine-grained enough to care.
 
 Provenance
 ----------
@@ -292,17 +298,23 @@ def _range_to(
     return distance_and_bearing(receiver, position)
 
 
-def _observed_at(now: float, age_s: float | None) -> float:
-    """The monotonic instant an observation reported as ``age_s`` seconds old happened.
+def reported_silence_s(update: AircraftStateUpdate) -> float:
+    """How long ago the decoder says it last heard this aircraft, sanitized.
+
+    The single sanitizing step every age-derived value in this module goes
+    through, so none of them can disagree about what one update means.
 
     ``None`` means the source reports no age — a replayed fixture that never
     captured one, or a future adapter for a decoder that does not offer it —
-    and the observation is then taken at face value. A negative age would date
-    it in the future, which no clock reading may be, so it clamps to ``now``.
+    and the observation is then taken at face value, age zero. A negative age
+    would date the observation in the future, which no clock reading may be,
+    so it too reads as zero. Public because the store needs the same number to
+    decide whether an observation is admissible at all.
     """
+    age_s = update.seen_s
     if age_s is None or age_s <= 0.0:
-        return now
-    return now - age_s
+        return 0.0
+    return age_s
 
 
 def _position_lag_s(update: AircraftStateUpdate) -> float:
@@ -314,10 +326,13 @@ def _position_lag_s(update: AircraftStateUpdate) -> float:
     ``reference minus seen_s`` by the adapter) and the moment the position was
     actually decoded. Zero whenever the decoder reports no separate position
     age, which leaves the position dated with the update.
+
+    It measures the gap against the *sanitized* silence, so a nonsensical
+    negative ``seen_s`` cannot inflate the position's age past its own report.
     """
     if update.seen_pos_s is None:
         return 0.0
-    return max(update.seen_pos_s - (update.seen_s or 0.0), 0.0)
+    return max(update.seen_pos_s - reported_silence_s(update), 0.0)
 
 
 def _track_point(update: AircraftStateUpdate, position: Position) -> TrackPoint:
@@ -357,7 +372,7 @@ def appear(
     if position is not None:
         track.append(_track_point(update, position))
 
-    observed_at = _observed_at(now, update.seen_s)
+    observed_at = now - reported_silence_s(update)
     position_lag_s = _position_lag_s(update)
 
     return LiveAircraft(
@@ -442,9 +457,10 @@ def merge(
     if has_position and position is not None:
         current.track.append(_track_point(update, position))
 
-    observed_at = _observed_at(now, update.seen_s)
+    silence_s = reported_silence_s(update)
+    observed_at = now - silence_s
     position_lag_s = _position_lag_s(update)
-    heard_recently = now - observed_at < stale_s
+    heard_recently = silence_s < stale_s
 
     merged = replace(
         current,
@@ -515,4 +531,5 @@ __all__ = [
     "appear",
     "mark_stale",
     "merge",
+    "reported_silence_s",
 ]

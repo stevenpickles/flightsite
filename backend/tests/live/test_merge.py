@@ -257,6 +257,35 @@ def test_a_position_with_no_age_of_its_own_is_dated_with_the_update() -> None:
     assert aircraft.position_seen == aircraft.last_seen
 
 
+def test_a_position_is_aged_against_the_sanitized_silence() -> None:
+    # A negative seen_s reads as zero everywhere, so it cannot widen the gap
+    # to the position and over-age it. Measured against the raw value this
+    # position would date 15 s back rather than the 10 s the decoder reported.
+    aircraft = appear(
+        make_update(position=AIRBORNE_POSITION, seen_s=-5.0, seen_pos_s=10.0),
+        now=1_000.0,
+        receiver=SEATTLE,
+    )
+
+    assert aircraft.last_seen_monotonic == 1_000.0
+    assert aircraft.position_seen_monotonic == 990.0
+
+
+def test_a_position_reported_fresher_than_the_update_is_dated_with_the_update() -> None:
+    # seen_pos_s below seen_s is incoherent — a position cannot be heard more
+    # recently than the message carrying it — so the gap floors at zero rather
+    # than dating the position ahead of the observation that reported it.
+    aircraft = appear(
+        make_update(position=AIRBORNE_POSITION, seen_s=30.0, seen_pos_s=10.0),
+        now=1_000.0,
+        receiver=SEATTLE,
+    )
+
+    assert aircraft.last_seen_monotonic == 970.0
+    assert aircraft.position_seen_monotonic == 970.0
+    assert aircraft.position_seen == aircraft.last_seen
+
+
 # --------------------------------------------------------------- reviving
 
 
