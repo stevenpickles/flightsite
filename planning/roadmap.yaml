@@ -1346,6 +1346,43 @@ slices:
     risk_level: medium
     notes: "Unplanned fix slice for GitHub issues #110 and #111 (found by slice 046). Added by Fable outside the phase plan."
 
+  - id: "056"
+    title: "First-run ingestion hot-start"
+    phase: 8
+    branch: "056-ingestion-hot-start"
+    status: merged
+    depends_on: ["007", "019", "055"]
+    objective: "Make the setup wizard's save start decoder ingestion in the running process, so a fresh install shows aircraft without the one manual backend restart the first run has always needed."
+    scope:
+      - "shared start helper used by both the boot path and the config-apply seam, so hot-start and cold-start decide what to poll the same way"
+      - "`PUT /api/internal/config` starts ingestion when nothing is running, the install is no longer on its first run, and demo mode is off"
+      - "the saved receiver location is applied to the live store on the same save, so distance and bearing compute immediately"
+      - "a failed hot-start logs `config_apply_failed` and never fails a save that already wrote, matching the slice-055 entry beside it"
+      - "docs and Settings-copy rationale updated: the first-run restart is gone, endpoint changes on a running adapter still need one"
+    out_of_scope:
+      - "hot-*restart*: changing the endpoint of an already-running adapter stays restart-required, and the Settings badges stay"
+      - "the receiver-metrics `StatsJsonPoller`, which is also never built on a first run and has no setter (follow-up issue)"
+      - "ingestion teardown, adapter reconfiguration, or a general settings-application registry"
+    acceptance_criteria:
+      - "finishing the setup wizard on a fresh install starts ingestion and aircraft flow into the live set with no backend restart"
+      - "a second config save constructs no second ingestion service"
+      - "a hot-start that raises leaves the save successful and ingestion retryable on a later save"
+      - "`/api/v1/ready` never regresses when the ingestion subsystem registers after `mark_startup_complete()`"
+    required_tests:
+      - first-run save starts ingestion and aircraft reach the live store
+      - second-save idempotence test asserting no new service is constructed
+      - failing-hot-start isolation test asserting the save still succeeds
+      - readiness test across a mid-life subsystem registration
+      - receiver-location-applied-to-live-store test
+    expected_artifacts:
+      - backend/src/flightsite/api/ingestion.py
+      - backend/src/flightsite/api/internal.py
+      - backend/src/flightsite/app.py
+      - docs/INSTALL.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #122, the first-run wart docs/INSTALL.md §6 documented as a known limitation. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
