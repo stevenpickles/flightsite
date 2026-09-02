@@ -18,9 +18,10 @@ comfortably below 1 GB.
 SPEC §85 does not ask for every metric to block a merge, and there is a good
 reason for that. Some limits are correctness-critical: cross one and the live
 picture becomes a backlog, or the process heads for the OOM killer. Others are
-questions of comfort whose real answer depends on hardware nobody has measured
-yet — and a budget calibrated on a developer laptop tells you nothing about an
-SD card on a Pi.
+questions of comfort whose real answer depends on the reference hardware — and
+a budget calibrated on a developer laptop tells you nothing about an SD card on
+a Pi. §5.4 now carries a first Pi 4 reading, taken on a contended machine; it
+informs the second kind of budget without yet being firm enough to fix one.
 
 So budgets come in two kinds, and every row of the table below is labelled.
 
@@ -33,7 +34,9 @@ So budgets come in two kinds, and every row of the table below is labelled.
 
 A reference budget is not a weaker budget. It is a budget that has not yet been
 calibrated against the hardware it is stated for, and reporting it as a hard
-gate on a developer machine would be dressing up a guess.
+gate on a developer machine would be dressing up a guess. A *contended* Pi 4 —
+which is what §5.4 records — does not lift that objection either; §5.4's
+closing note says why promotion waits for a clean re-run.
 
 ### CI headroom
 
@@ -80,6 +83,12 @@ responsive.*
 
 SPEC §85: *trend-track less critical metrics initially; convert to hard gates
 once real Pi 4 baselines exist.*
+
+A first Pi 4 baseline now exists (§5.4), so the per-row rationales below are no
+longer arguing from no data at all. None of these rows is promoted on it: that
+run was contended and its figures are upper bounds, so §5.3's promotion step is
+deferred to the clean re-run rather than applied to numbers that would set
+every threshold in the wrong place. §5.4 gives the argument in full.
 
 | Metric | SPEC §85 item | Budget (Pi 4) | Statistic | Why not yet a hard gate |
 |---|---|---|---|---|
@@ -297,16 +306,101 @@ table and the JSON off the Pi.
 
 ### 5.4 Recorded baselines
 
-> **No Raspberry Pi 4 baseline has been recorded yet.** The procedure above is
-> documented and the harness runs standalone, but the hardware was not
-> available to the slice that built it. Until a row appears here, every
-> reference budget in §2.2 remains a stated target rather than a calibrated
-> one, and none of them can be promoted to a hard gate. This is the outstanding
-> item for slice 049's second acceptance criterion.
+**2026-09-01** · FlightSite **v0.2.0** · Raspberry Pi 4 Model B Rev 1.5, 4 GB
+RAM (3794 MB), SD-card root (`/dev/root`, 59 GB), Raspberry Pi OS (armhf
+userland on an aarch64 kernel), Docker Compose · 500 aircraft, 600 ticks,
+4 WebSocket clients, ~10 min wall ·
+`flightsite-perf --realtime --ticks 600`
 
-| Date | Release | Hardware | Storage | Result |
-|---|---|---|---|---|
-| — | — | — | — | not yet run |
+> **This run was contended, contrary to §5.1 step 3.** It was taken on the
+> project owner's live production Pi with the production FlightSite backend
+> ingesting at 1 Hz, and with dump1090-fa, tar1090 and the FlightRadar24 and
+> ADS-B Exchange feeders all running on the same machine and the same SD card.
+> §5.1 allows a decoder feeding the Pi and nothing else; this had the decoder,
+> its web UI, two upload feeders, a second full copy of the product ingesting
+> live, and the harness — all competing for one SD card.
+>
+> The figures below are therefore recorded as the **provisional** Pi 4
+> baseline. They are a real Pi 4 under a real (in fact pessimistic) load, which
+> is worth far more than the empty table they replace, but they are not the
+> quiet-machine measurement §5.2 describes. **A clean re-run is pending**;
+> until it lands, read every figure here as an upper bound rather than as the
+> hardware's number.
+
+Budgets below are the Pi 4 budgets from §2 at face value. `CI_HEADROOM` does
+not apply: it exists so that a shared CI runner cannot fail a gate, and this
+*is* the reference hardware the budgets are stated for.
+
+| Metric | Gate | median | p95 | max | Gated statistic | Pi 4 budget | Result |
+|---|---|---|---|---|---|---|---|
+| `live_population` | hard | — | — | — | min 526 | ≥ 500 | pass |
+| `ingest_apply_ms` | hard | 55.8 | 81.2 | 664 | p95 81.2 | ≤ 100 | pass |
+| `ingest_duty_cycle` | hard | 0.213 | 0.99 | 5.29 | p95 0.99 | ≤ 0.5 | **over budget — issue #132** |
+| `live_sweep_ms` | hard | — | — | 9.59 | max 9.59 | ≤ 100 | pass |
+| `api_live_ms` | hard | 82.2 | 135 | 597 | p95 135 | ≤ 250 | pass |
+| `memory_rss_mib` | hard | 145 | — | 175 | max 175 | ≤ 1024 | pass |
+| `ws_fanout_ms` | reference | 54.3 | 68.1 | 764 | p95 68.1 | ≤ 100 | pass |
+| `db_write_cycle_ms` | reference | 80.1 | 678 | 5180 | p95 678 | ≤ 250 | over budget |
+| `db_read_ms` | reference | 15.5 | 26.2 | 365 | p95 26.2 | ≤ 500 | pass |
+| `analytics_query_ms` | reference | 31.8 | 48.2 | 78.7 | p95 48.2 | ≤ 500 | pass |
+| `startup_s` | reference | — | — | — | max 0.547 | ≤ 30 | pass |
+| `recovery_s` | reference | — | — | — | max 9.3 | ≤ 30 | pass |
+
+The WebSocket run distributed 3,560 frames with **0 resync reconnects**, which
+is slice 057's batching fix (§5.5's closing note) confirmed on real hardware
+rather than on the machine that wrote it. Recovery adopted **539 open
+sightings** in 9.3 s, the same open-sighting count as §5.5's development run
+and about four times its cost — the clearest single expression of what SD-card
+I/O does to this product. The JSON report is on that Pi at
+`/opt/flightsite/data/perf-baseline/report.json`; §5.2 asks for it to be copied
+off, and the clean re-run should archive it alongside this table.
+
+**Ten of the twelve figures pass, and the two that do not are the same
+finding.** `ingest_duty_cycle` is a hard gate and its p95 of 0.99 is twice its
+budget: at that figure the per-tick hot path is consuming a whole 1 Hz poll,
+with no margin left. Its driver is visible one row down — `db_write_cycle_ms`
+p95 678 ms against a 250 ms budget, with a maximum of 5.18 s. The duty cycle
+sums the harness's stages serially (§5.5 explains why, and why the product does
+not), so an SD card that occasionally takes five seconds to commit a flush
+carries the duty cycle straight up with it.
+
+Only the first of the two fails anything. `db_write_cycle_ms` is a reference
+budget, so by §1 it is reported rather than enforced, and it sits inside the
+in-suite bound of 1250 ms in any case; it is recorded here because it is the
+explanation for the row above it, not because a run went red.
+
+Per §5.3 rule 3 this is **a finding, not a reason to widen anything**: it is
+filed as **issue #132**, no budget in `backend/src/flightsite/perf/budgets.py`
+was touched, and `ingest_duty_cycle` remains a hard gate at 0.5. The issue
+records the three things that bear on it — the SQLite write spikes seen here,
+issue #114's track-row storage, and the owner's planned migration to a Pi 5
+with an SSD, which changes the storage substrate this measurement is dominated
+by. Whether the overrun survives an uncontended run on that hardware is exactly
+what the clean re-run answers.
+
+#### Promotion is deferred to the clean re-run
+
+§5.3 step 2 asks, for each reference budget now backed by a Pi 4 baseline,
+whether to promote it to a hard gate. The answer for all six is **not yet**,
+and the reason is the caveat at the top of this section rather than any
+reluctance about the figures themselves.
+
+A promotion sets a number that fails builds. Calibrating one on a contended run
+gets it wrong in one of two directions, and there is no third. Take the
+measurements at face value and every threshold inherits the contention:
+`db_write_cycle_ms` would be promoted at something near a second, which is not
+this product's write latency but its neighbours' share of an SD card, and the
+gate would then sit far too loose to catch the regression it exists for.
+Discount the contention instead and the discount is a guess — nothing here
+separates the harness's own cost from its neighbours'. Either way the result is
+§1's dressed-up guess, arrived at with more ceremony.
+
+So the reference budgets in §2.2 stay reference budgets. What this run does
+establish is that promotion is now a *near-term* decision with real evidence
+behind it rather than an open question: five of the six sit comfortably inside
+their budgets even under this load, and the sixth is the write-cycle row that
+#132 exists to explain. The clean re-run is the point at which §5.3 step 2 gets
+applied for real.
 
 ### 5.5 Development-machine baseline
 
