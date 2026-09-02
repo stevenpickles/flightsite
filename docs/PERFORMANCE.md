@@ -906,9 +906,12 @@ level 6. Setting `compresslevel=6` would cut roughly 200 s from a 5 GB backup
 and change the archive size by nothing measurable; level 1 would cut ~290 s for
 0.9 percentage points of ratio.
 
-Worth a roadmap entry against backup. `docs/BACKUP.md` currently promises
-nothing about duration and says only that a large backup "takes a while", which
-is the right place to state a real figure once the level is chosen.
+**Resolved by slice 058 (issue #117).** `archive.write_archive` now passes
+`compresslevel=6` explicitly, as `archive.COMPRESS_LEVEL`. The level is
+asserted through the container's gzip `XFL` header byte rather than by reading
+the constant back, so a drift to 9 by any route fails a test. The 406.9 s
+figure above predates the change; re-running §7.8 should show roughly 200 s of
+it gone at an unchanged archive size.
 
 ### 7.8 Raspberry Pi storage qualification procedure
 

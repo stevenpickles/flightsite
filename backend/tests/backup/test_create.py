@@ -20,6 +20,7 @@ from flightsite.backup import (
     create_backup,
     default_backup_dir,
 )
+from flightsite.backup import archive as archive_io
 from flightsite.backup.snapshot import quick_check
 from flightsite.config import ConfigStore
 from flightsite.db import migrate
@@ -213,3 +214,26 @@ async def test_result_render_summarises_the_backup(data_dir: Path, populated_db:
     assert "includes secrets:   no" in rendered
     assert migrate.head_revision() in rendered
     assert DATABASE_MEMBER in rendered
+
+
+def test_the_archive_is_written_at_the_chosen_compression_level(
+    data_dir: Path, populated_db: Path
+) -> None:
+    """Issue #117: level 6, not tarfile's default of 9.
+
+    Slice 050 measured both levels compressing a real database to the same
+    0.188 ratio while level 6 ran 2.7x faster, on a backup whose cost is
+    dominated by gzip. The level is asserted through the container rather than
+    by reading the constant back: gzip records it in the ``XFL`` byte of its
+    header — 2 for "best compression", 4 for "fastest", 0 for anything else —
+    so this fails if the level drifts back to 9 by any route, including
+    somebody dropping the ``compresslevel`` argument.
+    """
+    result = create_backup(data_dir, now=fixed_clock())
+
+    header = result.path.read_bytes()[:10]
+    assert header[:2] == b"\x1f\x8b", "not a gzip container"
+    assert header[8] == 0, (
+        f"XFL byte {header[8]} says the archive was written at an extreme "
+        f"compression level; {archive_io.COMPRESS_LEVEL} was intended"
+    )

@@ -74,7 +74,10 @@ against a continuously writing FlightSite could take arbitrarily long.
 
 A backup of a multi-gigabyte history takes a while and does real disk I/O.
 On a Raspberry Pi, expect the map to feel no different but the SD card to be
-busy. Take backups when you are not also doing something else heavy.
+busy. Take backups when you are not also doing something else heavy. For a
+rough figure, a 5 GB database took about 200 s on a developer machine — most
+of it compression — and produced an archive about a fifth of its size. Restore
+is far quicker than backup: decompression is cheap where compression is not.
 
 ## What is in an archive
 
