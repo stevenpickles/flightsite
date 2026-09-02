@@ -85,8 +85,8 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 
 | Setting | Why |
 |---|---|
-| `receiver.*` | The decoder endpoint is read once when ingestion starts |
-| `location.*` | The receiver reference point is fixed when the live store is built |
+| `receiver.*` | The decoder endpoint is read once when ingestion starts (see the first-run exception below) |
+| `location.*` | The receiver reference point is fixed when the live store is built (see the first-run exception below) |
 | `sighting.*` | Lifecycle thresholds are captured by the live store and persistence worker |
 | `retention.high_res_metric_days` | Read when the metrics service is constructed |
 | `timezone` | Analytics and receiver-metric day bucketing bind the zone at construction |
@@ -95,9 +95,16 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 | `alerts.enabled_templates` | Shipped templates are instantiated at startup |
 
 The Settings UI marks the Decoder and Receiver sections **"Applies on next
-restart"**. The other rows above are not currently badged in the UI
-([issue #122](https://github.com/stevenpickles/flightsite/issues/122)) — when in
-doubt, restart; it costs a few seconds and loses nothing.
+restart"**. The other rows above are not badged in the UI — when in doubt, restart; it
+costs a few seconds and loses nothing.
+
+**The first-run exception.** `receiver.*` and `location.*` are restart-required only
+once there is something running to disturb. On a fresh install nothing is polling yet,
+so the setup wizard's save starts ingestion in place and anchors the live store at the
+location it just wrote — finishing the wizard needs no restart. It is *changing* an
+endpoint or a location afterwards that waits: the running adapter owns its connection
+and its health history, and every already-observed aircraft carries a distance measured
+from the old reference point until it is seen again.
 
 ### Two behaviors that will surprise you
 
