@@ -1,5 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { AIRCRAFT_SOURCE_ID } from "@/features/map/aircraft/aircraftLayers";
@@ -19,6 +20,7 @@ import {
   MapLibreMockMap,
   resetMapLibreMock,
 } from "@/test/maplibreGlMock";
+import { installOverlaysApiMock } from "@/test/overlaysApiMock";
 
 /**
  * End-to-end through the real map wiring: `MapLibreMap` (which the mocked
@@ -34,16 +36,30 @@ import {
 beforeEach(() => {
   resetMapLibreMock();
   useLiveAircraftStore.getState().reset();
+  // `AircraftLayer` reads the selected aircraft's open sighting to backfill
+  // its track (slice 061); selecting one here must resolve against a stub
+  // rather than the network. The default answer is "no open sighting", so
+  // these label tests see exactly the track they build themselves.
+  installOverlaysApiMock();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 async function renderLoadedLayer(): Promise<MapLibreMockMap> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MapLibreMap
-      config={DEV_PLACEHOLDER_MAP_CONFIG}
-      basemap={getDefaultBasemap()}
-    >
-      <AircraftLayer />
-    </MapLibreMap>,
+    <QueryClientProvider client={queryClient}>
+      <MapLibreMap
+        config={DEV_PLACEHOLDER_MAP_CONFIG}
+        basemap={getDefaultBasemap()}
+      >
+        <AircraftLayer />
+      </MapLibreMap>
+    </QueryClientProvider>,
   );
   const map = getLastMockMap();
   await act(async () => {

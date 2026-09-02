@@ -7,14 +7,17 @@
  * the ones it has watched arrive. Accumulation therefore starts at the moment
  * of selection.
  *
- * **The backfill seam.** A history read API lands in slice 052; when it does,
- * the track for the open sighting can be fetched and *prepended* to whatever
- * has accumulated here. Everything this module needs for that is already true:
- * points are plain `{lat, lon, at}` with a UTC-millisecond timestamp, they are
- * kept in ascending `at` order, and `points` is a value the store swaps whole
- * rather than a structure the renderer mutates. A backfill is then a merge of
- * two sorted point lists into a new array, with no change to the renderer, the
- * layer, or the store's shape.
+ * **The backfill seam, now filled (slice 061, issue #133).** The history read
+ * API landed in slice 052, and {@link mergeTrackPoints} is the merge the seam
+ * was left open for: `features/map/aircraft/useTrackBackfill` resolves the
+ * selected aircraft's open sighting, maps its checkpointed `path` to
+ * {@link TrackPoint}s, and hands them to the store's `backfillTrack`, which
+ * merges them under the live-accumulated points. Every assumption the seam
+ * relied on held: points are still plain `{lat, lon, at}` with a
+ * UTC-millisecond timestamp, still kept in ascending `at` order, and `points`
+ * is still a value the store swaps whole rather than a structure the renderer
+ * mutates — so the backfill is a merge of two sorted lists into a new array,
+ * and the renderer and the layer are untouched.
  */
 
 /** One observed position of the selected aircraft. */
@@ -26,7 +29,9 @@ export interface TrackPoint {
 }
 
 /** The accumulating track, tied to the ICAO it was accumulated for so a stale
- * track can never be drawn against a newly selected aircraft. */
+ * track can never be drawn against a newly selected aircraft. This is the
+ * whole of what the renderer needs; the bookkeeping a backfill requires lives
+ * beside it in the store, not in here. */
 export interface SelectedTrack {
   icao: string;
   points: TrackPoint[];
@@ -72,4 +77,139 @@ export function appendTrackPoint(
   return next.length > TRACK_MAX_POINTS
     ? next.slice(next.length - TRACK_MAX_POINTS)
     : next;
+}
+
+/**
+ * `points` in ascending `at` order, by identity when it already is.
+ *
+ * The scan is the point: an already-ordered list — which is every list either
+ * caller actually produces — is returned as-is, so the defensive sort costs one
+ * pass and no allocation, and the identity result is what lets
+ * {@link mergeTrackPoints} recognise an unchanged track.
+ *
+ * `Array.prototype.sort` is stable, so points sharing an `at` keep the order
+ * they were given in.
+ */
+function ascendingByAt(points: readonly TrackPoint[]): readonly TrackPoint[] {
+  for (let index = 1; index < points.length; index += 1) {
+    if (
+      (points[index] as TrackPoint).at < (points[index - 1] as TrackPoint).at
+    ) {
+      return [...points].sort((left, right) => left.at - right.at);
+    }
+  }
+  return points;
+}
+
+/**
+ * Merges a backfilled history track with the live-accumulated one.
+ *
+ * The pipeline, in order:
+ *
+ * 1. **Sort both inputs defensively** (stable, by `at`).
+ * 2. **Clamp `older`** to before `newer[0].at`, when `newer` has any points.
+ * 3. **Merge** the two sorted lists, de-duplicating on `at`.
+ * 4. **Cap** at {@link TRACK_MAX_POINTS}, keeping the newest — the same rule
+ *    {@link appendTrackPoint} applies, so a long sighting's history yields to
+ *    the part of the flight on screen now.
+ *
+ * The two halves of that de-duplication belong to different steps. *Across*
+ * the lists it is the clamp's job and already done by the time the merge runs:
+ * every surviving `older` point precedes `newer[0]`, so no cross-list
+ * collision reaches step 3 and its tie-break branch is unreachable — kept as a
+ * defensive expression of "the live point wins", not as live logic. What step
+ * 3 does de-duplicate is *within* a list: two points sharing an `at`, which
+ * neither input is trusted to be free of.
+ *
+ * Steps 1 and 2 each exist for a specific failure:
+ *
+ * * **Clock skew** (step 2), and not as a corner case. The two lists are dated
+ *   by *different clocks*: `older` carries the receiver's timestamps
+ *   (`path[].t`) and `newer` the browser's `Date.now()` (the store's docstring
+ *   explains why the live picture is dated locally). A receiver clock running
+ *   ahead of the browser by more than the sighting's pre-selection age lands
+ *   the *whole* history after the live points, and an unclamped merge then
+ *   draws the current position, folds back to where the aircraft was minutes
+ *   ago, and re-traces forward — tens of nautical miles of polyline that no
+ *   aircraft flew. Clamping degrades gracefully instead: a skew that large
+ *   backfills nothing, which is the pre-slice-061 picture rather than a wrong
+ *   one. The clamp also subsumes the checkpoint-lag overlap, where the tail of
+ *   `older` and the head of `newer` describe the same stretch of flight.
+ * * **Out-of-order input** (step 1). Neither list is trusted to be sorted: a
+ *   response is server data, not an invariant this module established. Sorting
+ *   keeps that distrust *local* to the offending point. Dropping any point
+ *   that failed to advance the clock — the previous rule, issue #137 — was not
+ *   a reorder guard at all but an amplifier: one spike at `t100` in
+ *   `[t1, t100, t2, t3, t4, t5]` silently swallowed the entire tail, turning a
+ *   single bad point into four lost ones. A sort lands the spike in its own
+ *   place and keeps everything else.
+ *
+ * Returns `newer` unchanged when the merge would add nothing to it and it was
+ * already ordered, so a backfill that turns out to be redundant costs no
+ * allocation and no `setData` churn.
+ */
+export function mergeTrackPoints(
+  older: readonly TrackPoint[],
+  newer: readonly TrackPoint[],
+): TrackPoint[] {
+  const history = ascendingByAt(older);
+  const live = ascendingByAt(newer);
+
+  const merged: TrackPoint[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  let keptFromOlder = 0;
+  let keptFromNewer = 0;
+
+  // `newer` owns everything from its first point onwards, whatever it is: the
+  // live-accumulated list on a first backfill, the already-drawn track on the
+  // idempotent same-sighting path. With no points there to defer to, the whole
+  // history is drawable.
+  const liveFrom = live[0]?.at ?? Number.POSITIVE_INFINITY;
+
+  const push = (point: TrackPoint, fromNewer: boolean): void => {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && point.at <= last.at) {
+      return;
+    }
+    merged.push(point);
+    if (fromNewer) {
+      keptFromNewer += 1;
+    } else {
+      keptFromOlder += 1;
+    }
+  };
+
+  while (oldIndex < history.length || newIndex < live.length) {
+    const left = history[oldIndex];
+    if (left !== undefined && left.at >= liveFrom) {
+      // Inside the region `newer` owns — including, under a large enough skew,
+      // the entire history.
+      oldIndex += 1;
+      continue;
+    }
+    const right = live[newIndex];
+    // The `<=` half of this test is unreachable: the clamp above has already
+    // dropped every `left` that could tie with a `right`. It stays as the
+    // defensive statement of which point would win — the live one, watched
+    // arriving, over a checkpoint that only summarises it.
+    if (right !== undefined && (left === undefined || right.at <= left.at)) {
+      push(right, true);
+      newIndex += 1;
+    } else if (left !== undefined) {
+      push(left, false);
+      oldIndex += 1;
+    } else {
+      break;
+    }
+  }
+
+  // `live === newer` matters: a `newer` that had to be sorted is not the array
+  // the caller passed in, so returning it would keep the disorder on screen.
+  if (live === newer && keptFromOlder === 0 && keptFromNewer === newer.length) {
+    return newer as TrackPoint[];
+  }
+  return merged.length > TRACK_MAX_POINTS
+    ? merged.slice(merged.length - TRACK_MAX_POINTS)
+    : merged;
 }
