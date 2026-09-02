@@ -18,6 +18,13 @@
  *   010 had to survive that without reconnecting — so parsing keeps the
  *   envelope and lets the caller decide it has nothing to do with the payload.
  *   The rule still governs whatever a later slice adds next.
+ *
+ * Slice 057 is the next such change: the server now sends `activity_batch`,
+ * one frame carrying a whole detector pass, and no longer sends the singular
+ * `activity` frame at all. This module narrows **both**, because a browser
+ * holding a cached bundle can outlive a backend upgrade in either direction
+ * for the length of one release; the singular path is marked for removal
+ * there rather than here.
  */
 
 import type { ActivityEvent } from "@/lib/api/activity";
@@ -28,9 +35,11 @@ import type { LiveAircraft, ReceiverInfo } from "@/lib/api/live";
  * backend, exactly like the REST paths in `@/lib/api/client`. */
 export const LIVE_WS_PATH = "/api/v1/ws/live";
 
-/** Frame types this client understands. Anything else is ignored per §6. */
+/** Frame types this client understands. Anything else is ignored per §6.
+ * `activity` is the retired singular form (slice 035), still understood for
+ * one release so a running tab survives meeting an older backend. */
 export type ServerFrameType =
-  "snapshot" | "delta" | "activity" | "ping" | "pong";
+  "snapshot" | "delta" | "activity_batch" | "activity" | "ping" | "pong";
 
 /** `docs/API.md` §4.2: the complete live picture, replacing whatever the
  * client held. Sent on connect and again whenever the server resyncs. */
@@ -171,4 +180,30 @@ export function asActivityEvent(data: unknown): ActivityEvent | null {
     sighting_id: typeof sighting_id === "number" ? sighting_id : null,
     payload: isRecord(payload) ? payload : {},
   };
+}
+
+/**
+ * Narrows a frame body to an `activity_batch`: the array of §3.9 events one
+ * detector pass recorded (§4.4, slice 057).
+ *
+ * Returns `null` only when the body is not an array at all — that is a frame
+ * this client cannot read, and §6 says ignore it. An array whose *entries* are
+ * malformed is a different case: each entry is narrowed by
+ * {@link asActivityEvent} and the ones that fail are dropped individually, so
+ * one unreadable event costs one row rather than the whole pass. An array that
+ * survives as empty is returned as such; the caller decides that nothing to
+ * ingest means nothing to do.
+ */
+export function asActivityBatch(data: unknown): ActivityEvent[] | null {
+  if (!Array.isArray(data)) {
+    return null;
+  }
+  const events: ActivityEvent[] = [];
+  for (const entry of data) {
+    const event = asActivityEvent(entry);
+    if (event) {
+      events.push(event);
+    }
+  }
+  return events;
 }

@@ -512,8 +512,8 @@ still cannot reach this response.
 ## 4. WebSocket Protocol — `/api/v1/ws/live` (slice 010)
 
 One WebSocket carries the live picture and activity events. The base protocol
-(snapshot, delta, keepalive/resync) ships in slice 010; the `activity` frame type
-(§ 4.4) is added by slice 035.
+(snapshot, delta, keepalive/resync) ships in slice 010; the activity frame type
+(§ 4.4) is added by slice 035 and becomes the batched `activity_batch` in slice 057.
 
 ### 4.1 Message envelope
 
@@ -551,16 +551,34 @@ On connect the server immediately sends:
   robust, and cheap at 500-aircraft scale with batching.
 - `stale` lists ICAOs crossing the staleness threshold; `removed` lists ICAOs leaving
   live display. Interesting-status changes arrive as normal `updated` entries plus an
-  `activity` frame when an alert fires.
+  `activity_batch` frame when an alert fires.
 
-### 4.4 Activity events — added by slice 035
+### 4.4 Activity events — added by slice 035, batched by slice 057
 
 ```json
-{ "type": "activity", "seq": 3, "ts": "...", "data": { /* activity event, § 3.9 shape */ } }
+{ "type": "activity_batch", "seq": 3, "ts": "...", "data": [
+    /* one or more activity events, § 3.9 shape, oldest first */
+] }
 ```
 
 Drives the live activity feed and browser notifications (phase 6). Clients built
 against the slice-010 protocol ignore this frame type until they support it (§ 6).
+
+- **One frame per activity-detector pass**, carrying everything that pass recorded,
+  the same way a `delta` carries a whole tick. `data` is always an **array**, even
+  for a single event; a pass that recorded nothing sends no frame. At most 128
+  events go in one frame, so a pathological pass sends a few frames rather than one
+  enormous one.
+- Batching exists because the per-event form did not survive a first run: on a new
+  database every aircraft is a first-ever sighting, so one 5-second pass emitted a
+  burst larger than a client's outbound queue and § 4.5's slow-consumer rule evicted
+  every connected client (measured in `docs/PERFORMANCE.md` § 6).
+- **The singular `activity` frame type is retired.** The server no longer sends it.
+  A client written against slice 035 ignores `activity_batch` per § 6 — it stops
+  receiving live events until updated, and its `GET /activity` feed (§ 3.9) is
+  unaffected, which is precisely the degradation § 6 is written to make safe.
+- There is no replay: these frames are not part of the snapshot/delta picture, and a
+  reconnecting client refetches `GET /activity` rather than being re-sent them.
 
 ### 4.5 Keepalive, reconnect, slow consumers
 
@@ -633,6 +651,10 @@ reads return masked placeholders; logs and diagnostics never include them.
   semantics requires a deprecation note in release notes and is avoided after
   `v1.0.0`.
 - The WebSocket message set may add new `type`s; clients must ignore unknown types.
+  *Retiring* a `type` follows the field rule above — a note in the release notes,
+  and avoided after `v1.0.0`. The singular `activity` frame was retired pre-1.0 by
+  slice 057 in favour of `activity_batch` (§ 4.4); ignoring the unknown replacement
+  is what makes an un-updated client degrade to its REST feed instead of breaking.
 - `/api/internal` carries no compatibility promise.
 
 ---
