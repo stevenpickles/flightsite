@@ -105,6 +105,14 @@ const LABEL_HALO_WIDTH = 1.2;
  * layer with `text-variable-anchor`, which is why this layer sets neither and
  * uses {@link LABEL_RADIAL_OFFSET} instead. The selected-label layer keeps
  * the fixed anchor/offset pair precisely because it must never move.
+ *
+ * The layer pairs this with `text-justify: "auto"`, which is only meaningful
+ * under variable anchoring: at the default `center`, a multi-line label that
+ * relocates to the `left` or `right` anchor stays centre-justified, leaving a
+ * ragged inner edge facing the aircraft it belongs to. `auto` derives the
+ * justification from whichever anchor won, so a right-placed label is
+ * left-justified against the icon and a left-placed one right-justified — the
+ * text keeps a straight edge pointing at its aircraft however it moved.
  */
 const LABEL_VARIABLE_ANCHORS: ("top" | "bottom" | "right" | "left")[] = [
   "top",
@@ -394,6 +402,9 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
         // in would read as configuration that does nothing.
         "text-variable-anchor": LABEL_VARIABLE_ANCHORS,
         "text-radial-offset": LABEL_RADIAL_OFFSET,
+        // Justify from the anchor that actually won, so a relocated
+        // multi-line label keeps a straight edge facing its aircraft.
+        "text-justify": "auto",
         "text-line-height": 1.15,
         // MapLibre's own collision system: a label that fits none of the
         // candidate placements is hidden rather than drawn over its

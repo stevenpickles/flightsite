@@ -233,6 +233,10 @@ describe("ensureAircraftLayers", () => {
     expect(layout["text-anchor"]).toBeUndefined();
     expect(layout["text-offset"]).toBeUndefined();
     expect(layout["text-radial-offset"]).toEqual(expect.any(Number));
+    // Justification has to follow the anchor that won. At MapLibre's default
+    // of "center", a multi-line label relocated to the left or right anchor
+    // stays centre-justified and turns a ragged edge toward its own aircraft.
+    expect(layout["text-justify"]).toBe("auto");
   });
 
   it("keeps the selected label on a fixed anchor, never a variable one", () => {
@@ -246,6 +250,9 @@ describe("ensureAircraftLayers", () => {
     expect(layout["text-radial-offset"]).toBeUndefined();
     expect(layout["text-anchor"]).toBe("top");
     expect(layout["text-offset"]).toEqual([0, 1]);
+    // "auto" justification only means anything under variable anchoring, and
+    // this layer has none — so it stays off rather than riding along.
+    expect(layout["text-justify"]).toBeUndefined();
   });
 
   it("prioritizes interesting aircraft over ordinary ones in the label collision order", () => {
