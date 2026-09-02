@@ -54,6 +54,11 @@ export interface SettingsDraft {
    * disturbed just by opening the section. */
   aerodataboxKeyTouched: boolean;
 
+  // Metadata sources.
+  /** Whether the opt-in OpenSky aircraft database takes part in "Update
+   * Aircraft Metadata" (ADR-0013). Off by default; applies on restart. */
+  openskyEnabled: boolean;
+
   // Retention.
   highResMetricDays: string;
 }
