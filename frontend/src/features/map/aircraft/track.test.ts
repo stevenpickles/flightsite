@@ -99,28 +99,112 @@ describe("mergeTrackPoints", () => {
     expect(merged).toEqual([{ lat: 47.25, lon: -122, at: 9 }]);
   });
 
-  it("interleaves points that alternate between the two lists", () => {
+  it("never interleaves history into the region the live list covers", () => {
+    // The live list is authoritative from its first point onwards; a history
+    // point landing inside that window is a clock artefact, not a fix the
+    // aircraft reported between two watched ones.
     const merged = mergeTrackPoints(
       [point(47.0, -122, 1), point(47.2, -122, 3)],
       [point(47.1, -122, 2), point(47.3, -122, 4)],
     );
-    expect(at(merged)).toEqual([1, 2, 3, 4]);
+    expect(at(merged)).toEqual([1, 2, 4]);
   });
 
-  it("drops a history point that does not advance the clock", () => {
-    // Neither list is trusted to be perfectly sorted: a merge that honoured an
-    // out-of-order point would draw a polyline that doubles back on itself.
+  it("backfills nothing when the receiver clock runs ahead of the browser", () => {
+    // The fold: the receiver's clock is 5 minutes ahead, and the aircraft was
+    // airborne for only 2 minutes before the click, so every history point is
+    // stamped *after* the live ones. Merged naively the polyline would draw
+    // the current position, jump back to where the aircraft was two minutes
+    // ago, and re-trace forward. Clamping degrades to the pre-backfill
+    // picture instead of drawing a line no aircraft flew.
+    const skew = 300_000;
+    const selectedAt = 1_800_000_000_000;
+    const history = [
+      point(47.0, -122, selectedAt - 120_000 + skew),
+      point(47.2, -122, selectedAt - 60_000 + skew),
+      point(47.4, -122, selectedAt + skew),
+    ];
+    const live = [
+      point(47.5, -122, selectedAt),
+      point(47.51, -122, selectedAt + 1000),
+    ];
+
+    expect(mergeTrackPoints(history, live)).toBe(live);
+  });
+
+  it("keeps the history a modest skew leaves genuinely older", () => {
+    // The same skew against a sighting that has been open long enough to
+    // outrun it: the part of the history still older than the first live point
+    // is real and is drawn.
+    const skew = 60_000;
+    const selectedAt = 1_800_000_000_000;
+    const history = [
+      point(47.0, -122, selectedAt - 600_000 + skew),
+      point(47.2, -122, selectedAt - 300_000 + skew),
+      point(47.4, -122, selectedAt + skew),
+    ];
+    const live = [point(47.5, -122, selectedAt)];
+
+    expect(at(mergeTrackPoints(history, live))).toEqual([
+      selectedAt - 540_000,
+      selectedAt - 240_000,
+      selectedAt,
+    ]);
+  });
+
+  it("sorts an out-of-order history point into place", () => {
+    // Neither list is trusted to be perfectly sorted: honouring the given
+    // order would draw a polyline that doubles back on itself.
     const merged = mergeTrackPoints(
       [point(47.0, -122, 1), point(47.2, -122, 7), point(47.1, -122, 4)],
       [point(47.3, -122, 10)],
     );
-    expect(at(merged)).toEqual([1, 7, 10]);
+    expect(at(merged)).toEqual([1, 4, 7, 10]);
   });
 
-  it("drops an accumulated point that does not advance the clock", () => {
+  it("sorts an out-of-order accumulated point into place", () => {
     const merged = mergeTrackPoints(
       [point(47.0, -122, 1)],
       [point(47.3, -122, 10), point(47.2, -122, 6)],
+    );
+    expect(at(merged)).toEqual([1, 6, 10]);
+  });
+
+  it("loses no later points to a single out-of-order history point", () => {
+    // Issue #137: the strictly-increasing rule was an amplifier, not a reorder
+    // guard — one spike at t=100 discarded every point after it, turning one
+    // bad point into four lost ones.
+    const merged = mergeTrackPoints(
+      [
+        point(47.0, -122, 1),
+        point(48.0, -122, 100),
+        point(47.1, -122, 2),
+        point(47.2, -122, 3),
+        point(47.3, -122, 4),
+        point(47.4, -122, 5),
+      ],
+      [],
+    );
+    expect(at(merged)).toEqual([1, 2, 3, 4, 5, 100]);
+  });
+
+  it("keeps the out-of-order point itself, in its sorted position", () => {
+    const merged = mergeTrackPoints(
+      [point(47.0, -122, 1), point(47.9, -122, 9), point(47.1, -122, 3)],
+      [point(48.0, -122, 20)],
+    );
+    expect(merged).toEqual([
+      { lat: 47.0, lon: -122, at: 1 },
+      { lat: 47.1, lon: -122, at: 3 },
+      { lat: 47.9, lon: -122, at: 9 },
+      { lat: 48.0, lon: -122, at: 20 },
+    ]);
+  });
+
+  it("de-duplicates repeated timestamps inside one list", () => {
+    const merged = mergeTrackPoints(
+      [point(47.0, -122, 1), point(47.05, -122, 1)],
+      [point(47.3, -122, 10)],
     );
     expect(at(merged)).toEqual([1, 10]);
   });
