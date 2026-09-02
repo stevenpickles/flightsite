@@ -5,6 +5,7 @@ import {
   buildDecoderPatch,
   buildDisplayPatch,
   buildEnrichmentPatch,
+  buildMetadataPatch,
   buildNotificationsPatch,
   buildReceiverPatch,
   buildRetentionPatch,
@@ -15,6 +16,7 @@ import {
   pickDecoder,
   pickDisplay,
   pickEnrichment,
+  pickMetadata,
   pickNotifications,
   pickReceiverLocation,
   pickRetention,
@@ -232,5 +234,38 @@ describe("buildRetentionPatch", () => {
     const draft = pickRetention(draftFromConfig(defaultFlightSiteConfig()));
     const patch = buildRetentionPatch({ ...draft, highResMetricDays: "21" });
     expect(patch.retention).toEqual({ high_res_metric_days: 21 });
+  });
+});
+
+describe("buildMetadataPatch", () => {
+  it("sends the opensky flag unconditionally", () => {
+    expect(buildMetadataPatch({ openskyEnabled: true })).toEqual({
+      metadata: { opensky_enabled: true },
+    });
+    expect(buildMetadataPatch({ openskyEnabled: false })).toEqual({
+      metadata: { opensky_enabled: false },
+    });
+  });
+
+  it("carries no other section, so saving it cannot disturb one", () => {
+    expect(Object.keys(buildMetadataPatch({ openskyEnabled: true }))).toEqual([
+      "metadata",
+    ]);
+  });
+});
+
+describe("pickMetadata", () => {
+  it("round-trips the stored value out of a config document", () => {
+    const draft = draftFromConfig(
+      defaultFlightSiteConfig({ metadata: { opensky_enabled: true } }),
+    );
+
+    expect(pickMetadata(draft)).toEqual({ openskyEnabled: true });
+  });
+
+  it("defaults to off, matching the backend default (ADR-0013)", () => {
+    expect(pickMetadata(draftFromConfig(defaultFlightSiteConfig()))).toEqual({
+      openskyEnabled: false,
+    });
   });
 });

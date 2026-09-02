@@ -137,8 +137,11 @@ source of each non-decoder field group (SPEC §22):
 }
 ```
 
-Provenance values: `decoder` | `derived` | `mictronics` | `faa` | `aerodatabox` |
-`heuristic`. Fields without an entry are decoder-direct. Position source is a
+Provenance values: `decoder` | `derived` | `mictronics` | `faa` | `opensky` |
+`aerodatabox` | `heuristic`. `opensky` appears only on installs that enabled the
+opt-in OpenSky source (`metadata.opensky_enabled`, default off — ADR-0013), and only
+on `operator`, `owner`, `model` or `manufacture_year`, the four fields it may fill.
+Fields without an entry are decoder-direct. Position source is a
 separate, always-present field (§ 3.3) because it is safety-relevant display state,
 not enrichment.
 
@@ -162,7 +165,7 @@ and the roadmap. Any document using different spellings is wrong and must be fix
 | Sighting closure | `closure_reason`: `"gap_timeout"` \| `"shutdown_recovery"` \| `"data_reset"` |
 | Closest range | `closest_approach_nm` (per-sighting closest and aircraft lifetime closest) |
 | Farthest range | `max_range_nm` (per-sighting maximum and aircraft lifetime farthest detection) |
-| Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `aerodatabox` \| `heuristic` |
+| Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `opensky` (opt-in, default off) \| `aerodatabox` \| `heuristic` |
 | Alert severity | `info` \| `interesting` \| `high` \| `critical` |
 
 ### 2.9 Path parameter constraints

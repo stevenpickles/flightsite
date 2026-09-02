@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
 import { MetadataSection } from "@/features/settings/sections/MetadataSection";
+import type { FlightSiteConfig } from "@/lib/api/config";
+import {
+  defaultFlightSiteConfig,
+  installConfigApiMock,
+} from "@/test/configApiMock";
 import { installMetadataApiMock, metadataSource } from "@/test/metadataApiMock";
 
 const TIMEZONE = "UTC";
@@ -16,13 +21,13 @@ const EXPECTED_LOCAL_TIME = formatReceiverLocalTime(
   TIMEZONE,
 );
 
-function renderSection() {
+function renderSection(config: FlightSiteConfig = defaultFlightSiteConfig()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MetadataSection timezone={TIMEZONE} />
+      <MetadataSection timezone={TIMEZONE} config={config} />
     </QueryClientProvider>,
   );
 }
@@ -251,5 +256,81 @@ describe("MetadataSection", () => {
     expect(await screen.findByText("boom")).toBeInTheDocument();
     // The section keeps showing the status it already had.
     expect(screen.getByText("Never run")).toBeInTheDocument();
+  });
+});
+
+describe("MetadataSection — the opt-in OpenSky source (ADR-0013)", () => {
+  it("renders the toggle off by default", async () => {
+    installConfigApiMock();
+    renderSection();
+
+    const toggle = await screen.findByTestId("metadata-opensky-toggle");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("states the licensing caveat beside the control", async () => {
+    installConfigApiMock();
+    renderSection();
+
+    // The wording is the deliverable here, not decoration: the user is being
+    // asked to make a licensing judgement, so the constraint has to be at the
+    // point of decision rather than in the docs.
+    expect(
+      await screen.findByText(
+        /general terms restrict OpenSky data to non-commercial use/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/provided as-is/i)).toBeInTheDocument();
+  });
+
+  it("tells the user it only fills gaps and needs a restart", async () => {
+    installConfigApiMock();
+    renderSection();
+
+    expect(await screen.findByText(/Fills gaps only/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/never replaces what they provide/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/after a restart/i)).toBeInTheDocument();
+  });
+
+  it("saves the toggle and reflects the persisted value", async () => {
+    installConfigApiMock();
+    const user = userEvent.setup();
+    renderSection();
+
+    const toggle = await screen.findByTestId("metadata-opensky-toggle");
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("metadata-opensky-toggle")).toBeChecked();
+    });
+  });
+
+  it("renders the toggle on when the stored config has it enabled", async () => {
+    installConfigApiMock();
+    renderSection(
+      defaultFlightSiteConfig({ metadata: { opensky_enabled: true } }),
+    );
+
+    expect(await screen.findByTestId("metadata-opensky-toggle")).toBeChecked();
+  });
+
+  it("labels an OpenSky status card with the source's proper name", async () => {
+    installConfigApiMock({
+      metadataStatus: {
+        sources: [
+          metadataSource({ name: "mictronics" }),
+          metadataSource({ name: "opensky" }),
+        ],
+      },
+    });
+    renderSection();
+
+    // Without the SOURCE_LABELS entry this would render the raw source name
+    // capitalized ("Opensky"), which is not how the project spells itself.
+    expect(await screen.findByText("OpenSky")).toBeInTheDocument();
+    expect(screen.getByText("Mictronics")).toBeInTheDocument();
   });
 });

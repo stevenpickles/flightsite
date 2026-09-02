@@ -264,7 +264,7 @@ CREATE INDEX ix_sevents_sighting ON sighting_events(sighting_id, ts_ms);
 
 ```sql
 CREATE TABLE metadata_sources (
-  source          TEXT PRIMARY KEY,        -- 'mictronics' | 'faa' | 'airports'
+  source          TEXT PRIMARY KEY,        -- 'mictronics' | 'faa' | 'airports' | 'opensky'
   last_attempt_ms INTEGER,
   last_success_ms INTEGER,
   status          TEXT NOT NULL DEFAULT 'never_run'
@@ -327,7 +327,10 @@ CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
 ```
 
-`*_src` values: `mictronics | faa`. Together with the three-tier provenance model
+`*_src` values: `mictronics | faa`, plus `opensky` on installs that enabled the
+opt-in OpenSky source (ADR-0013) — and there only in `model_src`, `year_src`,
+`operator_src` or `owner_src`, since it is ranked below both other sources and never
+claims a registration or type code. Together with the three-tier provenance model
 (§8), this satisfies SPEC §22 without a per-field provenance table.
 
 The `operator_groups` FK is valid from birth: `operators`/`operator_groups` are

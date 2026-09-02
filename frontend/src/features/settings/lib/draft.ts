@@ -49,6 +49,8 @@ export function draftFromConfig(config: FlightSiteConfig): SettingsDraft {
     aerodataboxKeyInput: "",
     aerodataboxKeyTouched: false,
 
+    openskyEnabled: config.metadata.opensky_enabled,
+
     highResMetricDays: String(config.retention.high_res_metric_days),
   };
 }
@@ -104,6 +106,10 @@ export function pickEnrichment(draft: SettingsDraft) {
     aerodataboxKeyInput: draft.aerodataboxKeyInput,
     aerodataboxKeyTouched: draft.aerodataboxKeyTouched,
   };
+}
+
+export function pickMetadata(draft: SettingsDraft) {
+  return { openskyEnabled: draft.openskyEnabled };
 }
 
 export function pickRetention(draft: SettingsDraft) {
@@ -203,6 +209,14 @@ export function buildEnrichmentPatch(
     };
   }
   return patch;
+}
+
+/** The metadata-sources patch. No secret and no coupled field, so unlike
+ * `buildEnrichmentPatch` this is an unconditional one-key document. */
+export function buildMetadataPatch(
+  draft: ReturnType<typeof pickMetadata>,
+): ConfigPatch {
+  return { metadata: { opensky_enabled: draft.openskyEnabled } };
 }
 
 export function buildRetentionPatch(

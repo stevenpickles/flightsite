@@ -309,3 +309,52 @@ def test_log_level_comes_from_config_with_env_override_winning(
     monkeypatch.setenv("FLIGHTSITE_LOG_LEVEL", "DEBUG")
     app = create_app(isolated_data_dir)
     assert app.state.settings.log_level == "DEBUG"
+
+
+def test_metadata_section_defaults_opensky_to_off(client: TestClient) -> None:
+    """ADR-0013: the licensing ambiguity makes this the operator's call.
+
+    A fresh install must report the source disabled, so the Settings UI renders
+    the toggle unchecked without needing to know a default of its own.
+    """
+    body = client.get("/api/internal/config").json()
+
+    assert body["config"]["metadata"] == {"opensky_enabled": False}
+
+
+def test_the_opensky_toggle_round_trips_through_the_config_api(
+    client: TestClient, isolated_data_dir: Path
+) -> None:
+    response = client.put("/api/internal/config", json={"metadata": {"opensky_enabled": True}})
+
+    assert response.status_code == 200
+    assert response.json()["config"]["metadata"]["opensky_enabled"] is True
+    assert (
+        client.get("/api/internal/config").json()["config"]["metadata"]["opensky_enabled"] is True
+    )
+
+    on_disk = yaml.safe_load((isolated_data_dir / "config.yaml").read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["opensky_enabled"] is True
+
+    client.put("/api/internal/config", json={"metadata": {"opensky_enabled": False}})
+    assert (
+        client.get("/api/internal/config").json()["config"]["metadata"]["opensky_enabled"] is False
+    )
+
+
+def test_the_opensky_toggle_survives_a_restart(isolated_data_dir: Path) -> None:
+    """The setting is read at startup, so persistence is what makes it work."""
+    with TestClient(create_app(isolated_data_dir)) as client:
+        client.put("/api/internal/config", json={"metadata": {"opensky_enabled": True}})
+
+    restarted = create_app(isolated_data_dir)
+
+    assert restarted.state.settings.metadata.opensky_enabled is True
+    assert "opensky" in restarted.state.metadata.registry
+
+
+def test_the_opensky_toggle_introduces_no_secret(client: TestClient) -> None:
+    """Unlike the enrichment toggle, this one gates no API key (SPEC §29)."""
+    body = client.get("/api/internal/config").json()
+
+    assert body["secrets_set"] == {"enrichment.aerodatabox_api_key": False}
