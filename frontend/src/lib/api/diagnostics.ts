@@ -101,12 +101,25 @@ export interface DiagnosticsMaintenanceJob {
   detail: Record<string, unknown>;
 }
 
+/** Why the guarded `VACUUM` last declined to run. `required_free_bytes`
+ * against `available_free_bytes` is the point: `VACUUM` builds a complete
+ * second copy, so on a large database the requirement can exceed anything the
+ * card will ever have free — a refusal that never clears on its own. */
+export interface DiagnosticsVacuumRefusal {
+  reason: string;
+  required_free_bytes: number;
+  available_free_bytes: number;
+}
+
 export interface DiagnosticsMaintenance {
   cycles: number;
   last_cycle_at: string | null;
   healthy: boolean | null;
   running: boolean;
   jobs: Record<string, DiagnosticsMaintenanceJob>;
+  /** `null` when the last evaluation let a `VACUUM` run, or before the job
+   * has ever been due. */
+  vacuum_refusal: DiagnosticsVacuumRefusal | null;
 }
 
 export interface DiagnosticsRecovery {

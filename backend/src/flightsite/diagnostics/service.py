@@ -261,9 +261,19 @@ def _maintenance_section(app: FastAPI) -> tuple[dict[str, Any], str]:
     """Maintenance outcomes and the retained quick_check (SPEC §70 into §67)."""
     service = _state(app, "maintenance")
     if service is None:
-        return ({"cycles": 0, "last_cycle_at": None, "healthy": None, "jobs": {}}, STATUS_OK)
+        return (
+            {
+                "cycles": 0,
+                "last_cycle_at": None,
+                "healthy": None,
+                "jobs": {},
+                "vacuum_refusal": None,
+            },
+            STATUS_OK,
+        )
 
     report = service.report
+    refusal = report.vacuum_refusal
     jobs = {
         name: {
             "outcome": str(getattr(job.outcome, "value", job.outcome)),
@@ -281,6 +291,20 @@ def _maintenance_section(app: FastAPI) -> tuple[dict[str, Any], str]:
             "healthy": report.healthy,
             "running": bool(getattr(service, "running", False)),
             "jobs": jobs,
+            # Why the guarded VACUUM last declined, with the gap that caused
+            # it. `None` once one runs, or before the job has ever been due
+            # (issue #116). A refusal is not a degradation: declining to
+            # rewrite a healthy database is the policy working, so this
+            # informs without moving `status`.
+            "vacuum_refusal": (
+                None
+                if refusal is None
+                else {
+                    "reason": refusal.reason,
+                    "required_free_bytes": refusal.required_free_bytes,
+                    "available_free_bytes": refusal.available_free_bytes,
+                }
+            ),
         },
         status,
     )

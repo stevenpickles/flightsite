@@ -32,6 +32,7 @@ from flightsite.maintenance.model import (
     JobResult,
     MaintenanceReport,
     QuickCheckOutcome,
+    VacuumRefusal,
 )
 from flightsite.maintenance.policy import (
     VACUUM_MAX_LIVE_AIRCRAFT,
@@ -86,6 +87,7 @@ __all__ = [
     "RetentionTask",
     "RouteCachePruner",
     "VacuumDecision",
+    "VacuumRefusal",
     "VacuumVerdict",
     "gather_stats",
     "should_checkpoint",

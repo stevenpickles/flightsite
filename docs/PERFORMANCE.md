@@ -884,6 +884,13 @@ refused, and the diagnostics report `insufficient_free_space` without saying
 that it will never clear on its own. Worth surfacing in the health area, and
 worth a note in the install sizing guidance.
 
+**Surfaced by slice 058 (issue #116).** The refusal and its reason now travel on
+`MaintenanceReport.vacuum_refusal` and out through
+`database.maintenance.vacuum_refusal` in diagnostics, carrying
+`required_free_bytes` against `available_free_bytes`; the Health page renders
+the gap. The guard's threshold is unchanged — this makes the condition legible,
+it does not make it go away, and the install sizing note is still outstanding.
+
 **Backup is dominated by gzip, at a compression level that buys nothing.**
 `archive.write_archive` opens the tar with `w:gz`, taking tarfile's default
 level of 9. Backing up the 5.03 GB database took **406.9 s**, of which

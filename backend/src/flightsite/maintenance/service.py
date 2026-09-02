@@ -84,6 +84,7 @@ from flightsite.maintenance.model import (
     JobResult,
     MaintenanceReport,
     QuickCheckOutcome,
+    VacuumRefusal,
 )
 from flightsite.maintenance.policy import (
     VACUUM_MAX_LIVE_AIRCRAFT,
@@ -195,6 +196,7 @@ class MaintenanceService:
         "_sleep",
         "_stats",
         "_task",
+        "_vacuum_refusal",
     )
 
     def __init__(
@@ -226,6 +228,7 @@ class MaintenanceService:
         self._last_run_ms: dict[str, int] = {}
         self._quick_check: QuickCheckOutcome | None = None
         self._latest_stats: DatabaseStats | None = None
+        self._vacuum_refusal: VacuumRefusal | None = None
         self._cycles = 0
         self._last_cycle_ms: int | None = None
 
@@ -259,6 +262,7 @@ class MaintenanceService:
             jobs=dict(self._reports),
             quick_check=self._quick_check,
             stats=self._latest_stats,
+            vacuum_refusal=self._vacuum_refusal,
         )
 
     # ------------------------------------------------------------- lifecycle
@@ -539,9 +543,27 @@ class MaintenanceService:
             "db_bytes": decision.db_bytes,
             "reclaimable_bytes": decision.reclaimable_bytes,
             "reclaimable_ratio": round(decision.reclaimable_ratio, 4),
+            "required_free_bytes": decision.required_free_bytes,
+            "available_free_bytes": decision.free_bytes,
         }
         if not decision.should_run:
+            # Retained on the service, not only in this job's detail, so the
+            # report and diagnostics can state the refusal and its gap without
+            # a reader having to know which job to dig into (issue #116).
+            self._vacuum_refusal = VacuumRefusal(
+                reason=decision.verdict.value,
+                required_free_bytes=decision.required_free_bytes,
+                available_free_bytes=decision.free_bytes,
+            )
+            logger.info(
+                "maintenance_vacuum_refused",
+                verdict=decision.verdict.value,
+                required_free_bytes=decision.required_free_bytes,
+                available_free_bytes=decision.free_bytes,
+            )
             return JobResult(JobOutcome.SKIPPED, detail)
+
+        self._vacuum_refusal = None
 
         started = time.monotonic()
         async with self._database.maintenance_connection() as connection:

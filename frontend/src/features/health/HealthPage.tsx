@@ -22,6 +22,7 @@ import {
   metadataSourcePresentation,
   overallPresentation,
   recoveryPresentation,
+  vacuumRefusalPresentation,
 } from "@/features/health/lib/status";
 import {
   formatCount,
@@ -84,6 +85,12 @@ export function HealthPage() {
     data.database.maintenance.cycles,
   );
   const recovery = recoveryPresentation(data.database.recovery.anomalies);
+  const vacuumRefusal =
+    data.database.maintenance.vacuum_refusal === null
+      ? null
+      : vacuumRefusalPresentation(
+          data.database.maintenance.vacuum_refusal.reason,
+        );
 
   return (
     <div className="flex flex-col gap-6 p-8">
@@ -271,6 +278,32 @@ export function HealthPage() {
             label="Reclaimable"
             value={formatBytes(data.database.storage.reclaimable_bytes)}
           />
+          {vacuumRefusal !== null && (
+            <DetailRow
+              label="Compaction"
+              value={
+                <span className="flex flex-col items-end gap-1">
+                  <StatusPill
+                    tone={vacuumRefusal.tone}
+                    label={vacuumRefusal.label}
+                    className="font-normal"
+                  />
+                  {data.database.maintenance.vacuum_refusal?.reason ===
+                    "insufficient_free_space" && (
+                    <span className="text-xs text-muted-foreground">
+                      {`Needs ${formatBytes(
+                        data.database.maintenance.vacuum_refusal
+                          .required_free_bytes,
+                      )} free, has ${formatBytes(
+                        data.database.maintenance.vacuum_refusal
+                          .available_free_bytes,
+                      )}`}
+                    </span>
+                  )}
+                </span>
+              }
+            />
+          )}
           {data.database.quick_check.rows.length > 0 && (
             <ul className="mt-2 list-disc pl-4 text-xs text-destructive">
               {data.database.quick_check.rows.map((row) => (
