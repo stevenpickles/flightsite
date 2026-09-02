@@ -22,27 +22,52 @@ default):
 * **removed** — silent for at least ``remove_s``. Dropped from the live set,
   announced with the last record and its track attached.
 
+"Silent" throughout means silent by the decoder's own account of when it last
+heard the aircraft, never "absent from the last poll" — see
+:mod:`flightsite.live.aircraft`. dump1090-fa keeps a dead aircraft in its JSON
+for about five minutes, so an entry being present in the document is not an
+observation, and treating it as one held the decoder's whole retention window
+in the live set (issue #134).
+
+That retention window forces a fourth outcome, ahead of the three above: an
+observation the decoder already reports as silent for at least ``remove_s`` is
+**not admitted**. No record is created, no event is published, and the aircraft
+simply is not live. Without the refusal a removal is undone a second later —
+the next poll re-delivers the same entry, it is admitted at an age already past
+the threshold, the following sweep removes it again, and that pair repeats at
+the poll rate until the decoder finally drops it. Thousands of spurious
+appear/remove events per cohort, and a live total that answers differently
+depending on whether it is read before or after the sweep.
+
+Refusal is drawn at ``remove_s`` and deliberately not at ``stale_s``. An
+aircraft last heard 40 s ago *was* genuinely heard, inside the window the live
+set is defined by, so it is admitted — as ``live``, because
+:func:`~flightsite.live.aircraft.appear` states what the record is rather than
+pre-judging it, and the sweep takes it stale on its next pass. Only an aircraft
+the decoder itself places outside the live window is turned away. Re-admission
+is likewise not blocked: a genuinely re-acquired aircraft reports a fresh age
+and appears again, exactly as a first contact would.
+
+Refusing is the store applying its own thresholds, which is why it belongs here
+and not in the ingest adapter. The adapter's job is to report faithfully what
+the decoder said; this module stays the single authority on what counts as
+live.
+
+Which side of the ``stale_s`` line an admitted record sits on is decided in two
+places, and deliberately only two. The sweep below owns the ``live → stale``
+direction and the :class:`~flightsite.live.events.AircraftStale` event that
+announces it. :func:`~flightsite.live.aircraft.merge` owns the reverse: an
+aircraft heard again — genuinely heard, within ``stale_s`` — is live again
+immediately, which is why it takes this store's threshold as an argument.
+
 The third threshold in the settings model, ``sighting.close_s`` (600 s), is
 deliberately **not** implemented here. Sighting closure is slice 009's
 lifecycle, over persisted sightings rather than live records; what this store
 owes it is :attr:`~flightsite.live.aircraft.LiveAircraft.last_seen` on every
 record and on every event, which is the instant that rule is measured from.
 
-"Silent" is measured from the decoder's own report of when it last heard the
-aircraft, not from when a poll last mentioned it — see
-:mod:`flightsite.live.aircraft`. dump1090-fa keeps a dead aircraft in its JSON
-for about five minutes, so an entry being present in the document is not an
-observation, and treating it as one held the whole retention window in the live
-set (issue #134).
-
-Which side of the ``stale_s`` line a record sits on is decided in two places,
-and deliberately only two. The sweep below owns the ``live → stale`` direction
-and the :class:`~flightsite.live.events.AircraftStale` event that announces it.
-:func:`~flightsite.live.aircraft.merge` owns the reverse: an aircraft heard
-again — genuinely heard, within ``stale_s`` — is live again immediately, which
-is why it takes this store's threshold as an argument.
-
-All three decisions read an injected monotonic clock, never the wall clock.
+Every one of these decisions reads an injected monotonic clock, never the wall
+clock.
 A Raspberry Pi with no RTC boots with a wildly wrong time and then jumps when
 NTP lands; a wall-clock timer would read that jump as every aircraft having
 been silent for hours and expire the entire live set at once. The clock is a
@@ -75,7 +100,14 @@ from typing import Final
 import structlog
 
 from flightsite.ingest import AircraftStateBatch, AircraftStateUpdate, Position
-from flightsite.live.aircraft import LiveAircraft, LiveState, appear, mark_stale, merge
+from flightsite.live.aircraft import (
+    LiveAircraft,
+    LiveState,
+    appear,
+    mark_stale,
+    merge,
+    reported_silence_s,
+)
 from flightsite.live.events import (
     DEFAULT_QUEUE_SIZE,
     AircraftAppeared,
@@ -277,7 +309,12 @@ class LiveStore:
         self.apply_updates(batch)
 
     def apply_updates(self, updates: Iterable[AircraftStateUpdate]) -> None:
-        """Apply a sequence of updates, publishing an event for each."""
+        """Apply a sequence of updates, publishing an event for each admitted one.
+
+        An update the decoder reports as already expired is silently dropped
+        rather than admitted — see the module docstring's fourth lifecycle
+        outcome — so this does not publish exactly one event per input.
+        """
         now = self._clock()
         for update in updates:
             self._apply_update(update, now)
@@ -285,6 +322,12 @@ class LiveStore:
     def _apply_update(self, update: AircraftStateUpdate, now: float) -> None:
         current = self._aircraft.get(update.icao)
         if current is None:
+            if reported_silence_s(update) >= self._remove_s:
+                # The decoder is still listing an aircraft it stopped hearing
+                # longer ago than the removal threshold. Admitting it would
+                # create a record the very next sweep must remove, once per
+                # poll for the rest of the decoder's retention window.
+                return
             aircraft = appear(
                 update,
                 now=now,
