@@ -27,6 +27,15 @@ not-ready afterwards. Decoder connectivity is reported through
 service is not started at all and nothing is registered, so a first-run
 install is ready immediately.
 
+That last case is also why :meth:`IngestionService.start` may run long after
+startup completed: since slice 056 the configuration save that ends the
+first-run state starts ingestion in place, so ``register`` can add a subsystem
+to an already-ready registry. It cannot make ``/ready`` flap. ``register``
+seeds the subsystem not-ready, but the ``mark_ready`` below it runs in the same
+synchronous block with no ``await`` in between, and the ``/ready`` handler is a
+coroutine on that same event loop — so the intermediate state is never
+observable, and the registry's lock covers any non-``asyncio`` reader.
+
 Consumer isolation
 ------------------
 

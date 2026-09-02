@@ -3,9 +3,10 @@
  *
  * The full card grid at the `t0` preset — see `ANALYTICS_PRESET` in
  * `support/fixtureContract.ts` for why the fixtures are captured at "since
- * first sighting" rather than the page's `today` default (short version:
- * demo sightings carry scenario-epoch dates, so `today` is genuinely empty
- * on demo data and would lock eight "No data for this window." cards).
+ * first sighting" rather than the page's `today` default (short version: demo
+ * sightings used to carry scenario-epoch dates, so `today` was genuinely empty
+ * on demo data; slice 058 fixed that, and the preset stays `t0` only because
+ * moving it would re-capture every baseline here).
  *
  * These screenshots include eight ECharts canvases. Their entry animation is
  * on — nothing in the app disables it — but `toHaveScreenshot` re-captures

@@ -35,16 +35,9 @@ docker compose pull
 docker compose up -d
 ```
 
-Open **`http://<host-ip>:8090/`** and complete the setup wizard.
-
-> **Then restart the backend once — aircraft will not appear until you do.**
->
-> ```bash
-> docker compose restart flightsite-backend
-> ```
->
-> Ingestion starts at boot when a saved configuration exists, and on a fresh install
-> there is none at that moment. This applies only to the first save.
+Open **`http://<host-ip>:8090/`** and complete the setup wizard. Saving starts the
+decoder connection straight away — aircraft appear on the Live Map within seconds, with
+no restart.
 
 Just want to look around? No decoder, no configuration, no hardware:
 

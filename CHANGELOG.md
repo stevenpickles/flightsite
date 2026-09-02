@@ -5,6 +5,56 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.3.0] — 2026-09-02
+
+A fresh-install polish and live-picture correctness release, driven by the
+owner's Raspberry Pi deployment: the setup wizard now starts ingestion without
+a restart, the live map's count and tracks now tell the truth, and OpenSky
+joins the metadata sources.
+
+### Added
+- OpenSky Network aircraft database as an opt-in metadata source: default-off,
+  fetch-on-demand, filling gaps below Mictronics and FAA precedence; licensing
+  status recorded in ADR-0013 and `docs/LICENSES.md`, and surfaced beside the
+  Settings toggle
+- Measured Raspberry Pi 4 performance baseline in `docs/PERFORMANCE.md` §5.4
+  (contended-run, 11/12 budgets met; the ingest duty-cycle finding is tracked
+  in #132) (#101)
+
+### Fixed
+- **First-run installs no longer need a backend restart**: saving the setup
+  wizard now hot-starts decoder ingestion and applies the receiver location
+  live (#122)
+- **The live aircraft count now matches what the receiver actually hears**:
+  aircraft are aged by the decoder's own last-heard report, so entries
+  dump1090 retains for ~5 minutes after their last message expire on the
+  documented 15 s stale / 60 s removal thresholds instead of inflating the
+  count (measured 80 shown vs 59 audible before the fix); the stale "fading"
+  state now actually occurs, and already-expired entries are never admitted
+  (#134)
+- **Clicking an aircraft now draws its whole current track**: the selected
+  aircraft's trail is backfilled from its open sighting's stored path instead
+  of accumulating only from the moment of selection; re-clicking no longer
+  resets the trail, backfills self-correct across sighting boundaries, and
+  the merge is robust to clock skew and out-of-order points (#133, #136,
+  #137)
+- WebSocket clients are no longer evicted by activity bursts on connect:
+  activity events ship as batched frames (measured evictions in the
+  first-connect scenario: 20 → 0) (#99)
+- FAA registry metadata updates no longer fail with HTTP 403 (the download
+  now presents a browser-compatible User-Agent) (#121)
+- Demo mode's "Today" and Analytics panels are no longer empty (demo data is
+  stamped relative to now) (#107)
+
+### Changed
+- The Sightings page's default max-range sort is served by a covering index
+  (first page ~92 ms → ~0.1 ms on a 3-year dataset) (#115)
+- Backup archives compress at gzip level 6 instead of 9 — same ratio,
+  ~2.7× faster (#117)
+- VACUUM's 2× free-space refusal is now surfaced in the maintenance report
+  and diagnostics instead of failing silently (#116)
+- Pagination footers name what they count (e.g. "sightings") (#112)
+
 ## [0.2.0] — 2026-09-01
 
 Everything between the live-radar MVP and a feature-complete observatory: full
@@ -90,7 +140,8 @@ release consolidates the roadmap's planned v0.2–v0.4 themes into one version.
 
 ### Known limitations
 - A first-run install still needs one backend restart after the setup wizard
-  saves the receiver configuration before ingestion starts (#122)
+  saves the receiver configuration before ingestion starts (#122) — *fixed in
+  0.3.0*
 
 ## [0.1.0] — 2026-09-01
 

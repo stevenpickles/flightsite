@@ -1,8 +1,8 @@
 /**
  * The socket-to-notification path, end to end through the real protocol
- * client: an `activity` frame arrives and becomes exactly one browser
- * notification (roadmap slice 040), while the activity store gets the same
- * event for the panel.
+ * client: an `activity_batch` frame arrives and each alert event in it becomes
+ * exactly one browser notification (roadmap slice 040), while the activity
+ * store gets the whole batch in one update for the panel.
  */
 
 import { act, renderHook } from "@testing-library/react";
@@ -28,7 +28,14 @@ const ALL_ON = {
   critical: true,
 };
 
+/** Each event as its own single-event batch frame — successive detector
+ * passes, which is what a settled receiver actually produces. */
 function connectAndDeliver(...events: unknown[]): void {
+  connectAndDeliverBatches(...events.map((event) => [event]));
+}
+
+/** One frame per argument, each carrying a whole pass. */
+function connectAndDeliverBatches(...batches: unknown[][]): void {
   const ws = getLastWebSocket();
   act(() => {
     ws.emitFrame({
@@ -36,8 +43,8 @@ function connectAndDeliver(...events: unknown[]): void {
       seq: 1,
       data: { aircraft: [], receiver: null },
     });
-    events.forEach((data, index) => {
-      ws.emitFrame({ type: "activity", seq: index + 2, data });
+    batches.forEach((data, index) => {
+      ws.emitFrame({ type: "activity_batch", seq: index + 2, data });
     });
   });
 }
@@ -117,6 +124,32 @@ describe("useLiveConnection", () => {
 
     expect(FakeNotification.instances).toHaveLength(0);
     expect(useActivityFeedStore.getState().events).toHaveLength(1);
+  });
+
+  it("notifies per event in one batch, and feeds the store once", () => {
+    // One pass carrying several alerts is the case slice 057 created: the
+    // store takes the batch as a single update, while notifications stay one
+    // per event because a notification is a per-event user-visible thing.
+    installNotificationMock({ permission: "granted" });
+    useNotificationStore.getState().setPreferences(ALL_ON);
+    renderHook(() => {
+      useLiveConnection();
+    });
+
+    connectAndDeliverBatches([
+      alertTriggeredEvent({ id: 1 }),
+      alertTriggeredEvent({
+        id: 2,
+        severity: "critical",
+        payload: { reason: "Rule: Emergency" },
+      }),
+    ]);
+
+    expect(FakeNotification.instances).toHaveLength(2);
+    // Newest first: the batch arrives oldest first and is reversed on ingest.
+    expect(
+      useActivityFeedStore.getState().events.map((event) => event.id),
+    ).toEqual([2, 1]);
   });
 
   it("delivers nothing, and breaks nothing, when the user has not opted in", () => {

@@ -131,7 +131,7 @@ Package `flightsite` (backend/src/flightsite/), matching roadmap `expected_artif
 | `api/` | REST routers, WebSocket broadcaster, OpenAPI exposure | 010+ |
 | `demo/` | Deterministic `DemoAdapter` scenarios | 011 |
 | `devtools/` | Capture/replay CLI and `ReplayAdapter` | 012 |
-| `metadata/` | Normalized metadata schema, `MetadataProvider`, import pipeline, precedence (`sources/mictronics.py`, `sources/faa.py`) | 021–023 |
+| `metadata/` | Normalized metadata schema, `MetadataProvider`, import pipeline, precedence (`sources/mictronics.py`, `sources/faa.py`, and the opt-in `sources/opensky.py`) | 021–023, 059 |
 | `classification/` | Military/gov/police + mission classification, operator normalization | 024 |
 | `enrichment/` | `RouteEnrichmentProvider`, AeroDataBox client, cache, limits | 026 |
 | `airports/` | Airport dataset, nearest-airport, arrival/departure inference | 027 |
@@ -152,7 +152,11 @@ Asyncio tasks in one process:
   applies the batch to the live store. Budget: apply-500-aircraft-batch well under one
   polling interval.
 - **Lifecycle timer** — drives stale (15 s), live-removal (60 s), and sighting-close
-  (10 min) transitions from a monotonic clock (configurable values).
+  (10 min) transitions from a monotonic clock (configurable values). The silence those
+  thresholds measure runs from the decoder's own report of when it last heard the
+  aircraft, not from the last poll that listed it: both supported decoders keep a dead
+  aircraft in their output for minutes, so an entry appearing in a poll is not an
+  observation.
 - **Persistence worker** — drains bounded queues of domain events into batched
   transactions. Backpressure policy: queues are bounded; on overflow, coalescible
   items (track points) are thinned first and a counter + diagnostic records the

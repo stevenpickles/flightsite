@@ -41,6 +41,7 @@ import {
   EMPTY_FEATURE_COLLECTION,
   installOverlaysApiMock,
 } from "@/test/overlaysApiMock";
+import { sightingDetail, sightingRow } from "@/test/sightingsApiMock";
 import { getLastWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 
 // The `maplibre-gl` and `WebSocket` mocks are registered globally in
@@ -260,6 +261,128 @@ describe("LiveMapPage", () => {
       features: { geometry: { coordinates: number[][] } }[];
     };
     expect(track.features[0]?.geometry.coordinates).toHaveLength(2);
+  });
+
+  /** Serves `aaaaaa` an open sighting whose checkpointed path runs from 46.5 to
+   * 46.8 — well before any live position this file feeds in. */
+  function installOpenSightingMock() {
+    installOverlaysApiMock({
+      sightings: {
+        items: [
+          sightingRow({
+            id: 91_001,
+            icao: "aaaaaa",
+            ended_at: null,
+            duration_s: null,
+            closure_reason: null,
+          }),
+        ],
+        total: null,
+        limit: 1,
+        offset: 0,
+      },
+      sightingDetail: {
+        91_001: sightingDetail({
+          id: 91_001,
+          icao: "aaaaaa",
+          ended_at: null,
+          duration_s: null,
+          closure_reason: null,
+          path: [
+            {
+              t: "2020-01-01T00:00:00.000Z",
+              lat: 46.5,
+              lon: -122,
+              altitude_ft: 20000,
+              source: "adsb",
+            },
+            {
+              t: "2020-01-01T00:05:00.000Z",
+              lat: 46.8,
+              lon: -122,
+              altitude_ft: 21000,
+              source: "adsb",
+            },
+          ],
+        }),
+      },
+    });
+  }
+
+  it("backfills the clicked aircraft's track from its open sighting", async () => {
+    // Issue #133: before slice 061 the trail started at the click, so an
+    // aircraft that had been airborne for an hour drew a single point.
+    installOpenSightingMock();
+
+    const map = await renderLoadedMap();
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47, lon: -122 } }),
+        ]),
+      );
+    });
+
+    map.renderedFeatures = [{ properties: { icao: "aaaaaa" } }];
+    await act(async () => {
+      map.emit("click", { point: { x: 10, y: 10 } });
+    });
+
+    await waitFor(() => {
+      expect(useLiveAircraftStore.getState().track?.points).toHaveLength(3);
+    });
+
+    const track = map.getSource(AIRCRAFT_TRACK_SOURCE_ID)?.data as {
+      features: { geometry: { coordinates: number[][] } }[];
+    };
+    // Oldest first, ending at the position the click selected.
+    expect(track.features[0]?.geometry.coordinates).toEqual([
+      [-122, 46.5],
+      [-122, 46.8],
+      [-122, 47],
+    ]);
+  });
+
+  it("keeps the backfilled trail when the same aircraft is clicked again", async () => {
+    // A second click (or the second half of a double-click) used to restart
+    // accumulation while leaving the backfill's inputs unchanged, so nothing
+    // re-fetched and the trail collapsed to a dot for the rest of the
+    // selection.
+    installOpenSightingMock();
+
+    const map = await renderLoadedMap();
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47, lon: -122 } }),
+        ]),
+      );
+    });
+
+    map.renderedFeatures = [{ properties: { icao: "aaaaaa" } }];
+    await act(async () => {
+      map.emit("click", { point: { x: 10, y: 10 } });
+    });
+    await waitFor(() => {
+      expect(useLiveAircraftStore.getState().track?.points).toHaveLength(3);
+    });
+
+    await act(async () => {
+      map.emit("click", { point: { x: 11, y: 11 } });
+    });
+    await act(async () => {
+      map.emit("click", { point: { x: 12, y: 12 } });
+    });
+
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("aaaaaa");
+    const track = map.getSource(AIRCRAFT_TRACK_SOURCE_ID)?.data as {
+      features: { geometry: { coordinates: number[][] } }[];
+    };
+    expect(track.features[0]?.geometry.coordinates).toEqual([
+      [-122, 46.5],
+      [-122, 46.8],
+      [-122, 47],
+    ]);
   });
 
   it("clears the selection when the click lands on empty map", async () => {

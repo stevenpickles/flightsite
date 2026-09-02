@@ -119,6 +119,37 @@ export function maintenancePresentation(
     : { tone: "warn", label: "A job failed" };
 }
 
+/** Why the guarded `VACUUM` last declined, as something an operator can read.
+ *
+ * Three of the four reasons are the policy working and are reported calmly.
+ * `insufficient_free_space` is the one worth a warning: `VACUUM` builds a
+ * complete second copy, so its requirement scales with the database and on a
+ * large history can exceed anything the card will ever have free — the space
+ * is then never reclaimed, and nothing about the wording should suggest it
+ * clears itself overnight. */
+export function vacuumRefusalPresentation(reason: string): StatusPresentation {
+  switch (reason) {
+    case "insufficient_free_space":
+      return { tone: "warn", label: "Blocked — not enough free space" };
+    case "below_size_floor":
+      return { tone: "ok", label: "Not needed — database is small" };
+    case "little_reclaimable":
+      return { tone: "ok", label: "Not needed — little to reclaim" };
+    case "ingestion_pressure":
+      return { tone: "idle", label: "Deferred — receiver was busy" };
+    default:
+      // A reason this build does not know about is still worth showing: the
+      // backend is the authority on the vocabulary, and hiding an unrecognized
+      // one would turn a new refusal into the silence this row exists to end.
+      return { tone: "idle", label: humanizeReason(reason) };
+  }
+}
+
+function humanizeReason(reason: string): string {
+  const spaced = reason.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /** Unclean-shutdown recovery: anomalies are worth surfacing, a clean
  * recovery is not a problem to report. */
 export function recoveryPresentation(anomalies: number): StatusPresentation {

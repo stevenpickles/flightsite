@@ -73,6 +73,12 @@ releases:
       & notifications, operations, and the Phase 8 hardening pass. (Development
       outpaced the release cadence; the planned v0.2-v0.5 themes shipped together.
       Recorded 2026-09-01.)"
+  - version: "v0.3.0"
+    after_phase: 8
+    theme: "Fresh-install polish and live-picture correctness from the first
+      real deployment: first-run ingestion hot-start, activity WS batching,
+      quick-wins bundle, OpenSky metadata source, Pi 4 baseline, selected-track
+      backfill, live-set ghost expiry (slices 056-062). Recorded 2026-09-02."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -1345,6 +1351,273 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Unplanned fix slice for GitHub issues #110 and #111 (found by slice 046). Added by Fable outside the phase plan."
+
+  - id: "056"
+    title: "First-run ingestion hot-start"
+    phase: 8
+    branch: "056-ingestion-hot-start"
+    status: merged
+    depends_on: ["007", "019", "055"]
+    objective: "Make the setup wizard's save start decoder ingestion in the running process, so a fresh install shows aircraft without the one manual backend restart the first run has always needed."
+    scope:
+      - "shared start helper used by both the boot path and the config-apply seam, so hot-start and cold-start decide what to poll the same way"
+      - "`PUT /api/internal/config` starts ingestion when nothing is running, the install is no longer on its first run, and demo mode is off"
+      - "the saved receiver location is applied to the live store on the same save, so distance and bearing compute immediately"
+      - "a failed hot-start logs `config_apply_failed` and never fails a save that already wrote, matching the slice-055 entry beside it"
+      - "docs and Settings-copy rationale updated: the first-run restart is gone, endpoint changes on a running adapter still need one"
+    out_of_scope:
+      - "hot-*restart*: changing the endpoint of an already-running adapter stays restart-required, and the Settings badges stay"
+      - "the receiver-metrics `StatsJsonPoller`, which is also never built on a first run and has no setter (follow-up issue)"
+      - "ingestion teardown, adapter reconfiguration, or a general settings-application registry"
+    acceptance_criteria:
+      - "finishing the setup wizard on a fresh install starts ingestion and aircraft flow into the live set with no backend restart"
+      - "a second config save constructs no second ingestion service"
+      - "a hot-start that raises leaves the save successful and ingestion retryable on a later save"
+      - "`/api/v1/ready` never regresses when the ingestion subsystem registers after `mark_startup_complete()`"
+    required_tests:
+      - first-run save starts ingestion and aircraft reach the live store
+      - second-save idempotence test asserting no new service is constructed
+      - failing-hot-start isolation test asserting the save still succeeds
+      - readiness test across a mid-life subsystem registration
+      - receiver-location-applied-to-live-store test
+    expected_artifacts:
+      - backend/src/flightsite/api/ingestion.py
+      - backend/src/flightsite/api/internal.py
+      - backend/src/flightsite/app.py
+      - docs/INSTALL.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #122, the first-run wart docs/INSTALL.md §6 documented as a known limitation. Added by Fable outside the phase plan."
+  - id: "057"
+    title: "Activity WebSocket batching"
+    phase: 8
+    branch: "057-activity-ws-batching"
+    status: merged
+    depends_on: ["012", "035", "049"]
+    objective: "Stop a fresh install's activity backlog from evicting every WebSocket client, by sending one batched frame per detector pass instead of one frame per event."
+    scope:
+      - "new `activity_batch` frame type carrying an array of §3.9 activity events; one frame per detector pass, mirroring the delta's one-frame-per-tick shape"
+      - "the singular `activity` frame type is retired: the server emits only batches, so there is one server code path and one client path to keep correct"
+      - "events per frame capped so a pathological first-run pass sends a few frames instead of one enormous one, still far under the 32-frame client queue"
+      - "frontend: batch narrowing in the protocol module, a batch handler on the live socket, and single-update batch ingestion in the activity feed store (newest-first, 100-event cap preserved)"
+      - "docs/API.md §4.4 and the ws.py protocol docstring updated to the batched contract"
+    out_of_scope:
+      - client queue sizing, the slow-consumer rule itself, or the close code (§4.5 is unchanged)
+      - activity detection cadence, dedupe, or the §3.9 event shape
+      - "delta/snapshot batching: they already emit one frame per tick"
+      - activity replay on reconnect (still REST, deliberately)
+    acceptance_criteria:
+      - "a detector pass emitting hundreds of events no longer evicts a connected client; the slice-049 harness WS scenario reports zero activity-driven evictions"
+      - "one pass produces one frame (or the few a cap implies), taking its place in the `seq` sequence with no gap"
+      - "a client that only understands the slice-035 protocol ignores the new type per §6 rather than erroring or resyncing"
+      - "the activity feed store ingests a batch in one update, newest-first, capped at MAX_LIVE_EVENTS"
+    required_tests:
+      - broadcaster batch-contract tests (one frame per pass, array body, seq continuity, per-frame cap)
+      - fresh-install-scale burst test asserting no eviction where the pre-slice behaviour evicted
+      - frontend protocol narrowing tests (array accepted, malformed entries dropped)
+      - store batch-ingestion tests (order, dedupe, cap) and live-socket handler tests
+    expected_artifacts:
+      - backend/src/flightsite/api/ws.py
+      - frontend/src/lib/ws/protocol.ts
+      - frontend/src/lib/ws/liveSocket.ts
+      - frontend/src/features/activity/store/useActivityFeedStore.ts
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #99 (observed by the slice-049 harness and recorded in docs/PERFORMANCE.md §6). Added by Fable outside the phase plan."
+  - id: "058"
+    title: "Quick wins bundle"
+    phase: 8
+    branch: "058-quick-wins"
+    status: merged
+    depends_on: ["031", "042", "043", "050"]
+    objective: "Clear six small tracked defects found by the phase-8 qualification slices in one branch, each as its own single-concern commit."
+    scope:
+      - "#115: index `(max_range_nm, id)` on `sightings` (migration 0013) so the documented max-range sort stops full-scanning; retire the slice-050 finding"
+      - "#121: send a real User-Agent from the FAA metadata source client, which the registry rejects with 403 when absent"
+      - "#116: surface the maintenance VACUUM free-space refusal (required vs available bytes) in the MaintenanceReport and through diagnostics, so the Health UI shows why it never runs"
+      - "#117: drop backup gzip compression from level 9 to 6 — slice 050 measured an identical ratio at 2.7x the speed"
+      - "#112: give the shared pagination footer a noun prop so /sightings counts sightings, not aircraft"
+      - "#107: make demo mode's 'today' non-empty by reconciling the demo scenario epoch with the range the UI asks for"
+    out_of_scope:
+      - "index coverage for the `duration_s` and `interesting` sorts/filters (no measured need; write cost unjustified)"
+      - "metadata Settings UI surfaces (slice 059 owns them; #116/#121 stay backend + Health UI)"
+      - "any change to the VACUUM guard's threshold or to the backup format itself"
+      - "reworking demo scenario content, or the demo data generator's shape"
+    acceptance_criteria:
+      - "`ORDER BY max_range_nm` on `/api/v1/sightings` uses the new index, pinned by a query-plan test; `alembic heads` shows exactly one head (0013)"
+      - "the FAA source fetches the releasable-aircraft archive without a 403"
+      - "a refused VACUUM reports the refusal and its required/available bytes in the maintenance report and in the diagnostics response"
+      - "backups are written at gzip level 6"
+      - "the /sightings pagination footer reads 'sightings'"
+      - "in demo mode the Live Map Today panel and the Analytics 'today' preset are non-empty"
+    required_tests:
+      - query-plan test asserting the max-range sort uses `ix_sightings_max_range`
+      - FAA client test asserting the User-Agent header is sent
+      - maintenance refusal test plus a diagnostics passthrough test
+      - backup compression-level test
+      - pagination footer noun tests
+      - demo-mode 'today' non-empty test
+    expected_artifacts:
+      - backend/alembic/versions/ (rev 0013)
+      - backend/src/flightsite/db/models.py
+      - backend/src/flightsite/metadata/sources/faa.py
+      - backend/src/flightsite/maintenance/
+      - backend/src/flightsite/diagnostics/
+      - backend/src/flightsite/backup/
+      - frontend/src/components/
+    preferred_agent: opus
+    risk_level: low
+    notes: "Bundle slice for GitHub issues #107, #112, #115, #116, #117, #121 (raised by slices 042/043/047/050). One commit per issue. Added by Fable outside the phase plan."
+  - id: "059"
+    title: "OpenSky metadata source"
+    phase: 8
+    branch: "059-opensky-source"
+    status: merged
+    depends_on: ["021", "022", "023", "042"]
+    objective: "Add the OpenSky aircraft database as an opt-in, default-off, fetch-on-demand metadata source that fills gaps the higher-precedence sources left null, with its ambiguous licensing resolved by ADR-0013 and surfaced to the user beside the toggle."
+    scope:
+      - "ADR-0013 records the licensing finding (OpenSky's general Terms of Use restrict their data to non-profit research/education, while their FAQ states the aircraft database specifically is unlicensed and outside those terms) and the owner-approved resolution: treat it like the ambiguous Mictronics row, not like the CC BY-NC openAIP rejection"
+      - "`flightsite/metadata/sources/opensky.py` downloads `aircraftDatabase.csv`, validates its shape, and normalizes into FlightSite's own schema; never bundled or redistributed"
+      - "`metadata.opensky_enabled` (default `false`) gates registration: when off the provider is never constructed and the source does not participate in `Update Aircraft Metadata` at all"
+      - "fill-gaps-only precedence below mictronics and faa on the four fields this source adds value on (operator, owner, model, manufacture year); it can never overwrite a value a higher-precedence source supplied"
+      - "Settings metadata section carries the toggle plus a concise, factual license note; `docs/LICENSES.md` gains a register row in the same PR per the maintenance rule"
+    out_of_scope:
+      - "OpenSky's live state-vector API (this slice touches only the static aircraft database CSV)"
+      - "bundling or redistributing the dataset in the repo, releases, or container images"
+      - "changes to the mictronics or faa adapters, or to their existing precedence ranks"
+      - "scheduled/automatic metadata updates (a standing v1 non-goal)"
+    acceptance_criteria:
+      - "with `metadata.opensky_enabled` false (the default) no OpenSky provider is constructed, no request is made, and the source is absent from the update action and its per-source status"
+      - "with the toggle on, an import records a `dataset_version` and populates only fields mictronics and faa left null"
+      - "a malformed, truncated, or wrong-shaped download is rejected and leaves the previously imported dataset intact"
+      - "the Settings metadata section states the licensing caveat beside the enabling control"
+    required_tests:
+      - adapter parse/validate tests plus malformed and fuzz-style input tests
+      - transactional-failure test asserting prior data survives a failed import
+      - precedence tests asserting fill-gaps-only behaviour below mictronics and faa
+      - default-off test asserting the provider is never constructed, and a settings toggle round-trip test
+    expected_artifacts:
+      - docs/adr/0013-opensky-metadata-source.md
+      - backend/src/flightsite/metadata/sources/opensky.py
+      - backend/src/flightsite/metadata/precedence.py
+      - backend/src/flightsite/config/models.py
+      - frontend/src/features/settings/
+      - docs/LICENSES.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner-approved opt-in source. Licensing is ambiguous rather than clean, so the posture matches the Mictronics row (fetch-on-demand only) and adds default-off on top; contact@opensky-network.org is recorded in ADR-0013 as the route to firmer ground. Added by Fable outside the phase plan."
+  - id: "060"
+    title: "Raspberry Pi 4 performance baseline"
+    phase: 8
+    branch: "060-pi-baseline"
+    status: merged
+    depends_on: ["049", "050"]
+    objective: "Record the first Raspberry Pi 4 baseline for the slice-049 budget table in docs/PERFORMANCE.md, and apply §5.3's promotion rule to what that run actually measured (GitHub issues #101, #132)."
+    scope:
+      - "docs/PERFORMANCE.md §5.4 records the 2026-09-01 Pi 4 Model B Rev 1.5 / 4 GB / SD-card run of `flightsite-perf --realtime --ticks 600` against release v0.2.0: date, hardware, storage, and every measured figure with its gated statistic and verdict"
+      - "the run's contention caveat is recorded in substance — the production backend and the dump1090-fa/tar1090/FR24/ADSBx feeders shared the machine and the SD card, contrary to §5.1 step 3 — so the row stands as the provisional baseline with a clean re-run pending"
+      - "§5.3 promotion is deferred with its reasoning stated: reference budgets are not promoted to hard gates on contended numbers, because a gate calibrated on them would be either too loose or simply wrong"
+      - "the ingest_duty_cycle p95 overrun is recorded as a finding (issue #132) per §5.3 rule 3, not as a widened budget"
+      - "the slice-049 test that held the §5.4 no-baseline disclaimer in place is flipped to pin that §5.4 now carries a recorded baseline"
+    out_of_scope:
+      - "any change to the budget values or gate kinds in backend/src/flightsite/perf/budgets.py (that is the clean re-run's decision)"
+      - "the §7.6 Pi 4 storage baseline, which has its own procedure (§7.8) and its own disclaimer"
+      - "fixing the duty-cycle overrun itself (issue #132, which interacts with #114 and the owner's planned Pi 5 + SSD migration)"
+      - "re-running the measurement on an idle Pi (the pending clean re-run)"
+    acceptance_criteria:
+      - "docs/PERFORMANCE.md §5.4 carries the recorded Pi 4 baseline with every figure, the contention caveat, and the clean-re-run note referencing #132"
+      - "the document states that §5.3 promotion is deferred to the clean re-run, and why"
+      - "tests/perf/test_docs.py fails if §5.4 loses its recorded baseline, rather than requiring the disclaimer"
+      - "no budget value or gate kind in perf/budgets.py changed"
+    required_tests: [the flipped §5.4 baseline-presence guard in tests/perf/test_docs.py]
+    expected_artifacts:
+      - docs/PERFORMANCE.md
+      - backend/tests/perf/test_docs.py
+    preferred_agent: opus
+    risk_level: low
+    notes: "Closes slice 049's second acceptance criterion (issue #101) with a provisional, honestly-caveated figure. Measurement was run by Fable on the owner's production Pi over SSH; the JSON report is at /opt/flightsite/data/perf-baseline/report.json on that machine. Added by Fable outside the phase plan."
+  - id: "061"
+    title: "Selected aircraft track backfill"
+    phase: 8
+    branch: "061-track-backfill"
+    status: merged
+    depends_on: ["014", "052"]
+    objective: "Fill the backfill seam slice 014 left open: draw the selected aircraft's track back to the start of its current sighting on selection, instead of accumulating a trail only from the moment of the click."
+    scope:
+      - "`useTrackBackfill` chains the two slice-052 history reads on selection — `GET /api/v1/sightings?icao=<hex>&open=true&limit=1` for the open sighting, then `GET /api/v1/sightings/{id}` for its checkpointed `path` — through TanStack Query, mounted beside the other aircraft-layer hooks"
+      - "`mergeTrackPoints` merges the fetched history under the live-accumulated points: two ascending-`at` lists, strictly increasing timestamps only, live wins a tie, capped at `TRACK_MAX_POINTS` keeping the newest"
+      - "`backfillTrack` store action applies the merge only while the track still belongs to the ICAO the response was requested for, discarding a response that lands after the selection moved on, and returns the store unchanged when nothing was added so the layer does not redraw"
+      - "no open sighting, a closed row, a 404, or a dead backend backfills nothing and leaves selection, the detail panel and the live trail exactly as they were"
+      - "the `track.ts` seam docstring records what now fills it"
+    out_of_scope:
+      - "the renderer, the track layer, `SelectedTrack`'s shape, or the `TRACK_MAX_POINTS` retention rule (the slice-014 contract exists so this slice needs none of them)"
+      - "the slice-054 interpolation and position-anchor behaviour"
+      - "backend changes: slice 052's endpoints already serve everything this needs"
+      - "historical playback of closed sightings on the live map (a v1 non-goal; the sighting detail page owns closed-sighting paths)"
+    acceptance_criteria:
+      - "clicking an airborne aircraft immediately draws its track back to the start of the current sighting as checkpointed"
+      - "the trail keeps extending live after the backfill, and a deselect/reselect backfills again"
+      - "a response for an aircraft that is no longer selected never reaches the drawn track"
+      - "an aircraft with no open sighting, and a failing history read, both leave the pre-slice behaviour intact"
+    required_tests:
+      - merge unit tests (empty accumulation, checkpoint overlap, tie-breaking, out-of-order guards, retention cap, identity return)
+      - store tests for backfill application, the ICAO guard on deselect and reselect, and the no-notification path
+      - hook tests for the two chained reads, the no-open-sighting and closed-row paths, fetch failure, and a late response landing after deselect
+      - a Live Map page test asserting a click draws the backfilled track oldest-first
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/useTrackBackfill.ts
+      - frontend/src/features/map/aircraft/track.ts
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/features/map/aircraft/AircraftLayer.tsx
+      - frontend/src/test/overlaysApiMock.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Unplanned fix slice for GitHub issue #133, the seam `frontend/src/features/map/aircraft/track.ts` has documented since slice 014. Frontend-only. Added by Fable outside the phase plan."
+
+  - id: "062"
+    title: "Live-set ghost expiry"
+    phase: 8
+    branch: "062-live-count-ghosts"
+    status: merged
+    depends_on: ["007", "008", "009"]
+    objective: "Age each live record by the decoder's own report of when it last heard the aircraft, so dump1090-fa's ~5-minute retention window stops inflating the live set and the documented 15 s / 60 s lifecycle thresholds fire on time (issue #134)."
+    scope:
+      - "`live/aircraft.py` `appear()`/`merge()` date every observation at `now - seen_s` (and the position at `now - seen_pos_s`) instead of at the poll, clamping an absent or negative reported age to `now`"
+      - "the wall-clock `position_seen` is dated by the same offset as its monotonic companion, so the two never disagree"
+      - "`merge()` takes the store's `stale_s` and revives a STALE record only on an observation younger than it; a re-polled entry the decoder has not actually heard leaves the state alone, and marking stale stays the sweep's job along with its event"
+      - "`live/store.py` passes its configured threshold and documents the two-place ownership of the live/stale boundary"
+      - "`live/store.py` refuses to admit an observation the decoder already reports as silent for at least `remove_s`: no record, no event. Without it a removal is undone by the next poll and the appear/remove pair repeats at the poll rate for the rest of the decoder's retention window"
+    out_of_scope:
+      - "the thresholds themselves, the sweep, and the sighting-close rule, all unchanged"
+      - "filtering high-age entries in the ingest adapter — the store's thresholds stay the single lifecycle authority"
+      - "the consumer-efficiency follow-ups the higher event cadence exposes (forced sighting flush per removal, alert dedupe state dropped on removal, airport trail discarded after 60 s), each tracked separately"
+      - "frontend changes"
+    acceptance_criteria:
+      - "an entry the decoder re-delivers every second with a growing reported age goes STALE at 15 s and is removed at 60 s of real silence, not when the decoder finally drops it"
+      - "a STALE record is revived only by an observation younger than `stale_s`; a re-polled ghost never flips it back to LIVE"
+      - "an aircraft the decoder is still hearing at 1 Hz stays LIVE indefinitely"
+      - "a removed ghost the decoder keeps listing is not re-admitted by the polls that follow: exactly one appear and one removal across the retention window"
+      - "an aircraft first reported as already expired is never admitted, while one first reported between `stale_s` and `remove_s` is admitted live and then ages out normally"
+      - "the live total is the audible total whether it is sampled just after a poll or just after a sweep"
+      - "the removal event carries the last record, dated at the aircraft's last transmission rather than the last poll"
+      - "no regression in the sighting lifecycle suite or the slice-049 perf harness scenarios"
+    required_tests:
+      - appear/merge ageing tests over fresh, past-stale and 282 s reported ages, including the absent and negative cases
+      - position ageing tests for `seen_pos_s`, present and absent
+      - revival tests: fresh observation revives STALE, re-polled ghost does not, threshold boundary does not
+      - store-level integration test re-delivering one ghost per second and asserting the STALE and removal seconds plus the removal event's record
+      - admission tests: an already-expired first report is refused, a report inside the removal window is admitted, a removed ghost is not re-admitted over 12 further poll+sweep cycles, and a genuinely re-heard aircraft appears again
+      - live-count test asserting the total at both sampling phases across 120 poll+sweep cycles
+      - regression test that an aircraft reporting a sub-second age never expires
+    expected_artifacts:
+      - backend/src/flightsite/live/aircraft.py
+      - backend/src/flightsite/live/store.py
+      - backend/tests/live/test_merge.py
+      - backend/tests/live/test_lifecycle.py
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner measured 80 shown against 59 audible on the Pi at v0.2.0. Fixes GitHub issue #134. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

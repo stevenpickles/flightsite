@@ -85,19 +85,27 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 
 | Setting | Why |
 |---|---|
-| `receiver.*` | The decoder endpoint is read once when ingestion starts |
-| `location.*` | The receiver reference point is fixed when the live store is built |
+| `receiver.*` | The decoder endpoint is read once when ingestion starts (see the first-run exception below) |
+| `location.*` | The receiver reference point is fixed when the live store is built (see the first-run exception below) |
 | `sighting.*` | Lifecycle thresholds are captured by the live store and persistence worker |
 | `retention.high_res_metric_days` | Read when the metrics service is constructed |
 | `timezone` | Analytics and receiver-metric day bucketing bind the zone at construction |
 | `log_level`, `log_file_enabled` | Logging is configured before the app is built |
 | `enrichment.*` | The enrichment provider is built once at startup |
+| `metadata.opensky_enabled` | The metadata source registry is built once at startup |
 | `alerts.enabled_templates` | Shipped templates are instantiated at startup |
 
 The Settings UI marks the Decoder and Receiver sections **"Applies on next
-restart"**. The other rows above are not currently badged in the UI
-([issue #122](https://github.com/stevenpickles/flightsite/issues/122)) — when in
-doubt, restart; it costs a few seconds and loses nothing.
+restart"**. The other rows above are not badged in the UI — when in doubt, restart; it
+costs a few seconds and loses nothing.
+
+**The first-run exception.** `receiver.*` and `location.*` are restart-required only
+once there is something running to disturb. On a fresh install nothing is polling yet,
+so the setup wizard's save starts ingestion in place and anchors the live store at the
+location it just wrote — finishing the wizard needs no restart. It is *changing* an
+endpoint or a location afterwards that waits: the running adapter owns its connection
+and its health history, and every already-observed aircraft carries a distance measured
+from the old reference point until it is seen again.
 
 ### Two behaviors that will surprise you
 
@@ -213,6 +221,29 @@ FlightSite is fully functional with enrichment off. This is the only setting tha
 sends anything about observed aircraft to a third party — see
 [SECURITY.md §10](SECURITY.md).
 
+### `metadata` — aircraft metadata sources
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `opensky_enabled` | bool | `false` | Opt in to the OpenSky aircraft database as a supplementary source |
+
+The two default sources (Mictronics and the FAA registry) are always active and need
+no configuration. OpenSky is separate because its licensing is genuinely unclear:
+OpenSky's general Terms of Use restrict their data to non-profit research and
+education and require a written licence for commercial use, while the aircraft
+database's own page states it "is unlicensed and does not fall under our terms of
+use" and is offered as-is. FlightSite does not decide that for you — the source stays
+off until you turn it on, and while it is off no OpenSky provider is even
+constructed, so a stock install never contacts OpenSky at all. See
+[ADR-0013](adr/0013-opensky-metadata-source.md) and the
+[licensing register](LICENSES.md).
+
+When enabled, OpenSky **fills gaps only**: it may supply an operator, owner,
+manufacturer/model or build year for an airframe where Mictronics and the FAA
+registry supplied none, and it can never overwrite a value either of them provided.
+Note also that the published dataset has not been refreshed since November 2024, so
+treat it as a static backfill rather than a live feed.
+
 ### `notifications` — browser notifications
 
 | Key | Type | Default |
@@ -302,6 +333,12 @@ Variables that are **not** configuration keys:
 `FLIGHTSITE_DEMO=1` replaces the decoder with a deterministic simulation — a fixed
 seed, roughly 110 aircraft, 1 Hz updates, covering commercial, military, government,
 police, MLAT, non-positioned, rare, first-ever, ground and emergency-squawk traffic.
+
+The scenario is anchored to the clock at startup, so demo observations carry real
+times and "today" on the Live Map and Analytics shows the traffic you are watching.
+What is deterministic is the *content* — the same seed always produces the same
+aircraft doing the same things on the same tick — not the timestamps, which advance
+with the wall clock as a real receiver's would.
 
 It is deliberately an environment switch rather than a configuration key, because it
 has to work before any `config.yaml` exists. Unlike a real decoder, demo ingestion

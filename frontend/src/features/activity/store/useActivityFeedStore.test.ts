@@ -12,26 +12,75 @@ beforeEach(() => {
 });
 
 describe("useActivityFeedStore", () => {
-  it("keeps live events newest first", () => {
+  it("keeps live events newest first across successive batches", () => {
     const store = useActivityFeedStore.getState;
-    store().addEvent(activityEvent({ id: 1 }));
-    store().addEvent(activityEvent({ id: 2 }));
+    store().addEvents([activityEvent({ id: 1 })]);
+    store().addEvents([activityEvent({ id: 2 })]);
 
     expect(store().events.map((event) => event.id)).toEqual([2, 1]);
   });
 
+  it("reverses one batch, which arrives oldest first", () => {
+    // `docs/API.md` §4.4: the frame carries a pass in the order it was
+    // recorded (ascending event id). The store is newest first, so a batch
+    // ingested in one update has to land reversed — the case a per-event loop
+    // got right by accident and a batch update has to get right on purpose.
+    const store = useActivityFeedStore.getState;
+    store().addEvents([
+      activityEvent({ id: 1 }),
+      activityEvent({ id: 2 }),
+      activityEvent({ id: 3 }),
+    ]);
+
+    expect(store().events.map((event) => event.id)).toEqual([3, 2, 1]);
+  });
+
+  it("puts a whole batch in front of what it already held", () => {
+    const store = useActivityFeedStore.getState;
+    store().addEvents([activityEvent({ id: 1 })]);
+    store().addEvents([activityEvent({ id: 2 }), activityEvent({ id: 3 })]);
+
+    expect(store().events.map((event) => event.id)).toEqual([3, 2, 1]);
+  });
+
   it("ignores an event id it already holds", () => {
     const store = useActivityFeedStore.getState;
-    store().addEvent(activityEvent({ id: 7 }));
-    store().addEvent(activityEvent({ id: 7 }));
+    store().addEvents([activityEvent({ id: 7 })]);
+    store().addEvents([activityEvent({ id: 7 })]);
 
     expect(store().events).toHaveLength(1);
+  });
+
+  it("drops ids repeated within one batch", () => {
+    const store = useActivityFeedStore.getState;
+    store().addEvents([activityEvent({ id: 7 }), activityEvent({ id: 7 })]);
+
+    expect(store().events).toHaveLength(1);
+  });
+
+  it("leaves the state object untouched when a batch is all duplicates", () => {
+    // Identity matters: an unchanged reference is what stops zustand
+    // re-rendering the panel for a batch that added nothing.
+    const store = useActivityFeedStore.getState;
+    store().addEvents([activityEvent({ id: 7 })]);
+    const before = store().events;
+    store().addEvents([activityEvent({ id: 7 })]);
+
+    expect(store().events).toBe(before);
+  });
+
+  it("does nothing with an empty batch", () => {
+    const store = useActivityFeedStore.getState;
+    const before = store().events;
+    store().addEvents([]);
+
+    expect(store().events).toBe(before);
   });
 
   it("caps the stream so a long-lived tab cannot grow without bound", () => {
     const store = useActivityFeedStore.getState;
     for (let id = 1; id <= MAX_LIVE_EVENTS + 10; id += 1) {
-      store().addEvent(activityEvent({ id }));
+      store().addEvents([activityEvent({ id })]);
     }
 
     expect(store().events).toHaveLength(MAX_LIVE_EVENTS);
@@ -39,9 +88,32 @@ describe("useActivityFeedStore", () => {
     expect(store().events[0]?.id).toBe(MAX_LIVE_EVENTS + 10);
   });
 
+  it("caps a single batch larger than the whole store", () => {
+    // A fresh install's first pass is hundreds of events at once — the case
+    // that only exists now that a batch arrives as one update.
+    const store = useActivityFeedStore.getState;
+    const batch = Array.from({ length: MAX_LIVE_EVENTS + 50 }, (_, index) =>
+      activityEvent({ id: index + 1 }),
+    );
+    store().addEvents(batch);
+
+    expect(store().events).toHaveLength(MAX_LIVE_EVENTS);
+    // Newest first means the highest id survives and the oldest are dropped.
+    expect(store().events[0]?.id).toBe(MAX_LIVE_EVENTS + 50);
+    expect(store().events.at(-1)?.id).toBe(51);
+  });
+
+  it("does not mutate the caller's array", () => {
+    const store = useActivityFeedStore.getState;
+    const batch = [activityEvent({ id: 1 }), activityEvent({ id: 2 })];
+    store().addEvents(batch);
+
+    expect(batch.map((event) => event.id)).toEqual([1, 2]);
+  });
+
   it("empties on reset, so a remount shows no dead connection's stream", () => {
     const store = useActivityFeedStore.getState;
-    store().addEvent(activityEvent({ id: 1 }));
+    store().addEvents([activityEvent({ id: 1 })]);
     store().reset();
 
     expect(store().events).toEqual([]);

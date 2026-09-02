@@ -136,6 +136,13 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 051 | Documentation & install polish | 042, 045, 046 | sonnet | low | Docs complete enough for a fresh install from documentation alone |
 | 054 | Live map motion correctness | 014, 039 | opus | medium | Anchor dead reckoning to the last position change so markers stop creeping forward then teleporting back (issue #119) |
 | 055 | Alert template instantiation fixes | 038, 041, 046 | opus | medium | Instantiate newly enabled alert templates on config save, and fix the wizard/catalogue template-key mismatch (issues #110, #111) |
+| 056 | First-run ingestion hot-start | 007, 019, 055 | opus | medium | Start decoder ingestion on the config save that ends the first-run state, so a fresh install needs no backend restart (issue #122) |
+| 057 | Activity WebSocket batching | 012, 035, 049 | opus | medium | Batch a detector pass's activity events into one WebSocket frame so a fresh install's backlog stops evicting every client (issue #99) |
+| 058 | Quick wins bundle | 031, 042, 043, 050 | opus | low | Six small tracked fixes on one branch: max-range sort index, FAA User-Agent, VACUUM refusal surfaced, backup gzip 6, pagination noun, demo-mode "today" (issues #107, #112, #115, #116, #117, #121) |
+| 059 | OpenSky metadata source | 021, 022, 023, 042 | opus | medium | Opt-in, default-off OpenSky aircraft database as a fill-gaps-only source under an ambiguous license (ADR-0013) |
+| 060 | Raspberry Pi 4 performance baseline | 049, 050 | opus | low | Record the first Pi 4 baseline in docs/PERFORMANCE.md §5.4 and defer §5.3 promotion to the pending clean re-run (issues #101, #132) |
+| 061 | Selected aircraft track backfill | 014, 052 | opus | low | Backfill the selected aircraft's track from its open sighting so a click draws the whole current sighting, not just what arrives after it (issue #133) |
+| 062 | Live-set ghost expiry | 007, 008, 009 | opus | medium | Age live records by the decoder's own "last heard" report so dump1090's ~5-minute retention window stops inflating the live count and the 15 s / 60 s thresholds fire on time (issue #134) |
 
 ## Parallelization Guide
 

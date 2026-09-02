@@ -3,9 +3,11 @@
 Two decisions are pinned here, because both are easy to regress and expensive
 to get wrong in production:
 
-* a first-run install starts no ingestion at all, so a machine that has never
-  been configured does not spend its first boot logging connection failures
-  against a receiver nobody chose;
+* a first-run install starts no ingestion *at boot*, so a machine that has
+  never been configured does not spend its first boot logging connection
+  failures against a receiver nobody chose. That is a statement about boot
+  only: since slice 056 the save that ends the first-run state starts
+  ingestion in place, and ``test_hot_start`` pins that half;
 * a decoder that is unreachable does **not** fail ``/ready``. The app is fully
   usable without one, and an orchestrator restarting the backend because
   something outside it went offline would take away the very UI that explains
@@ -49,6 +51,14 @@ def point_decoder_at(
 
 
 def test_first_run_starts_no_ingestion() -> None:
+    """Nothing is polled, and nothing is registered, until a configuration exists.
+
+    Unchanged by slice 056: booting an unconfigured install must still start
+    no adapter. What that slice changed is how long this lasts — a
+    configuration save now ends it without a restart
+    (``test_hot_start.test_a_first_run_save_starts_ingestion_and_aircraft_flow``)
+    — so this asserts the boot state, not the fate of the process.
+    """
     app = create_app()
 
     with TestClient(app) as client:

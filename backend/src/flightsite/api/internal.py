@@ -38,6 +38,13 @@ Writing the file and swapping ``app.state.settings`` is not always the whole of
 saving a setting: ``alerts.enabled_templates`` names alert rules to create, and
 until this existed a fresh install that chose its templates in the setup wizard
 had no alert rules until the backend was restarted (issue #110).
+
+Slice 056 adds the other half of that same first-run story to the same step:
+the save that ends the first-run state now starts decoder ingestion and anchors
+the live store at the saved location, so a user who finishes the setup wizard
+sees aircraft without restarting the backend (issue #122). Endpoint *changes*
+on an already-running adapter remain restart-required — see
+:mod:`flightsite.api.ingestion` for where that line is drawn and why.
 """
 
 from __future__ import annotations
@@ -52,10 +59,12 @@ from pydantic import ValidationError
 
 from flightsite.alerts import AlertService
 from flightsite.api.alert_rules import router as alert_rules_router
+from flightsite.api.ingestion import ingestion_startable, start_decoder_ingestion
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
-from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, check_connection
+from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, Position, check_connection
+from flightsite.live import LiveStore
 from flightsite.metadata import ImportRun, MetadataService
 from flightsite.metadata.registry import SourceStatus, SourceStatusRecord
 from flightsite.watchlists import (
@@ -165,25 +174,97 @@ async def _apply_live_settings(app: FastAPI, settings: Settings) -> None:
     those rows, which decides what the change means (see
     :meth:`~flightsite.alerts.AlertService.apply_enabled_templates`).
 
-    This is the seam for that third kind of setting, and it stays a short
-    explicit list rather than a registry until there is more than one entry.
-    Failures are logged and swallowed, exactly as
+    This is the seam for that third kind of setting. Slice 056 adds the two
+    entries below it, which are the same shape and come from the same bug
+    report: on a fresh install the save that ends the first-run state is the
+    moment ingestion becomes possible, so it is also the moment ingestion must
+    start (issue #122) against a live store that finally has a location to
+    measure from. Ordered deliberately — the anchor is set before the first
+    batch can arrive, so no aircraft is ever observed into a store that has no
+    receiver location.
+
+    Each entry is independently guarded and independently isolated: none can
+    skip another by returning early, and a failure in one is logged and
+    swallowed exactly as
     :meth:`flightsite.watchlists.WatchlistService._notify_index` swallows a
-    listener's: the configuration is already validated, written and live, so an
-    exception here could only turn a save that succeeded into a 500 about it.
+    listener's. The configuration is already validated, written and live by the
+    time any of this runs, so an exception here could only turn a save that
+    succeeded into a 500 about it. Three entries is still a short explicit list
+    rather than a registry; a fourth is the point to reconsider that.
     """
+    await _apply_enabled_templates(app, settings)
+    _apply_receiver_location(app, settings)
+    await _apply_ingestion_start(app)
+
+
+def _apply_failed(setting: str, exc: Exception, **fields: Any) -> None:
+    """Report an apply step that raised, without failing the save it followed."""
+    logger.warning(
+        "config_apply_failed",
+        setting=setting,
+        error=str(exc),
+        error_type=type(exc).__name__,
+        **fields,
+    )
+
+
+async def _apply_enabled_templates(app: FastAPI, settings: Settings) -> None:
+    """Instantiate newly enabled alert templates (slice 055, issue #110)."""
     alerts: AlertService | None = getattr(app.state, "alerts", None)
     if alerts is None:  # pragma: no cover - the app always builds the service
         return
     try:
         await alerts.apply_enabled_templates(settings.alerts.enabled_templates)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "config_apply_failed",
-            setting="alerts.enabled_templates",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
+        _apply_failed("alerts.enabled_templates", exc)
+
+
+def _apply_receiver_location(app: FastAPI, settings: Settings) -> None:
+    """Anchor the live store's derived distance and bearing, if it has no anchor.
+
+    Only ever fills a blank. The store is built with the location that was
+    effective at construction, and on a first run there is none — so without
+    this, ingestion started by the entry below would fill the map with aircraft
+    whose distance and bearing are ``null``.
+
+    Changing a location the store already has is a different operation and is
+    deliberately not done here: every already-observed aircraft would keep a
+    distance measured from the old position until it was seen again, which is
+    why a location *change* is restart-required and says so on its Settings
+    badge. It also keeps demo mode alone — that path installs
+    :data:`~flightsite.demo.DEFAULT_CENTER` at boot and generates its traffic
+    around it, so a saved location must not move the anchor out from under it.
+    """
+    live: LiveStore = app.state.live
+    latitude = settings.location.latitude
+    longitude = settings.location.longitude
+    if live.receiver_location is not None or latitude is None or longitude is None:
+        return
+    try:
+        live.set_receiver_location(Position(latitude=latitude, longitude=longitude))
+    except Exception as exc:  # pragma: no cover - defensive
+        _apply_failed("location", exc)
+    else:
+        logger.info("receiver_location_applied")
+
+
+async def _apply_ingestion_start(app: FastAPI) -> None:
+    """Start decoder ingestion if this save is what made it possible (issue #122).
+
+    Hot-*start* only, and :func:`~flightsite.api.ingestion.ingestion_startable`
+    is what keeps it that way: nothing → running, never a second service beside
+    a running one and never a reconfiguration of one. See
+    :mod:`flightsite.api.ingestion` for why that line is drawn there.
+
+    A failure leaves ``app.state.ingestion`` unassigned rather than poisoned,
+    so a later save simply tries again.
+    """
+    if not ingestion_startable(app):
+        return
+    try:
+        await start_decoder_ingestion(app)
+    except Exception as exc:
+        _apply_failed("receiver", exc, action="start_ingestion")
 
 
 @router.post("/decoder/test")

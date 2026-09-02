@@ -171,6 +171,29 @@ class EnrichmentSettings(_ConfigModel):
         return self
 
 
+class MetadataSettings(_ConfigModel):
+    """Aircraft metadata sources — SPEC §25 / §27, ADR-0013.
+
+    The two default sources (``mictronics``, ``faa``) are always registered and
+    need no configuration. This section exists for sources that are opt-in.
+
+    ``opensky_enabled`` gates the OpenSky aircraft database. It defaults to
+    ``False`` because that source's licensing is ambiguous — OpenSky's general
+    Terms of Use restrict their data to non-profit research and education, while
+    the aircraft database's own page states it is "unlicensed and does not fall
+    under our terms of use" — so whether to fetch it is the operator's call,
+    not a default FlightSite makes on their behalf. ADR-0013 records the full
+    reasoning; the Settings UI states the caveat beside the control.
+
+    Read at startup by :func:`flightsite.app._build_metadata_registry`, which
+    constructs the provider only when this is set, so a change takes effect on
+    the next backend restart — the same contract as
+    ``enrichment.aerodatabox_enabled``.
+    """
+
+    opensky_enabled: bool = False
+
+
 class NotificationSettings(_ConfigModel):
     """Browser notification enables per alert severity — SPEC §46 / §48.
 
@@ -255,6 +278,7 @@ class Settings(BaseSettings):
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     map: MapSettings = Field(default_factory=MapSettings)
     enrichment: EnrichmentSettings = Field(default_factory=EnrichmentSettings)
+    metadata: MetadataSettings = Field(default_factory=MetadataSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
 

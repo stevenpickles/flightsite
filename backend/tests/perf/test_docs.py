@@ -27,11 +27,25 @@ HARD_HEADING = "### 2.1 Hard gates"
 REFERENCE_HEADING = "### 2.2 Reference budgets"
 END_HEADING = "### 2.3"
 
+BASELINE_HEADING = "### 5.4 Recorded baselines"
+BASELINE_END_HEADING = "### 5.5"
+
 
 @pytest.fixture(scope="module")
 def document() -> str:
     assert DOC.exists(), f"{DOC} is missing; slice 049 publishes it"
     return DOC.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def baseline(document: str) -> str:
+    """§5.4 alone.
+
+    Scoped deliberately: §5.5's development-machine table and §7.6's storage
+    section carry their own figures and their own disclaimer, and a check on
+    the whole document would be satisfied — or defeated — by either of them.
+    """
+    return section(document, BASELINE_HEADING, BASELINE_END_HEADING)
 
 
 def section(document: str, start: str, end: str) -> str:
@@ -91,16 +105,42 @@ def test_the_envelope_the_document_states_is_the_one_the_harness_runs() -> None:
     assert "Raspberry Pi 4" in document
 
 
-def test_the_document_records_whether_a_pi_baseline_exists(document: str) -> None:
+def test_the_document_records_a_pi_baseline(baseline: str) -> None:
     """The second acceptance criterion of slice 049 is a recorded Pi 4 run.
 
-    Until one exists the document must say so plainly rather than leaving an
-    empty table a reader could mistake for a passing result. When a baseline is
-    added, this test is what reminds whoever adds it to remove the disclaimer.
+    Slice 060 recorded one, so this test has changed sides. It used to hold the
+    "no baseline yet" disclaimer in place until a real result replaced it; it
+    now holds the result in place, so that §5.4 cannot quietly revert to an
+    empty table a reader could mistake for a passing one.
     """
-    has_disclaimer = "No Raspberry Pi 4 baseline has been recorded yet" in document
-    has_result = "not yet run" not in document
-    assert has_disclaimer != has_result, (
-        "docs/PERFORMANCE.md §5.4 must either carry the 'no baseline yet' "
-        "disclaimer or a recorded result, not both and not neither"
+    assert "No Raspberry Pi 4 baseline has been recorded yet" not in baseline, (
+        "docs/PERFORMANCE.md §5.4 carries a recorded baseline; the 'no baseline "
+        "yet' disclaimer must not come back alongside it"
+    )
+    assert "not yet run" not in baseline, "docs/PERFORMANCE.md §5.4 must not be an empty table"
+
+
+@pytest.mark.parametrize("budget", BUDGETS, ids=lambda budget: budget.metric)
+def test_the_recorded_baseline_reports_every_budget(budget: Budget, baseline: str) -> None:
+    """§5.3 step 1: a baseline records *every* measured figure, not a selection.
+
+    A run that reports the comfortable rows and omits the rest is not a
+    baseline, and the omission is invisible unless something checks for it.
+    """
+    assert budget.metric in baseline, (
+        f"{budget.metric} is measured by the harness but absent from §5.4's recorded baseline"
+    )
+
+
+def test_a_recorded_overrun_cites_a_tracked_finding(baseline: str) -> None:
+    """§5.3 rule 3: a figure over budget is filed, never accommodated.
+
+    The recorded run's ``ingest_duty_cycle`` exceeds its budget. The rule says
+    that is a finding rather than grounds for widening anything, and a finding
+    nobody can follow up is indistinguishable from one nobody filed — so §5.4
+    has to name the issue tracking it.
+    """
+    assert "#132" in baseline, (
+        "docs/PERFORMANCE.md §5.4 records a figure over its budget but names no "
+        "tracked issue for it; §5.3 rule 3 requires the finding to be filed"
     )

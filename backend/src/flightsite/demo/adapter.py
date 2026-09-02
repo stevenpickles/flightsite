@@ -57,10 +57,39 @@ class DemoAdapter:
     Every batch is computed by :func:`flightsite.demo.scenario.batch_at` from
     the roster built at construction time and the *elapsed* tick index alone
     — nothing about a previous tick is remembered. Two adapters built with
-    the same ``seed`` therefore produce identical batches for the same tick
-    index, and the same adapter re-asked for an old tick gets the same answer
-    back (roadmap acceptance criterion: "two runs with the same seed produce
-    identical update sequences").
+    the same ``seed`` and the same ``epoch`` therefore produce identical
+    batches for the same tick index, and the same adapter re-asked for an old
+    tick gets the same answer back (roadmap acceptance criterion: "two runs
+    with the same seed produce identical update sequences").
+
+    Why the epoch defaults to the wall clock
+    ----------------------------------------
+
+    These timestamps are not decoration: a decoder is the authority on when an
+    observation happened (:mod:`flightsite.live.aircraft`), so they become the
+    ``first_seen``/``last_seen`` on ``aircraft`` and the ``started_ms`` on
+    ``sightings``, and from there the day every analytics rollup buckets into.
+    Anchored to :data:`~flightsite.demo.scenario.SCENARIO_EPOCH` they all
+    landed on 2026-01-01, while the ``today`` window, the analytics rollup
+    writer and the receiver-metrics service every one resolve against the real
+    clock — so on a demo stack the Live Map Today panel and the Analytics
+    ``today`` preset were empty, permanently and by construction (issue #107).
+
+    Anchoring the scenario to "now" is the smaller of the two available fixes.
+    The alternative — teaching the API to resolve ``today`` against a scenario
+    clock when demo mode is on — would have to change every wall-clock read on
+    the analytics path *and* the rollup writer, so that reader and writer agree
+    on which day is "today"; and it could not fix the split anyway, because
+    :mod:`flightsite.receiver_metrics` stamps its own rows from the real clock,
+    which ``/analytics/summary`` reads alongside the sighting counts. That
+    trades one inconsistency for a subtler one and spreads demo-awareness
+    across the whole analytics stack. Moving the anchor puts every one of those
+    subsystems back on a single clock and keeps the knowledge of demo mode
+    inside this package.
+
+    Determinism is unaffected: the epoch is an argument, and shifting it moves
+    every timestamp by the same constant without changing which aircraft do
+    what on which tick. Tests that compare two adapters pass an explicit epoch.
 
     Args:
         seed: seeds every random decision in the roster (aircraft identity,
@@ -79,6 +108,9 @@ class DemoAdapter:
         sleep: awaited between polls; injectable for the same reason.
         tick_interval_s: simulated seconds per tick — the 1 Hz product
             cadence by default.
+        epoch: the instant tick 0 is stamped at. Defaults to now, truncated to
+            the second, for the reason above; pass an explicit value to make a
+            scenario reproducible across processes.
     """
 
     def __init__(
@@ -90,9 +122,13 @@ class DemoAdapter:
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         tick_interval_s: float = TICK_INTERVAL_S,
+        epoch: datetime | None = None,
     ) -> None:
         if tick_interval_s <= 0.0:
             raise ValueError("tick_interval_s must be greater than zero")
+        # Truncated to the second so a demo stream looks like the 1 Hz decoder
+        # it is imitating rather than carrying a startup microsecond forever.
+        self._epoch = epoch if epoch is not None else datetime.now(UTC).replace(microsecond=0)
         self._seed = seed
         self._center = center if center is not None else DEFAULT_CENTER
         self._roster: tuple[AircraftProfile, ...] = build_roster(
@@ -120,14 +156,19 @@ class DemoAdapter:
         """The deterministic aircraft roster this session is driving."""
         return self._roster
 
+    @property
+    def epoch(self) -> datetime:
+        """The instant tick 0 is stamped at."""
+        return self._epoch
+
     def batch_for_tick(self, tick_index: int) -> AircraftStateBatch:
-        """The batch at ``tick_index`` — a pure function of ``(seed, tick_index)``.
+        """The batch at ``tick_index`` — pure in ``(seed, tick_index, epoch)``.
 
         Exposed directly (not only through :meth:`updates`) so determinism
         and scenario-coverage tests can drive many ticks instantly, without
         running the async loop or a clock at all.
         """
-        return batch_at(self._roster, tick_index)
+        return batch_at(self._roster, tick_index, epoch=self._epoch)
 
     async def start(self) -> None:
         """Mark the scenario clock started. Does not yield anything by itself."""

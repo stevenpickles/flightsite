@@ -18,9 +18,10 @@ comfortably below 1 GB.
 SPEC §85 does not ask for every metric to block a merge, and there is a good
 reason for that. Some limits are correctness-critical: cross one and the live
 picture becomes a backlog, or the process heads for the OOM killer. Others are
-questions of comfort whose real answer depends on hardware nobody has measured
-yet — and a budget calibrated on a developer laptop tells you nothing about an
-SD card on a Pi.
+questions of comfort whose real answer depends on the reference hardware — and
+a budget calibrated on a developer laptop tells you nothing about an SD card on
+a Pi. §5.4 now carries a first Pi 4 reading, taken on a contended machine; it
+informs the second kind of budget without yet being firm enough to fix one.
 
 So budgets come in two kinds, and every row of the table below is labelled.
 
@@ -33,7 +34,9 @@ So budgets come in two kinds, and every row of the table below is labelled.
 
 A reference budget is not a weaker budget. It is a budget that has not yet been
 calibrated against the hardware it is stated for, and reporting it as a hard
-gate on a developer machine would be dressing up a guess.
+gate on a developer machine would be dressing up a guess. A *contended* Pi 4 —
+which is what §5.4 records — does not lift that objection either; §5.4's
+closing note says why promotion waits for a clean re-run.
 
 ### CI headroom
 
@@ -80,6 +83,12 @@ responsive.*
 
 SPEC §85: *trend-track less critical metrics initially; convert to hard gates
 once real Pi 4 baselines exist.*
+
+A first Pi 4 baseline now exists (§5.4), so the per-row rationales below are no
+longer arguing from no data at all. None of these rows is promoted on it: that
+run was contended and its figures are upper bounds, so §5.3's promotion step is
+deferred to the clean re-run rather than applied to numbers that would set
+every threshold in the wrong place. §5.4 gives the argument in full.
 
 | Metric | SPEC §85 item | Budget (Pi 4) | Statistic | Why not yet a hard gate |
 |---|---|---|---|---|
@@ -297,16 +306,101 @@ table and the JSON off the Pi.
 
 ### 5.4 Recorded baselines
 
-> **No Raspberry Pi 4 baseline has been recorded yet.** The procedure above is
-> documented and the harness runs standalone, but the hardware was not
-> available to the slice that built it. Until a row appears here, every
-> reference budget in §2.2 remains a stated target rather than a calibrated
-> one, and none of them can be promoted to a hard gate. This is the outstanding
-> item for slice 049's second acceptance criterion.
+**2026-09-01** · FlightSite **v0.2.0** · Raspberry Pi 4 Model B Rev 1.5, 4 GB
+RAM (3794 MB), SD-card root (`/dev/root`, 59 GB), Raspberry Pi OS (armhf
+userland on an aarch64 kernel), Docker Compose · 500 aircraft, 600 ticks,
+4 WebSocket clients, ~10 min wall ·
+`flightsite-perf --realtime --ticks 600`
 
-| Date | Release | Hardware | Storage | Result |
-|---|---|---|---|---|
-| — | — | — | — | not yet run |
+> **This run was contended, contrary to §5.1 step 3.** It was taken on the
+> project owner's live production Pi with the production FlightSite backend
+> ingesting at 1 Hz, and with dump1090-fa, tar1090 and the FlightRadar24 and
+> ADS-B Exchange feeders all running on the same machine and the same SD card.
+> §5.1 allows a decoder feeding the Pi and nothing else; this had the decoder,
+> its web UI, two upload feeders, a second full copy of the product ingesting
+> live, and the harness — all competing for one SD card.
+>
+> The figures below are therefore recorded as the **provisional** Pi 4
+> baseline. They are a real Pi 4 under a real (in fact pessimistic) load, which
+> is worth far more than the empty table they replace, but they are not the
+> quiet-machine measurement §5.2 describes. **A clean re-run is pending**;
+> until it lands, read every figure here as an upper bound rather than as the
+> hardware's number.
+
+Budgets below are the Pi 4 budgets from §2 at face value. `CI_HEADROOM` does
+not apply: it exists so that a shared CI runner cannot fail a gate, and this
+*is* the reference hardware the budgets are stated for.
+
+| Metric | Gate | median | p95 | max | Gated statistic | Pi 4 budget | Result |
+|---|---|---|---|---|---|---|---|
+| `live_population` | hard | — | — | — | min 526 | ≥ 500 | pass |
+| `ingest_apply_ms` | hard | 55.8 | 81.2 | 664 | p95 81.2 | ≤ 100 | pass |
+| `ingest_duty_cycle` | hard | 0.213 | 0.99 | 5.29 | p95 0.99 | ≤ 0.5 | **over budget — issue #132** |
+| `live_sweep_ms` | hard | — | — | 9.59 | max 9.59 | ≤ 100 | pass |
+| `api_live_ms` | hard | 82.2 | 135 | 597 | p95 135 | ≤ 250 | pass |
+| `memory_rss_mib` | hard | 145 | — | 175 | max 175 | ≤ 1024 | pass |
+| `ws_fanout_ms` | reference | 54.3 | 68.1 | 764 | p95 68.1 | ≤ 100 | pass |
+| `db_write_cycle_ms` | reference | 80.1 | 678 | 5180 | p95 678 | ≤ 250 | over budget |
+| `db_read_ms` | reference | 15.5 | 26.2 | 365 | p95 26.2 | ≤ 500 | pass |
+| `analytics_query_ms` | reference | 31.8 | 48.2 | 78.7 | p95 48.2 | ≤ 500 | pass |
+| `startup_s` | reference | — | — | — | max 0.547 | ≤ 30 | pass |
+| `recovery_s` | reference | — | — | — | max 9.3 | ≤ 30 | pass |
+
+The WebSocket run distributed 3,560 frames with **0 resync reconnects**, which
+is slice 057's batching fix (§5.5's closing note) confirmed on real hardware
+rather than on the machine that wrote it. Recovery adopted **539 open
+sightings** in 9.3 s, the same open-sighting count as §5.5's development run
+and about four times its cost — the clearest single expression of what SD-card
+I/O does to this product. The JSON report is on that Pi at
+`/opt/flightsite/data/perf-baseline/report.json`; §5.2 asks for it to be copied
+off, and the clean re-run should archive it alongside this table.
+
+**Ten of the twelve figures pass, and the two that do not are the same
+finding.** `ingest_duty_cycle` is a hard gate and its p95 of 0.99 is twice its
+budget: at that figure the per-tick hot path is consuming a whole 1 Hz poll,
+with no margin left. Its driver is visible one row down — `db_write_cycle_ms`
+p95 678 ms against a 250 ms budget, with a maximum of 5.18 s. The duty cycle
+sums the harness's stages serially (§5.5 explains why, and why the product does
+not), so an SD card that occasionally takes five seconds to commit a flush
+carries the duty cycle straight up with it.
+
+Only the first of the two fails anything. `db_write_cycle_ms` is a reference
+budget, so by §1 it is reported rather than enforced, and it sits inside the
+in-suite bound of 1250 ms in any case; it is recorded here because it is the
+explanation for the row above it, not because a run went red.
+
+Per §5.3 rule 3 this is **a finding, not a reason to widen anything**: it is
+filed as **issue #132**, no budget in `backend/src/flightsite/perf/budgets.py`
+was touched, and `ingest_duty_cycle` remains a hard gate at 0.5. The issue
+records the three things that bear on it — the SQLite write spikes seen here,
+issue #114's track-row storage, and the owner's planned migration to a Pi 5
+with an SSD, which changes the storage substrate this measurement is dominated
+by. Whether the overrun survives an uncontended run on that hardware is exactly
+what the clean re-run answers.
+
+#### Promotion is deferred to the clean re-run
+
+§5.3 step 2 asks, for each reference budget now backed by a Pi 4 baseline,
+whether to promote it to a hard gate. The answer for all six is **not yet**,
+and the reason is the caveat at the top of this section rather than any
+reluctance about the figures themselves.
+
+A promotion sets a number that fails builds. Calibrating one on a contended run
+gets it wrong in one of two directions, and there is no third. Take the
+measurements at face value and every threshold inherits the contention:
+`db_write_cycle_ms` would be promoted at something near a second, which is not
+this product's write latency but its neighbours' share of an SD card, and the
+gate would then sit far too loose to catch the regression it exists for.
+Discount the contention instead and the discount is a guess — nothing here
+separates the harness's own cost from its neighbours'. Either way the result is
+§1's dressed-up guess, arrived at with more ceremony.
+
+So the reference budgets in §2.2 stay reference budgets. What this run does
+establish is that promotion is now a *near-term* decision with real evidence
+behind it rather than an open question: five of the six sit comfortably inside
+their budgets even under this load, and the sixth is the write-cycle row that
+#132 exists to explain. The clean re-run is the point at which §5.3 step 2 gets
+applied for real.
 
 ### 5.5 Development-machine baseline
 
@@ -366,6 +460,12 @@ reconnect as a browser would. This is first-run behaviour that decays as
 aircraft stop being novel, but it is worth knowing that a fresh install with a
 busy receiver will resync its clients every few seconds for a while; see §6.
 
+> **Fixed by slice 057.** The run above predates it. A detector pass is now one
+> `activity_batch` frame rather than one frame per event (`docs/API.md` §4.4),
+> so the burst cannot exceed the queue; the same run on the same machine goes
+> from 20 resync reconnects to 0. The reading is left as recorded, because a
+> baseline that gets edited is not a baseline.
+
 ---
 
 ## 6. Observations for later slices
@@ -374,20 +474,28 @@ Findings the harness surfaced that are outside slice 049's scope. Recorded here
 rather than acted on, because measuring is this slice's job and changing what
 it measures is not.
 
-**Activity bursts overflow WebSocket client queues on a fresh install.** The
-activity service publishes one frame per event, synchronously, with no await
-between them (`LiveBroadcaster.publish_activity`). A pass that detects more
-events than a client's outbound queue holds — 32 by default — evicts every
-connected client in a single call. On a new database at 500 aircraft this
-happens on essentially every 5-second pass, because every aircraft is a
-first-ever sighting.
+**Activity bursts overflow WebSocket client queues on a fresh install.**
+*(Resolved by slice 057 — issue #99. Kept as the record of what the harness
+found and what was done about it.)* The activity service published one frame
+per event, synchronously, with no await between them
+(`LiveBroadcaster.publish_activity`). A pass that detects more events than a
+client's outbound queue holds — 32 by default — evicted every connected client
+in a single call. On a new database at 500 aircraft this happened on
+essentially every 5-second pass, because every aircraft is a first-ever
+sighting.
 
-The behaviour is correct in the sense that it is the documented slow-consumer
-rule and the client is told to resync rather than left stalled. Whether it is
-*desirable* on a first run is a product question: a browser reconnecting every
-five seconds for the first hours of an install is not a good first impression,
-and coalescing a pass's events into fewer frames, or capping the burst, would
-avoid it. Worth a roadmap entry against the activity or WebSocket slice.
+The behaviour was correct in the sense that it was the documented slow-consumer
+rule and the client is told to resync rather than left stalled. Whether it was
+*desirable* on a first run was the product question: a browser reconnecting
+every five seconds for the first hours of an install is not a good first
+impression.
+
+Slice 057 took the first of the two options named here — coalescing a pass's
+events into fewer frames. `publish_activity` now sends one `activity_batch`
+frame per pass (`docs/API.md` §4.4), capped at 128 events per frame, so the
+frame count follows the detector's 5-second cadence rather than the size of the
+backlog. Re-running §5.5's command on a fresh database takes the reconnect
+count to zero.
 
 ---
 
@@ -663,10 +771,12 @@ would hold after three weeks, because it is a fixed window. Its hourly and
 daily summaries, retained indefinitely, cost 3 MB for the whole period. That is
 ADR-0009 doing precisely what it was designed to do.
 
-**The unindexed sorts are three orders of magnitude slower than the indexed
+**The unindexed sorts were three orders of magnitude slower than the indexed
 reads.** 8.0 s against 2 ms, on the same table, in the same run. This is what
-drives the `history_query_ms` overrun and it is the whole of it: every other
-history read is single-digit milliseconds. See §7.7.
+drove the `history_query_ms` overrun and it was the whole of it: every other
+history read is single-digit milliseconds. Slice 058 indexed `max_range_nm`,
+the worse of the two, in rev 0013; `closest_approach_nm` is still unindexed.
+See §7.7.
 
 **`rarity_query_ms` lands within 3% of its budget.** 514 ms against 500, on a
 developer machine, for a query whose cost grows with distinct airframes —
@@ -709,7 +819,9 @@ not comfortably fit the card §9 recommends. With the page size corrected as
 years, back inside §9's figure and back inside its sizing advice.
 
 The unindexed sorts behave as expected at this scale too: 3.8 s over 541,980
-sightings, against 8.0 s over the 1,642,500 of the Scenario A run.
+sightings, against 8.0 s over the 1,642,500 of the Scenario A run. Both figures
+predate rev 0013, which indexed `max_range_nm`; re-running this scenario should
+now show that sort flat and only `closest_approach_nm` scaling.
 
 #### 7.6.3 What was not measured
 
@@ -818,14 +930,13 @@ should weigh, in the order they seem cheapest:
 Each needs an ADR and a re-run of this qualification; the first two also need a
 migration story for existing installs. Worth a roadmap entry against storage.
 
-**Two documented sort options have no index and take eight seconds on a
-three-year database.** This is the `history_query_ms` overrun in §7.6, and it
-is the whole of it.
+**Two documented sort options had no index and took eight seconds on a
+three-year database.** This was the `history_query_ms` overrun in §7.6, and it
+was the whole of it. *Half-resolved by slice 058 — see below.*
 
 `/api/v1/sightings?sort=closest_approach_nm` and `sort=max_range_nm` are
-published in `docs/API.md` §3.6, and `sightings` carries no index on either
-column (`docs/DATA_MODEL.md` §2.3 declares `aircraft_id+started_ms`,
-`started_ms`, and the partial open-sighting index). Those sorts therefore read
+published in `docs/API.md` §3.6, and at the time of this qualification
+`sightings` carried no index on either column. Those sorts therefore read
 every matching row and sort them in a temporary B-tree, so their cost grows
 linearly with history while every indexed read stays flat:
 
@@ -837,16 +948,38 @@ linearly with history while every indexed read stays flat:
 
 The indexed read does not care how much history exists; the unindexed ones are
 about 3,500 times slower than it at three years, and would be near a hundred
-seconds on Scenario B's 20M sightings. `tests/perf/storage/test_indexes.py`
-pins both plans, so the day an index is added, that test fails and points here.
+seconds on Scenario B's 20M sightings.
 
-The fix is not obviously "add two indexes": each is written on every sighting
-close, for a sort few users choose, trading ingestion cost and disk against a
-rare read. `?interesting=true` has the same shape and would be served by a
-cheap partial index. The honest options are an index, a cap on the range such a
-sort may cover, or keeping it as a documented slow path with the UI saying so.
+**Resolution (slice 058, issue #115).** `max_range_nm` — the worse of the two,
+and the one driving the overrun — is indexed as of rev 0013:
+`ix_sightings_max_range` on `(max_range_nm, id)`, the sort key plus the list
+endpoint's pagination tiebreaker. Measured over a synthetic 1M-row table, the
+first page goes from 91.6 ms to 0.1 ms and a 5,000-row-deep page from 111.2 ms
+to 21.1 ms, at a disk cost of 21 B/row. The descending plan still names a
+temporary B-tree "for last term of order by" — `id` ties break ascending in
+both directions, so a reverse walk re-sorts *within* each group of equal
+ranges, not across the table.
 
-Worth a roadmap entry against the sightings API.
+`closest_approach_nm` was deliberately left unindexed, on measurement rather
+than on symmetry. The write cost is not "one index per sighting close" as this
+finding originally assumed: `_RUNNING_COLUMNS` in
+`flightsite.sightings.repository` rewrites both extremes on the INSERT *and* on
+every 30-second flush of an open sighting, so each index is maintained roughly
+eight times per sighting. Replaying that write shape against a 1M-row table:
+
+| Indexes on the sort columns | Per-sighting write | vs. baseline |
+|---|---|---|
+| none | 0.256 ms | — |
+| `max_range_nm` only | 0.769 ms | 3.0x |
+| both | 1.437 ms | 5.6x |
+
+The second index costs about 2.6x the baseline write cost again, plus another
+21 B/row, to speed a sort with no evidence of use — so it stays a documented
+slow path until there is. `?interesting=true` has the same shape and would be
+served by a cheap partial index, and `duration_s` is unindexed for the same
+reason. `tests/perf/storage/test_indexes.py` pins both sides: that
+`max_range_nm` reads its index, and that `closest_approach_nm` still does not,
+so the day someone indexes it this finding is flagged as stale.
 
 **`VACUUM`'s free-space guard makes it unreachable on a full disk.**
 `maintenance.policy` requires free space of at least twice the database size
@@ -858,6 +991,13 @@ damaged, but the one mechanism that reclaims freelist space is permanently
 refused, and the diagnostics report `insufficient_free_space` without saying
 that it will never clear on its own. Worth surfacing in the health area, and
 worth a note in the install sizing guidance.
+
+**Surfaced by slice 058 (issue #116).** The refusal and its reason now travel on
+`MaintenanceReport.vacuum_refusal` and out through
+`database.maintenance.vacuum_refusal` in diagnostics, carrying
+`required_free_bytes` against `available_free_bytes`; the Health page renders
+the gap. The guard's threshold is unchanged — this makes the condition legible,
+it does not make it go away, and the install sizing note is still outstanding.
 
 **Backup is dominated by gzip, at a compression level that buys nothing.**
 `archive.write_archive` opens the tar with `w:gz`, taking tarfile's default
@@ -881,9 +1021,12 @@ level 6. Setting `compresslevel=6` would cut roughly 200 s from a 5 GB backup
 and change the archive size by nothing measurable; level 1 would cut ~290 s for
 0.9 percentage points of ratio.
 
-Worth a roadmap entry against backup. `docs/BACKUP.md` currently promises
-nothing about duration and says only that a large backup "takes a while", which
-is the right place to state a real figure once the level is chosen.
+**Resolved by slice 058 (issue #117).** `archive.write_archive` now passes
+`compresslevel=6` explicitly, as `archive.COMPRESS_LEVEL`. The level is
+asserted through the container's gzip `XFL` header byte rather than by reading
+the constant back, so a drift to 9 by any route fails a test. The 406.9 s
+figure above predates the change; re-running §7.8 should show roughly 200 s of
+it gone at an unchanged archive size.
 
 ### 7.8 Raspberry Pi storage qualification procedure
 

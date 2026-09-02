@@ -159,11 +159,20 @@ CREATE TABLE sightings (
 CREATE INDEX ix_sightings_aircraft ON sightings(aircraft_id, started_ms);
 CREATE INDEX ix_sightings_started  ON sightings(started_ms);
 CREATE INDEX ix_sightings_open     ON sightings(ended_ms) WHERE ended_ms IS NULL;
+CREATE INDEX ix_sightings_max_range ON sightings(max_range_nm, id);
 ```
 
 The partial index on open sightings makes unclean-shutdown recovery (SPEC §71) and the
 "no new sighting before close" rule cheap. `closure_reason='shutdown_recovery'` marks
 sightings closed by startup recovery, giving diagnostics an honest trail.
+
+`ix_sightings_max_range` serves `docs/API.md` §3.6's `sort=max_range_nm` in both
+directions (`id` is the list endpoint's pagination tiebreaker). It was added in rev 0013
+after slice 050 measured that sort at 8.0 s over 1.64M sightings. The remaining
+documented sorts — `duration_s` and `closest_approach_nm` — and the `interesting` filter
+stay unindexed on purpose: every index here is rewritten by the single writer on each
+30-second flush of an open sighting, and a second sort index measured about 2.6x the
+baseline per-sighting write cost again (issue #115; `docs/PERFORMANCE.md` §7.7).
 
 ### 2.4 Track storage — slice 052 (`sighting_track_checkpoints`, `sighting_tracks`)
 
@@ -255,7 +264,7 @@ CREATE INDEX ix_sevents_sighting ON sighting_events(sighting_id, ts_ms);
 
 ```sql
 CREATE TABLE metadata_sources (
-  source          TEXT PRIMARY KEY,        -- 'mictronics' | 'faa' | 'airports'
+  source          TEXT PRIMARY KEY,        -- 'mictronics' | 'faa' | 'airports' | 'opensky'
   last_attempt_ms INTEGER,
   last_success_ms INTEGER,
   status          TEXT NOT NULL DEFAULT 'never_run'
@@ -318,7 +327,10 @@ CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
 ```
 
-`*_src` values: `mictronics | faa`. Together with the three-tier provenance model
+`*_src` values: `mictronics | faa`, plus `opensky` on installs that enabled the
+opt-in OpenSky source (ADR-0013) — and there only in `model_src`, `year_src`,
+`operator_src` or `owner_src`, since it is ranked below both other sources and never
+claims a registration or type code. Together with the three-tier provenance model
 (§8), this satisfies SPEC §22 without a per-field provenance table.
 
 The `operator_groups` FK is valid from birth: `operators`/`operator_groups` are

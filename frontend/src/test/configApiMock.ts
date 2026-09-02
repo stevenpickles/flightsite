@@ -37,6 +37,7 @@ export function defaultFlightSiteConfig(
       range_ring_radii_nm: [50, 100, 150, 200],
     },
     enrichment: { aerodatabox_enabled: false, aerodatabox_api_key: null },
+    metadata: { opensky_enabled: false },
     notifications: {
       enabled: true,
       info: false,

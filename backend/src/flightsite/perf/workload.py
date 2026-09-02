@@ -327,18 +327,21 @@ class Workload:
         Deliberately *after* warm-up rather than at startup, and the reason is
         a first-run artefact rather than a preference. On an empty database
         every one of 500 aircraft is a first-ever sighting, so the activity
-        service's first pass publishes a burst of ~500 events — and
-        ``LiveBroadcaster.publish_activity`` sends one frame per event with no
-        await between them. That burst overflows every client's 32-frame queue
-        in a single call and the broadcaster evicts the lot as slow consumers,
-        which is the documented behaviour (``docs/API.md`` §4.5) and not a
-        product fault.
+        service's first pass publishes a burst of ~500 events.
 
-        It is, however, not the load this harness is trying to measure. A
-        browser connects to a system that is already running; it does not sit
-        through an install's first-ever backlog. So warm-up drains that backlog
-        with nobody connected — ``publish_activity`` is a no-op with no clients
-        — and the clients arrive afterwards, to steady-state traffic.
+        That burst is not the load this harness is trying to measure: a browser
+        connects to a system that is already running, it does not sit through
+        an install's first-ever backlog. So warm-up drains the backlog with
+        nobody connected — ``publish_activity`` is a no-op with no clients —
+        and the clients arrive afterwards, to steady-state traffic.
+
+        When this harness was written the ordering was load-bearing for a
+        second reason: ``publish_activity`` sent one frame per event, so the
+        burst overflowed every client's 32-frame queue in a single call and the
+        broadcaster evicted the lot as slow consumers (``docs/API.md`` §4.5).
+        Slice 057 made a pass one batched frame and that no longer happens —
+        the ordering now stands on the representativeness argument alone, which
+        was always the better half of it.
         """
         if self._clients:
             return

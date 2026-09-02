@@ -111,6 +111,7 @@ export function database(
           detail: {},
         },
       },
+      vacuum_refusal: null,
     },
     recovery: {
       recovered: 0,

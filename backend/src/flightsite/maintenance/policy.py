@@ -116,11 +116,24 @@ class VacuumDecision:
     db_bytes: int
     reclaimable_bytes: int
     reclaimable_ratio: float
+    free_bytes: int
 
     @property
     def should_run(self) -> bool:
         """True only for :attr:`VacuumVerdict.RUN`."""
         return self.verdict is VacuumVerdict.RUN
+
+    @property
+    def required_free_bytes(self) -> int:
+        """Free space this database would need before a ``VACUUM`` is allowed.
+
+        Carried alongside :attr:`free_bytes` so a refusal can state the gap
+        rather than only its name: on a multi-year database the requirement can
+        exceed anything the card will ever have free, and an operator reading
+        "insufficient_free_space" with no numbers cannot tell that apart from a
+        condition that clears itself overnight (issue #116).
+        """
+        return int(self.db_bytes * VACUUM_MIN_FREE_SPACE_FACTOR)
 
 
 def should_checkpoint(stats: DatabaseStats) -> bool:
@@ -146,6 +159,7 @@ def vacuum_decision(stats: DatabaseStats, *, under_pressure: bool) -> VacuumDeci
             db_bytes=db_bytes,
             reclaimable_bytes=reclaimable,
             reclaimable_ratio=ratio,
+            free_bytes=stats.free_bytes,
         )
 
     if db_bytes < VACUUM_MIN_DB_BYTES:

@@ -101,7 +101,7 @@ export function SettingsPage() {
         <AlertsSection config={config} />
         <NotificationsSection config={config} />
         <EnrichmentSection config={config} hasStoredKey={hasStoredKey} />
-        <MetadataSection timezone={config.timezone} />
+        <MetadataSection timezone={config.timezone} config={config} />
         <RetentionSection config={config} />
       </div>
 

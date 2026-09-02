@@ -24,6 +24,7 @@ from flightsite.metadata.repository import MetadataRepository
 from flightsite.metadata.sources.faa import (
     ACFTREF_MEMBER,
     MASTER_MEMBER,
+    USER_AGENT,
     FaaRegistryProvider,
     build_client,
 )
@@ -233,6 +234,28 @@ async def test_build_client_returns_a_usable_async_client() -> None:
         assert client.follow_redirects is True
     finally:
         await client.aclose()
+
+
+async def test_the_client_identifies_itself_as_the_faa_edge_requires() -> None:
+    """Issue #121: no User-Agent meant a ``403`` before the origin was reached.
+
+    ``registry.faa.gov`` is behind Akamai bot management. Verified against the
+    live endpoint: httpx's default identifier, ``curl``, ``Wget`` and an absent
+    header are all refused at the edge, while a ``Mozilla/5.0`` prefix carrying
+    our own product token is served. The two assertions are the two halves of
+    that: we say who we are, and we do not carry the ``(+https://...)``
+    contact-URL token that the filter reads as a bot marker.
+    """
+    client = build_client()
+    try:
+        sent = client.headers["user-agent"]
+    finally:
+        await client.aclose()
+
+    assert sent == USER_AGENT
+    assert sent.startswith("Mozilla/5.0 ")
+    assert "FlightSite/" in sent
+    assert "(+" not in sent
 
 
 async def test_download_streams_hashes_and_labels_the_snapshot(tmp_path: Path) -> None:
