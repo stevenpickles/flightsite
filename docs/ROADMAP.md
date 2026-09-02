@@ -140,6 +140,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 057 | Activity WebSocket batching | 012, 035, 049 | opus | medium | Batch a detector pass's activity events into one WebSocket frame so a fresh install's backlog stops evicting every client (issue #99) |
 | 058 | Quick wins bundle | 031, 042, 043, 050 | opus | low | Six small tracked fixes on one branch: max-range sort index, FAA User-Agent, VACUUM refusal surfaced, backup gzip 6, pagination noun, demo-mode "today" (issues #107, #112, #115, #116, #117, #121) |
 | 059 | OpenSky metadata source | 021, 022, 023, 042 | opus | medium | Opt-in, default-off OpenSky aircraft database as a fill-gaps-only source under an ambiguous license (ADR-0013) |
+| 061 | Selected aircraft track backfill | 014, 052 | opus | low | Backfill the selected aircraft's track from its open sighting so a click draws the whole current sighting, not just what arrives after it (issue #133) |
 
 ## Parallelization Guide
 
