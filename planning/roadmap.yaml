@@ -1619,6 +1619,45 @@ slices:
     risk_level: medium
     notes: "Owner measured 80 shown against 59 audible on the Pi at v0.2.0. Fixes GitHub issue #134. Added by Fable outside the phase plan."
 
+  - id: "064"
+    title: "Honest position-fix anchor"
+    phase: 8
+    branch: "064-fix-age-anchor"
+    status: merged
+    depends_on: ["054"]
+    objective: "Date each position fix by the age the decoder reports for it instead of by the instant the frame arrived, so dead reckoning hands over from one fix to the next without the periodic backwards step slice 054's fix left behind (issue #144)."
+    scope:
+      - "`useLiveAircraftStore` dates a *new* fix at `receivedAt - seen_pos_s * 1000`, clamped to `[0, INTERPOLATION_MAX_FIX_AGE_MS]`, falling back to `receivedAt` for a null, negative or non-finite reported age"
+      - "the same dating on both application paths, so a snapshot and a delta carrying one fix anchor it identically"
+      - "a repeated fix keeps the anchor it already has, however far its reported age has grown — an ageing `seen_pos_s` on an unchanged position must not walk the anchor backwards"
+      - "`INTERPOLATION_MAX_FIX_AGE_MS` doubles as the clamp: a fix older than the interpolator will project cannot be back-dated further than that bound"
+      - "the `interpolation.ts` and store module docstrings record the dating scheme, why the projection is now continuous across fixes for straight flight (the shared transport latency cancels; only the decode age differs between fixes), and why the correction blend declined in 054 stays declined now that its premise holds"
+    out_of_scope:
+      - "backend changes: `seen_pos_s` is already served (§3.3) and already honest since slice 062"
+      - "a correction blend or any other change to `displayPosition`, its two bounds, or the stall-grace path, all unchanged"
+      - "reading the receiver's clock: the #119 rule stands, and a reported *duration* subtracted from a browser timestamp mixes no clocks"
+      - "the track layer, the detail panel, and every other consumer of the reported position, which read the payload rather than the projection"
+    acceptance_criteria:
+      - "a distant aircraft on a 2-10 s CPR cadence with nonzero `seen_pos_s` draws a continuous path: the projection either side of a new fix's arrival differs by the sampling interval's travel and no more"
+      - "at the moment a frame lands the marker sits where the aircraft was when the backend polled, leaving only the shared transport lag no client-side arithmetic could remove"
+      - "an aircraft reporting `seen_pos_s` null or 0 behaves bit-for-bit as before the slice"
+      - "an outlier reported age is clamped to the fix-age bound rather than throwing the anchor minutes into the past"
+      - "frames repeating a fix with a growing reported age leave the anchor untouched"
+      - "no regression in the slice-054 stall and staleness freezes"
+    required_tests:
+      - store tests for back-dating on the snapshot and delta paths, their agreement on one fix, and the null/zero/negative/NaN/infinite fallbacks
+      - store tests for the outlier clamp and for repeated fixes with growing reported ages on both paths
+      - regression tests driving the store with modelled decode ages and a constant transport lag - no back-step across the sequence, no step at the fix handover, a new fix drawn ahead of its raw coordinates, and the drawn path tracking truth lagged only by transport
+      - the existing #119 scenario re-pinned at `seen_pos_s: 0` so its expectations stay the pre-slice ones exactly
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/features/map/aircraft/interpolation.ts
+      - frontend/src/features/map/aircraft/snapback.regression.test.ts
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.test.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner reported markers still oscillating on the Pi at v0.3.0. Fixes GitHub issue #144, the residual systematic term slice 054's no-correction-blend rationale underestimated. Frontend-only, client-side mirror of slice 062's server-side ageing. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
