@@ -208,7 +208,7 @@ async def test_the_endpoint_is_published_in_the_openapi_document(rest: AsyncClie
 async def test_the_websocket_frame_carries_the_same_object_as_the_feed(
     live_app: LiveApp, rest: AsyncClient
 ) -> None:
-    """§4.4's body *is* §3.9's shape, because one serializer builds both.
+    """§4.4's batch entries *are* §3.9's shape, because one serializer builds both.
 
     Recorded first and broadcast second, so the comparison is between two
     renderings of the same stored row rather than between a live object and a
@@ -229,5 +229,6 @@ async def test_the_websocket_frame_carries_the_same_object_as_the_feed(
         await probe.disconnect()
 
     page = await fetch(rest)
-    assert frame["type"] == "activity"
-    assert frame["data"] == page.items[0].model_dump()
+    assert frame["type"] == "activity_batch"
+    # The batch is an array of §3.9 objects; the elements are what must match.
+    assert frame["data"] == [page.items[0].model_dump()]

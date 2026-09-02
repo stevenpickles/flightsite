@@ -139,17 +139,121 @@ describe("LiveSocket", () => {
     socket.stop();
   });
 
-  it("ignores an activity frame when the consumer does not handle them", () => {
-    // Slice 035 added `activity` to this socket, and `onActivity` is optional
-    // precisely so a consumer that predates it — or simply does not want the
-    // feed — keeps the slice-010 behaviour: the frame falls through to §6's
-    // ignore path, the sequence still advances, and nothing resyncs.
+  it("ignores an activity_batch frame when the consumer does not handle them", () => {
+    // Slice 035 added activity frames to this socket and `onActivityBatch` is
+    // optional precisely so a consumer that predates them — or simply does not
+    // want the feed — keeps the slice-010 behaviour: the frame falls through
+    // to §6's ignore path, the sequence still advances, and nothing resyncs.
     const { socket, deltas } = harness();
     socket.start();
     const ws = getLastWebSocket();
     ws.emitFrame(snapshotFrame(1));
     ws.emitFrame({
-      type: "activity",
+      type: "activity_batch",
+      seq: 2,
+      data: [{ id: 4021, type: "milestone" }],
+    });
+    ws.emitFrame({
+      type: "delta",
+      seq: 3,
+      data: { updated: [], stale: [], removed: [] },
+    });
+
+    expect(ws.closed).toBe(false);
+    expect(deltas).toHaveLength(1);
+    socket.stop();
+  });
+
+  it("hands a whole batch to a consumer that does handle them", () => {
+    const batches: ActivityEvent[][] = [];
+    const socket = new LiveSocket({
+      url: "ws://test/api/v1/ws/live",
+      socketFactory: (url) =>
+        new FakeWebSocket(url) as unknown as LiveSocketLike,
+      random: () => 0,
+      onActivityBatch: (events) => batches.push(events),
+    });
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    ws.emitFrame({
+      type: "activity_batch",
+      seq: 2,
+      data: [
+        {
+          id: 4021,
+          type: "range_record",
+          severity: "interesting",
+          at: "2026-08-31T14:03:22.418Z",
+          icao: "ae1463",
+          sighting_id: 88213,
+          payload: { range_nm: 412.75 },
+        },
+        { id: 4022, type: "milestone" },
+      ],
+    });
+
+    // One call per frame, not one per event: a pass is one update downstream.
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.map((event) => event.id)).toEqual([4021, 4022]);
+    expect(batches[0]?.[0]?.type).toBe("range_record");
+    expect(batches[0]?.[0]?.payload).toEqual({ range_nm: 412.75 });
+    expect(ws.closed).toBe(false);
+    socket.stop();
+  });
+
+  it("does not call the handler for a batch with nothing readable in it", () => {
+    const batches: ActivityEvent[][] = [];
+    const deltas: DeltaData[] = [];
+    const socket = new LiveSocket({
+      url: "ws://test/api/v1/ws/live",
+      socketFactory: (url) =>
+        new FakeWebSocket(url) as unknown as LiveSocketLike,
+      random: () => 0,
+      onActivityBatch: (events) => batches.push(events),
+      onDelta: (data) => deltas.push(data),
+    });
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    // No `id`: nothing the feed could dedupe on or render. The event is
+    // dropped and the batch is empty, so the handler is not called with
+    // nothing — but the frame's `seq` was consumed, so the next delta applies.
+    ws.emitFrame({
+      type: "activity_batch",
+      seq: 2,
+      data: [{ type: "milestone" }],
+    });
+    ws.emitFrame({
+      type: "delta",
+      seq: 3,
+      data: { updated: [], stale: [], removed: [] },
+    });
+
+    expect(batches).toEqual([]);
+    expect(deltas).toHaveLength(1);
+    expect(ws.closed).toBe(false);
+    socket.stop();
+  });
+
+  it("ignores a batch frame whose body is not an array", () => {
+    // The singular §4.4 body shape arriving under the batch type would be a
+    // server that half-upgraded; §6 says ignore it, not resync on it.
+    const batches: ActivityEvent[][] = [];
+    const deltas: DeltaData[] = [];
+    const socket = new LiveSocket({
+      url: "ws://test/api/v1/ws/live",
+      socketFactory: (url) =>
+        new FakeWebSocket(url) as unknown as LiveSocketLike,
+      random: () => 0,
+      onActivityBatch: (events) => batches.push(events),
+      onDelta: (data) => deltas.push(data),
+    });
+    socket.start();
+    const ws = getLastWebSocket();
+    ws.emitFrame(snapshotFrame(1));
+    ws.emitFrame({
+      type: "activity_batch",
       seq: 2,
       data: { id: 4021, type: "milestone" },
     });
@@ -159,19 +263,24 @@ describe("LiveSocket", () => {
       data: { updated: [], stale: [], removed: [] },
     });
 
-    expect(ws.closed).toBe(false);
+    expect(batches).toEqual([]);
     expect(deltas).toHaveLength(1);
+    expect(ws.closed).toBe(false);
     socket.stop();
   });
 
-  it("hands an activity frame to a consumer that does handle them", () => {
-    const events: ActivityEvent[] = [];
+  it("still reads the retired singular activity frame, as a one-event batch", () => {
+    // Slice 057 retired the singular type server-side; this client keeps
+    // reading it for one release so a tab holding the new bundle survives
+    // reconnecting to a backend that has not been upgraded yet. Removable
+    // with the `activity` case in `liveSocket.ts`.
+    const batches: ActivityEvent[][] = [];
     const socket = new LiveSocket({
       url: "ws://test/api/v1/ws/live",
       socketFactory: (url) =>
         new FakeWebSocket(url) as unknown as LiveSocketLike,
       random: () => 0,
-      onActivity: (event) => events.push(event),
+      onActivityBatch: (events) => batches.push(events),
     });
     socket.start();
     const ws = getLastWebSocket();
@@ -179,50 +288,11 @@ describe("LiveSocket", () => {
     ws.emitFrame({
       type: "activity",
       seq: 2,
-      data: {
-        id: 4021,
-        type: "range_record",
-        severity: "interesting",
-        at: "2026-08-31T14:03:22.418Z",
-        icao: "ae1463",
-        sighting_id: 88213,
-        payload: { range_nm: 412.75 },
-      },
+      data: { id: 4021, type: "range_record" },
     });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.id).toBe(4021);
-    expect(events[0]?.type).toBe("range_record");
-    expect(events[0]?.payload).toEqual({ range_nm: 412.75 });
-    expect(ws.closed).toBe(false);
-    socket.stop();
-  });
-
-  it("drops an unreadable activity frame without breaking the stream", () => {
-    const events: ActivityEvent[] = [];
-    const deltas: DeltaData[] = [];
-    const socket = new LiveSocket({
-      url: "ws://test/api/v1/ws/live",
-      socketFactory: (url) =>
-        new FakeWebSocket(url) as unknown as LiveSocketLike,
-      random: () => 0,
-      onActivity: (event) => events.push(event),
-      onDelta: (data) => deltas.push(data),
-    });
-    socket.start();
-    const ws = getLastWebSocket();
-    ws.emitFrame(snapshotFrame(1));
-    // No `id`: nothing the feed could dedupe on or render. The frame is
-    // dropped, but its `seq` was still consumed, so the next delta applies.
-    ws.emitFrame({ type: "activity", seq: 2, data: { type: "milestone" } });
-    ws.emitFrame({
-      type: "delta",
-      seq: 3,
-      data: { updated: [], stale: [], removed: [] },
-    });
-
-    expect(events).toEqual([]);
-    expect(deltas).toHaveLength(1);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.map((event) => event.id)).toEqual([4021]);
     expect(ws.closed).toBe(false);
     socket.stop();
   });

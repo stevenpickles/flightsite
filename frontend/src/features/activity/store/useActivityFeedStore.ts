@@ -41,8 +41,20 @@ export const MAX_LIVE_EVENTS = 100;
 export interface ActivityFeedState {
   /** Newest first, capped at {@link MAX_LIVE_EVENTS}. */
   events: ActivityEvent[];
-  /** Appends one event from an `activity` frame (§4.4). */
-  addEvent: (event: ActivityEvent) => void;
+  /**
+   * Ingests one `activity_batch` frame — a whole detector pass — in a single
+   * update (§4.4).
+   *
+   * A batch, not an event, because that is what the socket now delivers: the
+   * server sends one frame per pass so a first-run backlog cannot evict the
+   * client (slice 057). One `set` per pass rather than per event is the
+   * incidental win — a 500-event first-run pass renders the panel once.
+   *
+   * The frame carries the pass oldest-first (the server sorts by event id, and
+   * `docs/API.md` §3.9 numbers them in the order they were recorded), so it is
+   * prepended reversed to keep this list newest-first.
+   */
+  addEvents: (events: readonly ActivityEvent[]) => void;
   /** Returns the store to its initial state — used when the socket is torn
    * down, so a remount never shows a stream from a dead connection. */
   reset: () => void;
@@ -55,16 +67,33 @@ function initialState(): Pick<ActivityFeedState, "events"> {
 export const useActivityFeedStore = create<ActivityFeedState>((set) => ({
   ...initialState(),
 
-  addEvent: (event) => {
+  addEvents: (incoming) => {
+    if (incoming.length === 0) {
+      return;
+    }
     set((state) => {
-      // The server never re-sends an event, but a reconnect can overlap with
-      // a REST refetch and the panel merges both — so dropping a duplicate id
-      // here as well keeps the store itself a set, and costs one scan of a
-      // hundred-item array per event at a rate of a few an hour.
-      if (state.events.some((existing) => existing.id === event.id)) {
+      // The server never re-sends an event, but a reconnect can overlap with a
+      // REST refetch and the panel merges both — so dropping a duplicate id
+      // here as well keeps the store itself a set. The seen-set is built once
+      // per pass rather than rescanning the array per event, which is what
+      // keeps a 500-event first-run batch linear instead of quadratic.
+      const seen = new Set(state.events.map((existing) => existing.id));
+      const fresh: ActivityEvent[] = [];
+      for (const event of incoming) {
+        if (!seen.has(event.id)) {
+          seen.add(event.id);
+          fresh.push(event);
+        }
+      }
+      if (fresh.length === 0) {
         return state;
       }
-      return { events: [event, ...state.events].slice(0, MAX_LIVE_EVENTS) };
+      // `reverse` is safe: `fresh` is this call's own array, never the
+      // caller's. Newest event of the pass ends up at the head.
+      fresh.reverse();
+      return {
+        events: [...fresh, ...state.events].slice(0, MAX_LIVE_EVENTS),
+      };
     });
   },
 

@@ -1346,6 +1346,43 @@ slices:
     risk_level: medium
     notes: "Unplanned fix slice for GitHub issues #110 and #111 (found by slice 046). Added by Fable outside the phase plan."
 
+  - id: "057"
+    title: "Activity WebSocket batching"
+    phase: 8
+    branch: "057-activity-ws-batching"
+    status: merged
+    depends_on: ["012", "035", "049"]
+    objective: "Stop a fresh install's activity backlog from evicting every WebSocket client, by sending one batched frame per detector pass instead of one frame per event."
+    scope:
+      - "new `activity_batch` frame type carrying an array of §3.9 activity events; one frame per detector pass, mirroring the delta's one-frame-per-tick shape"
+      - "the singular `activity` frame type is retired: the server emits only batches, so there is one server code path and one client path to keep correct"
+      - "events per frame capped so a pathological first-run pass sends a few frames instead of one enormous one, still far under the 32-frame client queue"
+      - "frontend: batch narrowing in the protocol module, a batch handler on the live socket, and single-update batch ingestion in the activity feed store (newest-first, 100-event cap preserved)"
+      - "docs/API.md §4.4 and the ws.py protocol docstring updated to the batched contract"
+    out_of_scope:
+      - client queue sizing, the slow-consumer rule itself, or the close code (§4.5 is unchanged)
+      - activity detection cadence, dedupe, or the §3.9 event shape
+      - "delta/snapshot batching: they already emit one frame per tick"
+      - activity replay on reconnect (still REST, deliberately)
+    acceptance_criteria:
+      - "a detector pass emitting hundreds of events no longer evicts a connected client; the slice-049 harness WS scenario reports zero activity-driven evictions"
+      - "one pass produces one frame (or the few a cap implies), taking its place in the `seq` sequence with no gap"
+      - "a client that only understands the slice-035 protocol ignores the new type per §6 rather than erroring or resyncing"
+      - "the activity feed store ingests a batch in one update, newest-first, capped at MAX_LIVE_EVENTS"
+    required_tests:
+      - broadcaster batch-contract tests (one frame per pass, array body, seq continuity, per-frame cap)
+      - fresh-install-scale burst test asserting no eviction where the pre-slice behaviour evicted
+      - frontend protocol narrowing tests (array accepted, malformed entries dropped)
+      - store batch-ingestion tests (order, dedupe, cap) and live-socket handler tests
+    expected_artifacts:
+      - backend/src/flightsite/api/ws.py
+      - frontend/src/lib/ws/protocol.ts
+      - frontend/src/lib/ws/liveSocket.ts
+      - frontend/src/features/activity/store/useActivityFeedStore.ts
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Unplanned fix slice for GitHub issue #99 (observed by the slice-049 harness and recorded in docs/PERFORMANCE.md §6). Added by Fable outside the phase plan."
   - id: "059"
     title: "OpenSky metadata source"
     phase: 8

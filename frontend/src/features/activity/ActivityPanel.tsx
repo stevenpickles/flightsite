@@ -5,7 +5,7 @@
  *
  * Two sources, one list. The REST first page (`GET /api/v1/activity`) supplies
  * the history that was already there when the tab opened, and the WebSocket's
- * `activity` frames (§4.4) append to it live through
+ * `activity_batch` frames (§4.4) append to it live through
  * `useActivityFeedStore` — merged and deduped by `id`, because a reconnect
  * plus a refetch can legitimately deliver the same row twice.
  *

@@ -17,8 +17,8 @@ Every server-to-client frame is one JSON object (§4.1)::
 client can detect a gap; this server never leaves one, because a client it
 cannot deliver to in order is disconnected instead (see *Slow consumers*).
 ``ts`` is the server's UTC send time in the §2.2 format. ``type`` is one of
-``snapshot``, ``delta``, ``activity``, ``ping`` or ``pong``. Per §6 a client
-must ignore types it does not know.
+``snapshot``, ``delta``, ``activity_batch``, ``ping`` or ``pong``. Per §6 a
+client must ignore types it does not know.
 
 Frames
 ------
@@ -47,17 +47,35 @@ as a flag flip. A client that follows this order ends each batch holding
 exactly what ``GET /api/v1/aircraft/current`` would have returned at the moment
 the frame was built, which is roadmap slice 010's REST/WS agreement criterion.
 
-**activity** — one frame per activity event, emitted as the activity detector
-records it (§4.4, slice 035)::
+**activity_batch** — one frame per activity-detector pass, carrying everything
+that pass recorded (§4.4, slice 035; batched by slice 057)::
 
-    {"id": 42, "type": "first_ever_aircraft", "severity": "info",
-     "at": "...", "icao": "ae1463", "sighting_id": 9021, "payload": {...}}
+    [{"id": 42, "type": "first_ever_aircraft", "severity": "info",
+      "at": "...", "icao": "ae1463", "sighting_id": 9021, "payload": {...}}]
 
-The body is exactly the §3.9 object ``GET /api/v1/activity`` returns, built by
-the same serializer, so a client appends a live event to the page it fetched
-without a second shape to handle. One event per frame rather than a batch:
-they arrive a few a minute at most, and a client that has to unwrap a list to
-render one row is paying for a rate that does not exist.
+The body is a JSON **array** of the §3.9 objects ``GET /api/v1/activity``
+returns, built by the same serializer, so a client appends live events to the
+page it fetched without a second shape to handle. A pass that recorded nothing
+sends no frame, exactly like an empty delta.
+
+*One frame per pass, not one per event*, for the same reason a delta batches a
+tick: the frame count then depends on the detector's cadence rather than on how
+much it found. Slice 035 sent a frame per event on the reasoning that they
+arrive a few a minute — true of a settled receiver, false of a new one, where
+every aircraft is a first-ever sighting and a single five-second pass emitted
+hundreds of frames into a client's 32-frame queue and evicted **every**
+connected client under the slow-consumer rule below. The slice-049 harness
+measured that (``docs/PERFORMANCE.md`` §6) and slice 057 is the fix.
+
+The singular ``activity`` type slice 035 defined is **retired**: the server
+emits only ``activity_batch``, so there is one shape on the wire and one code
+path on each side rather than two that must agree. A client written against
+slice 035 sees an unknown type and ignores it per §6 — it stops receiving live
+events until it is updated, and its REST feed (§3.9) is unaffected, which is
+the behaviour §6 exists to make safe.
+
+At most :data:`MAX_ACTIVITY_EVENTS_PER_FRAME` events go in one frame, so a
+pathological pass sends a few bounded frames rather than one enormous one.
 
 These frames are **not** part of the snapshot/delta picture and carry no
 replay: a client that reconnects fetches the feed's first page over REST
@@ -162,6 +180,17 @@ MISSED_PING_LIMIT: Final = 2
 #: being defended against is a socket that has stopped draining at all.
 DEFAULT_CLIENT_QUEUE_SIZE: Final = 32
 
+#: Activity events carried by a single ``activity_batch`` frame (§4.4).
+#:
+#: A settled receiver's detector pass produces a handful and always fits in one
+#: frame; this bound exists for the pathological pass. On a fresh install every
+#: one of 500 aircraft is a first-ever sighting, and one frame holding all of
+#: them would sit in *every* client's queue at once and be rendered by every
+#: browser in one update. Splitting at 128 keeps the worst realistic pass to
+#: four frames — an eighth of :data:`DEFAULT_CLIENT_QUEUE_SIZE`, so it cannot
+#: evict anybody — while keeping a frame's body to tens of kilobytes.
+MAX_ACTIVITY_EVENTS_PER_FRAME: Final = 128
+
 #: Close code for a server-initiated drop. 1013 ("try again later") says
 #: exactly what the client should do: reconnect with backoff and take the
 #: fresh snapshot (§4.5).
@@ -179,8 +208,11 @@ class MessageType(StrEnum):
 
     SNAPSHOT = "snapshot"
     DELTA = "delta"
-    #: §4.4, added by slice 035. Carries one §3.9 activity event.
-    ACTIVITY = "activity"
+    #: §4.4, added by slice 035 and batched by slice 057. Carries the array of
+    #: §3.9 activity events one detector pass recorded. The singular
+    #: ``activity`` type it replaces is retired, not deprecated: the server
+    #: never sends it, so it is not in this vocabulary.
+    ACTIVITY_BATCH = "activity_batch"
     PING = "ping"
     PONG = "pong"
 
@@ -527,7 +559,7 @@ class LiveBroadcaster:
         self._maybe_ping()
 
     def publish_activity(self, events: Sequence[Mapping[str, Any]]) -> None:
-        """Broadcast one ``activity`` frame per event (§4.4, slice 035).
+        """Broadcast one pass's events as ``activity_batch`` frames (§4.4).
 
         The seam :class:`~flightsite.activity.service.ActivityService` calls
         after each of its passes commits, with the events that pass actually
@@ -535,20 +567,39 @@ class LiveBroadcaster:
         the socket inherits the table's exactly-once guarantee rather than
         needing one of its own.
 
+        **One frame per pass, not one per event** (slice 057), mirroring the
+        way :meth:`_emit_delta` collapses a tick. Slice 035 sent a frame per
+        event, which made the burst size a function of how much the detector
+        found: on a fresh install every aircraft is a first-ever sighting, so a
+        single five-second pass enqueued hundreds of frames into a
+        :data:`DEFAULT_CLIENT_QUEUE_SIZE`-frame queue and the slow-consumer
+        rule below evicted *every* connected client — measured by the slice-049
+        harness (``docs/PERFORMANCE.md`` §6). Batching makes the frame count a
+        function of the detector's cadence instead, which is bounded.
+
+        At most :data:`MAX_ACTIVITY_EVENTS_PER_FRAME` events go in one frame,
+        so even the pathological pass sends a few bounded frames rather than
+        one enormous one. The events keep the order the service supplied
+        (ascending event id, oldest first), and the split preserves it.
+
         Synchronous, non-awaiting and outside the broadcast tick, exactly like
         every other delivery here: it renders each frame once and enqueues it,
         and a client whose queue is full is dropped by the same slow-consumer
-        rule that governs deltas (§4.5). Detection therefore cannot be slowed
-        by a saturated socket, which is the same rule ingestion lives under.
+        rule that governs deltas (§4.5) — a rule this method now has far less
+        occasion to trip, but is still subject to. Detection therefore cannot
+        be slowed by a saturated socket, which is the rule ingestion lives
+        under too.
 
         With no clients connected this does nothing at all: the events are
         already durable in ``activity_events`` and a client that connects later
-        reads them over REST.
+        reads them over REST. A pass that created nothing sends no frame, the
+        same silence an empty delta keeps.
         """
-        if not self._clients:
+        if not self._clients or not events:
             return
-        for event in events:
-            self._deliver_all(Frame.build(MessageType.ACTIVITY, event))
+        for start in range(0, len(events), MAX_ACTIVITY_EVENTS_PER_FRAME):
+            batch = list(events[start : start + MAX_ACTIVITY_EVENTS_PER_FRAME])
+            self._deliver_all(Frame.build(MessageType.ACTIVITY_BATCH, batch))
 
     async def _loop(self) -> None:
         while True:
