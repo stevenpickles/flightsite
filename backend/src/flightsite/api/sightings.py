@@ -44,19 +44,33 @@ already keeps durable while the sighting is open — decoded by
 :class:`~flightsite.sightings.tracks.TrackSample` shape, so the serializer
 never has to know which source a given sighting's path came from.
 
-Existing indexes only
-----------------------
+Which sorts an index covers
+----------------------------
 
-No migration ships with this slice. ``ix_sightings_started`` covers the
-documented default sort key directly; ``ix_sightings_aircraft`` (a composite
-on ``(aircraft_id, started_ms)``) covers the ``icao`` filter — including the
-per-aircraft sightings endpoint, which is that filter used alone — combined
-with `started_at` ordering. ``duration_s``, ``closest_approach_nm`` and
-``max_range_nm`` sorts, and the ``interesting``/``open`` filters, carry no
-index and fall back to SQLite scanning the filtered result; the partial index
-``ix_sightings_open`` (``ended_ms IS NULL``) keeps the ``open`` filter itself
-cheap regardless. :mod:`tests.api.test_sightings_perf` is the sanity check
-against a large fixture — sighting volume being the scale ``/sightings``
+``ix_sightings_started`` covers the documented default sort key directly;
+``ix_sightings_aircraft`` (a composite on ``(aircraft_id, started_ms)``)
+covers the ``icao`` filter — including the per-aircraft sightings endpoint,
+which is that filter used alone — combined with `started_at` ordering. The
+partial index ``ix_sightings_open`` (``ended_ms IS NULL``) keeps the ``open``
+filter cheap regardless of history.
+
+``max_range_nm`` joined them in rev 0013 as ``ix_sightings_max_range``
+(``(max_range_nm, id)``, the sort key plus this module's pagination
+tiebreaker): slice 050 measured that sort at 8.0 s over 1.64M sightings, an
+unbounded cost on a table retained indefinitely. Both directions read it —
+forward for ``asc``, backward for ``desc``. The descending plan still names a
+temporary B-tree "for last term of order by", because ``Sighting.id`` breaks
+ties ascending in *both* directions and a reverse walk hands ``id`` back
+descending; that sorts only within groups of equal ranges, not the table.
+
+``duration_s`` and ``closest_approach_nm`` sorts, and the ``interesting``
+filter, still carry no index and fall back to SQLite scanning the filtered
+result. That is a write-cost decision rather than an oversight: every index on
+``sightings`` is maintained on the INSERT *and* on each 30-second flush that
+rewrites an open sighting's running columns, and a second sort index measured
+~2.6x the baseline per-sighting write cost again (rev 0013's docstring carries
+the numbers; issue #115). :mod:`tests.api.test_sightings_perf` is the sanity
+check against a large fixture — sighting volume being the scale ``/sightings``
 actually has to answer at.
 """
 
