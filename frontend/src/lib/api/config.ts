@@ -63,6 +63,14 @@ export interface EnrichmentConfig {
   aerodatabox_api_key: string | null;
 }
 
+/** Mirrors `MetadataSettings`. The two default aircraft-metadata sources need
+ * no configuration; this gates the opt-in OpenSky one, off by default because
+ * its licensing is ambiguous (ADR-0013). Read at backend startup, so a change
+ * applies on the next restart. */
+export interface MetadataConfig {
+  opensky_enabled: boolean;
+}
+
 /** Mirrors `NotificationSettings`. */
 export interface NotificationConfig {
   enabled: boolean;
@@ -95,6 +103,7 @@ export interface FlightSiteConfig {
   retention: RetentionConfig;
   map: MapDocConfig;
   enrichment: EnrichmentConfig;
+  metadata: MetadataConfig;
   notifications: NotificationConfig;
   alerts: AlertConfig;
 }

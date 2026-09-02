@@ -6,11 +6,26 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { useState } from "react";
+
 import { Button } from "@/components/ui/button";
 import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
+import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
+import {
+  buildMetadataPatch,
+  draftFromConfig,
+  isSectionDirty,
+  pickMetadata,
+} from "@/features/settings/lib/draft";
+import {
+  fieldErrorsFrom,
+  generalErrorMessage,
+} from "@/features/settings/lib/errors";
 import { overallMetadataAge } from "@/features/settings/lib/metadataAge";
+import { usePutConfigMutation } from "@/lib/api/config";
+import type { FlightSiteConfig } from "@/lib/api/config";
 import {
   useMetadataStatusQuery,
   useTriggerMetadataUpdateMutation,
@@ -22,11 +37,14 @@ export interface MetadataSectionProps {
   /** IANA timezone "last updated" times render in — `config.timezone`
    * (docs/API.md §3.2), the same one the aircraft detail panel uses. */
   timezone: string;
+  /** The full config, for the opt-in OpenSky source's toggle. */
+  config: FlightSiteConfig;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
   mictronics: "Mictronics",
   faa: "FAA",
+  opensky: "OpenSky",
 };
 
 function sourceLabel(name: string): string {
@@ -170,6 +188,74 @@ function MetadataAgeLine({
 }
 
 /**
+ * The opt-in OpenSky source (roadmap slice 059, ADR-0013).
+ *
+ * The licence note beside the checkbox is the point of this control, not
+ * decoration: OpenSky's own two statements about this dataset disagree, and
+ * the decision of whether that fits a given deployment is the operator's to
+ * make. So the constraint is stated where the choice is made — factually,
+ * without advising them what it means for them.
+ */
+function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
+  const [baseline, setBaseline] = useState(() =>
+    pickMetadata(draftFromConfig(config)),
+  );
+  const [draft, setDraft] = useState(baseline);
+  const mutation = usePutConfigMutation();
+
+  const isDirty = isSectionDirty(draft, baseline);
+  const fieldErrors = fieldErrorsFrom(mutation.error);
+
+  function handleSave() {
+    mutation.mutate(buildMetadataPatch(draft), {
+      onSuccess: (response) => {
+        const next = pickMetadata(draftFromConfig(response.config));
+        setBaseline(next);
+        setDraft(next);
+      },
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          data-testid="metadata-opensky-toggle"
+          checked={draft.openskyEnabled}
+          onChange={(event) => {
+            setDraft({ ...draft, openskyEnabled: event.target.checked });
+          }}
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm">Use the OpenSky aircraft database</span>
+          <span className="text-xs text-muted-foreground">
+            OpenSky&rsquo;s aircraft database is provided as-is; their general
+            terms restrict OpenSky data to non-commercial use — enable only if
+            that fits your use.
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Fills gaps only: it adds an operator, owner, model or build year
+            where Mictronics and the FAA registry have none, and never replaces
+            what they provide. Takes effect after a restart.
+          </span>
+        </span>
+      </label>
+
+      <SectionSaveBar
+        isDirty={isDirty}
+        isPending={mutation.isPending}
+        justSaved={mutation.isSuccess && !isDirty}
+        errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
+        hasBlockingError={false}
+        onSave={handleSave}
+      />
+    </div>
+  );
+}
+
+/**
  * Aircraft metadata sources (roadmap slice 025): a status card per
  * registered source (Mictronics, FAA), an overall "last updated" line (the
  * age surface slice 042's health page reads), and the "Update Aircraft
@@ -177,8 +263,13 @@ function MetadataAgeLine({
  * source has settled — see `@/lib/api/metadata` — and each source's card
  * renders its own outcome independently, so one source failing never hides
  * or delays another's success (SPEC §27).
+ *
+ * Slice 059 adds the opt-in OpenSky source's toggle. Its card only appears
+ * once the source is actually registered, which happens at backend startup,
+ * so a freshly-enabled source shows up after a restart rather than
+ * immediately — the toggle's own copy says so.
  */
-export function MetadataSection({ timezone }: MetadataSectionProps) {
+export function MetadataSection({ timezone, config }: MetadataSectionProps) {
   const statusQuery = useMetadataStatusQuery();
   const triggerMutation = useTriggerMetadataUpdateMutation();
 
@@ -245,6 +336,8 @@ export function MetadataSection({ timezone }: MetadataSectionProps) {
             ))}
           </div>
         )}
+
+        <OpenSkyToggle config={config} />
       </div>
     </SettingsSection>
   );

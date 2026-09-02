@@ -97,7 +97,8 @@ class FieldPriority:
         return self.ranks.get(name, self.default)
 
 
-#: Priorities for the two sources v1 ships (slices 022 and 023).
+#: Priorities for the two sources v1 ships by default (slices 022 and 023) and
+#: the one opt-in source (slice 059).
 #:
 #: Mictronics leads on identity and type: it is the primary offline source
 #: (SPEC §25), worldwide, and carries ICAO type designators and operator names
@@ -106,6 +107,16 @@ class FieldPriority:
 #: mostly leaves them empty (SPEC §26). Where both know a registration the
 #: values agree; ranking Mictronics first there simply keeps one source
 #: authoritative for the identity triple rather than splitting it.
+#:
+#: ``opensky`` (ADR-0013) is **fill-gaps-only**: rank 2 on the four fields it
+#: contributes puts it strictly below every rank either other source declares,
+#: so rule 1 above ("silence never wins") plus rule 2 ("lowest rank wins") means
+#: an OpenSky value can land only where *both* others were ``None``. It can
+#: never overwrite. It declares no rank for ``registration`` or ``type_code``
+#: and so falls to :data:`UNRANKED` there — belt to the braces of
+#: :mod:`flightsite.metadata.sources.opensky` never emitting either field, since
+#: a crowdsourced type designator disagreeing with Mictronics' ICAO Doc 8643
+#: value would silently fragment the type statistics FlightSite groups by.
 DEFAULT_FIELD_PRIORITIES: Final[Mapping[str, FieldPriority]] = {
     "mictronics": FieldPriority(
         ranks={
@@ -125,6 +136,14 @@ DEFAULT_FIELD_PRIORITIES: Final[Mapping[str, FieldPriority]] = {
             "operator_name": 1,
             "manufacture_year": 0,
             "owner": 0,
+        }
+    ),
+    "opensky": FieldPriority(
+        ranks={
+            "model": 2,
+            "manufacture_year": 2,
+            "operator_name": 2,
+            "owner": 2,
         }
     ),
 }

@@ -96,6 +96,16 @@ map:
 enrichment:
   aerodatabox_enabled: false
 
+# Aircraft metadata sources. Mictronics and the FAA registry are always active
+# and need nothing here. OpenSky is opt-in because its licensing is unclear:
+# OpenSky's general terms restrict their data to non-commercial use, while the
+# aircraft database's own page says it is unlicensed and offered as-is. Off
+# means off — no provider is constructed and nothing is ever requested. When on,
+# it only fills gaps the other sources left empty and never overwrites them.
+# See docs/adr/0013-opensky-metadata-source.md.
+metadata:
+  opensky_enabled: false
+
 # Browser notifications, enabled per alert severity.
 notifications:
   enabled: true
