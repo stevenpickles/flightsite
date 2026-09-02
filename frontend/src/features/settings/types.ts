@@ -8,17 +8,23 @@ import type { NotificationConfig, UnitSystem } from "@/lib/api/config";
  * wizard does not manage (display, alert radius, map, retention) as well.
  */
 export interface SettingsDraft {
-  // Receiver location (SPEC §13). Restart-required: ingestion reads the
-  // receiver endpoint once at process startup (see `flightsite.app`), and
-  // downstream bearing/distance/range-ring computation is anchored on
-  // whatever location was effective at that time.
+  // Receiver location (SPEC §13). Restart-required to *change*: bearing,
+  // distance and range rings are computed against the reference point the
+  // running live store holds, so moving it would leave every aircraft
+  // already observed carrying a distance measured from somewhere else until
+  // it is next seen. Note this is about changing an established value — the
+  // setup wizard's first save fills the blank in place and needs no restart
+  // (`flightsite.api.internal._apply_receiver_location`).
   siteName: string;
   latitude: string;
   longitude: string;
   antennaHeightFt: string;
 
-  // Decoder endpoint (SPEC §11). Restart-required for the same reason as
-  // the receiver location above.
+  // Decoder endpoint (SPEC §11). Restart-required to *change* for the
+  // parallel reason: a running adapter owns its connection, its poll loop
+  // and its health history, all of which belong to the endpoint it started
+  // on. The first-run save, where there is no adapter yet, starts one in
+  // place (`flightsite.api.ingestion`).
   receiverHost: string;
   receiverPort: string;
   receiverPath: string;

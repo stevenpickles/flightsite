@@ -29,6 +29,7 @@ from flightsite.airports import (
 from flightsite.alerts import AlertListener, AlertService
 from flightsite.analytics import AnalyticsService
 from flightsite.api.context import LiveApiContext
+from flightsite.api.ingestion import decoder_endpoint, start_decoder_ingestion
 from flightsite.api.internal import router as internal_router
 from flightsite.api.serializers import activity_event_payload
 from flightsite.api.v1 import router as v1_router
@@ -40,7 +41,7 @@ from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository
 from flightsite.enrichment.service import build_provider
-from flightsite.ingest import DecoderEndpoint, IngestionService, Position, build_ingestion_service
+from flightsite.ingest import IngestionService, Position
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
 from flightsite.logging import DEFAULT_LOG_DIR, configure_logging, install_error_capture
@@ -55,17 +56,6 @@ from flightsite.sightings import PersistenceWorker
 from flightsite.watchlists import WatchlistService
 
 logger = structlog.get_logger(__name__)
-
-
-def _decoder_endpoint(settings: Settings) -> DecoderEndpoint:
-    """Translate the receiver section of settings into an ingestion endpoint."""
-    receiver = settings.receiver
-    return DecoderEndpoint(
-        host=receiver.host,
-        port=receiver.port,
-        path=receiver.path,
-        poll_interval_s=receiver.poll_interval_s,
-    )
 
 
 def _build_live_store(settings: Settings) -> LiveStore:
@@ -165,9 +155,13 @@ def _decoder_health(app: FastAPI) -> HealthProbe:
 
     A callable rather than a service reference because ``app.state.ingestion``
     is assigned *during* the lifespan hook, after the activity service has been
-    constructed and started; and it can be ``None`` for the whole life of the
-    process on a first-run install, which is exactly the case the feed must
-    stay silent about rather than report as an outage.
+    constructed and started; and on a first-run install it is ``None`` until a
+    configuration is saved — which is exactly the case the feed must stay
+    silent about rather than report as an outage.
+
+    Reading late is also what makes the hot start of issue #122 invisible
+    here: when a config save assigns ``app.state.ingestion`` mid-life, the
+    very next probe reports the new service's health with no re-registration.
     """
 
     def probe() -> AdapterHealth | None:
@@ -261,7 +255,7 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     """
     store: ConfigStore = app.state.config_store
     poller = (
-        None if store.first_run or demo_enabled() else StatsJsonPoller(_decoder_endpoint(settings))
+        None if store.first_run or demo_enabled() else StatsJsonPoller(decoder_endpoint(settings))
     )
     return ReceiverMetricsService(
         database=app.state.database,
@@ -272,24 +266,29 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     )
 
 
-async def _start_ingestion(app: FastAPI) -> IngestionService | None:
+async def _start_ingestion(app: FastAPI) -> None:
     """Start decoder ingestion, unless this install has never been configured.
 
     On a first run there is no ``config.yaml``, so there is no receiver the
     user has actually chosen — only model defaults. Polling those would
     produce a stream of connection failures and a ``down`` decoder before the
-    setup wizard has even been opened, so ingestion is skipped and starts on
-    the next boot after a configuration is saved.
+    setup wizard has even been opened, so ingestion is skipped here.
 
-    Demo mode (``FLIGHTSITE_DEMO=1``, slice 011) is the one exception: it
-    starts :class:`~flightsite.demo.DemoAdapter` regardless of first-run
-    state, because demo mode's whole purpose is a full stack with zero
-    configuration (SPEC §76). A receiver location is injected into the live
-    store when none is configured, so distance and bearing still compute.
+    Skipped, not skipped-until-reboot: the save that ends the first-run state
+    starts ingestion itself, through the same
+    :func:`~flightsite.api.ingestion.start_decoder_ingestion` this function
+    calls (issue #122). Before that, ``app.state.ingestion`` stayed ``None``
+    for the life of the process and a user who had just completed the setup
+    wizard saw an empty map until the backend was restarted.
 
-    The live store is the sole consumer: every normalized batch goes straight
-    into the in-memory registry, and nothing on this path touches the database
-    (``docs/ARCHITECTURE.md`` §3.1).
+    Demo mode (``FLIGHTSITE_DEMO=1``, slice 011) is the one exception to the
+    first-run skip: it starts :class:`~flightsite.demo.DemoAdapter` regardless
+    of first-run state, because demo mode's whole purpose is a full stack with
+    zero configuration (SPEC §76). A receiver location is injected into the
+    live store when none is configured, so distance and bearing still compute.
+
+    ``app.state.ingestion`` is assigned on every path, including the skip, so
+    the shutdown half of the lifespan hook can read it unconditionally.
 
     Decoder health deliberately never affects ``/ready``; the reasoning is in
     :mod:`flightsite.ingest.service`.
@@ -305,20 +304,16 @@ async def _start_ingestion(app: FastAPI) -> IngestionService | None:
             consumers=(live.apply,),
         )
         await service.start()
-        return service
+        app.state.ingestion = service
+        return
 
     store: ConfigStore = app.state.config_store
     if store.first_run:
         logger.info("ingestion_skipped", reason="first_run")
-        return None
+        app.state.ingestion = None
+        return
 
-    service = build_ingestion_service(
-        _decoder_endpoint(app.state.settings),
-        readiness=app.state.readiness,
-        consumers=(live.apply,),
-    )
-    await service.start()
-    return service
+    await start_decoder_ingestion(app)
 
 
 @asynccontextmanager
@@ -429,7 +424,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # startup then gets a snapshot and a continuous delta stream, never a
     # snapshot followed by a gap.
     await broadcaster.start()
-    app.state.ingestion = await _start_ingestion(app)
+    # Assigns app.state.ingestion itself, on every path — including the
+    # first-run skip, which assigns None. A save that later ends the first-run
+    # state assigns it through the same helper (issue #122).
+    await _start_ingestion(app)
     readiness.mark_startup_complete()
     logger.info("app_startup_complete")
     try:

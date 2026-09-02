@@ -6,8 +6,11 @@ export interface SettingsSectionProps {
   title: string;
   description: string;
   /** Shown when a change in this section only takes effect after the
-   * backend restarts (SPEC: ingestion reads the receiver endpoint and
-   * location once at process startup — see `flightsite.app`). */
+   * backend restarts — the decoder endpoint and receiver location, which a
+   * running ingestion loop and live store hold for their lifetime (see
+   * `flightsite.api.ingestion`). This is about *changing* a value: a fresh
+   * install's first save starts ingestion in place, which is why the setup
+   * wizard makes no such promise. */
   restartRequired?: boolean;
   children: ReactNode;
 }

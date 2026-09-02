@@ -35,8 +35,11 @@ export interface DecoderSectionProps {
 }
 
 /** Decoder host/port/path/poll interval (SPEC §11), plus the same live
- * connection test the setup wizard offers. Restart required: the ingestion
- * loop reads the receiver endpoint once at process startup. */
+ * connection test the setup wizard offers. Restart required: an ingestion
+ * loop is already running by the time this section can be edited, and it
+ * holds the endpoint it started on. (The wizard's first save is the one case
+ * with no loop to disturb, and it starts one in place — so the wizard shows
+ * no such badge.) */
 export function DecoderSection({ config }: DecoderSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickDecoder(draftFromConfig(config)),
