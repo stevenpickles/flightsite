@@ -91,7 +91,11 @@ describe("mergeTrackPoints", () => {
   });
 
   it("keeps the live point on a timestamp collision", () => {
-    // The client watched that fix arrive; the checkpoint is a summary of it.
+    // The clamp is what settles this, not the merge's tie-break: a history
+    // point sharing `newer[0]`'s timestamp is at the boundary of the region
+    // the live list owns, so it is dropped before the two lists ever meet.
+    // The outcome is the intended one either way — the client watched that fix
+    // arrive, where the checkpoint only summarises it.
     const merged = mergeTrackPoints(
       [point(47.2, -122, 9)],
       [point(47.25, -122, 9)],

@@ -292,8 +292,9 @@ describe("useTrackBackfill", () => {
 
   it("does not retry a 404 from the sighting detail read", async () => {
     // The sighting closed and was reaped between the two reads: a real answer,
-    // and the same non-retryable one `useSightingDetailQuery` treats it as —
-    // which matters here because both share a cache key for this endpoint.
+    // and the same non-retryable one `useSightingDetailQuery` treats it as.
+    // The two hooks keep separate caches, but it is one endpoint, and two
+    // policies for retrying it would be two answers to the same question.
     const fetchMock = installApi({
       list: listOf([openRow()]),
       detail: () =>

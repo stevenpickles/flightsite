@@ -108,12 +108,18 @@ function ascendingByAt(points: readonly TrackPoint[]): readonly TrackPoint[] {
  *
  * 1. **Sort both inputs defensively** (stable, by `at`).
  * 2. **Clamp `older`** to before `newer[0].at`, when `newer` has any points.
- * 3. **Merge** the two sorted lists, de-duplicating on `at` — a live point
- *    wins a tie, since the client watched that fix arrive where the checkpoint
- *    is only a summary of it.
+ * 3. **Merge** the two sorted lists, de-duplicating on `at`.
  * 4. **Cap** at {@link TRACK_MAX_POINTS}, keeping the newest — the same rule
  *    {@link appendTrackPoint} applies, so a long sighting's history yields to
  *    the part of the flight on screen now.
+ *
+ * The two halves of that de-duplication belong to different steps. *Across*
+ * the lists it is the clamp's job and already done by the time the merge runs:
+ * every surviving `older` point precedes `newer[0]`, so no cross-list
+ * collision reaches step 3 and its tie-break branch is unreachable — kept as a
+ * defensive expression of "the live point wins", not as live logic. What step
+ * 3 does de-duplicate is *within* a list: two points sharing an `at`, which
+ * neither input is trusted to be free of.
  *
  * Steps 1 and 2 each exist for a specific failure:
  *
@@ -155,8 +161,10 @@ export function mergeTrackPoints(
   let keptFromOlder = 0;
   let keptFromNewer = 0;
 
-  // The live list owns everything from its first point onwards. With no live
-  // points there is nothing to defer to, and the whole history is drawable.
+  // `newer` owns everything from its first point onwards, whatever it is: the
+  // live-accumulated list on a first backfill, the already-drawn track on the
+  // idempotent same-sighting path. With no points there to defer to, the whole
+  // history is drawable.
   const liveFrom = live[0]?.at ?? Number.POSITIVE_INFINITY;
 
   const push = (point: TrackPoint, fromNewer: boolean): void => {
@@ -175,12 +183,16 @@ export function mergeTrackPoints(
   while (oldIndex < history.length || newIndex < live.length) {
     const left = history[oldIndex];
     if (left !== undefined && left.at >= liveFrom) {
-      // Inside the region the live list owns — including, under a large enough
-      // skew, the entire history.
+      // Inside the region `newer` owns — including, under a large enough skew,
+      // the entire history.
       oldIndex += 1;
       continue;
     }
     const right = live[newIndex];
+    // The `<=` half of this test is unreachable: the clamp above has already
+    // dropped every `left` that could tie with a `right`. It stays as the
+    // defensive statement of which point would win — the live one, watched
+    // arriving, over a checkpoint that only summarises it.
     if (right !== undefined && (left === undefined || right.at <= left.at)) {
       push(right, true);
       newIndex += 1;
