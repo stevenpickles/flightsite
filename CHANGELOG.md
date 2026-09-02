@@ -5,6 +5,24 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.3.1] — 2026-09-02
+
+A same-day patch for two owner-reported live-map irritations.
+
+### Fixed
+- **Aircraft labels no longer blink**: the density-driven label tier latches
+  through a hysteresis band (callsign-only above 60 visible aircraft,
+  full stack again below 50) instead of flapping on a single threshold, and
+  a colliding label now tries the other sides of its aircraft
+  (`text-variable-anchor`, per-anchor justification) before MapLibre hides
+  it; the selected aircraft's label remains always visible (#143)
+- **Aircraft markers no longer oscillate forward and back**: position fixes
+  are dated by the decoder's own `seen_pos` age instead of their arrival
+  time, so dead reckoning projects from the moment the fix was actually
+  measured and consecutive projections hand over continuously — the
+  per-decode backwards step (fix age × ground speed, ~0.1–0.3 nm at jet
+  speeds) is gone (#144)
+
 ## [0.3.0] — 2026-09-02
 
 A fresh-install polish and live-picture correctness release, driven by the
