@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+import { resetDensityLatch } from "@/features/map/labels/densityLatch";
 import * as echartsCoreMock from "@/test/echartsMock";
 import { resetEchartsMock } from "@/test/echartsMock";
 import { AttributionControlMock, MapLibreMockMap } from "@/test/maplibreGlMock";
@@ -123,4 +124,8 @@ afterEach(() => {
   cleanup();
   resetWebSocketMock();
   resetEchartsMock();
+  // The label-density latch (issue #143) is module-level and deliberately
+  // remembers the previous frame, so one test's crowded picture would
+  // otherwise decide the next test's label tier.
+  resetDensityLatch();
 });

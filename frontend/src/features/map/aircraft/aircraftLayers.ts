@@ -21,9 +21,11 @@
  *    position source is distinguishable without relying on colour (SPEC §36);
  * 5. the aircraft symbols themselves, rotated to `track_deg`;
  * 6. non-selected aircraft labels — `text-allow-overlap: false`, so
- *    MapLibre's own collision system hides whichever labels lose the
- *    `symbol-sort-key` contest (roadmap slice 015: "MapLibre's own collision
- *    system plus zoom/density-driven tiering");
+ *    MapLibre's own collision system arbitrates, in `symbol-sort-key` order
+ *    (roadmap slice 015: "MapLibre's own collision system plus
+ *    zoom/density-driven tiering"). A label that loses the contest first
+ *    tries the other placements in `text-variable-anchor` (issue #143) and
+ *    is only hidden when none of them fits;
  * 7. the selected aircraft's label — its own layer because
  *    `text-allow-overlap`/`text-ignore-placement` are layer-level, not
  *    data-driven, and the selected label must never be the one collision
@@ -78,6 +80,52 @@ const SELECTION_COLOR = "#8ab4ff";
 const LABEL_TEXT_COLOR = "#f2f6ff";
 const LABEL_HALO_COLOR = "#0b1220";
 const LABEL_HALO_WIDTH = 1.2;
+
+/**
+ * Placements MapLibre tries, in order, for a non-selected label before it
+ * gives up and hides it (issue #143).
+ *
+ * `text-variable-anchor` is the whole fix for the second half of that issue:
+ * with a single fixed anchor, a label that loses the collision contest is
+ * simply not drawn, so two aircraft converging make one label blink out and
+ * back as the gap opens and closes. With a candidate list, MapLibre walks it
+ * and draws the first placement that fits — the label steps around its
+ * aircraft instead of vanishing. Hiding still happens when *no* candidate
+ * fits, which is the behaviour slice 015 wanted; it is now the last resort
+ * rather than the first response.
+ *
+ * `"top"` leads deliberately: it reproduces the fixed placement this layer
+ * used before (label below the icon, reading downward), so an uncontested
+ * label sits exactly where it always did and only a contested one moves.
+ * `"bottom"` next — the opposite side is the largest free area when a
+ * neighbour is crowding from one direction — then the two horizontal
+ * placements.
+ *
+ * MapLibre note: `text-anchor` and `text-offset` are both *ignored* on a
+ * layer with `text-variable-anchor`, which is why this layer sets neither and
+ * uses {@link LABEL_RADIAL_OFFSET} instead. The selected-label layer keeps
+ * the fixed anchor/offset pair precisely because it must never move.
+ *
+ * The layer pairs this with `text-justify: "auto"`, which is only meaningful
+ * under variable anchoring: at the default `center`, a multi-line label that
+ * relocates to the `left` or `right` anchor stays centre-justified, leaving a
+ * ragged inner edge facing the aircraft it belongs to. `auto` derives the
+ * justification from whichever anchor won, so a right-placed label is
+ * left-justified against the icon and a left-placed one right-justified — the
+ * text keeps a straight edge pointing at its aircraft however it moved.
+ */
+const LABEL_VARIABLE_ANCHORS: ("top" | "bottom" | "right" | "left")[] = [
+  "top",
+  "bottom",
+  "right",
+  "left",
+];
+
+/** Distance from the aircraft to its label, in ems, for every candidate
+ * anchor. Matches the magnitude of the fixed `text-offset: [0, 1]` the
+ * selected-label layer still uses, so the two layers place their labels the
+ * same distance out and a selection does not visibly nudge its own label. */
+const LABEL_RADIAL_OFFSET = 1;
 
 /**
  * The attention ring's severity palette (SPEC §36 "interesting/alerting:
@@ -348,11 +396,19 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
       layout: {
         "text-field": ["get", "label"],
         "text-size": 11,
-        "text-anchor": "top",
-        "text-offset": [0, 1],
+        // Placement is variable, not fixed: see LABEL_VARIABLE_ANCHORS.
+        // `text-anchor`/`text-offset` are deliberately absent — MapLibre
+        // ignores both once `text-variable-anchor` is set, so leaving them
+        // in would read as configuration that does nothing.
+        "text-variable-anchor": LABEL_VARIABLE_ANCHORS,
+        "text-radial-offset": LABEL_RADIAL_OFFSET,
+        // Justify from the anchor that actually won, so a relocated
+        // multi-line label keeps a straight edge facing its aircraft.
+        "text-justify": "auto",
         "text-line-height": 1.15,
-        // MapLibre's own collision system: a label that loses the
-        // placement contest is hidden rather than drawn over its neighbour.
+        // MapLibre's own collision system: a label that fits none of the
+        // candidate placements is hidden rather than drawn over its
+        // neighbour.
         "text-allow-overlap": false,
         "text-optional": true,
         // Interesting aircraft win a collision against an ordinary one;

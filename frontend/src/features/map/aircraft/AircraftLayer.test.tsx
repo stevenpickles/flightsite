@@ -10,7 +10,7 @@ import { getDefaultBasemap } from "@/features/map/basemaps";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import {
-  DENSITY_CALLSIGN_THRESHOLD,
+  DENSITY_CALLSIGN_ENTER,
   ZOOM_LABELS_FULL,
   ZOOM_LABELS_MIN,
 } from "@/features/map/labels/priority";
@@ -134,7 +134,7 @@ describe("AircraftLayer label integration", () => {
     map.zoom = ZOOM_LABELS_FULL;
 
     const crowd = Array.from(
-      { length: DENSITY_CALLSIGN_THRESHOLD + 5 },
+      { length: DENSITY_CALLSIGN_ENTER + 5 },
       (_, index) =>
         makeAircraft({
           icao: (index + 1).toString(16).padStart(6, "0"),

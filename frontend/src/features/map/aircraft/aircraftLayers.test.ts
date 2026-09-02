@@ -213,6 +213,48 @@ describe("ensureAircraftLayers", () => {
     expect(selected["text-ignore-placement"]).toBe(true);
   });
 
+  it("lets an ordinary label try other placements before it is hidden", () => {
+    // Issue #143's second mechanism: with one fixed anchor, a label that
+    // loses the collision contest blinks out entirely. Variable anchoring
+    // makes hiding the last resort rather than the first response.
+    ensureAircraftLayers(map);
+    const layout = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
+      string,
+      unknown
+    >;
+    const anchors = layout["text-variable-anchor"] as string[];
+    expect(anchors.length).toBeGreaterThan(1);
+    // "top" first keeps the uncontested placement exactly where it was.
+    expect(anchors[0]).toBe("top");
+    expect(new Set(anchors).size).toBe(anchors.length);
+    // MapLibre ignores both of these once text-variable-anchor is set, so
+    // leaving either behind would be dead configuration that reads as if it
+    // still placed the label.
+    expect(layout["text-anchor"]).toBeUndefined();
+    expect(layout["text-offset"]).toBeUndefined();
+    expect(layout["text-radial-offset"]).toEqual(expect.any(Number));
+    // Justification has to follow the anchor that won. At MapLibre's default
+    // of "center", a multi-line label relocated to the left or right anchor
+    // stays centre-justified and turns a ragged edge toward its own aircraft.
+    expect(layout["text-justify"]).toBe("auto");
+  });
+
+  it("keeps the selected label on a fixed anchor, never a variable one", () => {
+    // The selected label must not wander around its aircraft either — the
+    // fixed pair is what pins it under the icon, and it can never collide
+    // away, so it has nothing to relocate for.
+    ensureAircraftLayers(map);
+    const layout = mock.layers.get(AIRCRAFT_SELECTED_LABEL_LAYER_ID)
+      ?.layout as Record<string, unknown>;
+    expect(layout["text-variable-anchor"]).toBeUndefined();
+    expect(layout["text-radial-offset"]).toBeUndefined();
+    expect(layout["text-anchor"]).toBe("top");
+    expect(layout["text-offset"]).toEqual([0, 1]);
+    // "auto" justification only means anything under variable anchoring, and
+    // this layer has none — so it stays off rather than riding along.
+    expect(layout["text-justify"]).toBeUndefined();
+  });
+
   it("prioritizes interesting aircraft over ordinary ones in the label collision order", () => {
     ensureAircraftLayers(map);
     const layout = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
