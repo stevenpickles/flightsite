@@ -39,9 +39,10 @@
  * *late*: the projection from fix N had already run past fix N+1's raw
  * coordinates by the time they were drawn, so each new fix stepped the marker
  * backwards before it crept forward again. {@link fixAnchor} instead dates a
- * new fix at `now - seen_pos_s`, the age the decoder itself reports (§3.3,
- * honest since slice 062) — the client-side mirror of that slice's server-side
- * ageing.
+ * new fix at `now - seen_pos_s * 1000` — the age the decoder itself reports
+ * (§3.3, honest since slice 062), in seconds, converted to the milliseconds
+ * these timestamps are kept in — the client-side mirror of that slice's
+ * server-side ageing.
  *
  * This keeps the #119 rule that only the browser's clock is read. `seen_pos_s`
  * is a *duration*, not an instant: subtracting it from a browser timestamp
@@ -232,15 +233,20 @@ function samePosition(previous: LiveAircraft, next: LiveAircraft): boolean {
 }
 
 /**
- * The most reported fix age this store will honour, in seconds.
+ * The most reported fix age this store will honour, in milliseconds.
  *
  * {@link INTERPOLATION_MAX_FIX_AGE_MS} is the natural bound and not a second
  * arbitrary number: it is the age past which the interpolator stops projecting
- * a fix at all, so back-dating further can only change how long the marker sits
- * frozen, never where it is drawn. Anything above it is a decoder reporting
- * something the map has already given up on — an aircraft heard for minutes
- * without a usable CPR pair, or a malformed age — and clamping keeps such a
- * value from throwing the anchor minutes into the past.
+ * a fix at all. Nothing rendered depends on the clamp, in fact —
+ * `displayPosition` caps elapsed time at the same constant, so an anchor five
+ * minutes in the past and one clamped to fifteen seconds draw the marker in
+ * exactly the same place, frozen at the bound, for as long as either survives.
+ * What the clamp buys is a `positionChangedAt` that still means what the field
+ * says it means: anything above the bound is a decoder reporting something the
+ * map has already given up on — an aircraft heard for minutes without a usable
+ * CPR pair, or a malformed age — and a stored anchor minutes adrift would be a
+ * trap for the next reader, and for anything that later measures fix age from
+ * this field rather than through the interpolator.
  */
 const MAX_REPORTED_FIX_AGE_MS = INTERPOLATION_MAX_FIX_AGE_MS;
 
@@ -248,11 +254,12 @@ const MAX_REPORTED_FIX_AGE_MS = INTERPOLATION_MAX_FIX_AGE_MS;
  * When the receiver fixed the position `entry` reports, on the browser's clock.
  *
  * The frame arrived at `now`, but the decoder says it placed the aircraft
- * `seen_pos_s` seconds earlier, so that is the anchor (issue #144). A missing,
- * negative or non-finite age falls back to `now`, which is exactly the pre-#144
- * behaviour: without a reported age the arrival instant is the best guess
- * available, and it is the conservative one — it under-projects rather than
- * inventing motion.
+ * `seen_pos_s` seconds earlier, so the anchor is `now - seen_pos_s * 1000`
+ * (issue #144) — the reported age is in seconds, `now` and the anchor in
+ * milliseconds. A missing, negative or non-finite age falls back to `now`,
+ * which is exactly the pre-#144 behaviour: without a reported age the arrival
+ * instant is the best guess available, and it is the conservative one — it
+ * under-projects rather than inventing motion.
  */
 function fixAnchor(entry: LiveAircraft, now: number): number {
   const reportedS = entry.seen_pos_s;

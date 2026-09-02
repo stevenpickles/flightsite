@@ -18,8 +18,9 @@
  * position was *fixed*, which is what the store now records.
  *
  * **And the fix was already old when it arrived** — issue #144. The store dates
- * a new fix at `receivedAt - seen_pos_s`, the decoder's own age for the CPR
- * solution, rather than at the instant the frame landed; see
+ * a new fix at `receivedAt - seen_pos_s * 1000`, the decoder's own age for the
+ * CPR solution converted from seconds to the milliseconds these timestamps are
+ * kept in, rather than at the instant the frame landed; see
  * `useLiveAircraftStore` for the dating rules and why a *repeated* fix is never
  * re-dated. That is what makes this projection continuous across fixes. With
  * both anchors honest, the projection running from fix N at the moment fix N+1

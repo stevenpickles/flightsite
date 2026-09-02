@@ -854,8 +854,11 @@ describe("positionChangedAt back-dating (issue #144)", () => {
 
   it("clamps an outlier age to the fix-age cap", () => {
     // Five minutes: the decoder reporting something the interpolator has long
-    // given up projecting. Clamped, so the anchor lands at the cap rather than
-    // minutes into the past.
+    // given up projecting. This pins the *stored field*, not a drawn position:
+    // `displayPosition` caps elapsed time at the same constant, so clamped or
+    // not the marker sits frozen at the bound either way. The point is that
+    // `positionChangedAt` keeps meaning what its name says for anyone reading
+    // it directly.
     snapshot({ seen_pos_s: 300 }, T0);
 
     expect(anchor()).toBe(T0 - INTERPOLATION_MAX_FIX_AGE_MS);
