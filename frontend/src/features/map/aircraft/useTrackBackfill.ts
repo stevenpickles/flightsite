@@ -31,8 +31,16 @@
  *   changes on a click, not at the frame rate — so the ~1 Hz live picture still
  *   never renders React through this hook.
  *
- * Deselecting clears the track, so a reselect backfills again; TanStack Query
- * answers the repeat from cache rather than re-reading the backend.
+ * Deselecting clears the track, so a reselect backfills again.
+ *
+ * **Freshness (issue #136).** Both reads run at `staleTime: 0` under query keys
+ * of their own, rather than sharing the Sightings pages' 30-second cache. Which
+ * sighting is *open* is exactly the fact that cache would serve stale: sighting
+ * N closes, N+1 opens for the same aircraft, and a reselect inside the stale
+ * window would otherwise draw N's path. A cached answer is still rendered
+ * immediately while the refetch runs — and when the refetch names a different
+ * sighting, `backfillTrack` rebuilds rather than accumulates, so the stale path
+ * is removed rather than merely added to.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -47,8 +55,23 @@ import type {
 import {
   getSightingDetail,
   getSightingList,
-  sightingsQueryKeys,
+  SightingsApiError,
 } from "@/lib/api/sightings";
+
+/**
+ * Cache keys of this hook's own.
+ *
+ * Deliberately *not* `sightingsQueryKeys`: these reads want no stale window,
+ * where the Sightings pages want the shared 30-second one. Two observers of one
+ * key with contradictory `staleTime`/`retry` is a race over whose options win,
+ * so the divergence is settled by keeping the caches separate.
+ */
+const trackBackfillQueryKeys = {
+  openSighting: (icao: string) =>
+    ["map", "track-backfill", "open-sighting", icao] as const,
+  path: (sightingId: number) =>
+    ["map", "track-backfill", "path", sightingId] as const,
+};
 
 /** The open-sighting lookup, as `GET /api/v1/sightings` wants it: the single
  * newest currently-open sighting for one aircraft. */
@@ -92,9 +115,10 @@ export function useTrackBackfill(): void {
   // per-selection lookup would mean briefly holding *another aircraft's*
   // sighting. Here a pending lookup must read as pending.
   const listQuery = useQuery({
-    queryKey: sightingsQueryKeys.list(openSightingParams(selectedIcao ?? "")),
+    queryKey: trackBackfillQueryKeys.openSighting(selectedIcao ?? ""),
     queryFn: () => getSightingList(openSightingParams(selectedIcao as string)),
     enabled: selectedIcao !== null,
+    staleTime: 0,
   });
 
   // An open sighting reports `ended_at: null`; the ICAO is re-checked because
@@ -104,9 +128,17 @@ export function useTrackBackfill(): void {
     row && row.ended_at === null && row.icao === selectedIcao ? row.id : null;
 
   const detailQuery = useQuery({
-    queryKey: sightingsQueryKeys.detail(sightingId ?? -1),
+    queryKey: trackBackfillQueryKeys.path(sightingId ?? -1),
     queryFn: () => getSightingDetail(sightingId as number),
     enabled: sightingId !== null,
+    staleTime: 0,
+    // The retry policy `useSightingDetailQuery` established for this endpoint:
+    // a 404 is a real answer ("that sighting closed and was reaped between the
+    // two reads"), not a transient failure worth hammering.
+    retry: (failureCount, error) =>
+      !(error instanceof SightingsApiError && error.status === 404) &&
+      failureCount < 2,
+    retryDelay: 100,
   });
 
   const detail = detailQuery.data;
@@ -115,11 +147,14 @@ export function useTrackBackfill(): void {
     if (selectedIcao === null || detail === undefined) {
       return;
     }
-    if (detail.icao !== selectedIcao) {
+    // Both identities are re-checked: the ICAO because a response must never
+    // reach another aircraft's track, and the id because `detail` is what says
+    // which sighting these points belong to.
+    if (detail.icao !== selectedIcao || detail.id !== sightingId) {
       return;
     }
     useLiveAircraftStore
       .getState()
-      .backfillTrack(selectedIcao, toTrackPoints(detail.path));
-  }, [selectedIcao, detail]);
+      .backfillTrack(selectedIcao, detail.id, toTrackPoints(detail.path));
+  }, [selectedIcao, sightingId, detail]);
 }

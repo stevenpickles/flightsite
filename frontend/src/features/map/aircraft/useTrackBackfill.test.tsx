@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -79,20 +80,43 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 interface ApiScript {
-  list?: SightingListResponse;
+  /** A fixed list body, or one that varies by how many times it has been
+   * asked — which is how the "sighting N closed, N+1 opened" case is scripted. */
+  list?: SightingListResponse | ((callCount: number) => SightingListResponse);
   /** Resolves to the detail body; a rejection stands in for a dead backend. */
   detail?: () => Promise<Response>;
+  /** `id -> SightingDetail`, when a test needs more than one sighting. */
+  detailById?: Record<number, SightingDetail>;
 }
 
 function installApi(script: ApiScript) {
+  let listCalls = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const raw = typeof input === "string" ? input : input.toString();
     const url = new URL(raw, "http://localhost");
     if (url.pathname === "/api/v1/sightings") {
-      return jsonResponse(script.list ?? listOf([]));
+      listCalls += 1;
+      const body =
+        typeof script.list === "function"
+          ? script.list(listCalls)
+          : (script.list ?? listOf([]));
+      return jsonResponse(body);
     }
-    if (/^\/api\/v1\/sightings\/\d+$/.test(url.pathname)) {
-      return script.detail ? await script.detail() : jsonResponse(openDetail());
+    const detailMatch = /^\/api\/v1\/sightings\/(\d+)$/.exec(url.pathname);
+    if (detailMatch) {
+      if (script.detail) {
+        return await script.detail();
+      }
+      if (script.detailById) {
+        const detail = script.detailById[Number(detailMatch[1])];
+        return detail
+          ? jsonResponse(detail)
+          : jsonResponse(
+              { error: { code: "not_found", message: "gone", detail: null } },
+              404,
+            );
+      }
+      return jsonResponse(openDetail());
     }
     throw new Error(`Unhandled fetch in test: ${raw}`);
   });
@@ -100,12 +124,21 @@ function installApi(script: ApiScript) {
   return fetchMock;
 }
 
-function mount() {
+/** Mounts the hook. `staleTime` defaults to the *app's* 30 seconds rather than
+ * the test wrapper's zero, so the freshness the backfill needs (issue #136)
+ * has to come from the hook's own options to show up here at all. */
+function mount(staleTime = 30_000) {
   return renderHook(
     () => {
       useTrackBackfill();
     },
-    { wrapper: createQueryWrapper() },
+    {
+      wrapper: createQueryWrapper(
+        new QueryClient({
+          defaultOptions: { queries: { retry: false, staleTime } },
+        }),
+      ),
+    },
   );
 }
 
@@ -257,6 +290,37 @@ describe("useTrackBackfill", () => {
     expect(points()).toHaveLength(1);
   });
 
+  it("does not retry a 404 from the sighting detail read", async () => {
+    // The sighting closed and was reaped between the two reads: a real answer,
+    // and the same non-retryable one `useSightingDetailQuery` treats it as —
+    // which matters here because both share a cache key for this endpoint.
+    const fetchMock = installApi({
+      list: listOf([openRow()]),
+      detail: () =>
+        Promise.resolve(
+          jsonResponse(
+            { error: { code: "not_found", message: "gone", detail: null } },
+            404,
+          ),
+        ),
+    });
+    mount();
+
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+    });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    // One list read plus exactly one detail attempt, and nothing backfilled.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(points()).toHaveLength(1);
+  });
+
   it("discards a response that lands after the aircraft was deselected", async () => {
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
@@ -316,6 +380,87 @@ describe("useTrackBackfill", () => {
       icao: "bbbbbb",
       points: [{ lat: 10, lon: 10, at: T0 + 10 }],
     });
+  });
+
+  it("re-reads the open sighting rather than trusting the shared stale window", async () => {
+    // Issue #136: which sighting is *open* is exactly the fact a 30-second
+    // cache serves wrongly. The client here is configured with the app's own
+    // stale window, so a cached answer would show up as a missing refetch.
+    const fetchMock = installApi({ list: listOf([openRow()]) });
+    mount();
+
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+    });
+    await waitFor(() => {
+      expect(points()).toHaveLength(3);
+    });
+    const afterFirst = fetchMock.mock.calls.length;
+
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+    });
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0 + 20);
+    });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(afterFirst);
+    });
+  });
+
+  it("replaces a closed sighting's path when the reselect finds the next one", async () => {
+    // The full issue #136 sequence: sighting N is answered first, then N+1
+    // opens for the same aircraft. The refetch must both happen and *correct*
+    // what N drew, which no purely additive merge could.
+    const nextDetail = openDetail({
+      id: OPEN_SIGHTING_ID + 1,
+      path: [
+        {
+          t: new Date(T0 - 20_000).toISOString(),
+          lat: 48.9,
+          lon: -122,
+          altitude_ft: 30000,
+          source: "adsb",
+        },
+      ],
+    });
+    installApi({
+      list: (callCount) =>
+        listOf([
+          callCount === 1
+            ? openRow()
+            : openRow({ id: OPEN_SIGHTING_ID + 1, icao: "aaaaaa" }),
+        ]),
+      detailById: {
+        [OPEN_SIGHTING_ID]: openDetail(),
+        [OPEN_SIGHTING_ID + 1]: nextDetail,
+      },
+    });
+    mount();
+
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+    });
+    await waitFor(() => {
+      expect(points()).toHaveLength(3);
+    });
+
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+    });
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0 + 20);
+    });
+
+    // Sighting N's two points are replaced by N+1's single one, over the live
+    // position the reselect seeded — not added to them.
+    await waitFor(() => {
+      expect(points()?.map((entry) => entry.lat)).toEqual([48.9, 47.5]);
+    });
+    expect(useLiveAircraftStore.getState().trackBackfilledFrom).toBe(
+      OPEN_SIGHTING_ID + 1,
+    );
   });
 
   it("re-backfills when the same aircraft is selected again", async () => {
