@@ -28,6 +28,20 @@ lifecycle, over persisted sightings rather than live records; what this store
 owes it is :attr:`~flightsite.live.aircraft.LiveAircraft.last_seen` on every
 record and on every event, which is the instant that rule is measured from.
 
+"Silent" is measured from the decoder's own report of when it last heard the
+aircraft, not from when a poll last mentioned it — see
+:mod:`flightsite.live.aircraft`. dump1090-fa keeps a dead aircraft in its JSON
+for about five minutes, so an entry being present in the document is not an
+observation, and treating it as one held the whole retention window in the live
+set (issue #134).
+
+Which side of the ``stale_s`` line a record sits on is decided in two places,
+and deliberately only two. The sweep below owns the ``live → stale`` direction
+and the :class:`~flightsite.live.events.AircraftStale` event that announces it.
+:func:`~flightsite.live.aircraft.merge` owns the reverse: an aircraft heard
+again — genuinely heard, within ``stale_s`` — is live again immediately, which
+is why it takes this store's threshold as an argument.
+
 All three decisions read an injected monotonic clock, never the wall clock.
 A Raspberry Pi with no RTC boots with a wildly wrong time and then jumps when
 NTP lands; a wall-clock timer would read that jump as every aircraft having
@@ -281,7 +295,13 @@ class LiveStore:
             self._dispatcher.publish(AircraftAppeared(aircraft=aircraft, at=aircraft.last_seen))
             return
 
-        aircraft, changed = merge(current, update, now=now, receiver=self._receiver_location)
+        aircraft, changed = merge(
+            current,
+            update,
+            now=now,
+            stale_s=self._stale_s,
+            receiver=self._receiver_location,
+        )
         self._aircraft[update.icao] = aircraft
         self._dispatcher.publish(
             AircraftUpdated(aircraft=aircraft, at=aircraft.last_seen, changed=changed)

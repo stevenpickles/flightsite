@@ -13,12 +13,15 @@ from typing import Any
 import pytest
 
 from flightsite.ingest import Position
+from flightsite.live import DEFAULT_STALE_S
 from flightsite.live.aircraft import (
     AIRBORNE_INFERENCE_ALTITUDE_FT,
     GroundState,
     LiveAircraft,
+    LiveState,
     Provenance,
     appear,
+    mark_stale,
     merge,
 )
 
@@ -40,7 +43,13 @@ def test_a_partial_update_does_not_erase_known_fields() -> None:
     clock = ManualClock()
     current = first(callsign="RCH492", squawk="4521", altitude_ft=25_000.0, on_ground=False)
 
-    merged, _ = merge(current, make_update(offset_s=1.0, rssi_db=-12.1), now=clock(), receiver=None)
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, rssi_db=-12.1),
+        now=clock(),
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
 
     assert merged.callsign == "RCH492"
     assert merged.squawk == "4521"
@@ -53,7 +62,9 @@ def test_a_position_survives_an_update_that_carries_none() -> None:
     # that position's source; position_seen records how old it now is.
     current = first(position=AIRBORNE_POSITION, position_source="mlat")
 
-    merged, _ = merge(current, make_update(offset_s=5.0), now=5.0, receiver=SEATTLE)
+    merged, _ = merge(
+        current, make_update(offset_s=5.0), now=5.0, stale_s=DEFAULT_STALE_S, receiver=SEATTLE
+    )
 
     assert merged.position == AIRBORNE_POSITION
     assert merged.position_source == "mlat"
@@ -66,7 +77,11 @@ def test_a_callsign_change_is_reported_as_a_changed_field() -> None:
     current = first(callsign="RCH492")
 
     merged, changed = merge(
-        current, make_update(offset_s=1.0, callsign="RCH493"), now=1.0, receiver=None
+        current,
+        make_update(offset_s=1.0, callsign="RCH493"),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
     )
 
     assert merged.callsign == "RCH493"
@@ -79,7 +94,11 @@ def test_per_poll_bookkeeping_is_not_reported_as_a_change() -> None:
     current = first(callsign="RCH492", seen_s=0.1)
 
     _, changed = merge(
-        current, make_update(offset_s=1.0, callsign="RCH492", seen_s=0.4), now=1.0, receiver=None
+        current,
+        make_update(offset_s=1.0, callsign="RCH492", seen_s=0.4),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
     )
 
     assert changed == frozenset()
@@ -88,7 +107,13 @@ def test_per_poll_bookkeeping_is_not_reported_as_a_change() -> None:
 def test_identity_fields_carry_their_own_timestamps() -> None:
     current = first(callsign="RCH492")
 
-    merged, _ = merge(current, make_update(offset_s=30.0, squawk="4521"), now=30.0, receiver=None)
+    merged, _ = merge(
+        current,
+        make_update(offset_s=30.0, squawk="4521"),
+        now=30.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
 
     assert merged.callsign_seen == BASE_TIME
     assert merged.squawk_seen == BASE_TIME + timedelta(seconds=30)
@@ -98,7 +123,9 @@ def test_identity_fields_carry_their_own_timestamps() -> None:
 def test_observations_are_counted() -> None:
     current = first()
 
-    merged, _ = merge(current, make_update(offset_s=1.0), now=1.0, receiver=None)
+    merged, _ = merge(
+        current, make_update(offset_s=1.0), now=1.0, stale_s=DEFAULT_STALE_S, receiver=None
+    )
 
     assert current.observations == 1
     assert merged.observations == 2
@@ -108,9 +135,191 @@ def test_merging_leaves_the_previous_record_untouched() -> None:
     # Records are immutable, which is what makes a snapshot safe to hold.
     current = first(callsign="RCH492")
 
-    merge(current, make_update(offset_s=1.0, callsign="RCH493"), now=1.0, receiver=None)
+    merge(
+        current,
+        make_update(offset_s=1.0, callsign="RCH493"),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
 
     assert current.callsign == "RCH492"
+
+
+# ------------------------------------------------------------ observation age
+
+
+def test_a_first_observation_is_dated_by_the_decoders_reported_age() -> None:
+    aircraft = appear(make_update(seen_s=20.0), now=1_000.0, receiver=SEATTLE)
+
+    assert aircraft.last_seen_monotonic == 980.0
+    assert aircraft.first_seen_monotonic == 980.0
+    assert aircraft.age_s(1_000.0) == 20.0
+
+
+@pytest.mark.parametrize(
+    "seen_s",
+    [
+        pytest.param(0.2, id="fresh"),
+        pytest.param(20.0, id="past-stale"),
+        pytest.param(282.0, id="ghost"),
+    ],
+)
+def test_an_update_is_dated_by_the_decoders_reported_age(seen_s: float) -> None:
+    current = first(seen_s=0.0)
+
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, seen_s=seen_s),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.last_seen_monotonic == pytest.approx(1_000.0 - seen_s)
+    assert merged.age_s(1_000.0) == pytest.approx(seen_s)
+
+
+def test_a_ghost_re_delivered_every_second_stops_ageing_at_its_last_transmission() -> None:
+    # The failure in issue #134: the decoder keeps listing an aircraft it has
+    # not heard for minutes, so the monotonic instant must stay put while the
+    # clock and the reported age advance together.
+    aircraft = first(seen_s=0.0)
+
+    instants = []
+    for tick in range(1, 6):
+        aircraft, _ = merge(
+            aircraft,
+            make_update(seen_s=float(tick)),
+            now=1_000.0 + tick,
+            stale_s=DEFAULT_STALE_S,
+            receiver=None,
+        )
+        instants.append(aircraft.last_seen_monotonic)
+
+    assert instants == [1_000.0] * 5
+
+
+@pytest.mark.parametrize(
+    "seen_s", [pytest.param(None, id="not-reported"), pytest.param(-0.5, id="negative")]
+)
+def test_an_unusable_reported_age_dates_the_observation_at_the_clock(seen_s: float | None) -> None:
+    # A source that reports no age at all is taken at face value, and no
+    # observation may be dated in the future.
+    current = first()
+
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, seen_s=seen_s),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.last_seen_monotonic == 1_000.0
+
+
+def test_a_position_is_dated_by_its_own_reported_age() -> None:
+    aircraft = appear(
+        make_update(position=AIRBORNE_POSITION, seen_s=4.0, seen_pos_s=30.0),
+        now=1_000.0,
+        receiver=SEATTLE,
+    )
+
+    assert aircraft.position_seen_monotonic == 970.0
+    assert aircraft.position_age_s(1_000.0) == 30.0
+    # The wall-clock companion agrees: the update is already dated at
+    # reference minus seen_s, and the position is another 26 s behind that.
+    assert aircraft.position_seen == aircraft.last_seen - timedelta(seconds=26.0)
+
+
+def test_a_merged_position_is_dated_by_its_own_reported_age() -> None:
+    current = first()
+
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, position=AIRBORNE_POSITION, seen_s=4.0, seen_pos_s=30.0),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=SEATTLE,
+    )
+
+    assert merged.last_seen_monotonic == 996.0
+    assert merged.position_seen_monotonic == 970.0
+
+
+def test_a_position_with_no_age_of_its_own_is_dated_with_the_update() -> None:
+    aircraft = appear(
+        make_update(position=AIRBORNE_POSITION, seen_s=4.0), now=1_000.0, receiver=SEATTLE
+    )
+
+    assert aircraft.position_seen_monotonic == 996.0
+    assert aircraft.position_seen == aircraft.last_seen
+
+
+# --------------------------------------------------------------- reviving
+
+
+def test_a_fresh_observation_revives_a_stale_record() -> None:
+    stale = mark_stale(first(seen_s=0.0))
+
+    merged, changed = merge(
+        stale,
+        make_update(offset_s=20.0, seen_s=0.5),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.state is LiveState.LIVE
+    assert "state" in changed
+
+
+def test_a_re_polled_ghost_does_not_revive_a_stale_record() -> None:
+    # The decoder still listing the entry is not evidence the aircraft is back.
+    stale = mark_stale(first(seen_s=0.0))
+
+    merged, changed = merge(
+        stale,
+        make_update(offset_s=20.0, seen_s=40.0),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.state is LiveState.STALE
+    assert "state" not in changed
+
+
+def test_an_observation_exactly_on_the_stale_threshold_does_not_revive() -> None:
+    stale = mark_stale(first(seen_s=0.0))
+
+    merged, _ = merge(
+        stale,
+        make_update(offset_s=20.0, seen_s=DEFAULT_STALE_S),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.state is LiveState.STALE
+
+
+def test_merging_never_takes_a_live_record_stale_itself() -> None:
+    # Marking stale is the sweep's job, along with the event that announces it;
+    # merge only ever reports what the record's timing now says.
+    live = first(seen_s=0.0)
+
+    merged, _ = merge(
+        live,
+        make_update(offset_s=20.0, seen_s=40.0),
+        now=1_000.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
+    )
+
+    assert merged.state is LiveState.LIVE
+    assert merged.age_s(1_000.0) == 40.0
 
 
 # ------------------------------------------------------------ non-positioned
@@ -164,7 +373,11 @@ def test_range_is_recomputed_once_a_receiver_location_arrives() -> None:
     aircraft = appear(make_update(position=AIRBORNE_POSITION), now=0.0, receiver=None)
 
     merged, changed = merge(
-        aircraft, make_update(offset_s=1.0, position=AIRBORNE_POSITION), now=1.0, receiver=SEATTLE
+        aircraft,
+        make_update(offset_s=1.0, position=AIRBORNE_POSITION),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=SEATTLE,
     )
 
     assert merged.distance_nm is not None
@@ -194,7 +407,11 @@ def test_a_ground_report_clears_a_stale_cruise_altitude() -> None:
     current = first(altitude_ft=25_000.0)
 
     merged, changed = merge(
-        current, make_update(offset_s=1.0, on_ground=True), now=1.0, receiver=None
+        current,
+        make_update(offset_s=1.0, on_ground=True),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=None,
     )
 
     assert merged.altitude_ft is None
@@ -233,7 +450,9 @@ def test_ground_state_stays_unknown_without_confident_evidence(fields: dict[str,
 def test_a_ground_determination_persists_until_the_decoder_revises_it() -> None:
     current = first(on_ground=True)
 
-    merged, _ = merge(current, make_update(offset_s=1.0), now=1.0, receiver=None)
+    merged, _ = merge(
+        current, make_update(offset_s=1.0), now=1.0, stale_s=DEFAULT_STALE_S, receiver=None
+    )
 
     assert merged.on_ground is True
     assert merged.ground_state is GroundState.ON_GROUND
@@ -252,6 +471,7 @@ def test_positions_accumulate_into_the_track_in_order() -> None:
                 position=Position(latitude=47.0 + index * 0.1, longitude=-122.0),
             ),
             now=float(index),
+            stale_s=DEFAULT_STALE_S,
             receiver=SEATTLE,
         )
 
@@ -261,7 +481,9 @@ def test_positions_accumulate_into_the_track_in_order() -> None:
 def test_a_non_positioned_update_adds_no_track_point() -> None:
     aircraft = first(position=Position(latitude=47.0, longitude=-122.0))
 
-    aircraft, _ = merge(aircraft, make_update(offset_s=1.0), now=1.0, receiver=SEATTLE)
+    aircraft, _ = merge(
+        aircraft, make_update(offset_s=1.0), now=1.0, stale_s=DEFAULT_STALE_S, receiver=SEATTLE
+    )
 
     assert len(aircraft.track) == 1
 
@@ -279,6 +501,7 @@ def test_the_track_is_shared_across_successive_records() -> None:
         aircraft,
         make_update(offset_s=1.0, position=Position(latitude=47.1, longitude=-122.0)),
         now=1.0,
+        stale_s=DEFAULT_STALE_S,
         receiver=SEATTLE,
     )
 

@@ -35,6 +35,32 @@ fabricate, and it does not forget either). Three consequences worth naming:
   ``on_ground=True`` with no altitude). That update clears ``altitude_ft``
   rather than leaving a stale cruise level attached to a parked aircraft.
 
+Observation age
+---------------
+
+A poll is not an observation. Both supported decoders retain an aircraft in
+their output for minutes after they last heard it, re-listing the entry — with
+a growing reported age — on every poll, so "this entry was in the document we
+just fetched" says nothing about when the aircraft last transmitted. The
+decoder answers that itself: ``seen_s`` is how long ago it last heard anything
+from this aircraft, and ``seen_pos_s`` how long ago it last decoded a position.
+
+:func:`appear` and :func:`merge` therefore date every observation ``seen_s``
+seconds *before* the clock reading they are handed, rather than at it. Without
+that, a silent aircraft's clock restarted on every poll and it could never age
+past one polling interval while the decoder still listed it — the live set
+carried the decoder's whole retention window instead of what is actually
+audible, and the store's stale and removal sweeps fired minutes late (issue
+#134).
+
+This preserves the store's monotonic-only discipline (see
+:mod:`flightsite.live.store`): ``seen_s`` is a *relative* age reported by the
+decoder, not a wall-clock instant read from a machine whose clock may jump.
+Subtracting it from the injected monotonic reading yields a monotonic instant.
+
+The wall-clock companions agree by construction, because the ingest adapter
+already dates ``update.timestamp`` at ``reference minus seen_s``.
+
 Provenance
 ----------
 
@@ -48,7 +74,7 @@ a number came off the wire or out of a formula.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
@@ -266,6 +292,34 @@ def _range_to(
     return distance_and_bearing(receiver, position)
 
 
+def _observed_at(now: float, age_s: float | None) -> float:
+    """The monotonic instant an observation reported as ``age_s`` seconds old happened.
+
+    ``None`` means the source reports no age — a replayed fixture that never
+    captured one, or a future adapter for a decoder that does not offer it —
+    and the observation is then taken at face value. A negative age would date
+    it in the future, which no clock reading may be, so it clamps to ``now``.
+    """
+    if age_s is None or age_s <= 0.0:
+        return now
+    return now - age_s
+
+
+def _position_lag_s(update: AircraftStateUpdate) -> float:
+    """How much older this update's position is than the update itself.
+
+    Both decoders report ``seen_pos_s >= seen_s`` — a position cannot have been
+    decoded more recently than the last message carrying it — so this is the
+    non-negative gap between ``update.timestamp`` (already dated at
+    ``reference minus seen_s`` by the adapter) and the moment the position was
+    actually decoded. Zero whenever the decoder reports no separate position
+    age, which leaves the position dated with the update.
+    """
+    if update.seen_pos_s is None:
+        return 0.0
+    return max(update.seen_pos_s - (update.seen_s or 0.0), 0.0)
+
+
 def _track_point(update: AircraftStateUpdate, position: Position) -> TrackPoint:
     return TrackPoint(
         timestamp=update.timestamp,
@@ -285,7 +339,14 @@ def appear(
     receiver: Position | None = None,
     track_capacity: int = DEFAULT_TRACK_CAPACITY,
 ) -> LiveAircraft:
-    """Build the first live record for an aircraft from its first observation."""
+    """Build the first live record for an aircraft from its first observation.
+
+    The record starts :attr:`LiveState.LIVE` even when the decoder reports it
+    already long silent: an aircraft has to be in the live set before the sweep
+    can age it out, and the sweep — the sole authority on the stale and removal
+    thresholds — will do exactly that on its next pass, because the timing this
+    record carries is the decoder's, not the poll's.
+    """
     position = update.position
     ground_state, ground_provenance = _ground_state(
         on_ground=update.on_ground, altitude_ft=update.altitude_ft
@@ -296,17 +357,22 @@ def appear(
     if position is not None:
         track.append(_track_point(update, position))
 
+    observed_at = _observed_at(now, update.seen_s)
+    position_lag_s = _position_lag_s(update)
+
     return LiveAircraft(
         icao=update.icao,
         first_seen=update.timestamp,
         last_seen=update.timestamp,
-        first_seen_monotonic=now,
-        last_seen_monotonic=now,
+        first_seen_monotonic=observed_at,
+        last_seen_monotonic=observed_at,
         state=LiveState.LIVE,
         position=position,
         position_source=update.position_source,
-        position_seen=update.timestamp if position is not None else None,
-        position_seen_monotonic=now if position is not None else None,
+        position_seen=(
+            update.timestamp - timedelta(seconds=position_lag_s) if position is not None else None
+        ),
+        position_seen_monotonic=observed_at - position_lag_s if position is not None else None,
         callsign=update.callsign,
         callsign_seen=update.timestamp if update.callsign is not None else None,
         squawk=update.squawk,
@@ -335,12 +401,28 @@ def merge(
     update: AircraftStateUpdate,
     *,
     now: float,
+    stale_s: float,
     receiver: Position | None = None,
 ) -> tuple[LiveAircraft, frozenset[str]]:
     """Fold ``update`` into ``current``; return the new record and what changed.
 
     The returned record shares ``current``'s track object, to which this call
     has already appended the update's position if it carried a new one.
+
+    ``stale_s`` is the store's configured stale threshold, and merging is the
+    *only* place a record leaves :attr:`LiveState.STALE`: an aircraft heard
+    again is live again, and the transition rides out on the resulting
+    :class:`~flightsite.live.events.AircraftUpdated` as a changed ``state``.
+    The reverse transition stays with the sweep, which owns it along with the
+    :class:`~flightsite.live.events.AircraftStale` event that announces it, so
+    an update never silently re-states an aircraft's lifecycle.
+
+    What decides the revival is the *aged* observation, not the poll. A decoder
+    that re-lists an aircraft it has not heard for two minutes is not evidence
+    the aircraft is back, so such an update leaves the state alone; only an
+    observation younger than ``stale_s`` brings a stale record back to life.
+    The parameter is required rather than defaulted: a hard-coded 15 s would
+    quietly disagree with a store the owner configured differently.
     """
     has_position = update.position is not None
     position = update.position if has_position else current.position
@@ -360,15 +442,25 @@ def merge(
     if has_position and position is not None:
         current.track.append(_track_point(update, position))
 
+    observed_at = _observed_at(now, update.seen_s)
+    position_lag_s = _position_lag_s(update)
+    heard_recently = now - observed_at < stale_s
+
     merged = replace(
         current,
         last_seen=update.timestamp,
-        last_seen_monotonic=now,
-        state=LiveState.LIVE,
+        last_seen_monotonic=observed_at,
+        state=LiveState.LIVE if heard_recently else current.state,
         position=position,
         position_source=position_source,
-        position_seen=update.timestamp if has_position else current.position_seen,
-        position_seen_monotonic=now if has_position else current.position_seen_monotonic,
+        position_seen=(
+            update.timestamp - timedelta(seconds=position_lag_s)
+            if has_position
+            else current.position_seen
+        ),
+        position_seen_monotonic=(
+            observed_at - position_lag_s if has_position else current.position_seen_monotonic
+        ),
         callsign=update.callsign if update.callsign is not None else current.callsign,
         callsign_seen=update.timestamp if update.callsign is not None else current.callsign_seen,
         squawk=update.squawk if update.squawk is not None else current.squawk,
