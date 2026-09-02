@@ -73,6 +73,12 @@ releases:
       & notifications, operations, and the Phase 8 hardening pass. (Development
       outpaced the release cadence; the planned v0.2-v0.5 themes shipped together.
       Recorded 2026-09-01.)"
+  - version: "v0.3.0"
+    after_phase: 8
+    theme: "Fresh-install polish and live-picture correctness from the first
+      real deployment: first-run ingestion hot-start, activity WS batching,
+      quick-wins bundle, OpenSky metadata source, Pi 4 baseline, selected-track
+      backfill, live-set ghost expiry (slices 056-062). Recorded 2026-09-02."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
