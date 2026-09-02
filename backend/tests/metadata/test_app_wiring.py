@@ -13,8 +13,9 @@ from httpx import ASGITransport, AsyncClient
 
 from flightsite.app import create_app
 from flightsite.ingest import AircraftStateUpdate, Position
-from flightsite.metadata import MetadataService, SourceStatus
+from flightsite.metadata import MetadataService, SourceRegistry, SourceStatus
 from flightsite.metadata.sources import mictronics
+from flightsite.metadata.sources.opensky import OpenSkyProvider
 from tests.metadata.conftest import settle
 
 #: A tiny real-format snapshot: one ordinary airframe, one military one.
@@ -87,10 +88,101 @@ def test_the_service_is_constructed_without_touching_anything(
 
 
 def test_the_registry_ships_every_dataset_this_build_imports(isolated_data_dir: Path) -> None:
-    """Slice 022 registers the offline primary source, 023 adds FAA, 027 airports."""
+    """Slice 022 registers the offline primary source, 023 adds FAA, 027 airports.
+
+    Slice 059's ``opensky`` is deliberately absent: it is opt-in and off by
+    default (ADR-0013), so a stock install registers exactly these three.
+    """
     app = create_app(isolated_data_dir)
 
     assert app.state.metadata.registry.names == ("airports", "faa", "mictronics")
+
+
+# ------------------------------------------------------- opensky, default-off
+
+
+def _count_opensky_constructions(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record every :class:`OpenSkyProvider` the app wiring constructs.
+
+    The gate ADR-0013 promises is at *construction*, not at import time, so the
+    assertion that matters is that this list stays empty — not merely that the
+    provider never made a request.
+    """
+    built: list[object] = []
+
+    def spy(*args: object, **kwargs: object) -> OpenSkyProvider:
+        provider = OpenSkyProvider(*args, **kwargs)  # type: ignore[arg-type]
+        built.append(provider)
+        return provider
+
+    monkeypatch.setattr("flightsite.app.OpenSkyProvider", spy)
+    return built
+
+
+def test_opensky_is_not_constructed_when_the_setting_is_off(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default-off means *absent*, not merely skipped at import time."""
+    built = _count_opensky_constructions(monkeypatch)
+
+    app = create_app(isolated_data_dir)
+
+    assert built == []
+    assert "opensky" not in app.state.metadata.registry
+    assert app.state.settings.metadata.opensky_enabled is False
+
+
+def test_enabling_opensky_registers_it_alongside_the_default_sources(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLIGHTSITE_METADATA__OPENSKY_ENABLED", "true")
+    built = _count_opensky_constructions(monkeypatch)
+
+    app = create_app(isolated_data_dir)
+
+    assert len(built) == 1
+    assert app.state.metadata.registry.names == ("airports", "faa", "mictronics", "opensky")
+
+
+async def test_a_disabled_opensky_takes_no_part_in_an_update_run(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It cannot be imported, cannot be reported, and cannot be fetched.
+
+    Note what is *not* patched here: ``opensky.build_client``. Every other
+    source is pointed at a refusing transport because a source left unpatched
+    would reach the internet from the test suite — so if the default-off gate
+    ever regressed, this test would try to download 94 MB from OpenSky rather
+    than pass quietly.
+    """
+    _mock_mictronics(monkeypatch)
+    _refuse_network(monkeypatch, "flightsite.metadata.sources.faa.build_client")
+    _refuse_network(monkeypatch, "flightsite.airports.ourairports.build_client")
+    app = create_app(isolated_data_dir)
+
+    with TestClient(app):
+        service: MetadataService = app.state.metadata
+        run = await service.update()
+
+        assert "opensky" not in {result.source for result in run.results}
+        statuses = await service.statuses()
+        assert "opensky" not in {status.source for status in statuses}
+
+
+def test_the_opensky_precedence_declaration_is_below_the_default_sources() -> None:
+    """A registered ``opensky`` picks up its fill-gaps ranking automatically.
+
+    ``SourceRegistry.register`` resolves an unspecified priority through
+    ``DEFAULT_FIELD_PRIORITIES``, so the app wiring passes no ``priority=`` and
+    still gets ADR-0013's ranking. That indirection is worth pinning.
+    """
+    registry = SourceRegistry()
+    registry.register("mictronics", OpenSkyProvider())
+    registry.register("opensky", OpenSkyProvider())
+    model = registry.precedence()
+
+    for field in ("model", "manufacture_year", "operator_name", "owner"):
+        assert model.rank_of("opensky", field) > model.rank_of("mictronics", field), field
 
 
 def test_the_cache_runs_for_the_lifetime_of_the_app(isolated_data_dir: Path) -> None:

@@ -142,11 +142,12 @@ the source.
   source's precedence later.
 - **A 94 MB uncompressed download on a Pi.** Unlike Mictronics' ~8 MB gzipped
   artifact, OpenSky serves plain CSV with no compressed variant and no
-  `Content-Encoding: gzip`. The adapter therefore streams to disk and compresses as it
-  writes rather than buffering the artifact in memory the way
-  `mictronics.py::_fetch` does, whose approach would peak near 190 MB on a Pi 4. The
-  reasoning is recorded in the module docstring so the divergence from the sibling
-  adapter is not mistaken for drift.
+  `Content-Encoding: gzip`. The adapter therefore follows `faa.py`'s download shape —
+  stream to disk with a rolling hash — rather than `mictronics.py`'s, which buffers
+  the whole artifact in memory and joins it (`_fetch`) and would peak near 190 MB on a
+  Pi 4 at this size. Both shapes already exist in the codebase; this source takes the
+  one meant for a large artifact, and the module docstring records why so the
+  divergence from the sibling adapter is not mistaken for drift.
 - **No schema migration.** OpenSky's four contributed fields already exist on
   `aircraft_metadata` / `aircraft_metadata_resolved`, and `metadata_sources` is keyed
   by an arbitrary source name, so registering a third aircraft-metadata source is

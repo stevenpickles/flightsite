@@ -47,7 +47,7 @@ from flightsite.logging import DEFAULT_LOG_DIR, configure_logging, install_error
 from flightsite.maintenance import MaintenanceService, RouteCachePruner
 from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
-from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider
+from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider, OpenSkyProvider
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 from flightsite.reset import apply_pending_reset
@@ -88,7 +88,7 @@ def _build_live_store(settings: Settings) -> LiveStore:
     )
 
 
-def _build_metadata_registry(airports: AirportRepository) -> SourceRegistry:
+def _build_metadata_registry(airports: AirportRepository, settings: Settings) -> SourceRegistry:
     """The datasets this build ships.
 
     Slice 022 registers ``mictronics`` (the offline primary source); slice 023
@@ -97,12 +97,26 @@ def _build_metadata_registry(airports: AirportRepository) -> SourceRegistry:
     and shares everything else, so slice 025's update action imports it and
     reports its status independently (SPEC §27).
 
+    Slice 059 adds ``opensky``, the one source that is **not** unconditional:
+    it is registered only when ``metadata.opensky_enabled`` is set. The gate
+    lives here, at construction, rather than inside the provider or the
+    importer, and that is what makes "off" mean *absent* — an unregistered
+    source cannot be imported, cannot be named in a per-source status, and
+    cannot make a request. A stock install therefore never contacts OpenSky at
+    all, which is the point: ADR-0013 keeps that contact a deliberate act by
+    the operator, because the dataset's licensing is ambiguous. This mirrors
+    how :func:`flightsite.enrichment.service.build_provider` gates its own
+    optional provider, and carries the same consequence — the setting is read
+    at startup, so toggling it takes effect on the next restart.
+
     Constructing a provider here opens nothing — it downloads only when an
     import actually runs (:mod:`flightsite.metadata.importer`).
     """
     registry = SourceRegistry()
     registry.register("mictronics", MictronicsProvider())
     registry.register("faa", FaaRegistryProvider())
+    if settings.metadata.opensky_enabled:
+        registry.register("opensky", OpenSkyProvider())
     registry.register(AIRPORTS_SOURCE, OurAirportsProvider(), sink=AirportImportSink(airports))
     return registry
 
@@ -700,7 +714,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         database=app.state.database,
         live=app.state.live,
         data_dir=store.data_dir,
-        registry=_build_metadata_registry(airport_repository),
+        registry=_build_metadata_registry(airport_repository, settings),
         # Both listeners read `app.state` when they run rather than closing
         # over an object, so registering them here — before the services they
         # reach for even exist — is safe and keeps the wiring in one place.
