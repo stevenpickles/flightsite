@@ -309,9 +309,11 @@ def _to_record(row: Mapping[str, object]) -> NormalizedAircraftRecord | None:
     Returns ``None`` — silently skipped, not counted as rejected — in two cases,
     neither of which is malformed data:
 
-    * **No address.** Real snapshots contain all-empty rows (the first data row
-      of the current one is entirely blank). A row with no ``icao24`` names no
-      airframe.
+    * **No address.** Real snapshots contain rows carrying no data — the first
+      data row of the current one is blank in every column that means anything,
+      though *not* literally every column (see the module docstring). An empty
+      ``icao24`` is the property that actually identifies them: a row with no
+      address names no airframe.
     * **Nothing this source contributes.** A row whose operator, owner,
       manufacturer/model and build year are all empty has nothing to offer:
       this source withholds ``registration`` and ``type_code`` by design (see
