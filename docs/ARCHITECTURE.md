@@ -131,7 +131,7 @@ Package `flightsite` (backend/src/flightsite/), matching roadmap `expected_artif
 | `api/` | REST routers, WebSocket broadcaster, OpenAPI exposure | 010+ |
 | `demo/` | Deterministic `DemoAdapter` scenarios | 011 |
 | `devtools/` | Capture/replay CLI and `ReplayAdapter` | 012 |
-| `metadata/` | Normalized metadata schema, `MetadataProvider`, import pipeline, precedence (`sources/mictronics.py`, `sources/faa.py`) | 021–023 |
+| `metadata/` | Normalized metadata schema, `MetadataProvider`, import pipeline, precedence (`sources/mictronics.py`, `sources/faa.py`, and the opt-in `sources/opensky.py`) | 021–023, 059 |
 | `classification/` | Military/gov/police + mission classification, operator normalization | 024 |
 | `enrichment/` | `RouteEnrichmentProvider`, AeroDataBox client, cache, limits | 026 |
 | `airports/` | Airport dataset, nearest-airport, arrival/departure inference | 027 |
