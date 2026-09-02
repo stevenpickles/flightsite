@@ -30,8 +30,11 @@ export interface ReceiverSectionProps {
 
 /** Site name, location, and antenna height (SPEC §13) — the same fields the
  * setup wizard's Location step collects, editable afterward here. Restart
- * required: bearing/distance/range-ring computation and the ingestion
- * endpoint are both anchored on the location effective at process startup. */
+ * required: bearing, distance and range rings are measured from the reference
+ * point the running live store holds, so moving it here would leave every
+ * already-observed aircraft carrying a distance from the old one until it was
+ * seen again. (Filling the blank on a fresh install has nothing to disturb,
+ * so the wizard's first save applies immediately.) */
 export function ReceiverSection({ config }: ReceiverSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickReceiverLocation(draftFromConfig(config)),
