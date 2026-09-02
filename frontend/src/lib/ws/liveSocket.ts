@@ -34,6 +34,7 @@ import type { BackoffOptions } from "@/lib/ws/backoff";
 import { backoffDelayMs, DEFAULT_BACKOFF } from "@/lib/ws/backoff";
 import type { DeltaData, SnapshotData } from "@/lib/ws/protocol";
 import {
+  asActivityBatch,
   asActivityEvent,
   asDeltaData,
   asSnapshotData,
@@ -72,7 +73,19 @@ export interface LiveSocketHandlers {
   /** Connection state changed. Called only on a genuine transition. */
   onStatus: (status: ConnectionStatus) => void;
   /**
-   * An `activity` frame: one event (§4.4, roadmap slice 035).
+   * An `activity_batch` frame: everything one detector pass recorded
+   * (§4.4, roadmap slice 035, batched by slice 057).
+   *
+   * Called with a whole pass rather than an event at a time, which is the
+   * shape the wire now has: the server sends one frame per pass so that a
+   * fresh install's first-run backlog cannot overflow a client's queue and get
+   * it evicted. A consumer that wants events singly loops; a consumer that
+   * wants one state update per pass — the activity feed store — gets it for
+   * free, which is the direction the cost actually runs.
+   *
+   * Never called with an empty array: a pass that recorded nothing sends no
+   * frame, and a frame whose entries were all unreadable has nothing to hand
+   * over either.
    *
    * Optional, unlike the three above, and that is the point of how slice 035
    * touched this client at all. A caller that does not pass it gets exactly
@@ -81,12 +94,12 @@ export interface LiveSocketHandlers {
    * the feed is opt-in per consumer rather than something every socket owner
    * now has to handle.
    *
-   * There is no replay: `activity` frames are not part of the snapshot/delta
+   * There is no replay: activity frames are not part of the snapshot/delta
    * picture and a reconnect re-sends none of them. A consumer that needs the
    * events it missed refetches `GET /api/v1/activity` and resumes appending,
    * which is what `features/activity` does.
    */
-  onActivity?: (event: ActivityEvent) => void;
+  onActivityBatch?: (events: ActivityEvent[]) => void;
 }
 
 export interface LiveSocketOptions extends Partial<LiveSocketHandlers> {
@@ -142,9 +155,9 @@ export class LiveSocket {
       onDelta: options.onDelta ?? (() => {}),
       onStatus: options.onStatus ?? (() => {}),
       // Left genuinely absent rather than defaulted to a no-op: the dispatch
-      // switch reads its presence to decide whether an `activity` frame is
+      // switch reads its presence to decide whether an activity frame is
       // something this consumer handles or something it ignores.
-      onActivity: options.onActivity,
+      onActivityBatch: options.onActivityBatch,
     };
     this.url = options.url ?? liveSocketUrl();
     this.socketFactory = options.socketFactory ?? defaultSocketFactory;
@@ -229,16 +242,36 @@ export class LiveSocket {
         }
         return;
       }
+      case "activity_batch": {
+        // A consumer without an `onActivityBatch` handler falls through to
+        // exactly the ignore path below — no narrowing work, no error, no
+        // resync.
+        const handler = this.handlers.onActivityBatch;
+        if (!handler) {
+          return;
+        }
+        const events = asActivityBatch(frame.data);
+        // An empty pass is not delivered: the server does not send one, and a
+        // frame whose entries were all unreadable has nothing to append.
+        if (events && events.length > 0) {
+          handler(events);
+        }
+        return;
+      }
       case "activity": {
-        // A consumer without an `onActivity` handler falls through to exactly
-        // the ignore path below — no narrowing work, no error, no resync.
-        const handler = this.handlers.onActivity;
+        // The singular frame slice 035 defined and slice 057 retired. The
+        // server no longer sends it; this case is here for the one window
+        // where it can still arrive — a tab holding a new bundle that
+        // reconnects to a backend not yet upgraded — and it hands the event
+        // over as a one-event pass so there is a single consumer contract
+        // rather than two. Removable one release after 057 ships.
+        const handler = this.handlers.onActivityBatch;
         if (!handler) {
           return;
         }
         const event = asActivityEvent(frame.data);
         if (event) {
-          handler(event);
+          handler([event]);
         }
         return;
       }
@@ -249,8 +282,9 @@ export class LiveSocket {
       default:
         // §6: unknown types (and `pong`, which this client never provokes)
         // are ignored, not errors — the rule that let a slice-010 client
-        // survive slice 035 adding `activity` above, and that will let this
-        // one survive whatever comes next.
+        // survive slice 035 adding `activity`, and a slice-035 client survive
+        // slice 057 replacing it with `activity_batch` above, and that will
+        // let this one survive whatever comes next.
         return;
     }
   }
