@@ -86,6 +86,7 @@ export function SightingsPage() {
             pageSize={PAGE_SIZE}
             rowCount={listQuery.data.items.length}
             total={listQuery.data.total}
+            noun={{ singular: "sighting", plural: "sightings" }}
             onPageChange={(page) => setState({ page })}
           />
         </div>

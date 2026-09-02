@@ -72,6 +72,7 @@ export function AircraftPage() {
             pageSize={PAGE_SIZE}
             rowCount={listQuery.data.items.length}
             total={listQuery.data.total}
+            noun={{ singular: "aircraft", plural: "aircraft" }}
             onPageChange={(page) => setState({ page })}
           />
         </div>

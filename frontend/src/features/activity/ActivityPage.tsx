@@ -81,6 +81,7 @@ export function ActivityPage() {
             pageSize={PAGE_SIZE}
             rowCount={listQuery.data.items.length}
             total={listQuery.data.total}
+            noun={{ singular: "event", plural: "events" }}
             onPageChange={(page) => setState({ page })}
           />
         </div>
