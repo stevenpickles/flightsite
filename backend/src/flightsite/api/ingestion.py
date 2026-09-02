@@ -112,12 +112,24 @@ async def start_decoder_ingestion(app: FastAPI) -> IngestionService:
     into the in-memory registry, and nothing on this path touches the database
     (``docs/ARCHITECTURE.md`` §3.1).
 
-    ``app.state.ingestion`` is assigned here, last, so that a failed
-    ``start()`` leaves it ``None`` and a later save can try again — and so
-    that there is one place that decides what "ingestion is now running" means
-    for application state. Both readers pick the assignment up with no further
-    wiring: :func:`flightsite.app._decoder_health` reads it lazily on every
-    probe, and the lifespan hook's shutdown reads it when it stops.
+    ``app.state.ingestion`` is assigned *before* the service is started, and
+    that ordering is load-bearing rather than incidental. Constructing the
+    service opens nothing — no client, no task, no connection — so everything
+    from :func:`ingestion_startable`'s check through this assignment runs with
+    no ``await`` in it, and two saves arriving back to back on the same event
+    loop cannot both observe "nothing running" and both build an adapter. It
+    is the same check-and-claim shape, and the same reasoning, as
+    ``POST /metadata/update`` coalescing a double-clicked button onto the run
+    already happening. Assigning after ``start()`` instead would leave a window
+    across the adapter's own startup in which a second save saw an empty slot.
+
+    A failed ``start()`` releases the slot again, so the failure is not
+    sticky: ``app.state.ingestion`` is back to ``None`` and the next save
+    simply tries again.
+
+    Both readers pick the assignment up with no further wiring:
+    :func:`flightsite.app._decoder_health` reads it lazily on every probe, and
+    the lifespan hook's shutdown reads it when it stops.
     """
     live: LiveStore = app.state.live
     service = build_ingestion_service(
@@ -125,8 +137,12 @@ async def start_decoder_ingestion(app: FastAPI) -> IngestionService:
         readiness=app.state.readiness,
         consumers=(live.apply,),
     )
-    await service.start()
     app.state.ingestion = service
+    try:
+        await service.start()
+    except Exception:
+        app.state.ingestion = None
+        raise
     return service
 
 

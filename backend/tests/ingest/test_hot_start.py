@@ -17,6 +17,7 @@ it that way — it is the difference between "start what is not running" and
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -26,12 +27,18 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from flightsite.api.internal import _apply_ingestion_start
 from flightsite.app import create_app
+from flightsite.config import ConfigStore
 from flightsite.ingest import Position
+from flightsite.ingest import build_ingestion_service as real_build
 from flightsite.ingest.service import READINESS_SUBSYSTEM, IngestionService
 from flightsite.live import LiveStore
 
 from .conftest import CountingClientFactory, ScriptedTransport, json_response
+
+#: The real implementations, captured before any test monkeypatches them.
+real_start = IngestionService.start
 
 #: The document a first-run setup wizard save sends: a receiver endpoint and a
 #: location, which between them are everything ingestion needs to start.
@@ -155,6 +162,53 @@ def test_a_second_save_constructs_no_second_service(
         # polling in parallel with the first.
         assert app.state.ingestion is started
         assert app.state.settings.receiver.host == "other.test"
+
+
+async def test_two_saves_arriving_together_start_one_service(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, readsb_document: Any
+) -> None:
+    """A double-clicked Finish button must not start two adapters.
+
+    Both requests observe "nothing running" unless the claim on
+    ``app.state.ingestion`` is made in the same synchronous block as the check
+    — assigning after ``start()`` leaves a window across the adapter's own
+    startup, and two adapters polling the same decoder into the same live
+    store is the kind of thing that is only ever noticed in production.
+
+    ``start()`` is given a suspension point deliberately. Today's readsb
+    adapter happens to reach its first ``await`` without yielding, which hides
+    the race rather than removing it; this pins the ordering that stays
+    correct when that stops being true.
+    """
+    point_decoder_at(monkeypatch, json_response(readsb_document))
+    app = create_app(isolated_data_dir)
+
+    built: list[IngestionService] = []
+
+    def counting_build(*args: Any, **kwargs: Any) -> IngestionService:
+        service = real_build(*args, **kwargs)
+        built.append(service)
+        return service
+
+    async def suspending_start(service: IngestionService) -> None:
+        await asyncio.sleep(0)
+        await real_start(service)
+
+    monkeypatch.setattr("flightsite.api.ingestion.build_ingestion_service", counting_build)
+    monkeypatch.setattr(IngestionService, "start", suspending_start)
+
+    async with app.router.lifespan_context(app):
+        assert app.state.ingestion is None
+        # End the first-run state the way the endpoint does, then run the
+        # apply step twice concurrently — which is what two overlapping
+        # requests reach.
+        store: ConfigStore = app.state.config_store
+        app.state.settings = store.apply_update(FIRST_RUN_SAVE)
+
+        await asyncio.gather(_apply_ingestion_start(app), _apply_ingestion_start(app))
+
+        assert len(built) == 1
+        assert app.state.ingestion is built[0]
 
 
 def test_a_failed_hot_start_still_saves_the_configuration(
