@@ -41,6 +41,7 @@ import {
   EMPTY_FEATURE_COLLECTION,
   installOverlaysApiMock,
 } from "@/test/overlaysApiMock";
+import { sightingDetail, sightingRow } from "@/test/sightingsApiMock";
 import { getLastWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 
 // The `maplibre-gl` and `WebSocket` mocks are registered globally in
@@ -260,6 +261,80 @@ describe("LiveMapPage", () => {
       features: { geometry: { coordinates: number[][] } }[];
     };
     expect(track.features[0]?.geometry.coordinates).toHaveLength(2);
+  });
+
+  it("backfills the clicked aircraft's track from its open sighting", async () => {
+    // Issue #133: before slice 061 the trail started at the click, so an
+    // aircraft that had been airborne for an hour drew a single point.
+    installOverlaysApiMock({
+      sightings: {
+        items: [
+          sightingRow({
+            id: 91_001,
+            icao: "aaaaaa",
+            ended_at: null,
+            duration_s: null,
+            closure_reason: null,
+          }),
+        ],
+        total: null,
+        limit: 1,
+        offset: 0,
+      },
+      sightingDetail: {
+        91_001: sightingDetail({
+          id: 91_001,
+          icao: "aaaaaa",
+          ended_at: null,
+          duration_s: null,
+          closure_reason: null,
+          path: [
+            {
+              t: "2020-01-01T00:00:00.000Z",
+              lat: 46.5,
+              lon: -122,
+              altitude_ft: 20000,
+              source: "adsb",
+            },
+            {
+              t: "2020-01-01T00:05:00.000Z",
+              lat: 46.8,
+              lon: -122,
+              altitude_ft: 21000,
+              source: "adsb",
+            },
+          ],
+        }),
+      },
+    });
+
+    const map = await renderLoadedMap();
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47, lon: -122 } }),
+        ]),
+      );
+    });
+
+    map.renderedFeatures = [{ properties: { icao: "aaaaaa" } }];
+    await act(async () => {
+      map.emit("click", { point: { x: 10, y: 10 } });
+    });
+
+    await waitFor(() => {
+      expect(useLiveAircraftStore.getState().track?.points).toHaveLength(3);
+    });
+
+    const track = map.getSource(AIRCRAFT_TRACK_SOURCE_ID)?.data as {
+      features: { geometry: { coordinates: number[][] } }[];
+    };
+    // Oldest first, ending at the position the click selected.
+    expect(track.features[0]?.geometry.coordinates).toEqual([
+      [-122, 46.5],
+      [-122, 46.8],
+      [-122, 47],
+    ]);
   });
 
   it("clears the selection when the click lands on empty map", async () => {
