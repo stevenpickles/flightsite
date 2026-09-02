@@ -137,6 +137,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 054 | Live map motion correctness | 014, 039 | opus | medium | Anchor dead reckoning to the last position change so markers stop creeping forward then teleporting back (issue #119) |
 | 055 | Alert template instantiation fixes | 038, 041, 046 | opus | medium | Instantiate newly enabled alert templates on config save, and fix the wizard/catalogue template-key mismatch (issues #110, #111) |
 | 056 | First-run ingestion hot-start | 007, 019, 055 | opus | medium | Start decoder ingestion on the config save that ends the first-run state, so a fresh install needs no backend restart (issue #122) |
+| 057 | Activity WebSocket batching | 012, 035, 049 | opus | medium | Batch a detector pass's activity events into one WebSocket frame so a fresh install's backlog stops evicting every client (issue #99) |
 
 ## Parallelization Guide
 

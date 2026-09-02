@@ -9,13 +9,13 @@
  *
  * Two stores, because the socket carries two unrelated things (`docs/API.md`
  * §4). `snapshot`/`delta` are the live *picture*: replaced wholesale, and
- * meaningless once the connection is gone. `activity` frames (§4.4) are
+ * meaningless once the connection is gone. `activity_batch` frames (§4.4) are
  * notifications about durable history, appended to `useActivityFeedStore` so
  * `ActivityPanel` can show them arriving while the map is open — while
  * `/activity` reads the same events from the database when it is not. Both
  * stores are reset on unmount for the same reason.
  *
- * An `activity` frame also goes to `dispatchAlertNotification` (slice 040),
+ * The events in a batch also go to `dispatchAlertNotification` (slice 040),
  * which turns the two alert event types into a browser notification when the
  * user has asked for one. It is called here rather than downstream of the
  * store because delivery must survive the store's reset on teardown: "already
@@ -40,9 +40,14 @@ export function useLiveConnection(): void {
       onDelta: (data) => {
         store().applyDelta(data);
       },
-      onActivity: (event) => {
-        activity().addEvent(event);
-        dispatchAlertNotification(event);
+      onActivityBatch: (events) => {
+        activity().addEvents(events);
+        // Per event, unlike the store: a notification is one user-visible
+        // thing per event, and `dispatchAlertNotification` decides for itself
+        // which of them are worth raising.
+        for (const event of events) {
+          dispatchAlertNotification(event);
+        }
       },
       onStatus: (status) => {
         store().setConnection(status);
