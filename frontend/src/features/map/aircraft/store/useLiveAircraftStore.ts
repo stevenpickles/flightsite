@@ -20,20 +20,47 @@
  *
  * * `receivedAt` — when this object arrived. Dates the *data*: how long ago the
  *   client last heard anything at all about this aircraft.
- * * `positionChangedAt` — when the reported fix last actually moved. Dates the
- *   *position*, which is a different thing entirely, because the backend sends
- *   complete aircraft objects every frame: a delta carrying nothing but a new
- *   RSSI still repeats the last decoded position verbatim.
+ * * `positionChangedAt` — when the receiver *fixed* the position the record now
+ *   reports. Dates the *position*, which is a different thing entirely, because
+ *   the backend sends complete aircraft objects every frame: a delta carrying
+ *   nothing but a new RSSI still repeats the last decoded position verbatim.
  *
  * The interpolator dead-reckons from `positionChangedAt`. Anchoring it to
  * `receivedAt` was issue #119: distant aircraft decode a CPR position only
  * every 2-10 s while transmitting Mode S every second, so every intervening
  * delta reset elapsed time to zero and snapped the marker back to the stale
  * fix before it crept forward again.
+ *
+ * **A fix is already old when it arrives** — issue #144, the residual error
+ * #119's fix left behind. The decoder needs a CPR pair to place an aircraft, so
+ * the position in a frame was measured `seen_pos_s` seconds before the poll
+ * that read it, and the poll and the socket add their own second or two on top.
+ * Stamping the arrival instant therefore anchored every fix systematically
+ * *late*: the projection from fix N had already run past fix N+1's raw
+ * coordinates by the time they were drawn, so each new fix stepped the marker
+ * backwards before it crept forward again. {@link fixAnchor} instead dates a
+ * new fix at `now - seen_pos_s * 1000` — the age the decoder itself reports
+ * (§3.3, honest since slice 062), in seconds, converted to the milliseconds
+ * these timestamps are kept in — the client-side mirror of that slice's
+ * server-side ageing.
+ *
+ * This keeps the #119 rule that only the browser's clock is read. `seen_pos_s`
+ * is a *duration*, not an instant: subtracting it from a browser timestamp
+ * never mixes the two clocks, so a receiver hours out of step with the browser
+ * changes nothing — the same skew-immunity argument slice 062 made in the other
+ * direction.
+ *
+ * A repeated fix is **not** re-dated, however far its reported age has grown
+ * since. The aircraft has not been placed anywhere new, so the anchor it
+ * already carries is still exactly when it was placed; letting an ageing
+ * `seen_pos_s` push the anchor backwards frame by frame would reintroduce #119
+ * inverted — the marker racing ahead of the fix and jerking back on each
+ * genuine decode. Only a position that actually changed takes a new anchor.
  */
 
 import { create } from "zustand";
 
+import { INTERPOLATION_MAX_FIX_AGE_MS } from "@/features/map/aircraft/interpolation";
 import type { SelectedTrack, TrackPoint } from "@/features/map/aircraft/track";
 import {
   appendTrackPoint,
@@ -48,9 +75,10 @@ export interface LiveAircraftRecord {
   aircraft: LiveAircraft;
   /** `Date.now()` when this object was applied. */
   receivedAt: number;
-  /** `Date.now()` when `aircraft.position` last changed — the moment the
-   * receiver placed the aircraft where the record now says it is. Carried
-   * forward unchanged by every frame that repeats the same fix. */
+  /** On the browser's clock, the moment the receiver placed the aircraft where
+   * the record now says it is: the arrival of the frame that first carried this
+   * fix, back-dated by the fix's own reported age (see {@link fixAnchor}).
+   * Carried forward unchanged by every frame that repeats the same fix. */
   positionChangedAt: number;
 }
 
@@ -204,8 +232,46 @@ function samePosition(previous: LiveAircraft, next: LiveAircraft): boolean {
   );
 }
 
+/**
+ * The most reported fix age this store will honour, in milliseconds.
+ *
+ * {@link INTERPOLATION_MAX_FIX_AGE_MS} is the natural bound and not a second
+ * arbitrary number: it is the age past which the interpolator stops projecting
+ * a fix at all. Nothing rendered depends on the clamp, in fact —
+ * `displayPosition` caps elapsed time at the same constant, so an anchor five
+ * minutes in the past and one clamped to fifteen seconds draw the marker in
+ * exactly the same place, frozen at the bound, for as long as either survives.
+ * What the clamp buys is a `positionChangedAt` that still means what the field
+ * says it means: anything above the bound is a decoder reporting something the
+ * map has already given up on — an aircraft heard for minutes without a usable
+ * CPR pair, or a malformed age — and a stored anchor minutes adrift would be a
+ * trap for the next reader, and for anything that later measures fix age from
+ * this field rather than through the interpolator.
+ */
+const MAX_REPORTED_FIX_AGE_MS = INTERPOLATION_MAX_FIX_AGE_MS;
+
+/**
+ * When the receiver fixed the position `entry` reports, on the browser's clock.
+ *
+ * The frame arrived at `now`, but the decoder says it placed the aircraft
+ * `seen_pos_s` seconds earlier, so the anchor is `now - seen_pos_s * 1000`
+ * (issue #144) — the reported age is in seconds, `now` and the anchor in
+ * milliseconds. A missing, negative or non-finite age falls back to `now`,
+ * which is exactly the pre-#144 behaviour: without a reported age the arrival
+ * instant is the best guess available, and it is the conservative one — it
+ * under-projects rather than inventing motion.
+ */
+function fixAnchor(entry: LiveAircraft, now: number): number {
+  const reportedS = entry.seen_pos_s;
+  if (reportedS === null || !Number.isFinite(reportedS) || reportedS <= 0) {
+    return now;
+  }
+  return now - Math.min(reportedS * 1000, MAX_REPORTED_FIX_AGE_MS);
+}
+
 /** The record for a freshly delivered aircraft object, inheriting the position
- * anchor from the record it replaces when the fix has not moved. */
+ * anchor from the record it replaces when the fix has not moved — a repeated
+ * fix keeps the anchor it was given, whatever its reported age has grown to. */
 function upsert(
   entry: LiveAircraft,
   previous: LiveAircraftRecord | undefined,
@@ -217,7 +283,7 @@ function upsert(
     positionChangedAt:
       previous && samePosition(previous.aircraft, entry)
         ? previous.positionChangedAt
-        : now,
+        : fixAnchor(entry, now),
   };
 }
 

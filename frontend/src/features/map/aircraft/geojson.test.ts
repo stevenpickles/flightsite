@@ -14,7 +14,7 @@ import type {
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import {
-  DENSITY_CALLSIGN_THRESHOLD,
+  DENSITY_CALLSIGN_ENTER,
   ZOOM_LABELS_FULL,
   ZOOM_LABELS_MIN,
 } from "@/features/map/labels/priority";
@@ -329,7 +329,7 @@ describe("buildAircraftFeatureCollection", () => {
 
     it("drops a non-priority label to callsign-only when the live picture is dense, even at high zoom", () => {
       const dense = records(
-        ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD + 1 }, (_, i) => ({
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER + 1 }, (_, i) => ({
           icao: i.toString(16).padStart(6, "0"),
           callsign: `AA${i}`,
           altitude_ft: 35000,
@@ -340,6 +340,46 @@ describe("buildAircraftFeatureCollection", () => {
       );
       for (const feature of collection.features) {
         expect(feature.properties.label).toBe(feature.properties.callsign);
+      }
+    });
+
+    it("honours a caller-supplied density latch over this frame's own count", () => {
+      // The hysteresis band (issue #143) lives with the frame loop, so a
+      // sparse frame drawn while the latch is still held must stay on the
+      // callsign-only tier rather than snapping back to the full stack.
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            altitude_ft: 35000,
+          }),
+          zoom: ZOOM_LABELS_FULL,
+          densityLatched: true,
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("BAW123");
+    });
+
+    it("honours a cleared density latch over a count that is inside the band", () => {
+      const inBand = records(
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER }, (_, i) => ({
+          icao: i.toString(16).padStart(6, "0"),
+          callsign: `AA${i}`,
+          altitude_ft: 35000,
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: inBand,
+          zoom: ZOOM_LABELS_FULL,
+          densityLatched: false,
+        }),
+      );
+      for (const feature of collection.features) {
+        expect(feature.properties.label).toBe(
+          `${feature.properties.callsign}\nFL350`,
+        );
       }
     });
 
@@ -366,7 +406,7 @@ describe("buildAircraftFeatureCollection", () => {
           altitude_ft: 35000,
           interesting: { severity: "high", reasons: ["test"] },
         },
-        ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD }, (_, i) => ({
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER }, (_, i) => ({
           icao: (i + 1).toString(16).padStart(6, "0"),
           callsign: `AA${i}`,
         })),
@@ -486,7 +526,7 @@ describe("filtering (features/filters integration)", () => {
     // aircraft is entitled to, not the callsign-only tier a genuinely
     // crowded sky would force.
     const crowd = records(
-      ...Array.from({ length: DENSITY_CALLSIGN_THRESHOLD + 5 }, (_, i) => ({
+      ...Array.from({ length: DENSITY_CALLSIGN_ENTER + 5 }, (_, i) => ({
         icao: (i + 1).toString(16).padStart(6, "0"),
         callsign: `AA${i}`,
         altitude_ft: 35000,

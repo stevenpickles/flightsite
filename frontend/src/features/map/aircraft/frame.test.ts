@@ -13,22 +13,46 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
+import { resetDensityLatch } from "@/features/map/labels/densityLatch";
+import {
+  DENSITY_CALLSIGN_ENTER,
+  DENSITY_CALLSIGN_EXIT,
+} from "@/features/map/labels/priority";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
+
+interface DrawnFeature {
+  properties: { label: string };
+}
 
 function fakeMap(): {
   map: MapLibreGlMap;
   dataByFeatureCount: () => number;
+  firstLabel: () => string | undefined;
 } {
-  let lastData: { features?: unknown[] } = { features: [] };
+  let lastData: { features?: DrawnFeature[] } = { features: [] };
   const map = {
     getSource: () => ({
-      setData: (data: { features?: unknown[] }) => {
+      setData: (data: { features?: DrawnFeature[] }) => {
         lastData = data;
       },
     }),
     getZoom: () => 10,
   } as unknown as MapLibreGlMap;
-  return { map, dataByFeatureCount: () => lastData.features?.length ?? 0 };
+  return {
+    map,
+    dataByFeatureCount: () => lastData.features?.length ?? 0,
+    firstLabel: () => lastData.features?.[0]?.properties.label,
+  };
+}
+
+/** `count` distinct positioned aircraft, all inside the default radius. */
+function crowd(count: number): ReturnType<typeof makeAircraft>[] {
+  return Array.from({ length: count }, (_, index) =>
+    makeAircraft({
+      icao: index.toString(16).padStart(6, "0"),
+      callsign: `AA${index}`,
+    }),
+  );
 }
 
 function state(aircraftList: ReturnType<typeof makeAircraft>[]) {
@@ -52,6 +76,7 @@ function state(aircraftList: ReturnType<typeof makeAircraft>[]) {
 
 beforeEach(() => {
   resetFilteredLiveAircraftCache();
+  resetDensityLatch();
 });
 
 describe("drawAircraftFrame filtering", () => {
@@ -101,5 +126,52 @@ describe("drawAircraftFrame filtering", () => {
       { filters: { ...DEFAULT_FILTERS, groundTraffic: "hide" } },
     );
     expect(dataByFeatureCount()).toBe(1);
+  });
+});
+
+describe("drawAircraftFrame label-density hysteresis", () => {
+  // Issue #143: the frame loop is what turns the pure band into a latch, so
+  // the sequence of frames — not any one of them — is the behaviour.
+  const FULL = "AA0\nFL310";
+  const CALLSIGN_ONLY = "AA0";
+
+  it("keeps the full stack while a rising count is still inside the band", () => {
+    const { map, firstLabel } = fakeMap();
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_EXIT + 1)), 0);
+    expect(firstLabel()).toBe(FULL);
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER)), 0);
+    expect(firstLabel()).toBe(FULL);
+  });
+
+  it("stays on callsign-only once latched, until the count clears the lower edge", () => {
+    const { map, firstLabel } = fakeMap();
+    // Above the upper edge: latch on.
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER + 1)), 0);
+    expect(firstLabel()).toBe(CALLSIGN_ONLY);
+
+    // Back inside the band — the flapping that produced the blink. The
+    // label content must not move.
+    for (const count of [
+      DENSITY_CALLSIGN_ENTER - 1,
+      DENSITY_CALLSIGN_ENTER + 1,
+      DENSITY_CALLSIGN_EXIT + 1,
+      DENSITY_CALLSIGN_ENTER,
+    ]) {
+      drawAircraftFrame(map, state(crowd(count)), 0);
+      expect(firstLabel()).toBe(CALLSIGN_ONLY);
+    }
+
+    // Below the lower edge: the picture really has thinned out.
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_EXIT - 1)), 0);
+    expect(firstLabel()).toBe(FULL);
+  });
+
+  it("unlatches once the picture empties, so a reconnect starts fresh", () => {
+    const { map, firstLabel } = fakeMap();
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER + 1)), 0);
+    expect(firstLabel()).toBe(CALLSIGN_ONLY);
+    drawAircraftFrame(map, state([]), 0);
+    drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER)), 0);
+    expect(firstLabel()).toBe(FULL);
   });
 });

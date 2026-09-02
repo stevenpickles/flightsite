@@ -22,6 +22,7 @@ import type {
   LiveAircraftRecord,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
+import { updateDensityLatch } from "@/features/map/labels/densityLatch";
 import { DEFAULT_DISPLAY_RADIUS_NM } from "@/features/map/mapConfig";
 import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
@@ -76,6 +77,11 @@ export function drawAircraftFrame(
       zoom: map.getZoom(),
       visibleIcaos: filterResult.visibleIcaos,
       dimmedIcaos: filterResult.dimmedIcaos,
+      // The frame loop is the one caller that draws a *sequence*, so it is
+      // the one that owns the label-density latch (issue #143). Advancing it
+      // here — once per frame, on the same post-filter count `geojson.ts`
+      // would have derived — keeps the builder itself pure.
+      densityLatched: updateDensityLatch(filterResult.visibleIcaos.size),
     }),
   );
   if (options.includeTrack) {

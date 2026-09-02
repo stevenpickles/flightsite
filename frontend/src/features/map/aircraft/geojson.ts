@@ -30,6 +30,7 @@ import {
 } from "@/features/map/labels/labelContent";
 import {
   deriveLabelTier,
+  nextDensityLatched,
   ZOOM_LABELS_FULL,
 } from "@/features/map/labels/priority";
 
@@ -112,6 +113,17 @@ export interface AircraftFrameInput {
   /** Subset of `visibleIcaos` that should render de-emphasized rather
    * than at full strength — the ground-traffic filter's "dim" mode. */
   dimmedIcaos?: ReadonlySet<string>;
+  /**
+   * Whether the label-density override is currently latched on
+   * (`labels/densityLatch.ts`), carried in because the hysteresis band that
+   * decides it (issue #143) needs to know what the *previous* frame chose,
+   * and this builder is pure.
+   *
+   * `undefined` means "no history": the frame is judged on its own count
+   * alone, which is exactly right for a one-off caller — and for every test
+   * that hands over a picture without drawing a sequence.
+   */
+  densityLatched?: boolean;
 }
 
 function feature(
@@ -154,6 +166,9 @@ export function buildAircraftFeatureCollection(
   const liveCount = visibleIcaos
     ? visibleIcaos.size
     : Object.keys(aircraft).length;
+  // One decision for the whole frame, resolved once rather than per feature.
+  const densityLatched =
+    input.densityLatched ?? nextDensityLatched(false, liveCount);
 
   for (const icao in aircraft) {
     const record = aircraft[icao];
@@ -174,7 +189,7 @@ export function buildAircraftFeatureCollection(
     const interesting = view.interesting !== null;
     const tier = deriveLabelTier({
       zoom,
-      liveCount,
+      densityLatched,
       priority: selected || interesting,
     });
     features.push(
