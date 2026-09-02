@@ -1501,6 +1501,36 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Owner-approved opt-in source. Licensing is ambiguous rather than clean, so the posture matches the Mictronics row (fetch-on-demand only) and adds default-off on top; contact@opensky-network.org is recorded in ADR-0013 as the route to firmer ground. Added by Fable outside the phase plan."
+  - id: "060"
+    title: "Raspberry Pi 4 performance baseline"
+    phase: 8
+    branch: "060-pi-baseline"
+    status: merged
+    depends_on: ["049", "050"]
+    objective: "Record the first Raspberry Pi 4 baseline for the slice-049 budget table in docs/PERFORMANCE.md, and apply §5.3's promotion rule to what that run actually measured (GitHub issues #101, #132)."
+    scope:
+      - "docs/PERFORMANCE.md §5.4 records the 2026-09-01 Pi 4 Model B Rev 1.5 / 4 GB / SD-card run of `flightsite-perf --realtime --ticks 600` against release v0.2.0: date, hardware, storage, and every measured figure with its gated statistic and verdict"
+      - "the run's contention caveat is recorded in substance — the production backend and the dump1090-fa/tar1090/FR24/ADSBx feeders shared the machine and the SD card, contrary to §5.1 step 3 — so the row stands as the provisional baseline with a clean re-run pending"
+      - "§5.3 promotion is deferred with its reasoning stated: reference budgets are not promoted to hard gates on contended numbers, because a gate calibrated on them would be either too loose or simply wrong"
+      - "the ingest_duty_cycle p95 overrun is recorded as a finding (issue #132) per §5.3 rule 3, not as a widened budget"
+      - "the slice-049 test that held the §5.4 no-baseline disclaimer in place is flipped to pin that §5.4 now carries a recorded baseline"
+    out_of_scope:
+      - "any change to the budget values or gate kinds in backend/src/flightsite/perf/budgets.py (that is the clean re-run's decision)"
+      - "the §7.6 Pi 4 storage baseline, which has its own procedure (§7.8) and its own disclaimer"
+      - "fixing the duty-cycle overrun itself (issue #132, which interacts with #114 and the owner's planned Pi 5 + SSD migration)"
+      - "re-running the measurement on an idle Pi (the pending clean re-run)"
+    acceptance_criteria:
+      - "docs/PERFORMANCE.md §5.4 carries the recorded Pi 4 baseline with every figure, the contention caveat, and the clean-re-run note referencing #132"
+      - "the document states that §5.3 promotion is deferred to the clean re-run, and why"
+      - "tests/perf/test_docs.py fails if §5.4 loses its recorded baseline, rather than requiring the disclaimer"
+      - "no budget value or gate kind in perf/budgets.py changed"
+    required_tests: [the flipped §5.4 baseline-presence guard in tests/perf/test_docs.py]
+    expected_artifacts:
+      - docs/PERFORMANCE.md
+      - backend/tests/perf/test_docs.py
+    preferred_agent: opus
+    risk_level: low
+    notes: "Closes slice 049's second acceptance criterion (issue #101) with a provisional, honestly-caveated figure. Measurement was run by Fable on the owner's production Pi over SSH; the JSON report is at /opt/flightsite/data/perf-baseline/report.json on that machine. Added by Fable outside the phase plan."
   - id: "061"
     title: "Selected aircraft track backfill"
     phase: 8
