@@ -7,14 +7,24 @@
  * filter state of its own and can never drift from what the map is
  * actually drawing.
  *
- * Fields that match aircraft metadata (type/operator/operator group,
- * classification, mission) stay fully interactive rather than disabled, but
- * carry an inline note whenever this install has not imported metadata yet —
- * without it those filters match nothing, and the note says where to fix
- * that. Once an import has landed (`useMetadataAvailable`, slice 066) the
- * notes disappear, because the filters genuinely filter. "Interesting only"
- * was gated the same way until slice 038 started populating `interesting`
- * and slice 039 surfaced it.
+ * Fields that can only match imported aircraft metadata — type, operator,
+ * operator group, and the classification flags — stay fully interactive
+ * rather than disabled, but carry an inline note whenever this install has
+ * not imported any, because without it they match nothing. Once an import
+ * has landed (`useMetadataAvailable`, slice 066) those notes disappear,
+ * because the filters genuinely filter.
+ *
+ * Mission category is deliberately *not* in that set. The classification
+ * engine infers a mission from the callsign's airline designator against a
+ * bundled operator directory (`classification/engine.py`, `operators.py`),
+ * so airline traffic carries a mission on a metadata-less install; metadata
+ * only widens the coverage by adding type-code inference. Its note says
+ * that, unconditionally, rather than claiming a prerequisite it does not
+ * have. Classification flags are the opposite case and the note is right
+ * there: "a callsign never sets a flag" is that engine's own rule.
+ *
+ * "Interesting only" was gated the same way until slice 038 started
+ * populating `interesting` and slice 039 surfaced it.
  */
 
 import { Filter, X } from "lucide-react";
@@ -379,7 +389,10 @@ export function FilterDrawer() {
                   ))}
                 </ul>
               )}
-              {!metadataAvailable && <MetadataImportNote />}
+              <PlumbingNote>
+                Inferred from the callsign&apos;s airline designator; aircraft
+                metadata widens coverage by adding type-based missions.
+              </PlumbingNote>
             </FilterSection>
 
             <FilterSection title="Status">

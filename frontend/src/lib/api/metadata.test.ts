@@ -128,7 +128,7 @@ describe("hasImportedMetadata", () => {
     ).toBe(false);
   });
 
-  it("is true when any one source has rows installed", () => {
+  it("is true when any one airframe source has rows installed", () => {
     expect(
       hasImportedMetadata({
         sources: [
@@ -142,6 +142,70 @@ describe("hasImportedMetadata", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("ignores the airports source, whose rows are airports rather than airframes", () => {
+    // SPEC §27 keeps every source's outcome independent, so this — airports
+    // imported, both airframe sources failed — is an ordinary state, and it
+    // must not read as "this install has aircraft metadata".
+    expect(
+      hasImportedMetadata({
+        sources: [
+          metadataSource({
+            name: "airports",
+            status: "ok",
+            row_count: 80_412,
+            last_success_ms: 1_756_600_000_000,
+          }),
+          metadataSource({
+            name: "mictronics",
+            status: "failed",
+            last_error: "download failed",
+          }),
+          metadataSource({
+            name: "faa",
+            status: "failed",
+            last_error: "download failed",
+          }),
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("is true for airports alongside an airframe source with rows", () => {
+    expect(
+      hasImportedMetadata({
+        sources: [
+          metadataSource({
+            name: "airports",
+            status: "ok",
+            row_count: 80_412,
+            last_success_ms: 1_756_600_000_000,
+          }),
+          metadataSource({
+            name: "opensky",
+            status: "ok",
+            row_count: 512_000,
+            last_success_ms: 1_756_600_000_000,
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores an unrecognized source name — a new airframe source lands with the code that names it", () => {
+    expect(
+      hasImportedMetadata({
+        sources: [
+          metadataSource({
+            name: "some-future-source",
+            status: "ok",
+            row_count: 1_000,
+            last_success_ms: 1_756_600_000_000,
+          }),
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("stays true while a later run is in flight or has failed — the installed dataset is still there", () => {

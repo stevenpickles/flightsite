@@ -157,18 +157,29 @@ describe("FilterDrawer", () => {
     ).toHaveTextContent(/matches nothing until an aircraft-metadata import/i);
   });
 
-  it("notes the missing import on every metadata-backed section when nothing is imported", async () => {
+  it("notes the missing import on exactly the two import-only sections", async () => {
     renderDrawer();
     await userEvent.click(screen.getByRole("button", { name: /filters/i }));
 
-    // Category/operator, classification, and mission category.
+    // Category/operator and classification — and those two only. Mission is
+    // not among them: the classification engine infers it from the
+    // callsign's airline designator with no import at all.
     const notes = await screen.findAllByText(
       /matches nothing until an aircraft-metadata import runs \(settings → metadata\)/i,
     );
-    expect(notes).toHaveLength(3);
+    expect(notes).toHaveLength(2);
   });
 
-  it("drops the metadata-import notes once metadata is imported", async () => {
+  it("tells the truth about mission category, which callsign inference already fills", async () => {
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+
+    const note = screen.getByText(/inferred from the callsign/i);
+    expect(note).toHaveTextContent(/widens coverage by adding type-based/i);
+    expect(note).not.toHaveTextContent(/matches nothing until/i);
+  });
+
+  it("keeps the mission-category note and drops the import notes once metadata is imported", async () => {
     installMetadataApiMock({ statusSequence: [IMPORTED] });
     renderDrawer();
     await userEvent.click(screen.getByRole("button", { name: /filters/i }));
@@ -180,7 +191,10 @@ describe("FilterDrawer", () => {
         ),
       ).not.toBeInTheDocument(),
     );
-    // The filters themselves are untouched — only the caveat goes away.
+    // The mission note is unconditional — it describes how mission is
+    // derived, not a prerequisite.
+    expect(screen.getByText(/inferred from the callsign/i)).toBeInTheDocument();
+    // The filters themselves are untouched — only the caveats go away.
     expect(screen.getByRole("checkbox", { name: "Military" })).toBeEnabled();
     expect(screen.getByLabelText(/aircraft type/i)).toBeEnabled();
   });

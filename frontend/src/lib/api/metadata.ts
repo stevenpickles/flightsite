@@ -86,7 +86,32 @@ export function useMetadataStatusQuery(): UseQueryResult<MetadataStatusResponse>
   });
 }
 
-/** True when this source row proves a dataset is actually installed.
+/** The registered sources whose rows are *airframes*.
+ *
+ * The status endpoint reports every registered source and carries no field
+ * saying what kind of rows a source installs, so the distinction has to be
+ * drawn by name. `airports` (slice 027) is a metadata source in every
+ * mechanical sense — its own status row, its own `row_count` in the tens of
+ * thousands — but, as `backend/src/flightsite/metadata/registry.py`'s module
+ * docstring puts it, its "rows are airports rather than airframes". SPEC §27
+ * makes each source's outcome independent, so "airports ok, mictronics and
+ * faa failed" is an ordinary state; counting airports there would report
+ * metadata as available over an empty `aircraft_metadata` table — exactly
+ * the silently-empty-map hazard the original chip gate existed to prevent.
+ *
+ * The frontend already draws this line in `MetadataSection`'s
+ * `SOURCE_LABELS`, which names these three and lets `airports` fall through
+ * to the generic label. An unrecognized name is treated as
+ * not-an-airframe-source: a new aircraft source arrives together with the
+ * frontend change that names it, and failing closed until then only leaves a
+ * filter unavailable, where failing open would leave it lying. */
+const AIRCRAFT_METADATA_SOURCES: ReadonlySet<string> = new Set([
+  "mictronics",
+  "faa",
+  "opensky",
+]);
+
+/** True when this source row proves an *airframe* dataset is installed.
  *
  * `row_count` is written only by a successful promotion and cleared only by
  * a metadata reset, so a positive count is the single field that separates
@@ -97,13 +122,17 @@ export function useMetadataStatusQuery(): UseQueryResult<MetadataStatusResponse>
  * the previous dataset intact) — neither of those takes the data away, so
  * neither should take the metadata-backed filters away. */
 function sourceHasRows(source: MetadataSourceStatusEntry): boolean {
-  return source.row_count !== null && source.row_count > 0;
+  return (
+    AIRCRAFT_METADATA_SOURCES.has(source.name) &&
+    source.row_count !== null &&
+    source.row_count > 0
+  );
 }
 
-/** Whether a status document reports any source with rows installed.
- * `undefined` — status not loaded yet, or the request failed — reads as
- * "no metadata", the safe answer: a filter that would silently match
- * nothing stays visibly unavailable until we know better. */
+/** Whether a status document reports any airframe source with rows
+ * installed. `undefined` — status not loaded yet, or the request failed —
+ * reads as "no metadata", the safe answer: a filter that would silently
+ * match nothing stays visibly unavailable until we know better. */
 export function hasImportedMetadata(
   status: MetadataStatusResponse | undefined,
 ): boolean {

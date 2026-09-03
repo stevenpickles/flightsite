@@ -55,9 +55,10 @@ const EMPTY_SIGHTING_LIST: SightingListResponse = {
  * and `GET /api/v1/sightings/{id}`, which back the track backfill (roadmap
  * slice 061) — and `GET /api/internal/metadata/status`, which the filter
  * chips and drawer read to decide whether the metadata-backed filters have
- * anything to match (roadmap slice 066), so map tests can exercise the real API clients and TanStack
- * Query hooks without a running backend. Any other URL throws, surfacing an
- * un-mocked request as a test failure instead of a silent network error. */
+ * anything to match (roadmap slice 066). So map tests can exercise the real
+ * API clients and TanStack Query hooks without a running backend. Any other
+ * URL throws, surfacing an un-mocked request as a test failure instead of a
+ * silent network error. */
 export function installOverlaysApiMock(options: MockOverlaysApiOptions = {}) {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {

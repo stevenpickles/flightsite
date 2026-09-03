@@ -8,11 +8,14 @@
  * payloads once this install has imported aircraft metadata. The chip was
  * hard-disabled from slice 017 until slice 066 because no metadata system
  * existed at all; now that one does, the gate is on the *data*, not on
- * history: `useMetadataAvailable` asks whether any source has rows
- * installed, and the chip toggles for real when it does. With no import the
- * chip stays disabled — turning it on would silently empty the map — and
- * says where to fix that. "Emergency" (`emergency` squawk) and "Airborne
- * only" (ground traffic) are decoder fields and are always live.
+ * history: `useMetadataAvailable` asks whether any airframe source has rows
+ * installed, and the chip toggles for real when it does. With no import,
+ * turning the filter *on* would silently empty the map, so the chip is
+ * disabled and says where to fix that — but a filter already on (restored
+ * from the URL, or set in the drawer) leaves the chip enabled, because an
+ * active filter must always be releasable from where its state is shown.
+ * "Emergency" (`emergency` squawk) and "Airborne only" (ground traffic) are
+ * decoder fields and are always live.
  */
 
 import {
@@ -71,6 +74,20 @@ export function QuickFilterChips() {
   // can arrive military-selected, so the chip reports the model rather than
   // its own availability.
   const militaryActive = filters.classifications.includes("military");
+  // Disabled only where clicking would *start* a filter that matches
+  // nothing. An already-active filter stays clickable however unavailable
+  // the metadata is — otherwise the one control showing "military only" is
+  // the one control that cannot turn it off again.
+  const militaryDisabled = !metadataAvailable && !militaryActive;
+
+  const militaryChip = (
+    <Chip
+      label="Military"
+      active={militaryActive}
+      disabled={militaryDisabled}
+      onClick={() => toggleClassification("military")}
+    />
+  );
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -82,24 +99,19 @@ export function QuickFilterChips() {
         className="absolute left-3 top-12 z-10 flex flex-wrap gap-1.5"
       >
         {metadataAvailable ? (
-          <Chip
-            label="Military"
-            active={militaryActive}
-            onClick={() => toggleClassification("military")}
-          />
+          militaryChip
         ) : (
           <Tooltip>
             <TooltipTrigger asChild>
               {/* A disabled button suppresses its own pointer events in most
                * browsers, so the hover target — and the tooltip trigger — is
                * this wrapping span, not the button itself. */}
-              <span data-testid="military-chip-trigger">
-                <Chip label="Military" active={militaryActive} disabled />
-              </span>
+              <span data-testid="military-chip-trigger">{militaryChip}</span>
             </TooltipTrigger>
             <TooltipContent>
-              No aircraft metadata imported yet — run Settings → Metadata →
-              Update Aircraft Metadata
+              {militaryActive
+                ? "Filter active, but no aircraft metadata is imported — it matches nothing until one runs"
+                : "No aircraft metadata imported yet — run Settings → Metadata → Update Aircraft Metadata"}
             </TooltipContent>
           </Tooltip>
         )}

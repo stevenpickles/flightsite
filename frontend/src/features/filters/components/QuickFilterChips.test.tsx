@@ -59,6 +59,27 @@ describe("QuickFilterChips", () => {
     expect(militaryChip()).toBeDisabled();
   });
 
+  it("leaves an already-active military filter releasable with no metadata imported", async () => {
+    useFilterStore.getState().toggleClassification("military");
+    renderWithProviders(<QuickFilterChips />);
+
+    // Active, so clickable — the alternative is a filter you can see but
+    // cannot turn off from where it is shown.
+    expect(militaryChip()).toBeEnabled();
+    expect(militaryChip()).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.hover(screen.getByTestId("military-chip-trigger"));
+    const tooltip = await screen.findAllByText(
+      /filter active, but no aircraft metadata/i,
+    );
+    expect(tooltip.length).toBeGreaterThan(0);
+
+    await userEvent.click(militaryChip());
+    expect(useFilterStore.getState().filters.classifications).toEqual([]);
+    // Released, and now correctly back to disabled.
+    expect(militaryChip()).toBeDisabled();
+  });
+
   it("enables the Military chip and toggles the military classification once metadata is imported", async () => {
     installMetadataApiMock({ statusSequence: [IMPORTED] });
     renderWithProviders(<QuickFilterChips />);
