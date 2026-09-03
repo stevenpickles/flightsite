@@ -86,6 +86,43 @@ export function useMetadataStatusQuery(): UseQueryResult<MetadataStatusResponse>
   });
 }
 
+/** True when this source row proves a dataset is actually installed.
+ *
+ * `row_count` is written only by a successful promotion and cleared only by
+ * a metadata reset, so a positive count is the single field that separates
+ * "an import ran and installed rows" from "registered but never run", "still
+ * downloading its first dataset", and "failed with nothing to show". It
+ * deliberately keeps describing the installed dataset while a later run is
+ * `"running"` or after one has `"failed"` (SPEC §27: a failed import leaves
+ * the previous dataset intact) — neither of those takes the data away, so
+ * neither should take the metadata-backed filters away. */
+function sourceHasRows(source: MetadataSourceStatusEntry): boolean {
+  return source.row_count !== null && source.row_count > 0;
+}
+
+/** Whether a status document reports any source with rows installed.
+ * `undefined` — status not loaded yet, or the request failed — reads as
+ * "no metadata", the safe answer: a filter that would silently match
+ * nothing stays visibly unavailable until we know better. */
+export function hasImportedMetadata(
+  status: MetadataStatusResponse | undefined,
+): boolean {
+  return status?.sources.some(sourceHasRows) ?? false;
+}
+
+/** Does this install have aircraft metadata for the metadata-backed filters
+ * (classification, mission, type/operator) to match against?
+ *
+ * Reads {@link useMetadataStatusQuery} rather than fetching the status
+ * document a second time: one query key with one set of options, however
+ * many components ask. While the status is loading or errored this answers
+ * `false`, so a gated control opens up only on positive evidence and never
+ * flashes enabled before turning itself off again. */
+export function useMetadataAvailable(): boolean {
+  const { data } = useMetadataStatusQuery();
+  return hasImportedMetadata(data);
+}
+
 /** Triggers an update and refreshes {@link useMetadataStatusQuery} with an
  * immediate refetch, so the "running" state (and the polling it drives)
  * shows up as soon as the backend has scheduled the run rather than waiting

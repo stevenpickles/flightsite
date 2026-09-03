@@ -1,6 +1,7 @@
 import type { FeatureCollection } from "geojson";
 import { vi } from "vitest";
 
+import type { MetadataStatusResponse } from "@/lib/api/metadata";
 import type { SightingDetail, SightingListResponse } from "@/lib/api/sightings";
 
 /** An empty `FeatureCollection` — the default response for both endpoints,
@@ -33,6 +34,11 @@ export interface MockOverlaysApiOptions {
   /** `id -> SightingDetail` for `GET /api/v1/sightings/{id}`; an id with no
    * entry 404s. */
   sightingDetail?: Record<number, SightingDetail>;
+  /** Response `GET /api/internal/metadata/status` returns — the filter
+   * chips and drawer read it to decide whether the metadata-backed filters
+   * have anything to match (roadmap slice 066). Defaults to no registered
+   * sources, i.e. a stock install with no import behind it. */
+  metadataStatus?: MetadataStatusResponse;
 }
 
 /** The `GET /api/v1/sightings` default: no open sighting for anything. */
@@ -47,7 +53,9 @@ const EMPTY_SIGHTING_LIST: SightingListResponse = {
  * `GET /api/v1/airspace` (roadmap slice 028), plus the two sightings reads the
  * Live Map itself makes when an aircraft is selected — `GET /api/v1/sightings`
  * and `GET /api/v1/sightings/{id}`, which back the track backfill (roadmap
- * slice 061) — so map tests can exercise the real API clients and TanStack
+ * slice 061) — and `GET /api/internal/metadata/status`, which the filter
+ * chips and drawer read to decide whether the metadata-backed filters have
+ * anything to match (roadmap slice 066), so map tests can exercise the real API clients and TanStack
  * Query hooks without a running backend. Any other URL throws, surfacing an
  * un-mocked request as a test failure instead of a silent network error. */
 export function installOverlaysApiMock(options: MockOverlaysApiOptions = {}) {
@@ -95,6 +103,13 @@ export function installOverlaysApiMock(options: MockOverlaysApiOptions = {}) {
           );
         }
         return jsonResponse(detail);
+      }
+
+      if (
+        url.pathname === "/api/internal/metadata/status" &&
+        method === "GET"
+      ) {
+        return jsonResponse(options.metadataStatus ?? { sources: [] });
       }
 
       throw new Error(`Unhandled fetch in test: ${method} ${raw}`);

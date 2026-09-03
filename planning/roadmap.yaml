@@ -1704,6 +1704,51 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner reported markers still oscillating on the Pi at v0.3.0. Fixes GitHub issue #144, the residual systematic term slice 054's no-correction-blend rationale underestimated. Frontend-only, client-side mirror of slice 062's server-side ageing. Added by Fable outside the phase plan."
+  - id: "066"
+    title: "Military chip metadata gate"
+    phase: 8
+    branch: "066-military-chip"
+    status: merged
+    depends_on: ["017", "025"]
+    objective: "Lift the slice-017 gate that left the live map's Military quick-filter chip permanently disabled, and gate it on the install's actual metadata instead of on roadmap history — so the chip toggles for real once an import has landed, and says where to run one when it has not (issue #151)."
+    scope:
+      - "`lib/api/metadata.ts` gains `hasImportedMetadata(status)` and the `useMetadataAvailable()` hook, both deriving availability from `row_count > 0` on any source - the one field written only by a successful promotion, so it separates an installed dataset from never-run, first-run-in-flight and failed"
+      - "`useMetadataAvailable` reads the existing `useMetadataStatusQuery` rather than fetching `/api/internal/metadata/status` a second time: one key, one set of options, however many components ask (the slice-061 lesson about divergent observers of one key)"
+      - "unknown status - loading or errored - answers `false`, so a gated control opens only on positive evidence and never flashes enabled before disabling itself"
+      - "`QuickFilterChips` renders Military as a real toggle when metadata is available, wired to `toggleClassification(\"military\")` with `aria-pressed` read from `filters.classifications`; when it is not, the chip stays disabled and its tooltip points at Settings -> Metadata instead of at a future slice"
+      - "the chip reports the store's military selection whether enabled or disabled, so it can never disagree with the drawer checkbox it mirrors"
+      - "`FilterDrawer` replaces the three stale slice-024 plumbing notes (category/operator, classification, mission category) with one `MetadataImportNote` wording, rendered only while metadata is absent and gone once an import has landed"
+      - "`test/overlaysApiMock.ts` serves the metadata-status read the live map now makes, with a `metadataStatus` option"
+    out_of_scope:
+      - "the drawer's metadata-backed inputs themselves, which stay fully interactive with or without metadata - a note, never a disabled field"
+      - "`applyFilters` and its null-excludes semantics, unchanged: this slice changes what the UI says and enables, not what a selection matches"
+      - "backend changes; `/api/internal/metadata/status` already carries everything the predicate needs"
+      - "`features/filters/types.ts`'s module docstring, which still describes the metadata fields as slice-024-pending - a separate documentation-only cleanup"
+      - "any new metadata source, import trigger, or Settings-page change"
+    acceptance_criteria:
+      - "with a source reporting rows installed, the Military chip is enabled, toggles `classifications` military on and off, and carries the matching `aria-pressed`"
+      - "with no import, the chip is disabled and its tooltip names the prerequisite and where to fulfil it"
+      - "toggling the chip checks the drawer's Military checkbox and vice versa - one store, two views"
+      - "while the status is loading or after it fails, the chip is disabled; it never renders enabled first"
+      - "the drawer shows one import note per metadata-backed section without metadata, and none with it"
+      - "no drawer or chip copy references an unlanded slice"
+    required_tests:
+      - predicate unit tests over undefined/empty/never-run/zero-row/populated documents and the running-and-failed cases that must stay available
+      - hook tests for the false-until-proven default, the in-flight case, and the errored case
+      - chip tests for the disabled tooltip, the enabled toggle, external selection, loading and error safe states
+      - a mirror test rendering chips and drawer together and driving each from the other
+      - drawer tests for the note count without metadata and their absence with it
+    expected_artifacts:
+      - frontend/src/lib/api/metadata.ts
+      - frontend/src/features/filters/components/QuickFilterChips.tsx
+      - frontend/src/features/filters/components/FilterDrawer.tsx
+      - frontend/src/lib/api/metadata.test.ts
+      - frontend/src/features/filters/components/QuickFilterChips.test.tsx
+      - frontend/src/features/filters/components/FilterDrawer.test.tsx
+      - frontend/src/test/overlaysApiMock.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner-reported at v0.3.1: the chip had been disabled since slice 017, when no metadata system existed; slices 022-025 landed one and nobody lifted the gate. Fixes GitHub issue #151. Frontend-only. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
