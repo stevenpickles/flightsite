@@ -145,6 +145,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 062 | Live-set ghost expiry | 007, 008, 009 | opus | medium | Age live records by the decoder's own "last heard" report so dump1090's ~5-minute retention window stops inflating the live count and the 15 s / 60 s thresholds fire on time (issue #134) |
 | 063 | Aircraft label stability | 014, 015 | opus | low | Stop aircraft labels blinking: a hysteresis band on the density tier, and variable anchoring so a colliding label relocates before it hides (issue #143) |
 | 064 | Honest position-fix anchor | 054 | opus | low | Date each position fix by the decode age the frame reports rather than by its arrival, so dead reckoning hands over between fixes without the periodic backwards step (issue #144) |
+| 065 | Raspberry Pi 5 clean performance baseline | 049, 060 | opus | low | Record the first fully-passing on-hardware run in docs/PERFORMANCE.md §5.5 and apply §5.3's promotion rule: five reference budgets become hard gates, SQLite write latency does not (issue #132) |
 
 ## Parallelization Guide
 

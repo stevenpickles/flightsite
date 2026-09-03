@@ -1704,6 +1704,46 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner reported markers still oscillating on the Pi at v0.3.0. Fixes GitHub issue #144, the residual systematic term slice 054's no-correction-blend rationale underestimated. Frontend-only, client-side mirror of slice 062's server-side ageing. Added by Fable outside the phase plan."
+  - id: "065"
+    title: "Raspberry Pi 5 clean performance baseline"
+    phase: 8
+    branch: "065-pi5-baseline"
+    status: merged
+    depends_on: ["049", "060"]
+    objective: "Record the first fully-passing on-hardware qualification run in docs/PERFORMANCE.md, closing the finding slice 060 filed as issue #132, and apply §5.3's promotion rule now that a clean run exists."
+    scope:
+      - "docs/PERFORMANCE.md §5.5 records the 2026-09-02 Raspberry Pi 5 Model B Rev 1.0 / 8 GB / NVMe run of `flightsite-perf --realtime --ticks 600` against release v0.3.1: date, hardware, environment, command, and all twelve measured figures with their gated statistics and verdicts"
+      - "the section states what the run settles relative to §5.4 — the duty-cycle overrun was SD-card write stalls, not a code deficiency (db_write_cycle_ms p95 678 ms -> 57.7 ms, max 5.18 s -> 1.26 s; ingest_duty_cycle p95 0.99 -> 0.347) — and what it does not: two variables changed at once, and a Pi 4 on an SD card still consumes most of a poll"
+      - "the run's own load is stated honestly: an ultrafeeder decoder and three feeder containers (permitted by §5.1 step 3), the live backend ingesting beside the harness, and an idle proxy/database pair, so the figures are upper bounds"
+      - "§5.3 step 2 applied: ws_fanout_ms, db_read_ms, analytics_query_ms, startup_s and recovery_s promoted to GateKind.HARD in backend/src/flightsite/perf/budgets.py, each inside its budget on both the contended Pi 4 and the clean Pi 5; db_write_cycle_ms stays a reference budget because the two runs disagree about it by an order of magnitude"
+      - "no budget value changed and no in-suite bound was loosened: the promoted rows keep the ci_headroom they had, so startup_s and recovery_s are gated at their stated 30 s rather than relaxed to 150 s"
+      - "§1, §2.1, §2.2 and §5.3 updated to state the promotion, the asymmetry that licenses it (a figure that met its budget under contention met it with the worst case included), and the headroom exception; §5 retitled for Pi qualification generally and the development-machine baseline renumbered §5.6"
+      - "docs/TEST_STRATEGY.md §6.1 and docs/RELEASE.md's qualification checklist item follow the same change"
+      - "tests/perf/test_docs.py pins §5.5's presence, its report of every budget, and that the section names both the issue it closes and the budget that stayed trend-tracked"
+    out_of_scope:
+      - "any change to a budget value, a statistic, or an in-suite bound"
+      - "promoting db_write_cycle_ms, which needs a clean Pi 4 run on non-SD storage"
+      - "editing §5.4's recorded Pi 4 figures, which stand as taken"
+      - "the §7.6 Pi storage baseline, still unrecorded and behind its own procedure (§7.8)"
+      - "re-measuring on a Pi 4, and any change to the reference hardware the budgets are stated for (that would need an ADR)"
+    acceptance_criteria:
+      - "docs/PERFORMANCE.md §5.5 carries the Pi 5 baseline with all twelve figures, the hardware and environment preamble, and the comparison against §5.4 that closes issue #132"
+      - "the five promoted budgets are GateKind.HARD in perf/budgets.py, appear in §2.1 with their in-suite bounds, and no longer appear in §2.2"
+      - "db_write_cycle_ms remains GateKind.REFERENCE with its 250 ms budget unchanged, and §2.2 and §5.5 both say why"
+      - "the full backend suite passes with the five promoted gates now failing-capable, including the in-suite smoke run in tests/perf/test_harness.py"
+      - "tests/perf/test_docs.py fails if §5.5 loses the recorded run, omits a budget, or stops naming the finding it closes"
+    required_tests:
+      - the §5.5 baseline-presence, every-budget and promotion-decision guards in tests/perf/test_docs.py
+      - the existing tests/perf/test_budgets.py and tests/perf/test_harness.py gate-kind invariants, now covering eleven hard gates instead of six
+    expected_artifacts:
+      - docs/PERFORMANCE.md
+      - backend/src/flightsite/perf/budgets.py
+      - backend/tests/perf/test_docs.py
+      - docs/TEST_STRATEGY.md
+      - docs/RELEASE.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Closes GitHub issue #132 and completes the qualification story slice 060 left open. Measurement was run by Fable on the owner's Pi 5 over SSH; the JSON report is at /opt/flightsite/data/perf-baseline/report.json on that machine. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
