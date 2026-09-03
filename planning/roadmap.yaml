@@ -83,6 +83,11 @@ releases:
     after_phase: 8
     theme: "Same-day patch: aircraft label stability (hysteresis + relocate-before-hide)
       and the honest position-fix anchor (slices 063-064). Recorded 2026-09-02."
+  - version: "v0.3.2"
+    after_phase: 8
+    theme: "Military filter activation on real metadata availability + the clean
+      Pi 5 performance baseline with five budgets promoted to hard gates
+      (slices 065-066). Recorded 2026-09-03."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
