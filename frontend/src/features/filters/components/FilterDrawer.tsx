@@ -7,13 +7,24 @@
  * filter state of its own and can never drift from what the map is
  * actually drawing.
  *
- * Fields that target metadata the decoder does not populate until a later
- * slice (aircraft type/operator/operator group, classification, mission —
- * see `types.ts`'s doc comment) stay fully interactive rather than disabled,
- * but carry an inline note explaining why they will not change what's on the
- * map yet. "Interesting only" was one of those until slice 038 started
- * populating `interesting` and slice 039 surfaced it; its note is gone
- * because the filter now genuinely filters.
+ * Fields that can only match imported aircraft metadata — type, operator,
+ * operator group, and the classification flags — stay fully interactive
+ * rather than disabled, but carry an inline note whenever this install has
+ * not imported any, because without it they match nothing. Once an import
+ * has landed (`useMetadataAvailable`, slice 066) those notes disappear,
+ * because the filters genuinely filter.
+ *
+ * Mission category is deliberately *not* in that set. The classification
+ * engine infers a mission from the callsign's airline designator against a
+ * bundled operator directory (`classification/engine.py`, `operators.py`),
+ * so airline traffic carries a mission on a metadata-less install; metadata
+ * only widens the coverage by adding type-code inference. Its note says
+ * that, unconditionally, rather than claiming a prerequisite it does not
+ * have. Classification flags are the opposite case and the note is right
+ * there: "a callsign never sets a flag" is that engine's own rule.
+ *
+ * "Interesting only" was gated the same way until slice 038 started
+ * populating `interesting` and slice 039 surfaced it.
  */
 
 import { Filter, X } from "lucide-react";
@@ -30,6 +41,7 @@ import type {
 } from "@/features/filters/types";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
+import { useMetadataAvailable } from "@/lib/api/metadata";
 import { cn } from "@/lib/utils";
 
 const CLASSIFICATION_OPTIONS: { value: ClassificationFlag; label: string }[] = [
@@ -44,10 +56,24 @@ const GROUND_OPTIONS: { value: GroundTrafficMode; label: string }[] = [
   { value: "hide", label: "Hide" },
 ];
 
-/** A metadata-gated field's explanation, reused wherever slice 024/038
- * data is what the filter actually needs. */
+/** A short explanation under a field — what it does, or what it still
+ * needs. The metadata-gated sections render one only while the install has
+ * no metadata (see `MetadataImportNote`); the rest are unconditional. */
 function PlumbingNote({ children }: { children: ReactNode }) {
   return <p className="text-[11px] text-muted-foreground">{children}</p>;
+}
+
+/** The one wording for "this filter has no data to match against yet",
+ * rendered only when it is true. `children` adds any section-specific
+ * caveat after the shared sentence. */
+function MetadataImportNote({ children }: { children?: ReactNode }) {
+  return (
+    <PlumbingNote>
+      Matches nothing until an aircraft-metadata import runs (Settings →
+      Metadata).
+      {children}
+    </PlumbingNote>
+  );
 }
 
 function FilterSection({
@@ -77,6 +103,7 @@ function numberOrNull(value: string): number | null {
 
 export function FilterDrawer() {
   const [isOpen, setIsOpen] = useState(false);
+  const metadataAvailable = useMetadataAvailable();
   const filters = useFilterStore((state) => state.filters);
   const setAltitudeRange = useFilterStore((state) => state.setAltitudeRange);
   const setMaxDistanceNm = useFilterStore((state) => state.setMaxDistanceNm);
@@ -301,10 +328,7 @@ export function FilterDrawer() {
                   />
                 </div>
               </div>
-              <PlumbingNote>
-                Activates once aircraft metadata populates these fields (roadmap
-                slice 024).
-              </PlumbingNote>
+              {!metadataAvailable && <MetadataImportNote />}
             </FilterSection>
 
             <FilterSection title="Classification">
@@ -323,11 +347,13 @@ export function FilterDrawer() {
                   </label>
                 ))}
               </div>
-              <PlumbingNote>
-                Selects nothing until aircraft metadata (slice 024) arrives —
-                FlightSite never guesses a classification it hasn&apos;t
-                confirmed.
-              </PlumbingNote>
+              {!metadataAvailable && (
+                <MetadataImportNote>
+                  {" "}
+                  FlightSite never guesses a classification it hasn&apos;t
+                  confirmed.
+                </MetadataImportNote>
+              )}
             </FilterSection>
 
             <FilterSection title="Mission category">
@@ -364,7 +390,8 @@ export function FilterDrawer() {
                 </ul>
               )}
               <PlumbingNote>
-                Same as classification: selects nothing until slice 024.
+                Inferred from the callsign&apos;s airline designator; aircraft
+                metadata widens coverage by adding type-based missions.
               </PlumbingNote>
             </FilterSection>
 

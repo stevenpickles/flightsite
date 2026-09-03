@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from flightsite.perf.budgets import BUDGETS, TARGET_AIRCRAFT, Budget, GateKind
+from flightsite.perf.budgets import (
+    BUDGETS,
+    TARGET_AIRCRAFT,
+    Budget,
+    GateKind,
+    reference_budgets,
+)
 
 #: backend/tests/perf/test_docs.py -> repo root.
 DOC = Path(__file__).resolve().parents[3] / "docs" / "PERFORMANCE.md"
@@ -27,8 +33,11 @@ HARD_HEADING = "### 2.1 Hard gates"
 REFERENCE_HEADING = "### 2.2 Reference budgets"
 END_HEADING = "### 2.3"
 
-BASELINE_HEADING = "### 5.4 Recorded baselines"
+BASELINE_HEADING = "### 5.4 Raspberry Pi 4 baseline"
 BASELINE_END_HEADING = "### 5.5"
+
+CLEAN_BASELINE_HEADING = "### 5.5 Raspberry Pi 5 baseline"
+CLEAN_BASELINE_END_HEADING = "### 5.6"
 
 
 @pytest.fixture(scope="module")
@@ -39,13 +48,20 @@ def document() -> str:
 
 @pytest.fixture(scope="module")
 def baseline(document: str) -> str:
-    """§5.4 alone.
+    """§5.4 alone — the contended Pi 4 run.
 
-    Scoped deliberately: §5.5's development-machine table and §7.6's storage
-    section carry their own figures and their own disclaimer, and a check on
-    the whole document would be satisfied — or defeated — by either of them.
+    Scoped deliberately: §5.5's Pi 5 run, §5.6's development-machine table and
+    §7.6's storage section carry their own figures and their own caveats, and a
+    check on the whole document would be satisfied — or defeated — by any of
+    them.
     """
     return section(document, BASELINE_HEADING, BASELINE_END_HEADING)
+
+
+@pytest.fixture(scope="module")
+def clean_baseline(document: str) -> str:
+    """§5.5 alone — the fully-passing Pi 5 run, scoped for the same reason."""
+    return section(document, CLEAN_BASELINE_HEADING, CLEAN_BASELINE_END_HEADING)
 
 
 def section(document: str, start: str, end: str) -> str:
@@ -129,6 +145,71 @@ def test_the_recorded_baseline_reports_every_budget(budget: Budget, baseline: st
     """
     assert budget.metric in baseline, (
         f"{budget.metric} is measured by the harness but absent from §5.4's recorded baseline"
+    )
+
+
+def test_the_document_records_the_clean_pi_baseline(clean_baseline: str) -> None:
+    """Slice 065's result: the first on-hardware run that passed every gate.
+
+    Held the same way §5.4 is held. §5.4 is an upper bound taken on a contended
+    machine and says so; a document that kept it and quietly lost the clean run
+    beside it would read as though qualification had never succeeded.
+    """
+    assert "Raspberry Pi 5" in clean_baseline, (
+        "docs/PERFORMANCE.md §5.5 records the clean on-hardware run; it must name "
+        "the machine it was taken on"
+    )
+    assert "not yet run" not in clean_baseline, (
+        "docs/PERFORMANCE.md §5.5 must not be an empty table"
+    )
+    assert "#132" in clean_baseline, (
+        "docs/PERFORMANCE.md §5.5 answers the finding §5.4 filed; the section has "
+        "to name the issue it closes, or the two readings read as unrelated runs"
+    )
+
+
+@pytest.mark.parametrize("budget", BUDGETS, ids=lambda budget: budget.metric)
+def test_the_clean_baseline_reports_every_budget(budget: Budget, clean_baseline: str) -> None:
+    """§5.3 step 1 again, for the second recorded run.
+
+    The same rule as §5.4's: a run that reports the comfortable rows and omits
+    the rest is not a baseline. It matters more here, because this is the run
+    §5.3 step 2's promotions were decided on.
+    """
+    assert budget.metric in clean_baseline, (
+        f"{budget.metric} is measured by the harness but absent from §5.5's recorded baseline"
+    )
+
+
+@pytest.mark.parametrize("budget", reference_budgets(), ids=lambda budget: budget.metric)
+def test_the_promotion_decision_accounts_for_what_stayed_trend_tracked(
+    budget: Budget, clean_baseline: str
+) -> None:
+    """§5.3 step 2 is a decision, and a decision nobody can read was not made.
+
+    Mere presence is not enough and is already covered above: a metric named
+    only in §5.5's results table would satisfy that test while leaving the
+    reader no idea why it alone stayed trend-tracked after a run that measured
+    it passing. So this asks for the decision itself — the metric named on a
+    line that says it was *not* promoted, or that it stays a reference budget.
+    Emphasis and code markers are stripped first, because whether the document
+    writes ``**not** promoted`` or ``not promoted`` is layout, and pinning
+    layout is how a documentation test earns its deletion.
+    """
+    decisions = ("not promoted", "stays a reference", "reference -> reference")
+    lines = [
+        line.replace("*", "").replace("`", "").replace("→", "->")
+        for line in clean_baseline.splitlines()
+        if budget.metric in line
+    ]
+    assert lines, (
+        f"{budget.metric} was left a reference budget by §5.3 step 2, but §5.5 — "
+        "where that decision was taken — does not mention it"
+    )
+    assert any(decision in line for line in lines for decision in decisions), (
+        f"§5.5 names {budget.metric} but never states the decision: the row that "
+        "survived the promotion has to be recorded as not promoted, not merely "
+        f"reported. Lines found: {lines}"
     )
 
 
