@@ -66,8 +66,8 @@ measurements of a tenth of a second (§5.5); multiplying that ceiling by five
 would assert 150 s, which no machine this product runs on could fail. They were
 promoted at their stated 30 s in §5.5 because a promotion that loosens the
 bound it enforces is not a promotion, and the rule above exists to stop a busy
-runner failing a gate, not to inflate one that already has three orders of
-magnitude of room.
+runner failing a gate, not to inflate one that already clears its measurements
+by a factor of several hundred.
 
 ---
 
