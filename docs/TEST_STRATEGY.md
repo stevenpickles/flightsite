@@ -230,7 +230,8 @@ How the harness runs:
 **Trend-tracked (converted to hard gates once real Pi baselines calibrate them):**
 
 - SQLite write latency — the one figure the two recorded Pi runs disagree about,
-  because the storage device sets it (`docs/PERFORMANCE.md` §5.5, issue #132)
+  because the storage device sets it (`docs/PERFORMANCE.md` §5.5); the clean Pi 4
+  run on non-SD storage that would calibrate it is issue #153
 
 ### 6.2 Measured metrics
 

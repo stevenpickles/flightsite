@@ -30,7 +30,8 @@ Five of the original six were promoted on the two on-hardware baselines in
 all twelve gates passed): each was inside its budget on both, and a figure that
 *met* its budget on a contended machine met it with the worst case included.
 ``db_write_cycle_ms`` is the one that remains, because those two runs disagree
-about it by an order of magnitude — the storage device sets it (issue #132).
+about it by an order of magnitude — the storage device sets it, and the clean
+Pi 4 run on non-SD storage that would calibrate it is issue #153.
 
 CI headroom
 -----------
@@ -48,10 +49,15 @@ the live population a deterministic scenario produces does not vary with how
 loaded the machine is.
 
 ``startup_s`` and ``recovery_s`` are durations that also carry
-:data:`NO_HEADROOM`, for an arithmetic reason rather than a principled one:
-they are budgeted at 30 s against measurements of a tenth of a second, so a
-five-fold allowance would assert a bound nothing could fail. They were promoted
-in slice 065 at their stated 30 s.
+:data:`NO_HEADROOM`. Slice 065 promoted both at their stated 30 s rather than
+relaxing them to 150 s on promotion, because a promotion that loosens the bound
+it enforces is not one. Their margins are not alike, though, and the difference
+matters more than the shared constant: startup measured 0.547 s on a contended
+Pi 4 and 0.112 s on a Pi 5, while recovery measured **9.3 s** on that Pi 4's SD
+card against 0.0755 s on the Pi 5. Recovery therefore sits 3.2x inside its
+ceiling on the reference hardware, on a path already reported as load-sensitive
+(issue #100) — the tightest gate in this table, and the one to read first if a
+run on slow storage goes red.
 """
 
 from __future__ import annotations
@@ -335,10 +341,13 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         ci_headroom=NO_HEADROOM,
         rationale=(
             "Repairing every sighting left open by a power cut, from checkpoint rows "
-            "(slice 053). Bounded by the open-sighting count, which the harness records. "
-            "Promoted on the baselines in docs/PERFORMANCE.md §5.5 — 539 open sightings "
-            "repaired in 9.3 s on a contended Pi 4 SD card and 0.0755 s on a Pi 5 — and kept "
-            "at NO_HEADROOM for the same reason as startup."
+            "(slice 053). Bounded by the open-sighting count, which the harness records, and "
+            "by the storage device. Promoted on the baselines in docs/PERFORMANCE.md §5.5 and "
+            "kept at NO_HEADROOM, which leaves the narrowest margin of any gate here: 539 open "
+            "sightings were repaired in 9.3 s on a contended Pi 4 SD card — 3.2x inside the "
+            "30 s ceiling — against 0.0755 s on a Pi 5, and the path is already reported as "
+            "load-sensitive (issue #100). Promoted knowingly on that figure: the budget bounds "
+            "exactly the disk cost that consumed it."
         ),
         also_enforced_by=("tests/sightings/test_kill_drill.py",),
     ),
@@ -356,8 +365,9 @@ BUDGETS: Final[tuple[Budget, ...]] = (
             "One write-behind cycle committing a tick's accumulated sighting work. It is off "
             "the hot path by construction (ADR-0008), so this is a health figure rather than a "
             "correctness limit. The one row the two on-hardware baselines disagree about — "
-            "678 ms p95 on a Pi 4 SD card against 57.7 ms on a Pi 5 NVMe (issue #132) — so it "
-            "stays a reference budget: the storage device, not the code, sets it."
+            "678 ms p95 on a Pi 4 SD card against 57.7 ms on a Pi 5 NVMe — so it stays a "
+            "reference budget: the storage device, not the code, sets it, and the clean Pi 4 "
+            "run on non-SD storage that would calibrate it is issue #153."
         ),
     ),
 )

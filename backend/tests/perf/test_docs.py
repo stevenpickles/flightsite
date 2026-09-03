@@ -187,13 +187,29 @@ def test_the_promotion_decision_accounts_for_what_stayed_trend_tracked(
 ) -> None:
     """§5.3 step 2 is a decision, and a decision nobody can read was not made.
 
-    §5.5 applied the promotion rule. A budget still trend-tracked after a run
-    that measured it is the case the rule has to justify explicitly, so the
-    section that promoted the others has to name it.
+    Mere presence is not enough and is already covered above: a metric named
+    only in §5.5's results table would satisfy that test while leaving the
+    reader no idea why it alone stayed trend-tracked after a run that measured
+    it passing. So this asks for the decision itself — the metric named on a
+    line that says it was *not* promoted, or that it stays a reference budget.
+    Emphasis and code markers are stripped first, because whether the document
+    writes ``**not** promoted`` or ``not promoted`` is layout, and pinning
+    layout is how a documentation test earns its deletion.
     """
-    assert budget.metric in clean_baseline, (
+    decisions = ("not promoted", "stays a reference", "reference -> reference")
+    lines = [
+        line.replace("*", "").replace("`", "").replace("→", "->")
+        for line in clean_baseline.splitlines()
+        if budget.metric in line
+    ]
+    assert lines, (
         f"{budget.metric} was left a reference budget by §5.3 step 2, but §5.5 — "
         "where that decision was taken — does not mention it"
+    )
+    assert any(decision in line for line in lines for decision in decisions), (
+        f"§5.5 names {budget.metric} but never states the decision: the row that "
+        "survived the promotion has to be recorded as not promoted, not merely "
+        f"reported. Lines found: {lines}"
     )
 
 

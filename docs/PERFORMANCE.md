@@ -61,13 +61,18 @@ population a deterministic scenario produces does not vary with how loaded the
 machine is.
 
 Two timing gates carry no headroom either, and the reason is arithmetic rather
-than principle. `startup_s` and `recovery_s` are budgeted at 30 seconds against
-measurements of a tenth of a second (§5.5); multiplying that ceiling by five
-would assert 150 s, which no machine this product runs on could fail. They were
-promoted at their stated 30 s in §5.5 because a promotion that loosens the
-bound it enforces is not a promotion, and the rule above exists to stop a busy
-runner failing a gate, not to inflate one that already clears its measurements
-by a factor of several hundred.
+than principle. `startup_s` and `recovery_s` are budgeted at 30 seconds;
+multiplying that by five would assert 150 s, and a promotion that loosens the
+bound it enforces is not a promotion, so §5.5 promoted both at their stated
+figure. What that leaves is a real bound rather than a formality, and the
+margins differ sharply between the two. Startup measured 0.112 s on a Pi 5 and
+0.547 s on a contended Pi 4 — three hundred times inside the ceiling either way.
+Recovery measured 0.0755 s on the Pi 5 but **9.3 s on the contended Pi 4's SD
+card**, which is only 3.2× inside it, and the repair path is already known to be
+load-sensitive (issue #100). That is the narrowest margin of any gate in the
+table; it is deliberate — recovery is bounded by the open-sighting count and the
+storage device, and both are exactly what the budget is there to bound — but it
+is the row to watch on a slow disk, not one to treat as unfailable.
 
 ---
 
@@ -107,7 +112,7 @@ crossing one now fails.
 | `db_read_ms` | SQLite read/query latency | ≤ 500 ms | p95 | ≤ 2500 ms | A reader competing with the single writer for the WAL. Promoted in §5.5: 26.2 ms on a contended Pi 4, 9.16 ms on a Pi 5. §7 qualifies it again at multi-year scale. |
 | `analytics_query_ms` | analytics query latency | ≤ 500 ms | p95 | ≤ 2500 ms | Slice 031's stated budget, restated under concurrent ingestion. Promoted in §5.5: 48.2 ms on a contended Pi 4, 13.8 ms on a Pi 5. |
 | `startup_s` | startup | ≤ 30 s | max | ≤ 30 s | Migrations, wiring and the first ready report; dominated by disk. Promoted in §5.5 at two orders of magnitude of margin, and with no CI headroom (§1 explains why multiplying it would be meaningless). |
-| `recovery_s` | unclean-shutdown recovery | ≤ 30 s | max | ≤ 30 s | Repair of the sightings a power cut left open (slice 053), bounded by the open-sighting count the harness records. Promoted in §5.5, likewise without headroom. |
+| `recovery_s` | unclean-shutdown recovery | ≤ 30 s | max | ≤ 30 s | Repair of the sightings a power cut left open (slice 053), bounded by the open-sighting count the harness records. Promoted in §5.5, likewise without headroom — and the tightest row in this table: 539 sightings took 9.3 s on the contended Pi 4's SD card against 0.0755 s on a Pi 5, so the margin on the reference hardware is 3.2× and the path is load-sensitive (issue #100). |
 
 ### 2.2 Reference budgets (trend-tracked)
 
@@ -124,7 +129,7 @@ the table for.
 
 | Metric | SPEC §85 item | Budget (Pi 4) | Statistic | Why not yet a hard gate |
 |---|---|---|---|---|
-| `db_write_cycle_ms` | SQLite write latency | ≤ 250 ms | p95 | Off the hot path by construction (ADR-0008), so this is a health figure rather than a correctness limit. Measured at 678 ms on a Pi 4 SD card and 57.7 ms on a Pi 5 NVMe: the storage substrate, not the code, sets it (§5.5, issue #132). |
+| `db_write_cycle_ms` | SQLite write latency | ≤ 250 ms | p95 | Off the hot path by construction (ADR-0008), so this is a health figure rather than a correctness limit. Measured at 678 ms on a Pi 4 SD card and 57.7 ms on a Pi 5 NVMe: the storage substrate, not the code, sets it (§5.5). The clean Pi 4 run on non-SD storage that would calibrate it is issue #153. |
 
 ### 2.3 Where else these are enforced
 
@@ -362,8 +367,11 @@ userland on an aarch64 kernel), Docker Compose · 500 aircraft, 600 ticks,
 > hardware's number.
 >
 > **The re-run landed: §5.5, on a Pi 5 with an NVMe SSD, passes all twelve
-> gates and closes issue #132.** This section stays exactly as recorded — it is
-> the Pi 4 reading, and a baseline that gets edited is not a baseline.
+> gates and explains the overrun below.** Issue #132 is closed on that
+> explanation; the reference-hardware question it leaves open — a clean Pi 4 on
+> non-SD storage — is tracked as **issue #153**. This section stays exactly as
+> recorded: it is the Pi 4 reading, and a baseline that gets edited is not a
+> baseline.
 
 Budgets below are the Pi 4 budgets from §2 at face value. `CI_HEADROOM` does
 not apply: it exists so that a shared CI runner cannot fail a gate, and this
@@ -471,10 +479,13 @@ Nginx Proxy Manager and MariaDB pair resident on the host. The harness runs
 in-process against its own temporary database, so what it measured was a second
 full pipeline standing up beside the first.
 
-That is a *lighter* load than §5.4's but it is not a quiet machine either, and
-the figures are stated as the upper bounds they are. It does not weaken the
-result: every gate passed, and a gate passed with neighbours on the machine is a
-gate passed with them included.
+The container inventory is *larger* than §5.4's, not smaller. What is lighter is
+the contention that mattered there: the neighbours' writes no longer queue
+behind one SD card, and the proxy and database pair were idle rather than
+serving. So this is not the quiet machine §5.2 describes either, and the figures
+are stated as the upper bounds they are. That does not weaken the result: every
+gate passed, and a gate passed with neighbours on the machine is a gate passed
+with them included.
 
 Budgets are the Pi 4 budgets from §2 at face value, as in §5.4 — the same
 comparison, so the two tables can be read against each other. The Gate column
@@ -532,15 +543,17 @@ product, or is it the SD card? The answer is legible in the write-cycle row.
 | `ingest_duty_cycle` p95 | 0.99 | **0.347** |
 | `ingest_duty_cycle` max | 5.29 | **1.31** |
 
-An 11.8× fall in write-cycle p95 is not a CPU result. The Pi 5's cores are
-roughly two to three times the Pi 4's, and every purely computational row here
-moved by about that much — `ingest_apply_ms` p95 from 81.2 to 30.5,
-`ws_fanout_ms` from 68.1 to 28.2, `analytics_query_ms` from 48.2 to 13.8. The
-write cycle moved by an order of magnitude more than the arithmetic did, and it
-is the one stage whose cost is dominated by the storage device. §5.4 predicted
+An 11.8× fall in write-cycle p95 is not a CPU result. The purely computational
+rows moved by between **2.4× and 3.5×** — `ingest_apply_ms` p95 81.2 → 30.5
+(2.7×), `ws_fanout_ms` 68.1 → 28.2 (2.4×), `analytics_query_ms` 48.2 → 13.8
+(3.5×) — which is the range a Pi 5's cores against a Pi 4's would predict. The
+write cycle moved three to five times further than any of them, and it is the
+one stage whose cost is dominated by the storage device. §5.4 predicted
 exactly this: *"an SD card that occasionally takes five seconds to commit a
 flush carries the duty cycle straight up with it."* It did, and on NVMe it does
-not. **#132 is closed on that finding**, and no budget was widened to close it.
+not. **#132 is closed on that explanation**, and no budget was widened to close
+it: the finding is understood rather than made to disappear, and what it leaves
+open on the reference hardware is tracked as **#153**.
 
 Two honest limits on the claim. Two variables changed at once — the SoC and the
 storage — so this run does not decompose the improvement to the last
@@ -582,7 +595,11 @@ field per row. `ws_fanout_ms`, `db_read_ms` and `analytics_query_ms` keep
 harness already reported. `startup_s` and `recovery_s` keep `NO_HEADROOM` and
 are therefore gated at their stated 30 s: giving them the fivefold allowance
 would have asserted 150 s, and a promotion that loosens the bound it enforces
-is not a promotion (§1).
+is not a promotion (§1). Read against the reference hardware rather than
+against this run, `recovery_s` is the tightest of the five — 9.3 s of the 30 on
+§5.4's SD card, on a path issue #100 already reports as load-sensitive. It is
+promoted on that figure knowingly: 3.2× is a margin, the budget bounds exactly
+the disk cost that consumed it, and a gate nothing can reach is not a gate.
 
 `db_write_cycle_ms` is **not** promoted, and this is the conservative half of
 the same argument. It is the one row the two runs disagree about — 678 ms on an
@@ -591,8 +608,9 @@ calibrates it. Promoting it on the Pi 5 figure would make the reference
 hardware fail its own gate on the storage most Pi 4 installs use; promoting it
 on the Pi 4 figure is impossible, because that figure missed. It stays a
 reference budget at 250 ms, unwidened, exactly as §5.3 rule 3 requires. What
-would settle it is a clean Pi 4 run on a USB SSD — the same product, the same
-poll, with only the card taken out of the picture.
+would settle it is a clean Pi 4 run on non-SD storage — the same product, the
+same poll, with only the card taken out of the picture. That run is **issue
+#153**, #132's successor and the row's outstanding calibration.
 
 ### 5.6 Development-machine baseline
 
