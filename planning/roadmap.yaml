@@ -1751,6 +1751,59 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Completes the qualification story slice 060 left open. This slice's PR closes GitHub issue #132 on the explanation recorded in §5.5 (SD-card write stalls, not a code deficiency); the condition still reproduces on a Pi 4 with an SD card, and the clean Pi 4 run that would calibrate db_write_cycle_ms is tracked as issue #153. Measurement was run by Fable on the owner's Pi 5 over SSH; the JSON report is at /opt/flightsite/data/perf-baseline/report.json on that machine. Added by Fable outside the phase plan."
+  - id: "066"
+    title: "Military chip metadata gate"
+    phase: 8
+    branch: "066-military-chip"
+    status: merged
+    depends_on: ["017", "025"]
+    objective: "Lift the slice-017 gate that left the live map's Military quick-filter chip permanently disabled, and gate it on the install's actual metadata instead of on roadmap history — so the chip toggles for real once an import has landed, and says where to run one when it has not (issue #151)."
+    scope:
+      - "`lib/api/metadata.ts` gains `hasImportedMetadata(status)` and the `useMetadataAvailable()` hook, deriving availability from `row_count > 0` on an *airframe* source - the one field written only by a successful promotion, so it separates an installed dataset from never-run, first-run-in-flight and failed"
+      - "the airframe sources are named explicitly (mictronics, faa, opensky) because the status payload carries no kind discriminator: slice 027's `airports` source reports its own five-figure `row_count` while installing no airframes at all (registry.py: \"rows are airports rather than airframes\"), and SPEC §27's per-source independence makes airports-ok-airframes-failed an ordinary state that must not read as \"this install has aircraft metadata\""
+      - "`useMetadataAvailable` reads the existing `useMetadataStatusQuery` rather than fetching `/api/internal/metadata/status` a second time: one key, one set of options, however many components ask (the slice-061 lesson about divergent observers of one key)"
+      - "unknown status - loading or errored - answers `false`, so a gated control opens only on positive evidence and never flashes enabled before disabling itself"
+      - "`QuickFilterChips` renders Military as a real toggle when metadata is available, wired to `toggleClassification(\"military\")` with `aria-pressed` read from `filters.classifications`; when it is not, the chip is disabled and its tooltip points at Settings -> Metadata instead of at a future slice"
+      - "an already-active military filter keeps the chip enabled even with no metadata, so a selection restored from the URL or set in the drawer stays releasable from where its state is shown; that case gets its own tooltip saying the filter is on and matching nothing"
+      - "the chip reports the store's military selection whether enabled or disabled, so it can never disagree with the drawer checkbox it mirrors"
+      - "`FilterDrawer` replaces the stale slice-024 plumbing notes on the two import-only sections (category/operator, classification) with one `MetadataImportNote` wording, rendered only while metadata is absent"
+      - "mission category gets an unconditional honest note instead of an import note: the classification engine infers a mission from the callsign's airline designator against a bundled operator directory, so mission is populated with no import at all and metadata only widens coverage by adding type-code inference"
+      - "`test/overlaysApiMock.ts` serves the metadata-status read the live map now makes, with a `metadataStatus` option"
+    out_of_scope:
+      - "the drawer's metadata-backed inputs themselves, which stay fully interactive with or without metadata - a note, never a disabled field"
+      - "`applyFilters` and its null-excludes semantics, unchanged: this slice changes what the UI says and enables, not what a selection matches"
+      - "backend changes; `/api/internal/metadata/status` already carries everything the predicate needs"
+      - "`features/filters/types.ts`'s module docstring, which still describes the metadata fields as slice-024-pending - a separate documentation-only cleanup"
+      - "any new metadata source, import trigger, or Settings-page change"
+    acceptance_criteria:
+      - "with an airframe source reporting rows installed, the Military chip is enabled, toggles `classifications` military on and off, and carries the matching `aria-pressed`"
+      - "an airports-only import - airports ok, airframe sources failed or never run - leaves the chip disabled and the drawer notes in place"
+      - "with no import, the chip is disabled and its tooltip names the prerequisite and where to fulfil it"
+      - "with no import but the filter already active, the chip is enabled, says so, and one click clears the filter"
+      - "toggling the chip checks the drawer's Military checkbox and vice versa - one store, two views"
+      - "while the status is loading or after it fails, the chip is disabled; it never renders enabled first"
+      - "the drawer shows an import note on exactly the two import-only sections without metadata, and none with it"
+      - "the mission-category note describes callsign inference and claims no import prerequisite, with or without metadata"
+      - "no drawer or chip copy references an unlanded slice"
+    required_tests:
+      - predicate unit tests over undefined/empty/never-run/zero-row/populated documents and the running-and-failed cases that must stay available
+      - predicate unit tests for the airports source alone (false), airports beside an airframe source (true), and an unrecognized source name (false)
+      - hook tests for the false-until-proven default, the in-flight case, and the errored case
+      - chip tests for the disabled tooltip, the enabled toggle, external selection, loading and error safe states
+      - a chip test for the active-but-unavailable case: enabled, its own tooltip, and clearable in one click
+      - a mirror test rendering chips and drawer together and driving each from the other
+      - drawer tests for the import-note count without metadata, their absence with it, and the mission note's presence in both
+    expected_artifacts:
+      - frontend/src/lib/api/metadata.ts
+      - frontend/src/features/filters/components/QuickFilterChips.tsx
+      - frontend/src/features/filters/components/FilterDrawer.tsx
+      - frontend/src/lib/api/metadata.test.ts
+      - frontend/src/features/filters/components/QuickFilterChips.test.tsx
+      - frontend/src/features/filters/components/FilterDrawer.test.tsx
+      - frontend/src/test/overlaysApiMock.ts
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner-reported at v0.3.1: the chip had been disabled since slice 017, when no metadata system existed; slices 022-025 landed one and nobody lifted the gate. Fixes GitHub issue #151. Frontend-only. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

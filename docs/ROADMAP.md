@@ -146,6 +146,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 063 | Aircraft label stability | 014, 015 | opus | low | Stop aircraft labels blinking: a hysteresis band on the density tier, and variable anchoring so a colliding label relocates before it hides (issue #143) |
 | 064 | Honest position-fix anchor | 054 | opus | low | Date each position fix by the decode age the frame reports rather than by its arrival, so dead reckoning hands over between fixes without the periodic backwards step (issue #144) |
 | 065 | Raspberry Pi 5 clean performance baseline | 049, 060 | opus | low | Record the first fully-passing on-hardware run in docs/PERFORMANCE.md §5.5 and apply §5.3's promotion rule: five reference budgets become hard gates, SQLite write latency does not (closes issue #132; the clean Pi 4 run that would calibrate it is issue #153) |
+| 066 | Military chip metadata gate | 017, 025 | opus | low | Gate the live map's Military quick-filter chip on whether this install has imported aircraft metadata instead of on the long-lifted slice-017 gate, and refresh the drawer's stale metadata notes (issue #151) |
 
 ## Parallelization Guide
 
