@@ -65,12 +65,12 @@ than principle. `startup_s` and `recovery_s` are budgeted at 30 seconds;
 multiplying that by five would assert 150 s, and a promotion that loosens the
 bound it enforces is not a promotion, so §5.5 promoted both at their stated
 figure. What that leaves is a real bound rather than a formality, and the
-margins differ sharply between the two. Startup measured 0.112 s on a Pi 5 and
-0.547 s on a contended Pi 4 — three hundred times inside the ceiling either way.
+margins differ sharply between the two. Startup measured 0.112 s on a Pi 5 (268×
+inside the ceiling) and 0.547 s on a contended Pi 4 (55×).
 Recovery measured 0.0755 s on the Pi 5 but **9.3 s on the contended Pi 4's SD
 card**, which is only 3.2× inside it, and the repair path is already known to be
-load-sensitive (issue #100). That is the narrowest margin of any gate in the
-table; it is deliberate — recovery is bounded by the open-sighting count and the
+load-sensitive (issue #100). That is the narrowest margin among the five gates
+this section promotes; it is deliberate — recovery is bounded by the open-sighting count and the
 storage device, and both are exactly what the budget is there to bound — but it
 is the row to watch on a slow disk, not one to treat as unfailable.
 
@@ -112,7 +112,7 @@ crossing one now fails.
 | `db_read_ms` | SQLite read/query latency | ≤ 500 ms | p95 | ≤ 2500 ms | A reader competing with the single writer for the WAL. Promoted in §5.5: 26.2 ms on a contended Pi 4, 9.16 ms on a Pi 5. §7 qualifies it again at multi-year scale. |
 | `analytics_query_ms` | analytics query latency | ≤ 500 ms | p95 | ≤ 2500 ms | Slice 031's stated budget, restated under concurrent ingestion. Promoted in §5.5: 48.2 ms on a contended Pi 4, 13.8 ms on a Pi 5. |
 | `startup_s` | startup | ≤ 30 s | max | ≤ 30 s | Migrations, wiring and the first ready report; dominated by disk. Promoted in §5.5 at two orders of magnitude of margin, and with no CI headroom (§1 explains why multiplying it would be meaningless). |
-| `recovery_s` | unclean-shutdown recovery | ≤ 30 s | max | ≤ 30 s | Repair of the sightings a power cut left open (slice 053), bounded by the open-sighting count the harness records. Promoted in §5.5, likewise without headroom — and the tightest row in this table: 539 sightings took 9.3 s on the contended Pi 4's SD card against 0.0755 s on a Pi 5, so the margin on the reference hardware is 3.2× and the path is load-sensitive (issue #100). |
+| `recovery_s` | unclean-shutdown recovery | ≤ 30 s | max | ≤ 30 s | Repair of the sightings a power cut left open (slice 053), bounded by the open-sighting count the harness records. Promoted in §5.5, likewise without headroom — and the tightest of the no-headroom pair: 539 sightings took 9.3 s on the contended Pi 4's SD card against 0.0755 s on a Pi 5, so the margin on the reference hardware is 3.2× and the path is load-sensitive (issue #100). |
 
 ### 2.2 Reference budgets (trend-tracked)
 

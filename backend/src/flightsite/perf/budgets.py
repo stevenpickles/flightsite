@@ -56,8 +56,9 @@ matters more than the shared constant: startup measured 0.547 s on a contended
 Pi 4 and 0.112 s on a Pi 5, while recovery measured **9.3 s** on that Pi 4's SD
 card against 0.0755 s on the Pi 5. Recovery therefore sits 3.2x inside its
 ceiling on the reference hardware, on a path already reported as load-sensitive
-(issue #100) — the tightest gate in this table, and the one to read first if a
-run on slow storage goes red.
+(issue #100) — the tightest of the five gates §5.5 promotes. On slow storage the
+rows that actually go red first are ingest_duty_cycle and db_write_cycle_ms
+(issues #132/#153); recovery_s is the promoted gate worth watching beside them.
 """
 
 from __future__ import annotations
@@ -343,7 +344,7 @@ BUDGETS: Final[tuple[Budget, ...]] = (
             "Repairing every sighting left open by a power cut, from checkpoint rows "
             "(slice 053). Bounded by the open-sighting count, which the harness records, and "
             "by the storage device. Promoted on the baselines in docs/PERFORMANCE.md §5.5 and "
-            "kept at NO_HEADROOM, which leaves the narrowest margin of any gate here: 539 open "
+            "kept at NO_HEADROOM, the narrowest margin among the five §5.5 promotions: 539 open "
             "sightings were repaired in 9.3 s on a contended Pi 4 SD card — 3.2x inside the "
             "30 s ceiling — against 0.0755 s on a Pi 5, and the path is already reported as "
             "load-sensitive (issue #100). Promoted knowingly on that figure: the budget bounds "
