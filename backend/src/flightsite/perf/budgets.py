@@ -23,7 +23,15 @@ metrics initially; convert to hard gates once real Pi 4 baselines exist."* They
 are stated against the reference hardware (Raspberry Pi 4), and a dev machine
 beating them by an order of magnitude proves nothing about the Pi. Promoting
 one to :attr:`GateKind.HARD` is a deliberate edit here once
-``docs/PERFORMANCE.md`` carries a recorded Pi 4 baseline for it.
+``docs/PERFORMANCE.md`` carries a recorded Pi baseline for it.
+
+Five of the original six were promoted on the two on-hardware baselines in
+``docs/PERFORMANCE.md`` §5.4 (Pi 4, SD card, contended) and §5.5 (Pi 5, NVMe,
+all twelve gates passed): each was inside its budget on both, and a figure that
+*met* its budget on a contended machine met it with the worst case included.
+``db_write_cycle_ms`` is the one that remains, because those two runs disagree
+about it by an order of magnitude — the storage device sets it, and the clean
+Pi 4 run on non-SD storage that would calibrate it is issue #153.
 
 CI headroom
 -----------
@@ -39,6 +47,18 @@ Budgets that measure a *quantity* rather than a duration get
 :data:`NO_HEADROOM`. A 1 GB memory ceiling relaxed five-fold is not a gate, and
 the live population a deterministic scenario produces does not vary with how
 loaded the machine is.
+
+``startup_s`` and ``recovery_s`` are durations that also carry
+:data:`NO_HEADROOM`. Slice 065 promoted both at their stated 30 s rather than
+relaxing them to 150 s on promotion, because a promotion that loosens the bound
+it enforces is not one. Their margins are not alike, though, and the difference
+matters more than the shared constant: startup measured 0.547 s on a contended
+Pi 4 and 0.112 s on a Pi 5, while recovery measured **9.3 s** on that Pi 4's SD
+card against 0.0755 s on the Pi 5. Recovery therefore sits 3.2x inside its
+ceiling on the reference hardware, on a path already reported as load-sensitive
+(issue #100) — the tightest of the five gates §5.5 promotes. On slow storage the
+rows that actually go red first are ingest_duty_cycle and db_write_cycle_ms
+(issues #132/#153); recovery_s is the promoted gate worth watching beside them.
 """
 
 from __future__ import annotations
@@ -131,7 +151,8 @@ class Budget:
 
 
 #: The table. Ordered as ``docs/PERFORMANCE.md`` presents it: the hard gates
-#: SPEC §85 names, then the reference budgets awaiting Pi 4 baselines.
+#: SPEC §85 names, then the rows promoted to hard gates on the §5.4/§5.5
+#: baselines, then what remains trend-tracked.
 BUDGETS: Final[tuple[Budget, ...]] = (
     Budget(
         metric="live_population",
@@ -243,29 +264,13 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         value=100.0,
         statistic=Statistic.P95,
         direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
+        gate=GateKind.HARD,
         ci_headroom=CI_HEADROOM,
         rationale=(
             "One delta built and delivered to every connected client, once per ~1 Hz tick "
-            "(docs/API.md §4.3). Reference until a Pi 4 baseline exists: fan-out cost is "
-            "serialization-bound and scales with client count, which the harness records "
-            "alongside the figure."
-        ),
-    ),
-    Budget(
-        metric="db_write_cycle_ms",
-        title="SQLite write latency (persistence cycle)",
-        spec_metric="SQLite write latency",
-        unit="ms",
-        value=250.0,
-        statistic=Statistic.P95,
-        direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
-        ci_headroom=CI_HEADROOM,
-        rationale=(
-            "One write-behind cycle committing a tick's accumulated sighting work. It is off "
-            "the hot path by construction (ADR-0008), so this is a health figure rather than a "
-            "correctness limit — reference until Pi 4 SD-card I/O sets the real number."
+            "(docs/API.md §4.3). Promoted from a reference budget on the on-hardware baselines "
+            "in docs/PERFORMANCE.md §5.5: 68.1 ms p95 on a contended Pi 4 and 28.2 ms on a "
+            "Pi 5, both inside the 100 ms budget."
         ),
     ),
     Budget(
@@ -276,12 +281,13 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         value=500.0,
         statistic=Statistic.P95,
         direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
+        gate=GateKind.HARD,
         ci_headroom=CI_HEADROOM,
         rationale=(
             "History and sightings endpoints served while ingestion runs, i.e. a reader "
-            "competing with the single writer for the WAL. Reference until Pi 4 storage is "
-            "characterized; slice 050 qualifies it at multi-year scale."
+            "competing with the single writer for the WAL. Promoted on the baselines in "
+            "docs/PERFORMANCE.md §5.5: 26.2 ms p95 on a contended Pi 4 and 9.16 ms on a Pi 5, "
+            "against a 500 ms budget. Slice 050 qualifies it again at multi-year scale."
         ),
         also_enforced_by=(
             "tests/api/test_sightings_perf.py",
@@ -296,11 +302,13 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         value=500.0,
         statistic=Statistic.P95,
         direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
+        gate=GateKind.HARD,
         ci_headroom=CI_HEADROOM,
         rationale=(
             "Roadmap slice 031's stated budget, restated here under concurrent ingestion "
-            "rather than on an idle process. Slice 050 qualifies it on a multi-year dataset."
+            "rather than on an idle process. Promoted on the baselines in "
+            "docs/PERFORMANCE.md §5.5: 48.2 ms p95 on a contended Pi 4 and 13.8 ms on a Pi 5, "
+            "against a 500 ms budget. Slice 050 qualifies it on a multi-year dataset."
         ),
         also_enforced_by=("tests/analytics/test_perf.py",),
     ),
@@ -312,12 +320,14 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         value=30.0,
         statistic=Statistic.MAX,
         direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
+        gate=GateKind.HARD,
         ci_headroom=NO_HEADROOM,
         rationale=(
-            "Migrations, wiring and the first ready report. Dominated by disk on a Pi 4, so the "
-            "budget is stated for that hardware and carries no CI headroom — a dev machine "
-            "should be nowhere near it."
+            "Migrations, wiring and the first ready report. Dominated by disk on a Pi, so the "
+            "budget is stated for that hardware. Promoted on the baselines in "
+            "docs/PERFORMANCE.md §5.5 — 0.547 s on a contended Pi 4, 0.112 s on a Pi 5 — and "
+            "kept at NO_HEADROOM: multiplying a 30 s ceiling by five would assert a bound no "
+            "machine could fail, and a promotion that loosens its own bound is not one."
         ),
     ),
     Budget(
@@ -328,14 +338,38 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         value=30.0,
         statistic=Statistic.MAX,
         direction=Direction.CEILING,
-        gate=GateKind.REFERENCE,
+        gate=GateKind.HARD,
         ci_headroom=NO_HEADROOM,
         rationale=(
             "Repairing every sighting left open by a power cut, from checkpoint rows "
-            "(slice 053). Bounded by the open-sighting count, which the harness records; "
-            "reference until Pi 4 SD-card I/O sets the real number."
+            "(slice 053). Bounded by the open-sighting count, which the harness records, and "
+            "by the storage device. Promoted on the baselines in docs/PERFORMANCE.md §5.5 and "
+            "kept at NO_HEADROOM, the narrowest margin among the five §5.5 promotions: 539 open "
+            "sightings were repaired in 9.3 s on a contended Pi 4 SD card — 3.2x inside the "
+            "30 s ceiling — against 0.0755 s on a Pi 5, and the path is already reported as "
+            "load-sensitive (issue #100). Promoted knowingly on that figure: the budget bounds "
+            "exactly the disk cost that consumed it."
         ),
         also_enforced_by=("tests/sightings/test_kill_drill.py",),
+    ),
+    Budget(
+        metric="db_write_cycle_ms",
+        title="SQLite write latency (persistence cycle)",
+        spec_metric="SQLite write latency",
+        unit="ms",
+        value=250.0,
+        statistic=Statistic.P95,
+        direction=Direction.CEILING,
+        gate=GateKind.REFERENCE,
+        ci_headroom=CI_HEADROOM,
+        rationale=(
+            "One write-behind cycle committing a tick's accumulated sighting work. It is off "
+            "the hot path by construction (ADR-0008), so this is a health figure rather than a "
+            "correctness limit. The one row the two on-hardware baselines disagree about — "
+            "678 ms p95 on a Pi 4 SD card against 57.7 ms on a Pi 5 NVMe — so it stays a "
+            "reference budget: the storage device, not the code, sets it, and the clean Pi 4 "
+            "run on non-SD storage that would calibrate it is issue #153."
+        ),
     ),
 )
 

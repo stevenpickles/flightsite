@@ -18,10 +18,15 @@ name: perf
 # This job is deliberately NOT a required status check. Its budgets are stated
 # for the reference hardware (Raspberry Pi 4) and a shared GitHub runner is
 # neither that hardware nor a quiet one; treating a noisy trend signal as a
-# merge blocker would train people to re-run it until it passed. The Pi 4
-# qualification procedure in docs/PERFORMANCE.md is what converts these
-# reference budgets into hard gates, and that is a release activity run on real
-# hardware.
+# merge blocker would train people to re-run it until it passed.
+#
+# Note that "trend signal" no longer describes most of the table. Slice 065
+# promoted five reference budgets to hard gates on the on-hardware baselines in
+# docs/PERFORMANCE.md §5.4 and §5.5, so this run now asserts eleven of the
+# twelve; db_write_cycle_ms is the one still trend-tracked, awaiting a clean
+# Pi 4 run on non-SD storage (issue #153). Promotion happens in §5.3's
+# procedure, on real hardware at release time — never here, and never because a
+# runner happened to be fast.
 
 on:
   schedule:

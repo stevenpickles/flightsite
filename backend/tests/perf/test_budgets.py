@@ -81,6 +81,46 @@ def test_the_reference_budgets_are_the_ones_spec_85_lets_be_trended() -> None:
     assert not (trended & SPEC_85_HARD_GATES)
 
 
+def test_the_hard_gates_are_the_eleven_documented_ones() -> None:
+    """The exact hard set, pinned as ``tests/perf/storage`` pins its three.
+
+    The two checks above are supersets: they catch a SPEC §85 gate being
+    demoted, but say nothing about the five rows ``docs/PERFORMANCE.md`` §5.5
+    promoted on the recorded Pi baselines. Demoting one of those would restore
+    the pre-promotion behaviour — measured, reported, never failing a run — and
+    every other test in this module would still pass. Promotion was a decision
+    somebody made and wrote down; reversing it has to be one too.
+    """
+    assert {budget.metric for budget in hard_budgets()} == {
+        # SPEC §85's own hard-gate list.
+        "live_population",
+        "ingest_apply_ms",
+        "ingest_duty_cycle",
+        "live_sweep_ms",
+        "api_live_ms",
+        "memory_rss_mib",
+        # Promoted in docs/PERFORMANCE.md §5.5, on the §5.4 and §5.5 baselines.
+        "ws_fanout_ms",
+        "db_read_ms",
+        "analytics_query_ms",
+        "startup_s",
+        "recovery_s",
+    }
+
+
+def test_the_write_cycle_is_the_only_budget_still_trend_tracked() -> None:
+    """§5.5 promoted five of the six, and recorded why the sixth was not.
+
+    ``db_write_cycle_ms`` measured 678 ms on a Pi 4 SD card and 57.7 ms on a
+    Pi 5 NVMe against a 250 ms budget, so neither reading calibrates it and
+    promoting it on the faster one would fail the reference hardware for the
+    storage most Pi 4 installs use. Issue #153 is the run that would settle it.
+    Pinned in both directions, so neither promoting this row nor quietly adding
+    another one beside it happens without a documented decision.
+    """
+    assert {budget.metric for budget in reference_budgets()} == {"db_write_cycle_ms"}
+
+
 def test_the_live_population_floor_is_the_spec_5_envelope() -> None:
     budget = budget_for("live_population")
     assert budget.value == float(TARGET_AIRCRAFT)
