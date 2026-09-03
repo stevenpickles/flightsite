@@ -223,11 +223,14 @@ How the harness runs:
 - No live-state stalls (live update latency bounded)
 - Backend memory below the 1 GB budget under the reference workload
 - Core APIs remain responsive under load
+- SQLite read/query latency, WebSocket fan-out latency, analytics query latency,
+  startup time and unclean-shutdown recovery time — promoted from trend-tracked on
+  the on-hardware baselines in `docs/PERFORMANCE.md` §5.4 and §5.5, as SPEC §85 asks
 
-**Trend-tracked initially (converted to hard gates once Pi 4 baselines exist):**
+**Trend-tracked (converted to hard gates once real Pi baselines calibrate them):**
 
-- SQLite write/read latency, WebSocket fan-out latency, analytics query latency,
-  startup time, unclean-shutdown recovery time
+- SQLite write latency — the one figure the two recorded Pi runs disagree about,
+  because the storage device sets it (`docs/PERFORMANCE.md` §5.5, issue #132)
 
 ### 6.2 Measured metrics
 

@@ -73,8 +73,9 @@ Every release branch must complete all applicable items:
 - [ ] Adjacent-version upgrade test: previous release's data dir upgrades in place
 - [ ] Demo-mode validation: full stack runs and exercises scenarios
 - [ ] Live-decoder validation against readsb/dump1090-fa where appropriate
-- [ ] Raspberry Pi 4 qualification where required — run the procedure in
-      `docs/PERFORMANCE.md` §5 and record the baseline in §5.4
+- [ ] Raspberry Pi qualification where required — run the procedure in
+      `docs/PERFORMANCE.md` §5 and record the baseline there, one subsection per
+      machine (§5.3 step 1)
 - [ ] Documentation reviewed for accuracy against the released behavior
 - [ ] `docs/LICENSES.md` reviewed — no unresolved blocked rows for shipped features
 - [ ] Risk register (`docs/RISKS.md`) reviewed
