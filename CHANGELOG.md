@@ -5,6 +5,30 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.3.2] — 2026-09-03
+
+The Military filter comes alive, and the performance story gets its first
+fully-passing hardware qualification.
+
+### Added
+- Measured Raspberry Pi 5 (NVMe) performance baseline in
+  `docs/PERFORMANCE.md` §5.5 — **all 12 metrics pass**, confirming the Pi 4
+  baseline's duty-cycle failure was SD-card write stalls (#132; the clean
+  Pi 4 calibration run is tracked as #153)
+- Five performance budgets promoted from trend-tracked references to hard
+  CI gates on the strength of that run (`ws_fanout`, `db_read`,
+  `analytics_query`, `startup`, `recovery`) — no budget value changed in
+  either direction
+
+### Fixed
+- **The Military quick-filter chip works** once aircraft metadata is
+  imported: it was hard-disabled since the pre-metadata era. It now enables
+  on real metadata availability (Mictronics/FAA/OpenSky — an airports-only
+  import doesn't count), mirrors the filter drawer's checkbox, and when
+  disabled its tooltip says exactly what to do (Settings → Metadata). The
+  drawer's outdated "arrives in a later slice" notes now tell the
+  present-tense truth (#151)
+
 ## [0.3.1] — 2026-09-02
 
 A same-day patch for two owner-reported live-map irritations.
