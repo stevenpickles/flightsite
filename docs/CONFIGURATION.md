@@ -200,7 +200,11 @@ Must strictly increase: `stale_s < remove_s < close_s`.
 | `high_res_metric_days` | int, **7–30** | `14` | High-resolution receiver telemetry kept before downsampling to hourly/daily |
 
 Only receiver telemetry is ever pruned. Sightings, tracks and lifetime statistics are
-kept indefinitely.
+kept indefinitely, so the database grows for as long as you run it — measured at
+~1.7 GB/year for a typical suburban receiver and ~20 GB/year at the SPEC §5 design
+envelope. Neither figure is tunable from here: this setting only moves the
+high-resolution telemetry window, which is a fixed-size fraction of the total. Plan
+storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 
 ### `map`
 

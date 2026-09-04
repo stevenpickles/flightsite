@@ -31,3 +31,4 @@ Trivial implementation details do not get ADRs.
 | [0011](0011-default-basemap-provider.md) | Default basemap provider (OpenFreeMap, no user-supplied key) | Accepted |
 | [0012](0012-airspace-data-source.md) | Airspace overlay data source (user-supplied GeoJSON, no shipped default) | Accepted |
 | [0013](0013-opensky-metadata-source.md) | OpenSky aircraft database as an opt-in, default-off metadata source | Accepted |
+| [0014](0014-track-storage-cost.md) | Accept the measured `sighting_tracks` storage cost for v1 | Accepted |
