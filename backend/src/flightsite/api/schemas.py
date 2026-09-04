@@ -1183,8 +1183,34 @@ class DiagnosticsNotifications(_Model):
     permission_known_by: Literal["client"] = "client"
 
 
+class DiagnosticsEnrichmentBudget(_Model):
+    """The day's lookup allowance (``enrichment.daily_lookup_budget``).
+
+    ``limit`` and ``remaining`` are ``null`` on an uncapped install — the
+    default — which is not the same as ``0``: one means there is no ceiling,
+    the other would mean the ceiling has been reached.
+    """
+
+    limit: int | None = None
+    used_today: int = 0
+    remaining: int | None = None
+    #: The next 00:00 UTC, when ``used_today`` returns to zero. The collector
+    #: always names an instant; the key is nullable for the same reason every
+    #: other one here is (§2.7 — a stable key, never a missing one).
+    resets_at: IsoTimestamp | None = None
+
+
+class DiagnosticsEnrichmentCache(_Model):
+    """How the route cache is performing (slice 070)."""
+
+    hits: int = 0
+    misses: int = 0
+    #: Rows confirmed on enough separate days to be frozen for 30 days.
+    learned: int = 0
+
+
 class DiagnosticsEnrichment(_Model):
-    """SPEC §67: enrichment failures."""
+    """SPEC §67: enrichment failures, plus what the day's credits bought."""
 
     enabled: bool = False
     running: bool = False
@@ -1193,6 +1219,8 @@ class DiagnosticsEnrichment(_Model):
     dropped: int = 0
     pending: int = 0
     failures: int = 0
+    budget: DiagnosticsEnrichmentBudget = Field(default_factory=DiagnosticsEnrichmentBudget)
+    cache: DiagnosticsEnrichmentCache = Field(default_factory=DiagnosticsEnrichmentCache)
 
 
 class DiagnosticsWebSocket(_Model):
@@ -1286,6 +1314,8 @@ __all__ = [
     "DiagnosticsDatabase",
     "DiagnosticsDecoder",
     "DiagnosticsEnrichment",
+    "DiagnosticsEnrichmentBudget",
+    "DiagnosticsEnrichmentCache",
     "DiagnosticsError",
     "DiagnosticsLive",
     "DiagnosticsMaintenance",

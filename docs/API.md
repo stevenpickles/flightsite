@@ -546,6 +546,26 @@ Two contract details worth knowing:
   and `permission_known_by` is always `"client"`. Browser permission is unobservable
   from the backend, so the health page joins this with the frontend notification store
   (slice 040) to show the permission the user actually granted.
+- `enrichment` carries `budget` and `cache` alongside the failure counters (slice 070):
+
+  ```json
+  "enrichment": {
+    "enabled": true, "running": true, "circuit_open": false,
+    "lookups": 308, "dropped": 0, "pending": 2, "failures": 0,
+    "budget": {
+      "limit": 500, "used_today": 137, "remaining": 363,
+      "resets_at": "2026-09-05T00:00:00.000Z"
+    },
+    "cache": { "hits": 4112, "misses": 308, "learned": 57 }
+  }
+  ```
+
+  `limit` and `remaining` are `null` on an uncapped install (`daily_lookup_budget: 0`,
+  the default) — which is not the same as `0`: one means there is no ceiling, the other
+  means today's ceiling has been reached. `used_today` counts route-cache rows fetched
+  in the current UTC day, so it survives a restart, and `resets_at` is the next UTC
+  midnight. `cache.learned` is the number of cached routes confirmed on enough separate
+  days to be frozen for 30 days ([DATA_MODEL.md §7](DATA_MODEL.md)).
 - `database.maintenance.vacuum_refusal` is `null` unless the guarded `VACUUM` last
   declined to run, and otherwise carries `reason` plus `required_free_bytes` and
   `available_free_bytes`. The free-space guard wants twice the database size, so on a

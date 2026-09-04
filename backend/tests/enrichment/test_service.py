@@ -19,7 +19,7 @@ from flightsite.api.serializers import aircraft_payload
 from flightsite.counters import counters
 from flightsite.db import Database
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository, RouteInfo
-from flightsite.enrichment.model import RouteNotFound, RouteUnavailable
+from flightsite.enrichment.model import RouteLookup, RouteNotFound, RouteUnavailable
 from flightsite.enrichment.service import ENRICHMENT_FAILURES_COUNTER
 from flightsite.live import LiveStore
 from flightsite.live.events import AircraftAppeared, AircraftRemoved, AircraftStale
@@ -27,7 +27,6 @@ from flightsite.sightings import PersistenceWorker
 from flightsite.sightings.vocabulary import SightingEventType
 from tests.enrichment.conftest import (
     AIRLINE_CALLSIGN,
-    BASE_DATE,
     DESTINATION,
     ICAO,
     ORIGIN,
@@ -44,7 +43,9 @@ from tests.enrichment.conftest import (
     route_answer,
 )
 
-KEY = f"{AIRLINE_CALLSIGN}:{BASE_DATE}"
+#: The cache key of the fixtures' callsign — the callsign itself since
+#: slice 070 dropped the date bucket (``docs/DATA_MODEL.md`` §7).
+KEY = AIRLINE_CALLSIGN
 
 
 async def enrich(service: EnrichmentService, live: LiveStore, worker: PersistenceWorker) -> None:
@@ -690,7 +691,7 @@ async def test_an_aircraft_seen_mid_lookup_rides_the_request_in_flight(
 
         service: EnrichmentService
 
-        async def lookup(self, callsign: str) -> RouteInfo | RouteNotFound | RouteUnavailable:
+        async def lookup(self, callsign: str) -> RouteLookup:
             record = live.get(OTHER_ICAO)
             assert record is not None
             self.service.consider(AircraftAppeared(aircraft=record, at=record.last_seen))

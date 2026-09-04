@@ -1,4 +1,4 @@
-"""The eligibility matrix: who gets looked up, and under what key.
+"""The eligibility matrix: who gets looked up, under what key, and until when.
 
 The most consequential table in the slice. A false negative here costs one
 missing route; a false positive spends a request against the user's quota every
@@ -8,15 +8,15 @@ the cases are enumerated rather than sampled.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
-
 import pytest
 
+from flightsite.airports.model import AirportContext, InferredPhase
 from flightsite.classification.operators import CALLSIGN_PATTERN
 from flightsite.enrichment.policy import (
     MAX_CALLSIGN_LENGTH,
     airline_designator,
     cache_key,
+    contradicts_route,
     eligible_callsign,
     normalize_callsign,
 )
@@ -93,36 +93,73 @@ def test_a_callsign_that_is_not_the_form_has_no_designator() -> None:
     assert airline_designator("N738AB") is None
 
 
-def test_the_cache_key_is_the_callsign_and_the_utc_day() -> None:
-    at = datetime(2026, 8, 30, 22, 14, 31, tzinfo=UTC)
-
-    assert cache_key("DAL1234", at) == "DAL1234:2026-08-30"
-
-
-def test_two_observations_of_one_flight_share_a_key() -> None:
-    """The whole point: one request per flight per day, not per sighting."""
-    morning = datetime(2026, 8, 30, 6, 0, tzinfo=UTC)
-    evening = datetime(2026, 8, 30, 23, 59, tzinfo=UTC)
-
-    assert cache_key("DAL1234", morning) == cache_key("DAL1234", evening)
+def test_the_cache_key_is_the_callsign_alone() -> None:
+    """Slice 070 dropped the date bucket; the key is the callsign (§7)."""
+    assert cache_key("DAL1234") == "DAL1234"
 
 
-def test_the_same_flight_number_tomorrow_is_a_different_key() -> None:
-    """A flight number is a fact about a *day*; the key says so."""
-    today = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
-    tomorrow = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
-
-    assert cache_key("DAL1234", today) != cache_key("DAL1234", tomorrow)
+def test_the_key_normalizes_what_a_decoder_transmits() -> None:
+    """A padded, lower-cased transmission must not file a second row."""
+    assert cache_key("  dal1234 ") == cache_key("DAL1234")
 
 
-def test_a_non_utc_timestamp_is_bucketed_by_its_utc_day() -> None:
-    """Two zones either side of local midnight still share one UTC key."""
-    tokyo = datetime(2026, 8, 31, 7, 0, tzinfo=timezone(timedelta(hours=9)))
+def test_two_observations_of_one_flight_share_a_key_across_days() -> None:
+    """The measured saving: 62 % of a day's callsigns were heard yesterday.
 
-    assert cache_key("DAL1234", tokyo) == "DAL1234:2026-08-30"
+    With a dated key those two observations were two rows and two requests.
+    Now they are one row, and the expiry decides when it is bought again.
+    """
+    assert cache_key("DAL1234") == cache_key("DAL1234")
 
 
-def test_a_naive_timestamp_is_refused() -> None:
-    """The same rule the storage layer applies: no timestamp is assumed UTC."""
-    with pytest.raises(ValueError, match="naive"):
-        cache_key("DAL1234", datetime(2026, 8, 30, 22, 0))
+# ------------------------------------------------------- the consistency check
+
+
+ARRIVING_AT_KSEA = AirportContext(
+    ident="KSEA", name="Seattle-Tacoma Intl", distance_nm=3.0, phase=InferredPhase.ARRIVING
+)
+DEPARTING_KSEA = AirportContext(
+    ident="KSEA", name="Seattle-Tacoma Intl", distance_nm=2.0, phase=InferredPhase.DEPARTING
+)
+NEAR_KSEA = AirportContext(ident="KSEA", name="Seattle-Tacoma Intl", distance_nm=4.0)
+
+
+def test_a_departure_from_somewhere_else_contradicts_the_origin() -> None:
+    """The schedule changed under the cached row; the aircraft says so."""
+    assert contradicts_route(DEPARTING_KSEA, origin_ident="KATL", destination_ident="KSLC")
+
+
+def test_an_arrival_somewhere_else_contradicts_the_destination() -> None:
+    assert contradicts_route(ARRIVING_AT_KSEA, origin_ident="KATL", destination_ident="KSLC")
+
+
+def test_a_departure_from_the_cached_origin_contradicts_nothing() -> None:
+    assert not contradicts_route(DEPARTING_KSEA, origin_ident="ksea", destination_ident="KSLC")
+
+
+def test_an_arrival_at_the_cached_destination_contradicts_nothing() -> None:
+    assert not contradicts_route(ARRIVING_AT_KSEA, origin_ident="KATL", destination_ident="KSEA")
+
+
+def test_a_departure_is_checked_against_the_origin_only() -> None:
+    """Being right about one end is not evidence against the other."""
+    assert not contradicts_route(DEPARTING_KSEA, origin_ident="KSEA", destination_ident="KATL")
+
+
+def test_an_unnamed_end_of_the_route_contradicts_nothing() -> None:
+    """The cache claimed nothing about that airport, so nothing is disproved."""
+    assert not contradicts_route(DEPARTING_KSEA, origin_ident=None, destination_ident="KSLC")
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        pytest.param(None, id="no-context"),
+        pytest.param(NEAR_KSEA, id="near-a-field-with-no-phase"),
+    ],
+)
+def test_without_a_latched_phase_nothing_is_contradicted(
+    context: AirportContext | None,
+) -> None:
+    """SPEC §39: weak evidence produces no answer, and invalidates nothing."""
+    assert not contradicts_route(context, origin_ident="KATL", destination_ident="KSLC")

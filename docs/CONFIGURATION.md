@@ -83,10 +83,13 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 does ticking a new template under `alerts.enabled_templates`: the save instantiates it
 into a live rule (see the note below for what that does *not* do).
 
-So does `enrichment.*`. Enabling it, disabling it, and pasting a new
-`aerodatabox_api_key` all take effect on save: the backend rebuilds the route provider
-from what you just wrote and hands it to the running enrichment worker, which starts,
-stops, or swaps to the new key accordingly. Routes begin appearing on the next eligible
+So does `enrichment.*`. Enabling it, disabling it, pasting a new `aerodatabox_api_key`
+and changing `route_ttl_days` or `daily_lookup_budget` all take effect on save: the
+backend rebuilds the route provider and the spending plan from what you just wrote and
+hands both to the running enrichment worker, which starts, stops, or swaps to the new key
+accordingly. A change to either number is adopted in place — the worker keeps its queue
+and its subscription — so raising a budget you have just spent resumes lookups
+immediately rather than at midnight. Routes begin appearing on the next eligible
 callsign the receiver sees, with no restart
 ([issue #161](https://github.com/stevenpickles/flightsite/issues/161)). Turning it off
 is equally immediate, and equally complete: the worker stops and the API client is
@@ -236,13 +239,37 @@ storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 |---|---|---|---|
 | `aerodatabox_enabled` | bool | `false` | |
 | `aerodatabox_api_key` | secret | — | **Belongs in `secrets.yaml`, not here.** Required when enabled |
+| `route_ttl_days` | int | `7` | 1–30. How long a found route stays cached before it is bought again |
+| `daily_lookup_budget` | int | `0` | `0` = uncapped. Provider lookups allowed per UTC day |
 
 FlightSite is fully functional with enrichment off. This is the only setting that
 sends anything about observed aircraft to a third party — see
 [SECURITY.md §10](SECURITY.md).
 
-Both settings apply on save, in either direction and including a change of key;
-nothing here needs a restart. See [Applies immediately](#applies-immediately) above.
+Every setting here applies on save, in either direction and including a change of key
+or of either number; nothing in this section needs a restart. See
+[Applies immediately](#applies-immediately) above.
+
+**The two numbers are the credit economy** (slice 070). They bound spending from
+opposite ends: `route_ttl_days` decides how *often* one callsign may be asked about, and
+`daily_lookup_budget` decides how many callsigns may be asked about at all. Neither is a
+rate limit — FlightSite's 10 requests/minute burst limiter is separate and not
+configurable.
+
+A week is the default because a scheduled flight number flies the same pair of airports
+for a season: on the receiver these were measured on, 62 % of a day's airline callsigns
+had already been heard the previous day, so a week-long cache turns one or two lookups a
+day for such a flight into one a week. A route confirmed identical on three separate days
+is then frozen for 30 days automatically — that needs no setting, and it is why raising
+`route_ttl_days` beyond a month is not offered.
+
+Set `daily_lookup_budget` if your AeroDataBox credits are finite (a feeder allowance, a
+free tier). When the day's budget is spent, no further requests are made until 00:00 UTC;
+already-cached routes keep being applied, and the Health page's enrichment card shows
+what is used and left. Lookups still queued when the budget runs out are drained in
+priority order once it resets: aircraft currently matching an alert rule first, then
+aircraft inside `display_radius_nm`, then everything else, with refreshes of
+already-known routes last.
 
 ### `metadata` — aircraft metadata sources
 

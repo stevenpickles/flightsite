@@ -695,23 +695,60 @@ counts for today's hours), since rollups for the current day are not yet final.
 
 ---
 
-## 7. Enrichment cache (slice 026)
+## 7. Enrichment cache (slice 026, economy in slice 070)
 
 ```sql
 CREATE TABLE route_cache (
-  cache_key    TEXT PRIMARY KEY,           -- normalized callsign (+date bucket)
-  status       TEXT NOT NULL CHECK (status IN ('ok','not_found','error')),
+  cache_key    TEXT PRIMARY KEY,           -- normalized callsign, nothing else
+  status       TEXT NOT NULL CHECK (status IN ('ok','not_found','restricted','error')),
   origin_ident TEXT,
   destination_ident TEXT,
   payload_json TEXT,                       -- provider extras, schema-validated
   fetched_ms   INTEGER NOT NULL,
-  expires_ms   INTEGER NOT NULL
+  expires_ms   INTEGER NOT NULL,
+  confirmations    INTEGER NOT NULL DEFAULT 0,  -- separate days agreeing (0014)
+  first_fetched_ms INTEGER                      -- when this answer first arrived
 ) WITHOUT ROWID;
 CREATE INDEX ix_route_cache_expiry ON route_cache(expires_ms);
 ```
 
-Negative results (`not_found`, `error`) are cached with shorter TTLs — "cache
-aggressively, respect provider limits" (SPEC §28). Pruned by expiry during maintenance.
+**The key is the callsign.** It carried a UTC date bucket until slice 070, on the
+reasoning that `DAL1234` is a different pair of airports next month — true, and the
+wrong bound. Measured on the owner's receiver: 2,200–2,650 distinct airline callsigns
+a day at ~190 lookups an hour, of which **62 % had already been heard the previous
+day** after four days of history. A dated key therefore re-bought two thirds of
+yesterday's answers every morning. Rows written under the old dated keys
+(`DAL1234:2026-09-03`) are carried through migration 0014 and left to expire; nothing
+reads them again.
+
+**Expiry is now the whole staleness rule**, and it is deliberately asymmetric:
+
+| Status | Meaning | TTL |
+|---|---|---|
+| `ok` | the provider named at least one airport | `enrichment.route_ttl_days` (default 7, 1–30) |
+| `not_found` | the provider answered and has no route | 24 h — often an unfiled schedule, worth asking again tomorrow |
+| `restricted` | HTTP 451: the flight is legally withheld ([#165](https://github.com/stevenpickles/flightsite/issues/165)) | `route_ttl_days` — the law does not change between sightings |
+| `error` | reserved: a definitive, unusable answer for one key | — (unwritten) |
+
+A provider *unavailability* — timeout, 429, 5xx, open circuit — is never stored: it is a
+fact about the network, not about the flight, and caching it would turn one bad minute
+into hours of false "no route" (SPEC §28: Unknown when uncertain).
+
+**Learned schedules.** A refresh returning the same origin/destination as the stored row
+on a **different calendar day** increments `confirmations`; at **three** the row's expiry
+is set **30 days** out, so a scheduled service costs one lookup a month rather than one a
+week. A differing answer resets `confirmations` to 0 and `first_fetched_ms` to now, and
+the row returns to the ordinary TTL. Provenance stays `aerodatabox` throughout — the
+answer is the provider's, confirmed against itself, never FlightSite's inference.
+
+**Early invalidation.** When the airport-context service (§3.6, slice 027) latches a
+*departure* from a field the cached route does not call the origin, or an *arrival* at
+one it does not call the destination, the row is deleted and the next observation buys a
+fresh answer — once per callsign per process, so a persistent disagreement cannot become
+a request per observation. This is the only path that deletes an unexpired row.
+
+Expired rows are not deleted on read; they are simply not returned, and maintenance
+prunes them by expiry.
 
 ---
 
@@ -882,3 +919,4 @@ field names; ingest normalizes before anything is persisted.
 | 035 | `activity_events`, `milestones` |
 | 037 | `watchlists`, `watchlist_entries` |
 | 038 | `alert_rules`, `alert_matches` |
+| 070 | `route_cache` gains `confirmations` / `first_fetched_ms` and the `restricted` status (rev 0014, a table rebuild) |
