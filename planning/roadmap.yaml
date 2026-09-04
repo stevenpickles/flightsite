@@ -1899,6 +1899,45 @@ slices:
     risk_level: medium
     notes: "Bundle slice for the five severity:medium issues from slice 067's triage. The three decision items are settled here by Fable, each the option that makes a shipped surface tell the truth at the least structural cost: #104 keeps the marker and writes it, #105 follows SPEC §48's wording over PRODUCT.md's narrower gloss, #114 documents the measured cost and defers the remedy. One commit per issue. Added by Fable outside the phase plan."
 
+  - id: "069"
+    title: "Enrichment hot-apply & honest restart badges"
+    phase: 8
+    branch: "069-enrichment-hot-apply"
+    status: merged
+    depends_on: ["026", "055", "056", "068"]
+    objective: "Apply `enrichment.*` on config save so turning on AeroDataBox route lookup (or changing its key) takes effect without a backend restart, and make the Settings page say which sections still need one (issue #161)."
+    scope:
+      - "`EnrichmentService` gains an apply path that takes a freshly built provider (or `None`): a no-op when the configuration is unchanged, otherwise it stops the running consumer, closes the old provider, installs the new one and starts again if enabled — cache, persistence hook and pending queue semantics unchanged, circuit breaker reset with the provider"
+      - "`_apply_live_settings` gains the enrichment entry, guarded and isolated like the three before it; its own docstring said a fourth entry is the point to reconsider the explicit list, so the slice either keeps the list with that note updated or introduces the smallest registry that keeps each entry independently guarded — whichever reads better, stated in the commit"
+      - "the provider comparison is by configuration (enabled flag and key), never by object identity, so a save that touches other sections does not restart a working enrichment worker"
+      - "`docs/CONFIGURATION.md` moves `enrichment.*` from the needs-a-restart table to applies-immediately; the `EnrichmentSection` docstring's existing 'Applies immediately' claim becomes true instead of being edited"
+      - "the Settings page badges every section (or field, where a section mixes both kinds) that CONFIGURATION.md's needs-a-restart table still lists after this slice: sighting thresholds, `retention.high_res_metric_days`, `timezone`, `metadata.opensky_enabled`, logging — reusing `SettingsSection`'s existing `restartRequired` affordance, with a field-level variant only if a section genuinely mixes both kinds; CONFIGURATION.md's sentence that the other rows are not badged in the UI is deleted"
+    out_of_scope:
+      - "hot-applying any other restart-required setting (`metadata.opensky_enabled` is the obvious next candidate and gets a roadmap-tracked note, not code)"
+      - "changing the enrichment eligibility policy, cache keying, rate limits or the provider's request shape"
+      - "a second provider or a provider selector (SPEC §28: one provider in v1)"
+    acceptance_criteria:
+      - "on a running install with enrichment off, saving `aerodatabox_enabled: true` with a key present logs `enrichment_started` and the next eligible airline callsign is looked up, with no restart"
+      - "saving with enrichment turned off stops the worker and closes the provider; no further external request is made"
+      - "changing the key restarts the worker with the new key; a save that changes only other sections leaves the running worker untouched (same provider object, no stop/start)"
+      - "a failure while applying is logged as `config_apply_failed` and never fails the save"
+      - "every section CONFIGURATION.md still lists as restart-required carries the 'Applies on next restart' badge or an equivalent field-level note, and the Enrichment section carries none"
+      - "`Closes #161` in the PR body"
+    required_tests:
+      - service tests for apply on a stopped service, apply-enable on a running service, apply-disable, key change, and unchanged-configuration no-op (provider identity preserved)
+      - config API test through the TestClient that a PUT enabling enrichment starts the worker and one disabling it stops it, plus the isolation test that an apply failure does not fail the save
+      - Settings section tests asserting the restart badge on each newly badged section and its absence on Enrichment
+    expected_artifacts:
+      - backend/src/flightsite/enrichment/service.py
+      - backend/src/flightsite/api/internal.py
+      - backend/tests/enrichment/
+      - backend/tests/api/
+      - frontend/src/features/settings/sections/
+      - docs/CONFIGURATION.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner-requested on 2026-09-04 before v0.4.0: origin/destination were not appearing on fermi.local because enrichment had been enabled (and its key stored) after the last backend start, and the provider is built only at startup; a restart made routes flow within a minute (21 sightings enriched in the first sixty seconds). Same bug class as issues #110, #122 and #129: a config save that should apply live and did not. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
