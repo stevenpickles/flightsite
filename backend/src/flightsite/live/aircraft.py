@@ -67,6 +67,13 @@ record's wall-clock and monotonic views of the same observation. Nothing in
 this codebase compares them across that boundary, and no threshold here is
 fine-grained enough to care.
 
+``seen_pos_s`` is the one field the sticky-merge rule above does not apply to.
+It is an age *of a particular position*, so an update that carries a position
+but no age for it reports ``None`` rather than inheriting the previous record's
+— see :func:`_carried_position_age_s`. Inheriting would hand a client an age
+measured against the fix before this one, always too large, and clients
+back-date the aircraft by it.
+
 Provenance
 ----------
 
@@ -335,6 +342,36 @@ def _position_lag_s(update: AircraftStateUpdate) -> float:
     return max(update.seen_pos_s - reported_silence_s(update), 0.0)
 
 
+def _carried_position_age_s(current: LiveAircraft, update: AircraftStateUpdate) -> float | None:
+    """The ``seen_pos_s`` the merged record should report.
+
+    The sticky rule the rest of the merge follows — a ``None`` means "not
+    reported this time", so keep what is already known — is wrong for this one
+    field whenever the update actually carries a position. ``seen_pos_s``
+    describes *that* position, and the previous record's value describes the
+    previous one; carrying it forward would attach an age measured against an
+    older fix to a newer one, and always an age too large. Clients read it as
+    "how long ago was this position true" and back-date the aircraft by it (the
+    map's dead-reckoning anchor does exactly that), so an inherited value moves
+    a freshly decoded aircraft backwards along its own track.
+
+    ``None`` is the honest answer instead: §2.7 spells "unknown" that way, and
+    consumers already handle a decoder that reports no position age at all by
+    taking the position as dated with the update.
+
+    An update that carries *no* position still inherits, because then the
+    record's position has not changed either and the age it carries is still
+    the age of the position on file. That the age is stale by a poll interval
+    is a property of the reading, not an error: it is the last thing the
+    decoder said about a fix that is itself unchanged.
+    """
+    if update.seen_pos_s is not None:
+        return update.seen_pos_s
+    if update.position is not None:
+        return None
+    return current.seen_pos_s
+
+
 def _track_point(update: AircraftStateUpdate, position: Position) -> TrackPoint:
     return TrackPoint(
         timestamp=update.timestamp,
@@ -503,7 +540,7 @@ def merge(
         rssi_db=update.rssi_db if update.rssi_db is not None else current.rssi_db,
         messages=update.messages if update.messages is not None else current.messages,
         seen_s=update.seen_s,
-        seen_pos_s=update.seen_pos_s if update.seen_pos_s is not None else current.seen_pos_s,
+        seen_pos_s=_carried_position_age_s(current, update),
         distance_nm=distance,
         bearing_deg=bearing,
         observations=current.observations + 1,

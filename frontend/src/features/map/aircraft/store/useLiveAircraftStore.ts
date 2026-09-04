@@ -68,6 +68,16 @@
  * `seen_pos_s` push the anchor backwards frame by frame would reintroduce #119
  * inverted — the marker racing ahead of the fix and jerking back on each
  * genuine decode. Only a position that actually changed takes a new anchor.
+ *
+ * **The trail is dated by the same anchor** (issue #145). `positionChangedAt`
+ * is not the marker's private business: every point {@link extendTrack} adds
+ * to the selected aircraft's track carries it as its `at`, so the head of the
+ * trail is exactly where and when the marker says the aircraft was fixed. Two
+ * things follow. The marker cannot lead its own trail — dating points at
+ * arrival left it `seen_pos_s` × groundspeed ahead of them the moment #144
+ * back-dated the anchor — and the live points meet the fix-dated history a
+ * backfill prepends (slice 061) on one clock and one rule, with no seam where
+ * the dating convention changes mid-polyline.
  */
 
 import { create } from "zustand";
@@ -115,8 +125,9 @@ export interface LiveAircraftState {
   receiver: ReceiverInfo | null;
   selectedIcao: string | null;
   /** The selected aircraft's track, as the renderer draws it: positions
-   * observed since it was selected, under the current sighting's history once
-   * `backfillTrack` has merged it in. */
+   * observed since it was selected, each dated by the fix anchor of the record
+   * it came from rather than by its arrival, under the current sighting's
+   * history once `backfillTrack` has merged it in. */
   track: SelectedTrack | null;
   /**
    * The positions of {@link track} the client watched arrive, without any
@@ -143,7 +154,7 @@ export interface LiveAircraftState {
    * track accumulation from the aircraft's current position. Selecting the
    * aircraft that is *already* selected changes nothing at all — see the
    * implementation for why that matters. */
-  selectAircraft: (icao: string | null, now?: number) => void;
+  selectAircraft: (icao: string | null) => void;
   /** Merges the selected aircraft's fetched history under the points watched
    * since selection (issue #133). A no-op unless `icao` is still the aircraft
    * the current track belongs to, which is what discards a response that
@@ -333,18 +344,59 @@ function pruneDeparting(
 }
 
 /**
+ * The least a live track point's timestamp may advance on the one before it.
+ *
+ * One millisecond, the resolution these timestamps are kept in: the smallest
+ * value that keeps the list *strictly* ascending, which is what
+ * {@link mergeTrackPoints} de-duplicates on. It applies only where a fix's
+ * reported age would otherwise date it at or before its predecessor — a
+ * back-dating artefact of the decoder's per-poll age sampling, never a real
+ * interval — so it never moves a point that the fix itself placed cleanly.
+ */
+const MIN_TRACK_POINT_GAP_MS = 1;
+
+/**
  * The track after this frame: seeded on selection, extended while the selected
  * aircraft keeps reporting a position, and left alone when it does not.
  *
  * A new position is appended to both lists under the same rules, so `points`
  * always ends with everything `live` holds — the backfill only ever prepends
  * history, and the retention cap drops the oldest, which is history first.
+ *
+ * **Every point is dated by the fix, not by its arrival** — issue #145. The
+ * `at` written here is the record's own {@link LiveAircraftRecord.positionChangedAt},
+ * read off the record rather than recomputed, so the head of the trail and the
+ * marker the interpolator dead-reckons are the same instant by construction and
+ * cannot drift apart if the anchoring rule changes again. Stamping the arrival
+ * instant instead left the marker leading its own trail head by `seen_pos_s` ×
+ * groundspeed from the moment slice 064 began back-dating the anchor, and
+ * spliced arrival-dated live points onto the genuinely fix-dated history a
+ * backfill prepends — one polyline dated by two different rules at the seam.
+ *
+ * The one thing that discipline has to give back is monotonicity, restored by
+ * holding each point at least {@link MIN_TRACK_POINT_GAP_MS} after the previous
+ * *live* one. `seen_pos_s` is sampled afresh every poll and need not track the
+ * gap between the frames that carry it, so a fix landing a second after the
+ * last one can report an age two seconds larger and anchor *before* it. That is
+ * a real reading, not a malformed one, and left alone it would break the
+ * strictly ascending `at` order every consumer of a point list assumes:
+ * {@link mergeTrackPoints} sorts defensively and would redraw the polyline
+ * through the reordered points, folding the trail back on itself, and it drops
+ * a point that ties with the one before it — so a merely non-decreasing rule
+ * would quietly lose a real vertex at the next backfill.
+ *
+ * Both sides of that comparison are live points on the browser's clock, so it
+ * never reaches across to the receiver's — the #119 rule holds. It deliberately
+ * does not consider the backfilled history the drawn track may begin with:
+ * clamping a browser timestamp up to a receiver one would let a skewed receiver
+ * throw the whole live trail into the future, where leaving it alone costs at
+ * worst the history that `mergeTrackPoints` already treats as inside the region
+ * the live list owns, and drops on its next pass.
  */
 function extendTrack(
   state: TrackState,
   selectedIcao: string | null,
   aircraft: Record<string, LiveAircraftRecord>,
-  now: number,
 ): TrackState {
   if (selectedIcao === null) {
     return NO_TRACK;
@@ -353,11 +405,23 @@ function extendTrack(
     state.track && state.track.icao === selectedIcao
       ? trackStateOf(state)
       : freshTrack(selectedIcao);
-  const position = aircraft[selectedIcao]?.aircraft.position;
-  if (!position) {
+  const record = aircraft[selectedIcao];
+  const position = record?.aircraft.position;
+  if (record === undefined || !position) {
     return base;
   }
-  const point: TrackPoint = { lat: position.lat, lon: position.lon, at: now };
+  const previous = base.trackLive[base.trackLive.length - 1];
+  const point: TrackPoint = {
+    lat: position.lat,
+    lon: position.lon,
+    at:
+      previous === undefined
+        ? record.positionChangedAt
+        : Math.max(
+            record.positionChangedAt,
+            previous.at + MIN_TRACK_POINT_GAP_MS,
+          ),
+  };
   const trackLive = appendTrackPoint(base.trackLive, point);
   if (trackLive === base.trackLive) {
     return base;
@@ -399,7 +463,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
         aircraft,
         departing: pruneDeparting(state.departing, now),
         receiver: data.receiver ?? state.receiver,
-        ...extendTrack(state, state.selectedIcao, aircraft, now),
+        ...extendTrack(state, state.selectedIcao, aircraft),
       };
     });
   },
@@ -439,7 +503,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
       return {
         aircraft,
         departing,
-        ...extendTrack(state, state.selectedIcao, aircraft, now),
+        ...extendTrack(state, state.selectedIcao, aircraft),
       };
     });
   },
@@ -448,7 +512,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
     set({ connection: status });
   },
 
-  selectAircraft: (icao, now = Date.now()) => {
+  selectAircraft: (icao) => {
     set((state) => {
       // Re-selecting what is already selected is not a selection: it is a
       // second click on the same aircraft, a click arriving from a panel row
@@ -465,7 +529,7 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
       }
       return {
         selectedIcao: icao,
-        ...extendTrack(NO_TRACK, icao, state.aircraft, now),
+        ...extendTrack(NO_TRACK, icao, state.aircraft),
       };
     });
   },

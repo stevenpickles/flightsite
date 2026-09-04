@@ -48,7 +48,7 @@ describe("TrackStats", () => {
       },
       T0,
     );
-    store.selectAircraft("aaaaaa", T0);
+    store.selectAircraft("aaaaaa");
     store.backfillTrack("aaaaaa", 91_001, [
       { lat: 47.1, lon: -122, at: T0 - 1_200_000 },
       { lat: 47.3, lon: -122, at: T0 - 600_000 },
