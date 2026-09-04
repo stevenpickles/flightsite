@@ -251,6 +251,12 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     decoder-supplied columns left ``NULL``. That is the same graceful absence
     SPEC §60 asks for when a decoder serves no statistics document.
 
+    Absent, not absent-until-reboot: the save that ends the first-run state
+    attaches a poller to this service, through
+    :func:`~flightsite.api.ingestion.attach_stats_poller` (issue #129), just as
+    it starts ingestion. Before that, a fresh install's decoder metric columns
+    stayed ``NULL`` for the life of the process.
+
     Constructing it opens nothing: no HTTP client, no session, no task.
     """
     store: ConfigStore = app.state.config_store

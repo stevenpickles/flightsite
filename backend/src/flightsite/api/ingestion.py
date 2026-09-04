@@ -1,4 +1,4 @@
-"""Starting decoder ingestion: at boot, and on the save that first configures it.
+"""Starting decoder polling: at boot, and on the save that first configures it.
 
 Two callers, one implementation:
 
@@ -25,6 +25,18 @@ done with the same file. That equivalence is the point, and it is why this
 module builds the endpoint from ``app.state.settings`` rather than from the
 request body: hot-start and cold-start must not be two ways to decide what to
 poll.
+
+The decoder's *second* reader (issue #129)
+------------------------------------------
+
+Aircraft ingestion is not the only thing a first-run install builds empty: the
+receiver-metrics service is constructed with no ``stats.json`` poller for
+exactly the same reason, and it had no equivalent of this module —
+``ReceiverMetricsService`` read its poller once, in ``__init__``. So the same
+fresh install that used to show an empty map went on showing ``NULL`` decoder
+metrics after slice 056 fixed the map, until the backend was restarted.
+:func:`attach_stats_poller` is the other half, on the same save, under the same
+conditions.
 
 Hot-**start** only
 ------------------
@@ -60,6 +72,7 @@ from fastapi import FastAPI
 from flightsite.config import ConfigStore, Settings
 from flightsite.ingest import DecoderEndpoint, IngestionService, build_ingestion_service
 from flightsite.live import LiveStore
+from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 
 logger = structlog.get_logger(__name__)
 
@@ -146,4 +159,35 @@ async def start_decoder_ingestion(app: FastAPI) -> IngestionService:
     return service
 
 
-__all__ = ["decoder_endpoint", "ingestion_startable", "start_decoder_ingestion"]
+async def attach_stats_poller(app: FastAPI) -> None:
+    """Give the receiver-metrics service the ``stats.json`` poller it lacks.
+
+    The second consumer of the same first-run save (issue #129). The metrics
+    service is built with ``poller=None`` on a first run for the same reason
+    ingestion is not started — there is no receiver the user has chosen — but
+    unlike ingestion it had no way to be told otherwise, so a fresh install's
+    decoder-supplied metric columns (messages, positions, RSSI, decoder
+    uptime) stayed ``NULL`` until the backend was restarted, while every
+    FlightSite-computed metric beside them worked.
+
+    The poller's endpoint comes from ``app.state.settings``, which is the same
+    rule the rest of this module follows and for the same reason: hot-start and
+    cold-start must not be two ways to decide what to poll.
+
+    Attaching is safe on any path :func:`ingestion_startable` admits, and a
+    no-op on the others —
+    :meth:`~flightsite.receiver_metrics.service.ReceiverMetricsService.attach_poller`
+    keeps a poller a service already has rather than replacing it.
+    """
+    metrics: ReceiverMetricsService | None = getattr(app.state, "receiver_metrics", None)
+    if metrics is None:  # pragma: no cover - the app always builds the service
+        return
+    await metrics.attach_poller(StatsJsonPoller(decoder_endpoint(app.state.settings)))
+
+
+__all__ = [
+    "attach_stats_poller",
+    "decoder_endpoint",
+    "ingestion_startable",
+    "start_decoder_ingestion",
+]
