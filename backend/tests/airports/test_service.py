@@ -581,3 +581,38 @@ async def test_an_unusable_queue_size_is_refused(
         AirportContextService(
             live=live, persistence=worker, repository=repository, queue_size=queue_size
         )
+
+
+# -------------------------------------------------- naming somebody else's ident
+
+
+async def test_the_service_names_an_ident_from_the_imported_dataset(
+    service: AirportContextService,
+) -> None:
+    """``route.origin_name`` (``docs/API.md`` §2.6) is answered from the same
+    index the nearest-airport inference uses, and makes no claim of its own."""
+    assert service.name_for("KBFI") == "Boeing Field"
+    assert service.name_for("ZZZZ") is None
+
+
+async def test_the_service_names_nothing_before_an_import(
+    live: LiveStore, worker: PersistenceWorker, repository: AirportRepository
+) -> None:
+    """A stock install: every name is null and no payload changes shape for it."""
+    unseeded = AirportContextService(live=live, persistence=worker, repository=repository)
+
+    assert unseeded.known_airports == 0
+    assert unseeded.name_for("KBFI") is None
+
+
+async def test_a_reimport_renames_a_field(
+    service: AirportContextService, repository: AirportRepository
+) -> None:
+    """The index swap is what makes a name current, exactly as it is for the
+    nearest-airport answers built from the same reference."""
+    await seed_index(repository, service, [airport("KBFI", *BOEING_FIELD, name="Old Name")])
+    assert service.name_for("KBFI") == "Old Name"
+
+    await seed_index(repository, service, [airport("KBFI", *BOEING_FIELD, name="New Name")])
+
+    assert service.name_for("KBFI") == "New Name"

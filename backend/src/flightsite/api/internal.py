@@ -85,7 +85,7 @@ from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
 from flightsite.enrichment import EnrichmentService
-from flightsite.enrichment.service import build_provider
+from flightsite.enrichment.service import build_economy, build_provider
 from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, Position, check_connection
 from flightsite.live import LiveStore
 from flightsite.metadata import ImportRun, MetadataService
@@ -339,19 +339,21 @@ async def _apply_enrichment(app: FastAPI, settings: Settings) -> None:
     yet, and the cost of dropping those is that the next observation of each
     flight queues it again.
 
-    The provider is rebuilt from ``app.state.settings``' successor rather than
-    from the request body, for the reason
-    :mod:`flightsite.api.ingestion` gives for the same choice: a running
-    install and its next boot must not read one configuration two ways.
-    :meth:`~flightsite.enrichment.EnrichmentService.apply_provider` then
-    decides what the new provider *means*, including that a save which did not
-    touch this section means nothing at all.
+    The provider and the spending plan — ``route_ttl_days`` and
+    ``daily_lookup_budget``, slice 070 — are rebuilt from
+    ``app.state.settings``' successor rather than from the request body, for
+    the reason :mod:`flightsite.api.ingestion` gives for the same choice: a
+    running install and its next boot must not read one configuration two ways.
+    :meth:`~flightsite.enrichment.EnrichmentService.apply_provider` then decides
+    what the new configuration *means*, including that a save which did not
+    touch this section means nothing at all, and that a save which changed only
+    a number adopts it without restarting the worker.
     """
     enrichment: EnrichmentService | None = getattr(app.state, "enrichment", None)
     if enrichment is None:  # pragma: no cover - the app always builds the service
         return
     try:
-        await enrichment.apply_provider(build_provider(settings))
+        await enrichment.apply_provider(build_provider(settings), build_economy(settings))
     except Exception as exc:
         _apply_failed("enrichment", exc)
 

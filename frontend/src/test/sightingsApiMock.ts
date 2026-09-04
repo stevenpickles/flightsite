@@ -53,7 +53,12 @@ export function sightingDetail(
     ended_at: "2026-08-30T22:41:55.000Z",
     duration_s: 2385,
     closure_reason: "gap_timeout",
-    route: { origin: "KTCM", destination: "PHIK" },
+    route: {
+      origin: "KTCM",
+      destination: "PHIK",
+      origin_name: "Tacoma McChord Field",
+      destination_name: "Hickam Air Force Base",
+    },
     reception: {
       rssi_peak_db: -3.2,
       rssi_avg_db: -11.8,

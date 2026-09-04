@@ -38,6 +38,16 @@ aircraft is low near a field. Everything inside it is attributed
 ``heuristic`` — SPEC §41 requires the inference to be clearly labeled, and
 §2.6's own example names exactly this provenance key.
 
+Slice 070 adds ``origin_name`` and ``destination_name`` inside ``route``. They
+are looked up through an injected :data:`AirportNameLookup` — in the running
+app the airport index's own
+:meth:`~flightsite.airports.service.AirportContextService.name_for` — rather
+than fetched here, for the same reason the metadata is passed in: this function
+runs once per aircraft per ~1 Hz delta frame, so the lookup has to be a
+dictionary access and can never be a query or a provider call. Nothing was
+removed to make room: the two idents stay exactly where they were, and a client
+that only knows about them is unaffected.
+
 Slice 037 adds ``watchlists``: always a list, ``[]`` when nothing matches,
 never absent — the same always-present, empty-when-none shape §2.7's null
 pattern takes for a list rather than a scalar. ``docs/API.md`` §5 notes an
@@ -100,7 +110,7 @@ decoder values.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -170,6 +180,24 @@ BEARING_DECIMALS: Final = 2
 #: the whole deserves.
 NEAREST_AIRPORT_PROVENANCE: Final = "heuristic"
 
+#: How a payload asks for an airport's local name, given its ident. Injected
+#: rather than imported so this module keeps its "no application state, no
+#: database" property: in the running app it is
+#: :meth:`~flightsite.airports.service.AirportContextService.name_for`, a
+#: dictionary access over the in-memory airport index (slice 027); in a test it
+#: is whatever the test wants it to be.
+type AirportNameLookup = Callable[[str], str | None]
+
+
+def no_airport_names(ident: str) -> None:
+    """The default :data:`AirportNameLookup`: nothing is known locally.
+
+    What an install that has never imported the airport dataset answers, and
+    what a caller with no index to hand gets — the same ``null`` either way,
+    because §2.7 makes "unknown" one answer rather than several.
+    """
+    return None
+
 
 def iso_utc(moment: datetime) -> str:
     """Format an instant as ``docs/API.md`` §2.2 UTC ISO-8601.
@@ -202,18 +230,44 @@ def _round(value: float | None, decimals: int) -> float | None:
     return None if value is None else round(value, decimals)
 
 
-def _route(route: SightingRoute | None) -> dict[str, str | None]:
-    """The §2.6 ``route`` block: both keys always, values ``null`` if unknown.
+def route_block(
+    origin: str | None,
+    destination: str | None,
+    airport_names: AirportNameLookup,
+) -> dict[str, str | None]:
+    """The §2.6 ``route`` block: four keys always, values ``null`` if unknown.
 
     A stable object rather than a nullable one. "No route yet", "not an airline
     flight", "enrichment is off" and "nobody has a route for this flight" are
     four different reasons for the same display, and a client that has to
     distinguish an absent block from a block of nulls before it can render
     *Unknown* is carrying that distinction for nothing (§2.7).
+
+    ``origin_name`` and ``destination_name`` are those same idents looked up in
+    the **local** ``airports`` table (slice 027) — never a second provider call
+    and never a database read. An ident the local dataset does not carry, and
+    every ident at all on an install that has never run an airports import,
+    names ``null``; the ident itself is still published, so a client renders the
+    code it has rather than nothing. A name is a label for an ident somebody
+    else reported, not a claim of FlightSite's own, so it carries no provenance
+    entry separate from ``route``'s.
+
+    ``airport_names`` is called at most twice, and only for an ident that is
+    actually there — see the module docstring on what that costs per frame.
     """
+    return {
+        "origin": origin,
+        "origin_name": None if origin is None else airport_names(origin),
+        "destination": destination,
+        "destination_name": None if destination is None else airport_names(destination),
+    }
+
+
+def _route(route: SightingRoute | None, airport_names: AirportNameLookup) -> dict[str, str | None]:
+    """:func:`route_block` for the live payload's in-memory route record."""
     if route is None:
-        return {"origin": None, "destination": None}
-    return {"origin": route.origin_ident, "destination": route.destination_ident}
+        return route_block(None, None, airport_names)
+    return route_block(route.origin_ident, route.destination_ident, airport_names)
 
 
 def _nearest_airport(context: AirportContext | None) -> dict[str, Any] | None:
@@ -269,6 +323,7 @@ def aircraft_payload(
     metadata: AircraftMetadataView | None = None,
     route: SightingRoute | None = None,
     airport: AirportContext | None = None,
+    airport_names: AirportNameLookup = no_airport_names,
     watchlists: Sequence[str] = (),
     interesting: InterestingState | None = None,
 ) -> dict[str, Any]:
@@ -300,6 +355,13 @@ def aircraft_payload(
             state for most of the sky: no airport dataset imported, the
             aircraft is at cruise, or it is nowhere near a field. It serializes
             as ``nearest_airport: null``, never as a missing key.
+        airport_names: how to turn a route ident into the airport's local name
+            for §2.6's ``origin_name``/``destination_name`` (slice 070). The
+            running app passes
+            :meth:`~flightsite.airports.service.AirportContextService.name_for`,
+            a dictionary access over the same in-memory index ``airport`` comes
+            from; the default answers ``None`` for everything, which is what an
+            install with no imported airport dataset publishes anyway.
         watchlists: the names of every watchlist (SPEC §42, roadmap slice 037)
             this aircraft currently matches, from
             :meth:`~flightsite.watchlists.matcher.WatchlistMatcher.matches` —
@@ -348,7 +410,7 @@ def aircraft_payload(
         "operator": None if resolved is None else resolved.operator_name,
         "operator_group": None if metadata is None else metadata.operator_group,
         "classification": None if metadata is None else metadata.classification.payload(),
-        "route": _route(route),
+        "route": _route(route, airport_names),
         "nearest_airport": _nearest_airport(airport),
         "interesting": None if interesting is None else interesting.payload(),
         "watchlists": list(watchlists),
@@ -883,6 +945,7 @@ def sighting_detail_payload(
     *,
     events: Sequence[RowMapping],
     path: Sequence[TrackSample],
+    airport_names: AirportNameLookup = no_airport_names,
 ) -> dict[str, Any]:
     """One sighting's full detail — ``docs/API.md`` §3.6.
 
@@ -892,6 +955,10 @@ def sighting_detail_payload(
     to attribute" rule :func:`_provenance` applies to the live payload: a
     sighting with no route enrichment publishes no ``route`` provenance
     entry at all, not one naming a source for two nulls.
+
+    ``airport_names`` is the same injected lookup :func:`aircraft_payload`
+    takes, so a stored route ident is named here exactly as a live one is —
+    one block shape, one source of names (slice 070).
     """
     return {
         "id": row["id"],
@@ -902,7 +969,7 @@ def sighting_detail_payload(
         "ended_at": None if row["ended_ms"] is None else iso_utc(from_epoch_ms(row["ended_ms"])),
         "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // 1000,
         "closure_reason": row["closure_reason"],
-        "route": {"origin": row["origin_ident"], "destination": row["destination_ident"]},
+        "route": route_block(row["origin_ident"], row["destination_ident"], airport_names),
         "reception": {
             "rssi_peak_db": row["rssi_peak_db"],
             "rssi_avg_db": row["rssi_avg_db"],
@@ -1091,6 +1158,7 @@ __all__ = [
     "EXPOSED_PROVENANCE_FIELDS",
     "METADATA_PROVENANCE_KEYS",
     "NEAREST_AIRPORT_PROVENANCE",
+    "AirportNameLookup",
     "activity_event_payload",
     "aircraft_detail_payload",
     "aircraft_history_row_payload",
@@ -1105,12 +1173,14 @@ __all__ = [
     "analytics_window_payload",
     "iso_utc",
     "lifetime_payload",
+    "no_airport_names",
     "receiver_lifetime_stats_payload",
     "receiver_metric_series_payload",
     "receiver_payload",
     "receiver_range_by_bearing_payload",
     "receiver_scorecard_payload",
     "receiver_signal_distribution_payload",
+    "route_block",
     "sighting_detail_payload",
     "sighting_event_payload",
     "sighting_path_point_payload",

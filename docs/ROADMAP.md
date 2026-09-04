@@ -151,6 +151,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 067 | Open-issue severity triage | 066 | opus | low | Re-verify every open issue against dev, close the ones merged slices already fixed, and label the rest by severity (plus release-gate / decision) so the SPEC §114 bug gate is a label query; records the Pi 5 + SSD runtime environment (issue #157) |
 | 068 | Medium-severity fix bundle | 040, 056, 061, 064, 067 | opus | medium | Five single-concern commits: poller attach after first-run hot-start (#129), fix-dated live track points and no stale seen_pos_s inheritance (#145), a write path for the alert-match 'Notified' marker (#104), the live socket hoisted to the app shell per ADR-0015 (#105), and ADR-0014 accepting the measured track storage cost (#114); tracking issue #159 |
 | 069 | Enrichment hot-apply & honest restart badges | 026, 055, 056, 068 | opus | low | Apply enrichment settings on config save so AeroDataBox route lookup starts, stops or re-keys without a backend restart, and badge every Settings section that still needs one (issue #161) |
+| 070 | Route enrichment credit economy & airport names | 026, 027, 042, 069 | opus | medium | Week-long per-callsign route cache, learned schedules, a daily lookup budget spent in priority order, restricted flights cached instead of retried (#165), and airport names beside route idents from the local airports table (issue #167) |
 
 ## Parallelization Guide
 

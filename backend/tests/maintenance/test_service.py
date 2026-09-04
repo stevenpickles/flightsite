@@ -20,7 +20,7 @@ from flightsite.counters import CounterRegistry
 from flightsite.db import Database
 from flightsite.db.engine import QUICK_CHECK_OK
 from flightsite.db.models import Meta
-from flightsite.enrichment.cache import RouteCacheRepository
+from flightsite.enrichment.cache import MS_PER_SECOND, SECONDS_PER_DAY, RouteCacheRepository
 from flightsite.enrichment.model import RouteInfo
 from flightsite.live import LiveStore
 from flightsite.maintenance.model import (
@@ -745,9 +745,12 @@ async def test_the_real_route_cache_pruner_is_driven_by_the_cycle(
     route_cache: RouteCacheRepository,
 ) -> None:
     """The wiring the app uses, exercised end to end rather than with a double."""
-    await route_cache.store_not_found("XXX999-2026-08-31", now_ms=clock.now_ms - 10_000_000)
+    # Two days back, so the 24 h negative TTL has run out and the week-long
+    # positive one written below has not.
+    two_days_ago = clock.now_ms - 2 * SECONDS_PER_DAY * MS_PER_SECOND
+    await route_cache.store_not_found("XXX999", now_ms=two_days_ago)
     await route_cache.store_route(
-        "BAW117-2026-08-31",
+        "BAW117",
         RouteInfo(origin_ident="EGLL", destination_ident="KJFK"),
         now_ms=clock.now_ms,
     )

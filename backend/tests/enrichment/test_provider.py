@@ -25,6 +25,7 @@ from flightsite.enrichment import (
     AeroDataBoxProvider,
     RouteInfo,
     RouteNotFound,
+    RouteRestricted,
     RouteUnavailable,
     aerodatabox,
     parse_route,
@@ -260,7 +261,6 @@ async def test_the_provider_answering_nothing_is_not_found(status: int) -> None:
         pytest.param(429, "rate_limited", id="rate-limited"),
         pytest.param(401, "http_401", id="rejected-key"),
         pytest.param(400, "http_400", id="bad-request"),
-        pytest.param(451, "http_451", id="legal"),
         pytest.param(500, "http_500", id="server-error"),
         pytest.param(503, "http_503", id="unavailable"),
     ],
@@ -270,6 +270,44 @@ async def test_an_error_status_is_unavailable_not_a_missing_route(status: int, r
     provider, client = mock_provider(responder(httpx.Response(status, json={"error": "no"})))
     async with client:
         assert await provider.lookup(CALLSIGN) == RouteUnavailable(reason=reason)
+
+
+async def test_a_legally_restricted_flight_is_its_own_answer() -> None:
+    """Issue #165: HTTP 451 is a fact about the flight, not about the API.
+
+    Read as an error it was a failure the breaker counted, so one restricted
+    business jet was re-requested nine times in twelve minutes and opened the
+    circuit twice. The provider now names it, and the service caches it.
+    """
+    provider, client = mock_provider(responder(httpx.Response(451, json={"error": "no"})))
+    async with client:
+        assert await provider.lookup(CALLSIGN) == RouteRestricted()
+
+
+async def test_a_restricted_answer_is_logged_with_its_own_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A findable line, and one that never carries the request or the key.
+
+    The module logger is replaced rather than captured through structlog: any
+    test that has built the real application has configured structlog with
+    cached bound loggers, and a cached logger cannot be intercepted.
+    """
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    class Recorder:
+        def info(self, event: str, **fields: Any) -> None:
+            recorded.append((event, fields))
+
+    monkeypatch.setattr(aerodatabox, "logger", Recorder())
+    provider, client = mock_provider(responder(httpx.Response(451)))
+    async with client:
+        await provider.lookup(CALLSIGN)
+
+    events = [fields for event, fields in recorded if event == "enrichment_lookup_restricted"]
+    assert events and events[0]["reason"] == "restricted"
+    assert events[0]["callsign"] == CALLSIGN
+    assert SECRET_SENTINEL not in str(events[0])
 
 
 async def test_a_timeout_is_unavailable() -> None:

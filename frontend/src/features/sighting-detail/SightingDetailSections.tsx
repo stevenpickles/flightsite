@@ -7,6 +7,7 @@
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
+import { routeEndpointValue } from "@/features/aircraft-detail/components/RouteEndpointValue";
 import {
   formatAltitude,
   formatDistance,
@@ -108,12 +109,18 @@ export function SightingRouteSection({
     <DetailSection title="Route">
       <FieldRow
         label="Origin"
-        value={route.origin}
+        value={routeEndpointValue({
+          ident: route.origin,
+          name: route.origin_name,
+        })}
         provenanceSource={provenanceSource}
       />
       <FieldRow
         label="Destination"
-        value={route.destination}
+        value={routeEndpointValue({
+          ident: route.destination,
+          name: route.destination_name,
+        })}
         provenanceSource={provenanceSource}
       />
     </DetailSection>

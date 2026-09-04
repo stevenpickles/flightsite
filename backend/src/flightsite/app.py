@@ -21,6 +21,7 @@ from flightsite.activity import (
 )
 from flightsite.airports import (
     AIRPORTS_SOURCE,
+    AirportContext,
     AirportContextService,
     AirportImportSink,
     AirportRepository,
@@ -40,7 +41,7 @@ from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository
-from flightsite.enrichment.service import build_provider
+from flightsite.enrichment.service import build_economy, build_provider
 from flightsite.ingest import IngestionService, Position
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
@@ -221,6 +222,56 @@ def _alert_radius(app: FastAPI) -> Callable[[], float | None]:
     def probe() -> float | None:
         settings: Settings = app.state.settings
         return settings.alert_radius_nm
+
+    return probe
+
+
+def _display_radius(app: FastAPI) -> Callable[[], float | None]:
+    """Read ``display_radius_nm`` when something needs it (slice 070).
+
+    The same shape and the same reason as :func:`_alert_radius`: enrichment
+    ranks its pending lookups by whether an aircraft is inside the radius the
+    map is showing, and a captured value would rank them by a radius the user
+    has since changed.
+    """
+
+    def probe() -> float | None:
+        settings: Settings = app.state.settings
+        return settings.display_radius_nm
+
+    return probe
+
+
+def _aircraft_is_alerting(app: FastAPI) -> Callable[[str], bool]:
+    """Ask the alert engine whether an aircraft is matching a rule right now.
+
+    A closure rather than a dependency, so enrichment ranks its queue against
+    live alert state without holding the engine — the same reading
+    ``GET /api/v1/aircraft/interesting`` takes, through the same in-memory
+    call, and ``False`` for any aircraft the engine has no state for.
+    """
+
+    def probe(icao: str) -> bool:
+        alerts: AlertService | None = getattr(app.state, "alerts", None)
+        return alerts is not None and alerts.engine.interesting(icao) is not None
+
+    return probe
+
+
+def _airport_context(app: FastAPI) -> Callable[[str], AirportContext | None]:
+    """Read the airport-context service's latched answer for one aircraft.
+
+    Enrichment's consistency check (slice 070) needs to know where an aircraft
+    is departing from or arriving at, and that is already computed, in memory,
+    once per observation by
+    :class:`~flightsite.airports.service.AirportContextService`. Reading it
+    through a closure rather than wiring the two services together keeps the
+    dependency one-way and costs a dictionary lookup.
+    """
+
+    def probe(icao: str) -> AirportContext | None:
+        airports: AirportContextService | None = getattr(app.state, "airports", None)
+        return None if airports is None else airports.context_for(icao)
 
     return probe
 
@@ -740,11 +791,19 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # runtime and the guarantee above holds at every instant, not just at this
     # one.
     route_cache = RouteCacheRepository(app.state.database)
+    # The two probes are closures over `app.state`, in the `_alert_radius`
+    # style: enrichment ranks its pending lookups against live alert state and
+    # the configured display radius, and checks a cached route against the
+    # airport-context service's latched phase, without holding either service.
     app.state.enrichment = EnrichmentService(
         live=app.state.live,
         persistence=app.state.persistence,
         cache=route_cache,
         provider=build_provider(settings),
+        economy=build_economy(settings),
+        alerting=_aircraft_is_alerting(app),
+        airport_context=_airport_context(app),
+        display_radius_nm=_display_radius(app),
     )
     # Database maintenance (SPEC §70, slice 044): a sixth low-frequency task
     # running the integrity check, retention pruning, `PRAGMA optimize`, WAL

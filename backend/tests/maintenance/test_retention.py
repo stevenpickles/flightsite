@@ -54,22 +54,23 @@ async def test_expired_rows_are_removed_and_fresh_ones_kept(
 ) -> None:
     """The asymmetric TTLs mean one instant can expire one row and not the other.
 
-    A negative answer lives an hour and a found route twelve, so a prune two
-    hours after both were written must take exactly one of them. That is a
-    sharper assertion than "expired rows go": it proves the pruner reads each
-    row's own ``expires_ms`` rather than applying one age to the whole table.
+    A negative answer lives a day and a found route a week (slice 070), so a
+    prune between the two must take exactly one of them. That is a sharper
+    assertion than "expired rows go": it proves the pruner reads each row's own
+    ``expires_ms`` rather than applying one age to the whole table.
     """
-    await route_cache.store_route("BAW117-2026-08-31", LHR_JFK, now_ms=BASE_MS)
-    await route_cache.store_not_found("XXX999-2026-08-31", now_ms=BASE_MS)
-    two_hours_later = BASE_MS + 2 * 60 * 60 * MS_PER_SECOND
+    await route_cache.store_route("BAW117", LHR_JFK, now_ms=BASE_MS)
+    await route_cache.store_not_found("XXX999", now_ms=BASE_MS)
+    assert NEGATIVE_TTL_S < POSITIVE_TTL_S
+    between_the_two = BASE_MS + (NEGATIVE_TTL_S + 60) * MS_PER_SECOND
 
-    pruned = await RouteCachePruner(route_cache).prune(now_ms=two_hours_later)
+    pruned = await RouteCachePruner(route_cache).prune(now_ms=between_the_two)
 
     assert pruned == 1
     assert await route_cache.size() == 1
     # Through the repository's own reader, which is the agreement that matters.
-    assert await route_cache.get("BAW117-2026-08-31", now_ms=two_hours_later) is not None
-    assert await route_cache.get("XXX999-2026-08-31", now_ms=two_hours_later) is None
+    assert await route_cache.get("BAW117", now_ms=between_the_two) is not None
+    assert await route_cache.get("XXX999", now_ms=between_the_two) is None
 
 
 async def test_a_row_expiring_exactly_now_is_pruned(route_cache: RouteCacheRepository) -> None:

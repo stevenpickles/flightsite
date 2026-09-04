@@ -15,6 +15,11 @@ from flightsite.config import (
     Settings,
     SightingTimingSettings,
 )
+from flightsite.enrichment.cache import (
+    DEFAULT_ROUTE_TTL_DAYS,
+    MAX_ROUTE_TTL_DAYS,
+    MIN_ROUTE_TTL_DAYS,
+)
 
 
 @pytest.mark.parametrize(
@@ -150,6 +155,53 @@ def test_alert_template_ids_are_deduplicated() -> None:
 def test_enrichment_requires_a_key_when_enabled() -> None:
     with pytest.raises(ValidationError, match="requires an AeroDataBox API key"):
         EnrichmentSettings(aerodatabox_enabled=True)
+
+
+def test_the_enrichment_economy_defaults_to_a_week_and_no_cap() -> None:
+    """Slice 070's defaults: a week-long cache, and the spending it always had."""
+    enrichment = EnrichmentSettings()
+
+    assert enrichment.route_ttl_days == DEFAULT_ROUTE_TTL_DAYS
+    assert enrichment.daily_lookup_budget == 0
+
+
+def test_the_config_bounds_are_the_ones_the_cache_enforces() -> None:
+    """The model spells the bounds as literals (it cannot import the cache).
+
+    So this is the test that keeps the two spellings honest, exactly as
+    ``db.models``' ``CHECK`` vocabularies are kept honest against their enums.
+    """
+    field = EnrichmentSettings.model_fields["route_ttl_days"]
+    bounds = {
+        type(item).__name__: getattr(item, "ge", getattr(item, "le", None))
+        for item in field.metadata
+    }
+
+    assert bounds["Ge"] == MIN_ROUTE_TTL_DAYS
+    assert bounds["Le"] == MAX_ROUTE_TTL_DAYS
+
+
+@pytest.mark.parametrize("days", [MIN_ROUTE_TTL_DAYS, DEFAULT_ROUTE_TTL_DAYS, MAX_ROUTE_TTL_DAYS])
+def test_a_route_ttl_inside_the_bounds_is_accepted(days: int) -> None:
+    assert EnrichmentSettings(route_ttl_days=days).route_ttl_days == days
+
+
+@pytest.mark.parametrize(
+    "days",
+    [
+        pytest.param(0, id="below-a-day-is-not-a-cache"),
+        pytest.param(31, id="beyond-a-month-is-the-confirmation-freeze"),
+    ],
+)
+def test_a_route_ttl_outside_the_bounds_is_refused(days: int) -> None:
+    with pytest.raises(ValidationError):
+        EnrichmentSettings(route_ttl_days=days)
+
+
+def test_a_negative_daily_budget_is_refused() -> None:
+    """Zero already means uncapped; a negative number would mean nothing."""
+    with pytest.raises(ValidationError):
+        EnrichmentSettings(daily_lookup_budget=-1)
 
 
 def test_unknown_nested_key_is_rejected_by_the_model() -> None:

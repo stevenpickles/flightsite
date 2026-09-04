@@ -31,7 +31,10 @@ tell the user which kind of key they hold.
 The response is a **bare JSON array** of flight objects. Departure and arrival
 are top-level siblings, each with an ``airport`` carrying ``icao`` and ``iata``.
 ``204 No Content`` means no flight matched; a ``200`` with an empty array means
-the same thing and is treated identically.
+the same thing and is treated identically. ``451`` means the flight is legally
+withheld, which is an answer about that callsign rather than a failure of the
+API, and is reported as :class:`~flightsite.enrichment.model.RouteRestricted`
+(issue #165).
 
 What is sent, and what is not
 -----------------------------
@@ -66,6 +69,7 @@ from flightsite.enrichment.model import (
     RouteInfo,
     RouteLookup,
     RouteNotFound,
+    RouteRestricted,
     RouteUnavailable,
 )
 
@@ -96,6 +100,14 @@ CONNECT_TIMEOUT_S: Final = 5.0
 
 #: HTTP statuses this provider treats as "asked and answered, no route".
 _NOT_FOUND_STATUSES: Final[frozenset[int]] = frozenset({204, 404})
+
+#: ``451 Unavailable For Legal Reasons``: AeroDataBox withholds some flights —
+#: private and government movements under national blocking programmes. It is a
+#: *definitive* answer about one callsign, and issue #165 is what happened while
+#: it was read as a server error: one business jet was re-requested nine times
+#: in twelve minutes and tripped the circuit breaker twice, because a fact about
+#: that flight was being counted as evidence about the provider.
+_RESTRICTED_STATUS: Final = 451
 
 #: Extras kept in ``route_cache.payload_json`` for diagnostics: what the
 #: provider called the flight, and what state it said it was in.
@@ -253,6 +265,11 @@ class AeroDataBoxProvider:
 
         if response.status_code in _NOT_FOUND_STATUSES:
             return RouteNotFound()
+        if response.status_code == _RESTRICTED_STATUS:
+            # Logged like an unavailability so the line is findable, and
+            # returned as its own answer so nothing downstream treats it as one.
+            logger.info("enrichment_lookup_restricted", reason="restricted", callsign=callsign)
+            return RouteRestricted()
         if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
             return self._unavailable("rate_limited", callsign)
         if response.status_code >= httpx.codes.BAD_REQUEST:

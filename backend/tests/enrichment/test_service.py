@@ -19,7 +19,7 @@ from flightsite.api.serializers import aircraft_payload
 from flightsite.counters import counters
 from flightsite.db import Database
 from flightsite.enrichment import EnrichmentService, RouteCacheRepository, RouteInfo
-from flightsite.enrichment.model import RouteNotFound, RouteUnavailable
+from flightsite.enrichment.model import RouteLookup, RouteNotFound, RouteUnavailable
 from flightsite.enrichment.service import ENRICHMENT_FAILURES_COUNTER
 from flightsite.live import LiveStore
 from flightsite.live.events import AircraftAppeared, AircraftRemoved, AircraftStale
@@ -27,7 +27,6 @@ from flightsite.sightings import PersistenceWorker
 from flightsite.sightings.vocabulary import SightingEventType
 from tests.enrichment.conftest import (
     AIRLINE_CALLSIGN,
-    BASE_DATE,
     DESTINATION,
     ICAO,
     ORIGIN,
@@ -44,7 +43,9 @@ from tests.enrichment.conftest import (
     route_answer,
 )
 
-KEY = f"{AIRLINE_CALLSIGN}:{BASE_DATE}"
+#: The cache key of the fixtures' callsign — the callsign itself since
+#: slice 070 dropped the date bucket (``docs/DATA_MODEL.md`` §7).
+KEY = AIRLINE_CALLSIGN
 
 
 async def enrich(service: EnrichmentService, live: LiveStore, worker: PersistenceWorker) -> None:
@@ -143,7 +144,12 @@ async def test_the_live_payload_carries_the_route_and_its_provenance(
 
     payload = aircraft_payload(record, route=worker.route_for(ICAO))
 
-    assert payload["route"] == {"origin": ORIGIN, "destination": DESTINATION}
+    assert payload["route"] == {
+        "origin": ORIGIN,
+        "origin_name": None,
+        "destination": DESTINATION,
+        "destination_name": None,
+    }
     assert payload["provenance"]["route"] == "aerodatabox"
 
 
@@ -157,7 +163,12 @@ async def test_the_route_block_is_present_and_null_before_enrichment(
 
     payload = aircraft_payload(record)
 
-    assert payload["route"] == {"origin": None, "destination": None}
+    assert payload["route"] == {
+        "origin": None,
+        "origin_name": None,
+        "destination": None,
+        "destination_name": None,
+    }
     assert "route" not in payload["provenance"]
 
 
@@ -302,7 +313,9 @@ async def test_a_disabled_install_leaves_a_clean_unknown(
 
     assert aircraft_payload(record, route=worker.route_for(ICAO))["route"] == {
         "origin": None,
+        "origin_name": None,
         "destination": None,
+        "destination_name": None,
     }
 
 
@@ -678,7 +691,7 @@ async def test_an_aircraft_seen_mid_lookup_rides_the_request_in_flight(
 
         service: EnrichmentService
 
-        async def lookup(self, callsign: str) -> RouteInfo | RouteNotFound | RouteUnavailable:
+        async def lookup(self, callsign: str) -> RouteLookup:
             record = live.get(OTHER_ICAO)
             assert record is not None
             self.service.consider(AircraftAppeared(aircraft=record, at=record.last_seen))

@@ -345,6 +345,78 @@ class TestMetadataAge:
         assert payload["status"] == STATUS_OK
 
 
+class TestEnrichmentSection:
+    """The Health page's enrichment card reads these keys and no others."""
+
+    #: 2026-08-31T00:00:00Z — the midnight after :data:`NOW`.
+    MIDNIGHT_MS = 1_788_134_400_000
+
+    @classmethod
+    def _service(cls, **overrides: Any) -> Any:
+        state: dict[str, Any] = {
+            "enabled": True,
+            "running": True,
+            "circuit_open": False,
+            "lookups": 308,
+            "dropped": 0,
+            "pending": 2,
+            "budget": SimpleNamespace(
+                limit=500, used_today=137, remaining=363, resets_at_ms=cls.MIDNIGHT_MS
+            ),
+            "cache_stats": SimpleNamespace(hits=4_112, misses=308, learned=57),
+        }
+        state.update(overrides)
+        return SimpleNamespace(**state)
+
+    @pytest.mark.asyncio
+    async def test_the_budget_and_cache_counters_reach_the_payload(self) -> None:
+        app = _app(enrichment=self._service())
+
+        payload = await collect_diagnostics(
+            app, counters=CounterRegistry(), ring=ErrorRing(), now=NOW
+        )
+
+        assert payload["enrichment"]["budget"] == {
+            "limit": 500,
+            "used_today": 137,
+            "remaining": 363,
+            "resets_at": "2026-08-31T00:00:00.000Z",
+        }
+        assert payload["enrichment"]["cache"] == {"hits": 4_112, "misses": 308, "learned": 57}
+
+    @pytest.mark.asyncio
+    async def test_an_uncapped_budget_reports_null_rather_than_zero(self) -> None:
+        """``null`` means "no ceiling"; ``0`` would mean "nothing left today"."""
+        service = self._service(
+            budget=SimpleNamespace(
+                limit=None, used_today=12, remaining=None, resets_at_ms=self.MIDNIGHT_MS
+            )
+        )
+
+        payload = await collect_diagnostics(
+            _app(enrichment=service), counters=CounterRegistry(), ring=ErrorRing(), now=NOW
+        )
+
+        budget = payload["enrichment"]["budget"]
+        assert (budget["limit"], budget["remaining"]) == (None, None)
+        assert budget["used_today"] == 12
+
+    @pytest.mark.asyncio
+    async def test_a_process_with_no_enrichment_service_still_answers(self) -> None:
+        """Every section degrades rather than failing — including this one."""
+        payload = await collect_diagnostics(
+            _app(), counters=CounterRegistry(), ring=ErrorRing(), now=NOW
+        )
+
+        assert payload["enrichment"]["budget"] == {
+            "limit": None,
+            "used_today": 0,
+            "remaining": None,
+            "resets_at": "2026-09-01T00:00:00.000Z",
+        }
+        assert payload["enrichment"]["cache"] == {"hits": 0, "misses": 0, "learned": 0}
+
+
 class TestCountersAndErrors:
     @pytest.mark.asyncio
     async def test_counter_values_reach_their_sections(self) -> None:

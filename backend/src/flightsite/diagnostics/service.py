@@ -436,8 +436,21 @@ def _websocket_section(app: FastAPI, counter_values: Mapping[str, int]) -> dict[
     }
 
 
-def _enrichment_section(app: FastAPI, counter_values: Mapping[str, int]) -> dict[str, Any]:
-    """SPEC §67: enrichment failures."""
+def _enrichment_section(
+    app: FastAPI, counter_values: Mapping[str, int], now: datetime
+) -> dict[str, Any]:
+    """SPEC §67: enrichment failures, and what the day's credits went on.
+
+    ``budget`` and ``cache`` were added by slice 070 for the Health page's
+    enrichment card. Both are read from the service's own memory — the budget
+    ledger is refreshed from ``route_cache`` at start and at midnight, not per
+    request — so this stays what the endpoint promises to be: no query, no
+    writer session, nothing a diagnostics poll can make expensive.
+
+    ``limit`` and ``remaining`` are ``null`` on an uncapped install, which is
+    the default and is not the same as ``0``: one means "no ceiling", the other
+    would mean "no lookups left today".
+    """
     service = _state(app, "enrichment")
     return {
         "enabled": bool(getattr(service, "enabled", False)),
@@ -447,7 +460,45 @@ def _enrichment_section(app: FastAPI, counter_values: Mapping[str, int]) -> dict
         "dropped": int(getattr(service, "dropped", 0)),
         "pending": int(getattr(service, "pending", 0)),
         "failures": counter_values.get("enrichment_failures", 0),
+        "budget": _enrichment_budget(getattr(service, "budget", None), now),
+        "cache": _enrichment_cache(getattr(service, "cache_stats", None)),
     }
+
+
+def _enrichment_budget(budget: Any, now: datetime) -> dict[str, Any]:
+    """The daily lookup budget, or an uncapped one when there is no service."""
+    if budget is None:
+        return {
+            "limit": None,
+            "used_today": 0,
+            "remaining": None,
+            "resets_at": _iso(_next_utc_midnight(now)),
+        }
+    limit = budget.limit
+    remaining = budget.remaining
+    return {
+        "limit": None if limit is None else int(limit),
+        "used_today": int(budget.used_today),
+        "remaining": None if remaining is None else int(remaining),
+        "resets_at": _iso_from_ms(budget.resets_at_ms),
+    }
+
+
+def _enrichment_cache(stats: Any) -> dict[str, int]:
+    """Cache hits, misses and learned schedules."""
+    if stats is None:
+        return {"hits": 0, "misses": 0, "learned": 0}
+    return {
+        "hits": int(stats.hits),
+        "misses": int(stats.misses),
+        "learned": int(stats.learned),
+    }
+
+
+def _next_utc_midnight(now: datetime) -> datetime:
+    """The next 00:00 UTC after ``now``."""
+    midnight = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight + timedelta(days=1)
 
 
 def _error_payload(entry: RecentError) -> dict[str, Any]:
@@ -558,7 +609,7 @@ async def collect_diagnostics(
         },
         "metadata": metadata,
         "notifications": _notifications_section(settings),
-        "enrichment": _enrichment_section(app, counter_values),
+        "enrichment": _enrichment_section(app, counter_values, moment),
         "websocket": _websocket_section(app, counter_values),
         "counters": dict(counter_values),
         "recent_errors": _recent_errors(buffer),

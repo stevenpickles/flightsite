@@ -14,6 +14,8 @@ export const ALERT_RADIUS_MAX_NM = 10000;
 export const RETENTION_MIN_DAYS = 7;
 export const RETENTION_MAX_DAYS = 30;
 export const MAX_RANGE_RINGS = 10;
+export const ROUTE_TTL_MIN_DAYS = 1;
+export const ROUTE_TTL_MAX_DAYS = 30;
 
 export function validateDisplayRadius(raw: string): string | null {
   const value = parseNumber(raw);
@@ -84,6 +86,33 @@ export function validateRangeRingRadii(raw: string): string | null {
   }
   if (new Set(values).size !== values.length) {
     return "Range ring radii must be unique.";
+  }
+  return null;
+}
+
+/** The daily provider-lookup allowance (slice 070). Zero is a legitimate
+ * value meaning "uncapped", not an empty field, so it is accepted rather
+ * than treated as the absence of an answer. */
+export function validateDailyLookupBudget(raw: string): string | null {
+  const value = parseNumber(raw);
+  if (value === null || !Number.isInteger(value) || value < 0) {
+    return "Enter a whole number of lookups per day, or 0 for unlimited.";
+  }
+  return null;
+}
+
+/** How long a cached route stays usable. Mirrors the backend's 1–30 bound:
+ * below a day the cache would never absorb a repeat flight, and beyond a
+ * month a schedule change would outlive its own correction. */
+export function validateRouteTtlDays(raw: string): string | null {
+  const value = parseNumber(raw);
+  if (
+    value === null ||
+    !Number.isInteger(value) ||
+    value < ROUTE_TTL_MIN_DAYS ||
+    value > ROUTE_TTL_MAX_DAYS
+  ) {
+    return `Enter a whole number of days between ${ROUTE_TTL_MIN_DAYS} and ${ROUTE_TTL_MAX_DAYS}.`;
   }
   return null;
 }

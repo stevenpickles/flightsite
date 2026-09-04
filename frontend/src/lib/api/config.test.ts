@@ -8,6 +8,7 @@ import {
   usePutConfigMutation,
 } from "@/lib/api/config";
 import {
+  defaultEnrichmentConfig,
   defaultFlightSiteConfig,
   installConfigApiMock,
 } from "@/test/configApiMock";
@@ -67,7 +68,10 @@ describe("putConfig", () => {
   it("never receives the real secret value back — only the mask or null", async () => {
     installConfigApiMock({
       config: defaultFlightSiteConfig({
-        enrichment: { aerodatabox_enabled: true, aerodatabox_api_key: "•••" },
+        enrichment: defaultEnrichmentConfig({
+          aerodatabox_enabled: true,
+          aerodatabox_api_key: "•••",
+        }),
       }),
       secretsSet: { "enrichment.aerodatabox_api_key": true },
     });

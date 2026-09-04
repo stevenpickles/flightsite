@@ -114,16 +114,24 @@ class AirportIndex:
             which the repository makes deterministic by loading in ident order.
     """
 
-    __slots__ = ("_by_ident", "_cells", "_size")
+    __slots__ = ("_by_iata", "_by_ident", "_cells", "_size")
 
     def __init__(self, airports: Iterable[AirportRecord] = ()) -> None:
         cells: dict[tuple[int, int], list[AirportRecord]] = {}
         by_ident: dict[str, AirportRecord] = {}
+        by_iata: dict[str, AirportRecord] = {}
         for airport in airports:
             by_ident[airport.ident] = airport
+            if airport.iata is not None:
+                # First writer wins, and the repository loads in ident order,
+                # so a duplicated IATA code — upstream has a handful — resolves
+                # to the same field on every rebuild rather than to whichever
+                # row happened to be read second.
+                by_iata.setdefault(airport.iata, airport)
             cells.setdefault((_lat_cell(airport.lat), _lon_cell(airport.lon)), []).append(airport)
         self._cells = cells
         self._by_ident = by_ident
+        self._by_iata = by_iata
         self._size = len(by_ident)
 
     def __len__(self) -> int:
@@ -141,6 +149,27 @@ class AirportIndex:
         stored ``inferred_airport_ident`` gets a name back without a query.
         """
         return self._by_ident.get(ident.upper())
+
+    def name_for(self, ident: str) -> str | None:
+        """This field's name, or ``None`` if the local dataset has no such field.
+
+        The lookup behind the ``origin_name``/``destination_name`` members of
+        ``docs/API.md`` §2.6's ``route`` block, and it is on the live path: the
+        aircraft serializer calls it twice per aircraft per ~1 Hz frame, so it
+        is a dictionary access and never a query.
+
+        ICAO first, then IATA, because a route ident is whichever of the two
+        the provider had (:mod:`flightsite.enrichment.aerodatabox` prefers ICAO
+        and falls back to IATA), and both keys are already in memory.
+        ``.upper()`` is a fallback rather than the first move: every stored
+        ident is normalized upper-case (:mod:`flightsite.airports.records`) and
+        so is every enriched one, so the common call allocates nothing.
+        """
+        record = self._by_ident.get(ident) or self._by_iata.get(ident)
+        if record is None:
+            key = ident.upper()
+            record = self._by_ident.get(key) or self._by_iata.get(key)
+        return None if record is None else record.name
 
     def nearest(self, position: Position, *, within_nm: float) -> NearestAirport | None:
         """The closest airport within ``within_nm``, or ``None`` if none is.

@@ -145,7 +145,13 @@ def test_secrets_are_never_written_to_config_yaml(store: ConfigStore) -> None:
     config_text = store.config_path.read_text(encoding="utf-8")
     assert SECRET_SENTINEL not in config_text
     assert "aerodatabox_api_key" not in config_text
-    assert yaml.safe_load(config_text)["enrichment"] == {"aerodatabox_enabled": False}
+    # The non-secret half of the section is written in full; only the key is
+    # held back (slice 070 added the two economy numbers to that half).
+    assert yaml.safe_load(config_text)["enrichment"] == {
+        "aerodatabox_enabled": False,
+        "route_ttl_days": 7,
+        "daily_lookup_budget": 0,
+    }
 
 
 def test_secrets_are_written_only_to_secrets_yaml(store: ConfigStore) -> None:

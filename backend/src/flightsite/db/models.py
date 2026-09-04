@@ -136,18 +136,21 @@ METADATA_SOURCE_STATUS_CHECK: Final[str] = "status IN ('never_run', 'ok', 'faile
 #: The ``route_cache.status`` vocabulary of ``docs/DATA_MODEL.md`` §7, spelled
 #: as the SQL ``CHECK`` predicate.
 #:
-#: All three values are constrained from birth. Slice 026 writes ``ok`` and
-#: ``not_found``: it never records a *provider unavailability* — a timeout, a
-#: 429, a 5xx, an open circuit — because those say nothing about the callsign
-#: and caching them would turn one bad minute into hours of false "no route".
-#: ``error`` is the shape reserved for the different case of a provider that
-#: answers definitively and unusably for a particular key, the same way
-#: :data:`CLOSURE_REASON_CHECK` carried values before the code that writes them
-#: existed. The runtime enum is
+#: Every value is constrained from birth. Slice 026 wrote ``ok`` and
+#: ``not_found``, and slice 070 added ``restricted``: what none of them records
+#: is a *provider unavailability* — a timeout, a 429, a 5xx, an open circuit —
+#: because those say nothing about the callsign and caching them would turn one
+#: bad minute into hours of false "no route". ``restricted`` is the opposite
+#: case and belongs here for exactly that reason: an HTTP 451 is the provider
+#: answering, definitively, that this flight is legally withheld (issue #165),
+#: so it is cached like any other answer. ``error`` remains the shape reserved
+#: for a provider answering definitively and unusably for a particular key, the
+#: same way :data:`CLOSURE_REASON_CHECK` carried values before the code that
+#: writes them existed. The runtime enum is
 #: :class:`flightsite.enrichment.model.RouteCacheStatus`; as with
 #: :data:`CLOSURE_REASON_CHECK` it cannot be imported here (``enrichment``
 #: depends on ``db``, not the reverse), so a test asserts the two agree.
-ROUTE_CACHE_STATUS_CHECK: Final[str] = "status IN ('ok', 'not_found', 'error')"
+ROUTE_CACHE_STATUS_CHECK: Final[str] = "status IN ('ok', 'not_found', 'restricted', 'error')"
 
 #: The ``watchlist_entries.kind`` vocabulary of ``docs/DATA_MODEL.md`` §4.1 /
 #: SPEC §42, spelled as the SQL ``CHECK`` predicate.
@@ -727,14 +730,20 @@ class RouteCache(Base):
     about at most once per key, however many sightings, restarts or aircraft
     ask about it.
 
-    The key is a **normalized callsign plus a UTC date bucket** (§7). The date
-    is part of the key rather than an implicit TTL because the fact being cached
-    is a fact about a *flight on a day* — ``DAL1234`` flies a different pair of
-    airports next week — so a key that omitted it would eventually serve a
-    correct answer to the wrong question. ``expires_ms`` then bounds staleness
-    *within* a day, and is shorter for a negative result than for a positive
-    one: "no route yet" is often a schedule that has not been filed, and is
-    worth re-asking about later in the day.
+    The key is the **normalized callsign**, and nothing else (§7). It carried a
+    UTC date bucket until slice 070 measured what that cost on the owner's
+    receiver: 62 % of a day's airline callsigns had been seen the previous day,
+    so a dated key was buying the same answer again every morning at ~190
+    lookups an hour. ``expires_ms`` is now the whole of the staleness rule —
+    ``enrichment.route_ttl_days`` (default 7) for an answer, 24 h for a
+    "no route yet" that is often just an unfiled schedule.
+
+    ``confirmations`` counts the separate calendar days a refresh has returned
+    the *same* pair of airports; at three the row is frozen for 30 days, which
+    is how a scheduled service earns its place without being re-bought weekly.
+    ``first_fetched_ms`` records when the answer now stored was first seen, so
+    that run of confirmations is legible after the fact. A differing answer
+    resets both.
 
     ``WITHOUT ROWID`` with the text key as the primary key: every access is a
     point lookup by that key, and the table is small — one row per airline
@@ -761,6 +770,14 @@ class RouteCache(Base):
     payload_json: Mapped[str | None] = mapped_column(Text)
     fetched_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Separate calendar days a refresh has confirmed the stored answer.
+    confirmations: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: When the answer now stored was first reported. Nullable because rows
+    #: written before revision 0014 have no such record and inventing one
+    #: would be a claim about a past this build did not observe.
+    first_fetched_ms: Mapped[int | None] = mapped_column(Integer)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RouteCache(cache_key={self.cache_key!r}, status={self.status!r})"

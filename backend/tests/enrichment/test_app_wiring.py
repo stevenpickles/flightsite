@@ -110,4 +110,9 @@ def test_the_published_schema_documents_the_route_block(isolated_data_dir: Path)
         schemas = client.get("/api/v1/openapi.json").json()["components"]["schemas"]
 
     assert "route" in schemas["AircraftView"]["properties"]
-    assert set(schemas["RouteView"]["properties"]) == {"origin", "destination"}
+    assert set(schemas["RouteView"]["properties"]) == {
+        "origin",
+        "origin_name",
+        "destination",
+        "destination_name",
+    }

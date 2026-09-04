@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   decoderPresentation,
+  enrichmentBudgetPresentation,
   errorCountPresentation,
   integrityPresentation,
   maintenancePresentation,
@@ -122,5 +123,44 @@ describe("errorCountPresentation", () => {
       tone: "warn",
       label: "4 recent",
     });
+  });
+});
+
+describe("enrichmentBudgetPresentation", () => {
+  it("reports what is left of a capped budget", () => {
+    expect(
+      enrichmentBudgetPresentation({
+        limit: 100,
+        used_today: 12,
+        remaining: 88,
+        resets_at: "2026-09-01T00:00:00.000Z",
+      }),
+    ).toEqual({ tone: "ok", label: "88 left today" });
+  });
+
+  it("says uncapped rather than claiming health for an unlimited budget", () => {
+    expect(
+      enrichmentBudgetPresentation({
+        limit: null,
+        used_today: 412,
+        remaining: null,
+        resets_at: "2026-09-01T00:00:00.000Z",
+      }),
+    ).toEqual({ tone: "idle", label: "Uncapped" });
+  });
+
+  it("warns on a spent budget — a chosen cap being reached is not a fault", () => {
+    expect(
+      enrichmentBudgetPresentation({
+        limit: 50,
+        used_today: 50,
+        remaining: 0,
+        resets_at: "2026-09-01T00:00:00.000Z",
+      }),
+    ).toEqual({ tone: "warn", label: "Budget spent" });
+  });
+
+  it("has nothing to present for a backend that does not report a budget", () => {
+    expect(enrichmentBudgetPresentation(undefined)).toBeNull();
   });
 });

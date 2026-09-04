@@ -157,15 +157,33 @@ class EnrichmentSettings(_ConfigModel):
     written to ``config.yaml`` and never serialized by
     :meth:`Settings.dump_public`.
 
-    Both fields apply on save. ``PUT /api/internal/config`` rebuilds the
-    provider from them and hands it to
+    Every field applies on save. ``PUT /api/internal/config`` rebuilds the
+    provider *and* the spending plan from them and hands both to
     :meth:`~flightsite.enrichment.EnrichmentService.apply_provider`, so
-    enabling, disabling and re-keying all take effect in the running process
-    (issue #161).
+    enabling, disabling, re-keying and re-budgeting all take effect in the
+    running process (issues #161 and #167).
+
+    The two numbers are the credit economy of slice 070, and they bound
+    spending from opposite ends. ``route_ttl_days`` decides how *often* a
+    callsign may be asked about; ``daily_lookup_budget`` decides how many
+    callsigns may be asked about at all, whatever their TTLs say. Neither is a
+    rate limit — the 10/minute burst limiter is separate and unchanged.
     """
 
     aerodatabox_enabled: bool = False
     aerodatabox_api_key: SecretStr | None = None
+    #: Days a found route stays cached. The measured saving: a scheduled
+    #: callsign heard on most days costs one lookup a week instead of one or
+    #: two a day. The default and the bounds are spelled here as literals
+    #: rather than imported from :mod:`flightsite.enrichment.cache`, which
+    #: imports this module — the same constraint ``db.models`` works under for
+    #: its ``CHECK`` vocabularies, and as there a test asserts the two agree.
+    route_ttl_days: int = Field(default=7, ge=1, le=30)
+    #: Provider lookups allowed per UTC day. ``0`` — the default — is uncapped,
+    #: which is the behaviour every install had before this setting existed;
+    #: setting it is how an owner whose feeder earns a fixed number of credits
+    #: a day stops enrichment outspending them.
+    daily_lookup_budget: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _key_required_when_enabled(self) -> Self:
