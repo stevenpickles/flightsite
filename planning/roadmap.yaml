@@ -88,6 +88,13 @@ releases:
     theme: "Military filter activation on real metadata availability + the clean
       Pi 5 performance baseline with five budgets promoted to hard gates
       (slices 065-066). Recorded 2026-09-03."
+  - version: "v0.4.0"
+    after_phase: 8
+    theme: "Settings that apply on save and alerts that reach every tab: route
+      enrichment hot-apply, stats-poller hot-start, the app-shell-owned live
+      socket with click-to-map, the alert-match Notified marker's write path,
+      fix-dated track points, ADR-0014/0015, and the severity-triaged tracker
+      (slices 067-069). Recorded 2026-09-04."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
