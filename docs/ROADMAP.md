@@ -35,6 +35,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.3.0 | 8 | Fresh-install polish and live-picture correctness from the first real deployment (slices 056–062; recorded 2026-09-02) |
 | v0.3.1 | 8 | Same-day patch: aircraft label stability and the honest position-fix anchor (slices 063–064; recorded 2026-09-02) |
 | v0.3.2 | 8 | Military filter activation on real metadata availability + the clean Pi 5 performance baseline with five budgets promoted to hard gates (slices 065–066; recorded 2026-09-03) |
+| v0.4.0 | 8 | Settings that apply on save and alerts that reach every tab: enrichment hot-apply, stats-poller hot-start, app-shell-owned live socket, Notified marker write path, fix-dated track points, ADR-0014/0015, severity-triaged tracker (slices 067–069; recorded 2026-09-04) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
