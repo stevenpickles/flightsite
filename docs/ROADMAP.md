@@ -148,6 +148,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 065 | Raspberry Pi 5 clean performance baseline | 049, 060 | opus | low | Record the first fully-passing on-hardware run in docs/PERFORMANCE.md §5.5 and apply §5.3's promotion rule: five reference budgets become hard gates, SQLite write latency does not (closes issue #132; the clean Pi 4 run that would calibrate it is issue #153) |
 | 066 | Military chip metadata gate | 017, 025 | opus | low | Gate the live map's Military quick-filter chip on whether this install has imported aircraft metadata instead of on the long-lifted slice-017 gate, and refresh the drawer's stale metadata notes (issue #151) |
 | 067 | Open-issue severity triage | 066 | opus | low | Re-verify every open issue against dev, close the ones merged slices already fixed, and label the rest by severity (plus release-gate / decision) so the SPEC §114 bug gate is a label query; records the Pi 5 + SSD runtime environment (issue #157) |
+| 068 | Medium-severity fix bundle | 040, 056, 061, 064, 067 | opus | medium | Five single-concern commits: poller attach after first-run hot-start (#129), fix-dated live track points and no stale seen_pos_s inheritance (#145), a write path for the alert-match 'Notified' marker (#104), the live socket hoisted to the app shell per ADR-0015 (#105), and ADR-0014 accepting the measured track storage cost (#114); tracking issue #159 |
 
 ## Parallelization Guide
 
