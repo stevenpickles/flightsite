@@ -16,8 +16,9 @@ lifespan hook has started anything.
 
 Nothing here touches SQLite on the aircraft path — the live registry answers
 from memory, and so do the metadata cache, the airport context service's
-in-memory index, and the persistence worker's accumulators (which carry the
-open sighting's id and its enriched route), which is the invariant
+in-memory index (which also names a route's origin and destination airports),
+and the persistence worker's accumulators (which carry the open sighting's id
+and its enriched route), which is the invariant
 ``docs/ARCHITECTURE.md`` §3.1 states as "no live request or decoder poll ever
 waits on SQLite" and §3.3 restates as "metadata joins and rarity checks hit a
 cache, not the database". The one database read in this module is T0 for the
@@ -240,6 +241,7 @@ class LiveApiContext:
                 metadata=cache.get(record.icao),
                 route=worker.route_for(record.icao),
                 airport=airports.context_for(record.icao),
+                airport_names=airports.name_for,
                 watchlists=watchlists.matches(record.icao),
                 interesting=alerts.interesting(record.icao),
             )
@@ -285,6 +287,7 @@ class LiveApiContext:
                 metadata=cache.get(record.icao),
                 route=worker.route_for(record.icao),
                 airport=airports.context_for(record.icao),
+                airport_names=airports.name_for,
                 watchlists=watchlists.matches(record.icao),
                 interesting=interesting,
             )
@@ -319,6 +322,7 @@ class LiveApiContext:
                         metadata=cache.get(icao),
                         route=worker.route_for(icao),
                         airport=airports.context_for(icao),
+                        airport_names=airports.name_for,
                         watchlists=watchlists.matches(icao),
                         interesting=alerts.interesting(icao),
                     )
@@ -445,7 +449,9 @@ class LiveApiContext:
         is_open = row["ended_ms"] is None
         events = await repository.get_events(sighting_id)
         path = await repository.get_path(sighting_id, is_open=is_open)
-        return sighting_detail_payload(row, events=events, path=path)
+        return sighting_detail_payload(
+            row, events=events, path=path, airport_names=self.airports.name_for
+        )
 
     # ------------------------------------------------------------ analytics
 

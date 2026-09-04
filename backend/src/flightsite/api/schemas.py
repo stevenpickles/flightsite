@@ -68,13 +68,27 @@ class RouteView(_Model):
     deliberately a different field: SPEC §41 keeps what somebody told
     FlightSite structurally apart from what FlightSite guessed.
 
-    Both keys are always present; either may be ``null`` on its own — a
+    Both idents are always present; either may be ``null`` on its own — a
     provider that named one airport and not the other is reporting half a
     route, which is information, not an error.
+
+    ``origin_name`` and ``destination_name`` (slice 070) are those idents
+    resolved against the **local** ``airports`` table (slice 027), which is the
+    only place FlightSite looks: no second provider call, and no name at all
+    until an airports import has run. A name is therefore ``null`` far more
+    often than its ident is, and it never replaces one — a client renders the
+    name when there is one and the code when there is not.
     """
 
     origin: str | None = None
+    #: Local name of :attr:`origin`, or ``null`` when the ident is unknown
+    #: locally (or absent). Carries no provenance of its own: the ident's
+    #: ``route`` entry names where the route came from, and this is a label
+    #: for it, not a second claim.
+    origin_name: str | None = None
     destination: str | None = None
+    #: Local name of :attr:`destination` — see :attr:`origin_name`.
+    destination_name: str | None = None
 
 
 class NearestAirportView(_Model):

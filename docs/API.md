@@ -126,7 +126,12 @@ source of each non-decoder field group (SPEC §22):
 {
   "operator": "Delta Air Lines",
   "registration": "N302DN",
-  "route": { "origin": "KATL", "destination": "KSLC" },
+  "route": {
+    "origin": "KATL",
+    "origin_name": "Hartsfield Jackson Atlanta International Airport",
+    "destination": "KSLC",
+    "destination_name": "Salt Lake City International Airport"
+  },
   "provenance": {
     "operator": "mictronics",
     "registration": "faa",
@@ -144,6 +149,16 @@ on `operator`, `owner`, `model` or `manufacture_year`, the four fields it may fi
 Fields without an entry are decoder-direct. Position source is a
 separate, always-present field (§ 3.3) because it is safety-relevant display state,
 not enrichment.
+
+The `route` block carries four members: `origin` and `destination` (the idents the
+enrichment provider reported) and `origin_name` and `destination_name` (those idents
+looked up in the **local** `airports` table imported by slice 027 — never a second
+provider call). All four are always present. A name is `null` when the ident is
+`null`, and also whenever the local dataset does not carry that ident — including on
+every install until an airports import has run, where every name is `null` while the
+idents are unaffected. Names carry no provenance entry of their own: `route` already
+names where the route came from, and a name is a local label for it rather than a
+second claim. Clients render the name when there is one and fall back to the ident.
 
 ### 2.7 Null / Unknown semantics
 
@@ -298,7 +313,12 @@ Aircraft object (the same shape used by the WebSocket):
     "severity": "high",
     "reasons": ["Rule: Military aircraft"]
   },
-  "route": { "origin": "KATL", "destination": "KSEA" },
+  "route": {
+    "origin": "KATL",
+    "origin_name": "Hartsfield Jackson Atlanta International Airport",
+    "destination": "KSEA",
+    "destination_name": "Seattle Tacoma International Airport"
+  },
   "provenance": {
     "registration": "mictronics",
     "operator": "mictronics",
@@ -312,6 +332,9 @@ Aircraft object (the same shape used by the WebSocket):
 - `route`: the current sighting's externally reported route (§2.6 shape) — always
   present, members `null` until enrichment lands (slice 026); never a locally
   inferred value (that is the separate nearest-airport context, slice 027).
+  `origin_name`/`destination_name` are the reported idents named from the local
+  `airports` table (slice 027, slice 070) and stay `null` until an airports import
+  has run.
 
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.
@@ -385,7 +408,12 @@ Sighting detail sketch:
   "ended_at": "2026-08-30T22:41:55Z",
   "duration_s": 2385,
   "closure_reason": "gap_timeout",
-  "route": { "origin": "KTCM", "destination": "PHIK" },
+  "route": {
+    "origin": "KTCM",
+    "origin_name": "McChord Air Force Base",
+    "destination": "PHIK",
+    "destination_name": "Hickam Air Force Base"
+  },
   "reception": {
     "rssi_peak_db": -3.2,
     "rssi_avg_db": -11.8,

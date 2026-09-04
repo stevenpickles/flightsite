@@ -290,3 +290,42 @@ def test_a_repeated_ident_collapses_to_one_airport() -> None:
     assert found is not None
     assert found.name == "Second"
     assert index.size == 1
+
+
+# ---------------------------------------------------------- names by ident
+
+
+def test_a_known_ident_names_its_field(index: AirportIndex) -> None:
+    """The lookup behind ``route.origin_name`` (``docs/API.md`` §2.6)."""
+    assert index.name_for("KBFI") == "Boeing Field"
+
+
+def test_an_ident_the_dataset_does_not_carry_names_nothing(index: AirportIndex) -> None:
+    assert index.name_for("ZZZZ") is None
+
+
+def test_an_empty_index_names_nothing() -> None:
+    """The state of every install until an airports import has run."""
+    assert AirportIndex().name_for("KBFI") is None
+
+
+def test_an_iata_code_is_a_fallback_key(index: AirportIndex) -> None:
+    """A route ident is ICAO where the provider had one and IATA otherwise
+    (:mod:`flightsite.enrichment.aerodatabox`), so both have to answer."""
+    assert index.name_for("BFI") == "Boeing Field"
+
+
+def test_an_ident_is_matched_case_insensitively(index: AirportIndex) -> None:
+    assert index.name_for("kbfi") == "Boeing Field"
+
+
+def test_a_duplicated_iata_code_resolves_to_the_first_row_loaded() -> None:
+    """Deterministic across rebuilds — the repository loads in ident order."""
+    duplicated = AirportIndex(
+        [
+            airport("AAAA", 10.0, 10.0, name="First", iata="DUP"),
+            airport("BBBB", 11.0, 11.0, name="Second", iata="DUP"),
+        ]
+    )
+
+    assert duplicated.name_for("DUP") == "First"

@@ -132,7 +132,8 @@ def test_the_inference_and_the_reported_route_are_different_fields() -> None:
         airport=KBFI,
     )
 
-    assert payload["route"] == {"origin": "KATL", "destination": "KSLC"}
+    assert payload["route"]["origin"] == "KATL"
+    assert payload["route"]["destination"] == "KSLC"
     assert payload["nearest_airport"]["ident"] == "KBFI"
     assert payload["provenance"]["route"] == "aerodatabox"
     assert payload["provenance"]["nearest_airport"] == "heuristic"
@@ -142,7 +143,12 @@ def test_an_inference_never_becomes_a_route() -> None:
     """The failure mode the two fields exist to make impossible."""
     payload = aircraft_payload(record(), airport=KBFI)
 
-    assert payload["route"] == {"origin": None, "destination": None}
+    assert payload["route"] == {
+        "origin": None,
+        "origin_name": None,
+        "destination": None,
+        "destination_name": None,
+    }
     assert "route" not in payload["provenance"]
 
 
@@ -229,7 +235,12 @@ async def test_the_live_endpoint_serves_the_inference(isolated_data_dir: Path) -
     assert block["phase"] == "arriving"
     assert aircraft[ICAO]["provenance"]["nearest_airport"] == "heuristic"
     # And the enrichment half stays empty on an install with no provider.
-    assert aircraft[ICAO]["route"] == {"origin": None, "destination": None}
+    assert aircraft[ICAO]["route"] == {
+        "origin": None,
+        "origin_name": None,
+        "destination": None,
+        "destination_name": None,
+    }
 
 
 async def test_the_live_endpoint_is_null_on_an_install_with_no_dataset(

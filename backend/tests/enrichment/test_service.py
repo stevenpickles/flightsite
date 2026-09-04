@@ -143,7 +143,12 @@ async def test_the_live_payload_carries_the_route_and_its_provenance(
 
     payload = aircraft_payload(record, route=worker.route_for(ICAO))
 
-    assert payload["route"] == {"origin": ORIGIN, "destination": DESTINATION}
+    assert payload["route"] == {
+        "origin": ORIGIN,
+        "origin_name": None,
+        "destination": DESTINATION,
+        "destination_name": None,
+    }
     assert payload["provenance"]["route"] == "aerodatabox"
 
 
@@ -157,7 +162,12 @@ async def test_the_route_block_is_present_and_null_before_enrichment(
 
     payload = aircraft_payload(record)
 
-    assert payload["route"] == {"origin": None, "destination": None}
+    assert payload["route"] == {
+        "origin": None,
+        "origin_name": None,
+        "destination": None,
+        "destination_name": None,
+    }
     assert "route" not in payload["provenance"]
 
 
@@ -302,7 +312,9 @@ async def test_a_disabled_install_leaves_a_clean_unknown(
 
     assert aircraft_payload(record, route=worker.route_for(ICAO))["route"] == {
         "origin": None,
+        "origin_name": None,
         "destination": None,
+        "destination_name": None,
     }
 
 
