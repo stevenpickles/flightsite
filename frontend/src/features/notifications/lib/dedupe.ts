@@ -13,10 +13,10 @@
  *
  * What the client must still stop is the same *event* being handled twice:
  * a socket that reconnects while a frame is in flight, a React StrictMode
- * double effect, or a Live Map remount. Module scope rather than store state
- * is deliberate — `useActivityFeedStore` resets on socket teardown (so its own
- * id check cannot outlive a remount), while what a user has already been shown
- * must outlive one.
+ * double effect, or a shell remount. Module scope rather than store state
+ * is deliberate — `useActivityFeedStore` resets whenever the connection is
+ * lost (ADR-0015), so its own id check cannot outlive a reconnect, while what
+ * a user has already been shown must outlive one.
  *
  * Bounded, because a tab left open for weeks must not accumulate ids without
  * limit. The bound is far above any plausible burst, and eviction is oldest

@@ -1,12 +1,15 @@
 /**
  * `GET /api/v1/receiver` (`docs/API.md` §3.2) as a TanStack Query hook.
  *
- * The live store already carries a `ReceiverInfo` snapshot, but only once
- * the WebSocket has connected — and only `features/map/aircraft/AircraftLayer`
- * opens that connection, so routes outside the Live Map (the Aircraft page
- * and its detail route, roadmap slice 029) never populate it. Those routes
- * still need `units` and `timezone` to format distances, altitudes and
- * timestamps, so they fetch the same block directly instead.
+ * The live store already carries a `ReceiverInfo` snapshot, but only once the
+ * WebSocket has *delivered a snapshot*. Since ADR-0015 the socket is opened by
+ * `components/shell/AppShell` on every route rather than by the Live Map, so
+ * that value now arrives everywhere — but it still arrives a connection and a
+ * frame late, and it is absent for as long as the socket is down. Routes that
+ * need `units` and `timezone` to format distances, altitudes and timestamps
+ * (the Aircraft page and its detail route, roadmap slice 029) therefore keep
+ * fetching the same block directly, and the store keeps the last one it saw
+ * across an outage rather than dropping it with the picture.
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 

@@ -291,8 +291,10 @@ test.describe("interesting-aircraft alert", () => {
         StubNotification;
     });
 
-    // The Live Map owns the socket alerts arrive on, so delivery only
-    // happens while it is open (`dispatch.ts`).
+    // The app shell owns the socket alerts arrive on (ADR-0015), so delivery
+    // happens on any route; the Live Map is used here because
+    // `waitForLiveAircraft` gives this test a definite "the stream is
+    // flowing" signal to start from.
     await page.goto("/");
     await waitForLiveAircraft(page);
 
@@ -323,8 +325,7 @@ test.describe("interesting-aircraft alert", () => {
             // is broadcast, so this is slower than the live `interesting`
             // surface the earlier tests read.
             timeout: 45_000,
-            message:
-              "a matching alert never became a browser notification on the Live Map",
+            message: "a matching alert never became a browser notification",
           },
         )
         .toBeGreaterThan(0);

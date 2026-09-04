@@ -32,3 +32,4 @@ Trivial implementation details do not get ADRs.
 | [0012](0012-airspace-data-source.md) | Airspace overlay data source (user-supplied GeoJSON, no shipped default) | Accepted |
 | [0013](0013-opensky-metadata-source.md) | OpenSky aircraft database as an opt-in, default-off metadata source | Accepted |
 | [0014](0014-track-storage-cost.md) | Accept the measured `sighting_tracks` storage cost for v1 | Accepted |
+| [0015](0015-app-shell-live-socket.md) | The app shell owns the live WebSocket | Accepted |

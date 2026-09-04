@@ -9,8 +9,10 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import { getDefaultBasemap } from "@/features/map/basemaps";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
+import { updateDensityLatch } from "@/features/map/labels/densityLatch";
 import {
   DENSITY_CALLSIGN_ENTER,
+  DENSITY_CALLSIGN_EXIT,
   ZOOM_LABELS_FULL,
   ZOOM_LABELS_MIN,
 } from "@/features/map/labels/priority";
@@ -47,11 +49,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function renderLoadedLayer(): Promise<MapLibreMockMap> {
+async function renderLoadedLayer(): Promise<{
+  map: MapLibreMockMap;
+  unmount: () => void;
+}> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  const { unmount } = render(
     <QueryClientProvider client={queryClient}>
       <MapLibreMap
         config={DEV_PLACEHOLDER_MAP_CONFIG}
@@ -70,7 +75,7 @@ async function renderLoadedLayer(): Promise<MapLibreMockMap> {
   await act(async () => {
     await Promise.resolve();
   });
-  return map;
+  return { map, unmount };
 }
 
 function features(map: MapLibreMockMap) {
@@ -81,7 +86,7 @@ function features(map: MapLibreMockMap) {
 
 describe("AircraftLayer label integration", () => {
   it("keeps the selected aircraft's label visible even far below the labeling zoom", async () => {
-    const map = await renderLoadedLayer();
+    const { map } = await renderLoadedLayer();
     map.zoom = ZOOM_LABELS_MIN - 1;
 
     act(() => {
@@ -107,7 +112,7 @@ describe("AircraftLayer label integration", () => {
   });
 
   it("hides the label for a non-priority aircraft below the labeling zoom", async () => {
-    const map = await renderLoadedLayer();
+    const { map } = await renderLoadedLayer();
     map.zoom = ZOOM_LABELS_MIN - 1;
 
     act(() => {
@@ -130,7 +135,7 @@ describe("AircraftLayer label integration", () => {
   });
 
   it("still shows the selected aircraft's full label when the picture is dense", async () => {
-    const map = await renderLoadedLayer();
+    const { map } = await renderLoadedLayer();
     map.zoom = ZOOM_LABELS_FULL;
 
     const crowd = Array.from(
@@ -165,5 +170,52 @@ describe("AircraftLayer label integration", () => {
     // A non-priority neighbour drops to callsign-only under the same
     // density that the selected aircraft is exempt from.
     expect(other?.properties.label).toBe(other?.properties.callsign);
+  });
+});
+
+describe("AircraftLayer teardown (ADR-0015)", () => {
+  it("clears the map's own state on unmount, and only that", async () => {
+    // Since the socket moved to the app shell, leaving the Live Map is not
+    // leaving the connection: what the map tears down is its own session
+    // state — the selection (with the track and backfill bookkeeping hanging
+    // off it) and the label-density latch. The picture the socket filled
+    // stays, because the socket is still filling it.
+    const { map, unmount } = await renderLoadedLayer();
+    const crowd = Array.from(
+      { length: DENSITY_CALLSIGN_ENTER + 5 },
+      (_, index) =>
+        makeAircraft({
+          icao: (index + 1).toString(16).padStart(6, "0"),
+          callsign: `AA${index}`,
+          position: { lat: 47 + index / 1000, lon: -122 },
+        }),
+    );
+
+    map.zoom = ZOOM_LABELS_FULL;
+    act(() => {
+      useLiveAircraftStore
+        .getState()
+        .applySnapshot({ aircraft: crowd, receiver: null });
+      useLiveAircraftStore.getState().selectAircraft("000001");
+    });
+
+    expect(useLiveAircraftStore.getState().track?.icao).toBe("000001");
+    // Latched by the crowded frames just drawn: a count inside the hysteresis
+    // band still reads "dense" while the latch stands.
+    expect(updateDensityLatch(DENSITY_CALLSIGN_EXIT + 1)).toBe(true);
+
+    unmount();
+
+    const state = useLiveAircraftStore.getState();
+    expect(state.selectedIcao).toBeNull();
+    expect(state.track).toBeNull();
+    expect(state.trackLive).toEqual([]);
+    expect(state.trackBackfilledFrom).toBeNull();
+    // The live picture is untouched — this is the whole difference from the
+    // pre-ADR-0015 teardown, which reset the store wholesale.
+    expect(Object.keys(state.aircraft)).toHaveLength(crowd.length);
+    expect(state.connection).toBe("connecting");
+    // And the same in-band count now reads "not dense".
+    expect(updateDensityLatch(DENSITY_CALLSIGN_EXIT + 1)).toBe(false);
   });
 });

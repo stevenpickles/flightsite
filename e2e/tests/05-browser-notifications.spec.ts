@@ -246,7 +246,8 @@ test.describe("browser notification permission", () => {
   }) => {
     await watchForAsks(page);
 
-    // The Live Map holds the socket alerts arrive on — the one place an
+    // The app shell holds the socket alerts arrive on (ADR-0015), and the
+    // Live Map is where its frames are visible — so this is the place an
     // implementation might be tempted to ask from. Waiting for live aircraft
     // means the config load (which says notifications are enabled), the
     // socket and the first frames have all happened before the assertion.

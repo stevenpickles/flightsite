@@ -9,6 +9,18 @@
  * write would mean 500 store notifications and 500 React renders a second for a
  * picture that is drawn once.
  *
+ * **Two owners, two teardowns** (ADR-0015). The socket lives in the app shell
+ * and writes `aircraft`, `departing` and `receiver` on every route, so those
+ * are dropped when the *connection* is lost ({@link LiveAircraftState.dropLivePicture})
+ * rather than when the map unmounts. `selectedIcao` and the three track fields
+ * are the *map's* — nothing outside the Live Map sets them — so the map clears
+ * them on its own unmount, and {@link LiveAircraftState.reset} is left for the
+ * shell's own teardown. That split is also this store's memory bound on a
+ * non-map route: {@link extendTrack} accumulates points only for a selected
+ * aircraft, so with the selection cleared a tab parked on Analytics for hours
+ * grows no track at all, while `aircraft` and `departing` stay bounded by the
+ * traffic the receiver can see.
+ *
  * `applyDelta` implements the application order the protocol pins down
  * (`backend/src/flightsite/api/ws.py`): **`removed`, then `stale`, then
  * `updated`**. Following it leaves the client holding exactly what
@@ -143,8 +155,27 @@ export interface LiveAircraftState {
     sightingId: number,
     points: readonly TrackPoint[],
   ) => void;
-  /** Returns the store to its initial state — used when the socket is torn
-   * down so a remount never renders a picture from a dead connection. */
+  /**
+   * Drops the socket-owned half of the picture — every live and departing
+   * aircraft — and nothing else.
+   *
+   * Called when the connection is lost (ADR-0015): a socket that is gone can
+   * no longer say which of these aircraft are still in the sky, and the
+   * snapshot that ends the outage rebuilds the map wholesale anyway. `reset`
+   * would be too broad for that event now that the socket outlives the map.
+   * The selection and its track belong to the Live Map, which clears them when
+   * it unmounts, and a two-second reconnect must not close the detail panel
+   * the user is reading. `receiver` stays for the same kind of reason: it is
+   * configuration (units, timezone, site) that `GET /api/v1/receiver` also
+   * serves and that formatting reads on every route, not part of the picture.
+   *
+   * A no-op on an already-empty picture, so the initial `connecting` status
+   * does not notify a single subscriber.
+   */
+  dropLivePicture: () => void;
+  /** Returns the store to its initial state — the tab's own teardown, when
+   * the shell that owns the socket goes away, so nothing is left to render a
+   * picture from a connection that no longer exists. */
   reset: () => void;
 }
 
@@ -155,6 +186,7 @@ function initialState(): Omit<
   | "setConnection"
   | "selectAircraft"
   | "backfillTrack"
+  | "dropLivePicture"
   | "reset"
 > {
   return {
@@ -473,6 +505,15 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
         trackBackfilledFrom: sightingId,
       };
     });
+  },
+
+  dropLivePicture: () => {
+    set((state) =>
+      Object.keys(state.aircraft).length === 0 &&
+      Object.keys(state.departing).length === 0
+        ? state
+        : { aircraft: {}, departing: {} },
+    );
   },
 
   reset: () => {
