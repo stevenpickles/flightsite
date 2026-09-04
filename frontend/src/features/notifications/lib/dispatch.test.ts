@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetNotificationDedupe } from "@/features/notifications/lib/dedupe";
 import { dispatchAlertNotification } from "@/features/notifications/lib/dispatch";
+import { registerNavigator } from "@/lib/navigation";
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import {
@@ -54,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  registerNavigator(null);
   vi.unstubAllGlobals();
   resetNotificationDedupe();
   useNotificationStore.getState().reset();
@@ -237,6 +239,33 @@ describe("dispatchAlertNotification", () => {
     expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
     expect(focus).toHaveBeenCalled();
     expect(shown?.closed).toBe(true);
+  });
+
+  it("brings a tab parked on another route back to the Live Map on click", () => {
+    // ADR-0015: the alert can arrive on any route, and a selection is only
+    // visible on the map, so the click has to go there first.
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    const navigate = vi.fn();
+    registerNavigator(navigate);
+
+    dispatchAlertNotification(alertTriggeredEvent({ icao: "ae1463" }));
+    lastNotification()?.onclick?.();
+
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("/");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
+  });
+
+  it("selects without navigating when no shell has lent a router", () => {
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    registerNavigator(null);
+
+    dispatchAlertNotification(alertTriggeredEvent({ icao: "ae1463" }));
+    expect(() => lastNotification()?.onclick?.()).not.toThrow();
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
   });
 
   it("still focuses for an alert with no ICAO to select", () => {

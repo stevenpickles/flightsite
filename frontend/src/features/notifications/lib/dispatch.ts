@@ -2,10 +2,11 @@
  * Delivery: one alert activity event in, at most one browser notification out
  * (SPEC §48, roadmap slice 040).
  *
- * Called from `features/map/aircraft/useLiveConnection.ts` for every `activity`
+ * Called from `features/live/useLiveConnection.ts` for every `activity`
  * frame, beside the store write that feeds the activity panel — the socket is
  * where live alerts actually arrive, and putting delivery anywhere downstream
- * would mean re-deriving "is this new?" from a store that resets on teardown.
+ * would mean re-deriving "is this new?" from a store that resets on
+ * connection loss.
  *
  * **Why this never prompts.** A WebSocket frame carries no user activation, so
  * calling `requestPermission()` from here would be refused by Firefox and
@@ -30,11 +31,10 @@
  * module knows whether a `Notification` was constructed. It is fire-and-forget
  * — see `reportNotified` below.
  *
- * The single caveat, inherited rather than introduced: the live socket is
- * owned by the Live Map (`useActivityFeedStore`'s docstring explains why it is
- * not hoisted), so notifications flow while FlightSite's map is open — which
- * is the case SPEC §48 describes, a tab left open and then backgrounded — and
- * not while the only open tab sits on, say, Analytics.
+ * Since ADR-0015 the socket is owned by the app shell, so this runs for a tab
+ * parked on any FlightSite route — Analytics, Settings, the map — which is
+ * the case SPEC §48 describes: a tab left open and then backgrounded. Only
+ * the setup wizard, which renders outside the shell, delivers nothing.
  */
 
 import { composeAlertNotification } from "@/features/notifications/lib/compose";
@@ -47,6 +47,10 @@ import {
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { ActivityEvent } from "@/lib/api/activity";
 import { markAlertMatchNotified } from "@/lib/api/alertMatches";
+import { navigateTo } from "@/lib/navigation";
+
+/** The Live Map's route (`src/routes.tsx`, the shell's index route). */
+const LIVE_MAP_PATH = "/";
 
 /**
  * Why an event did or did not become a notification.
@@ -78,11 +82,14 @@ function notificationApi(): typeof Notification | null {
  * SPEC §48's *"clicking should open/select the aircraft in FlightSite where
  * practical"*.
  *
- * Two steps, and no router navigation: focus brings the tab forward from the
- * background case the notification exists for, and selecting the ICAO opens
- * `AircraftDetailPanel` on it — the same pair `LiveMapJumpLink` uses. A route
- * change is not among them because the socket that delivered this alert is
- * owned by the Live Map, so the tab being clicked back to is already on it.
+ * Three steps: focus brings the tab forward from the background case the
+ * notification exists for; a route change brings it to the Live Map if it
+ * was parked anywhere else (`lib/navigation` — the shell skips it when the
+ * tab is already there), since ADR-0015 lets an alert arrive on any route
+ * and a selection is only visible on the map; and selecting the ICAO opens
+ * `AircraftDetailPanel` on it — the same pair `LiveMapJumpLink` uses. The
+ * selection is made after the navigation so that it lands in a store the
+ * map is about to read rather than one `AircraftLayer` is unmounting.
  */
 function focusAircraft(icao: string | null): void {
   try {
@@ -91,6 +98,7 @@ function focusAircraft(icao: string | null): void {
     // A browser that refuses to focus (a policy some engines apply outside a
     // user gesture) must not stop the selection below from happening.
   }
+  navigateTo(LIVE_MAP_PATH);
   if (icao !== null) {
     useLiveAircraftStore.getState().selectAircraft(icao);
   }

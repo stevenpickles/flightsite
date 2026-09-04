@@ -1,8 +1,10 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { Sidebar } from "@/components/shell/Sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useLiveConnection } from "@/features/live/useLiveConnection";
+import { registerNavigator } from "@/lib/navigation";
 
 /**
  * The app chrome — skip link, sidebar, main region — and, since ADR-0015, the
@@ -18,9 +20,27 @@ import { useLiveConnection } from "@/features/live/useLiveConnection";
  * this shell (see `src/routes.tsx`). A session parked in the wizard therefore
  * holds no socket, which is the honest place for the line — nothing is worth
  * streaming to a receiver that has not been configured yet.
+ *
+ * It also lends the router to code that runs outside React (`lib/navigation`):
+ * a clicked notification, delivered on whichever route the tab was parked on,
+ * has to be able to bring it back to the Live Map.
  */
 export function AppShell() {
   useLiveConnection();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    // Re-registered on every route change so that asking for the route the
+    // tab is already on is a no-op rather than a duplicate history entry.
+    registerNavigator((path) => {
+      if (path !== pathname) {
+        void navigate(path);
+      }
+    });
+    return () => {
+      registerNavigator(null);
+    };
+  }, [navigate, pathname]);
 
   return (
     <TooltipProvider delayDuration={200}>

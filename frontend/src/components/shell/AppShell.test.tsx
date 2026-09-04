@@ -114,6 +114,19 @@ describe("AppShell live-socket ownership", () => {
     expect(
       useActivityFeedStore.getState().events.map((event) => event.id),
     ).toEqual([5100]);
+
+    // Clicking it brings the tab back to the map with the aircraft selected —
+    // the second half of SPEC §48's "clicking should open/select".
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    act(() => {
+      FakeNotification.instances[0]?.onclick?.();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Live Map" }),
+      ).toBeInTheDocument();
+    });
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
   });
 
   it("holds the live picture across a route change", async () => {
