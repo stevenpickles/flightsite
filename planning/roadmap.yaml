@@ -116,6 +116,7 @@ backlog:
   - automatic self-updater
   - additional decoder adapters (BeastAdapter, SbsAdapter, RemoteReceiverAdapter)
   - scheduled (automatic) aircraft metadata updates
+  - packed-track on-disk layout revisit (rowid for sighting_tracks and/or page_size 16384, with a migration path for existing databases and a re-run of the PERFORMANCE.md §7 qualification) — deferred by ADR-0014, revisit triggers listed there
 
 slices:
   # ---------------------------------------------------------------- Phase 1

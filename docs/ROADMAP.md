@@ -185,4 +185,5 @@ airport-level historical analytics · period-over-period analytics · aircraft-f
 mode · circling/loitering/repeated-pass detection · complex nested boolean alert
 expressions · user-installable plugins · Prometheus/Grafana integration · automatic
 self-updater · additional decoder adapters (Beast, SBS, remote receiver) · scheduled
-metadata updates
+metadata updates · packed-track on-disk layout revisit (rowid / page_size 16384 with a
+migration path; deferred by ADR-0014)
