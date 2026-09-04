@@ -49,6 +49,12 @@ columns stop being ``NULL`` too (issue #129). Endpoint *changes* on an
 already-running adapter remain restart-required — see
 :mod:`flightsite.api.ingestion` for where that line is drawn and why.
 
+Issue #161 adds a fourth entry to the same step, and it does not stop at
+starting: route enrichment is switched on, switched off and re-keyed from the
+same save, because nothing about it is expensive to replace. The provider was
+previously built once at startup, so enabling enrichment on a running install
+wrote the flag and the key and changed nothing until the next restart.
+
 Issue #104 adds the write path for ``alert_matches.notified``, again as its own
 mounted router (:mod:`flightsite.api.alert_matches`). The column shipped with
 slice 040's migration and nothing ever set it, so the Alerts page rendered a
@@ -78,6 +84,8 @@ from flightsite.api.ingestion import (
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
+from flightsite.enrichment import EnrichmentService
+from flightsite.enrichment.service import build_provider
 from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, Position, check_connection
 from flightsite.live import LiveStore
 from flightsite.metadata import ImportRun, MetadataService
@@ -199,18 +207,38 @@ async def _apply_live_settings(app: FastAPI, settings: Settings) -> None:
     batch can arrive, so no aircraft is ever observed into a store that has no
     receiver location.
 
+    Issue #161 adds the fourth entry, and it is the same kind again: the route
+    enrichment provider was built once in ``create_app`` from a flag and a key,
+    so an owner who enabled enrichment and pasted their key into the Settings
+    page saved both and got nothing until the backend was restarted. Unlike the
+    two above it, that one is not a first-run story — it is a setting an
+    established install changes, turns off, and re-keys — so the entry applies
+    a *state* rather than starting something once.
+
     Each entry is independently guarded and independently isolated: none can
     skip another by returning early, and a failure in one is logged and
     swallowed exactly as
     :meth:`flightsite.watchlists.WatchlistService._notify_index` swallows a
     listener's. The configuration is already validated, written and live by the
     time any of this runs, so an exception here could only turn a save that
-    succeeded into a 500 about it. Three entries is still a short explicit list
-    rather than a registry; a fourth is the point to reconsider that.
+    succeeded into a 500 about it.
+
+    Four entries, and still an explicit list rather than a registry. A registry
+    would have to encode the two things this list states by being a list: the
+    order, which is load-bearing (the anchor before the start), and the call
+    shape, which is not uniform — three of these are coroutines and one is not,
+    three take ``settings`` and one takes only ``app``. That is a table plus a
+    dispatcher in place of four lines read top to bottom, to centralize a
+    guard that :func:`_apply_failed` already centralizes; every entry calls it,
+    and adding one is adding a ``try`` block, not re-deriving the pattern. The
+    thing that would change the answer is an entry that must run
+    *conditionally* on something other than its own state — deciding which
+    entries run is what a dispatcher is actually for.
     """
     await _apply_enabled_templates(app, settings)
     _apply_receiver_location(app, settings)
     await _apply_ingestion_start(app)
+    await _apply_enrichment(app, settings)
 
 
 def _apply_failed(setting: str, exc: Exception, **fields: Any) -> None:
@@ -298,6 +326,34 @@ async def _apply_ingestion_start(app: FastAPI) -> None:
         await attach_stats_poller(app)
     except Exception as exc:
         _apply_failed("receiver", exc, action="attach_stats_poller")
+
+
+async def _apply_enrichment(app: FastAPI, settings: Settings) -> None:
+    """Reconcile route enrichment with the configuration just saved (#161).
+
+    Unlike the entry above it this is not hot-*start*: enabling, disabling and
+    re-keying are all applied, because unlike a decoder adapter there is
+    nothing here whose identity a user would lose. Enrichment holds no
+    connection anyone is waiting on, no health history and no readiness
+    registration — it holds a bounded queue of callsigns it has not asked about
+    yet, and the cost of dropping those is that the next observation of each
+    flight queues it again.
+
+    The provider is rebuilt from ``app.state.settings``' successor rather than
+    from the request body, for the reason
+    :mod:`flightsite.api.ingestion` gives for the same choice: a running
+    install and its next boot must not read one configuration two ways.
+    :meth:`~flightsite.enrichment.EnrichmentService.apply_provider` then
+    decides what the new provider *means*, including that a save which did not
+    touch this section means nothing at all.
+    """
+    enrichment: EnrichmentService | None = getattr(app.state, "enrichment", None)
+    if enrichment is None:  # pragma: no cover - the app always builds the service
+        return
+    try:
+        await enrichment.apply_provider(build_provider(settings))
+    except Exception as exc:
+        _apply_failed("enrichment", exc)
 
 
 @router.post("/decoder/test")

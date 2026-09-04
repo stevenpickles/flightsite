@@ -220,6 +220,36 @@ async def test_starting_and_stopping_never_logs_the_key(
     assert SECRET_SENTINEL not in swept(captured_logs.records)
 
 
+async def test_reconfiguring_the_provider_never_logs_the_key(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """The config-apply path (issue #161) compares keys and logs the swap.
+
+    Comparing is where a key is most tempting to unwrap, and
+    ``enrichment_reconfigured`` is a line written on the very save that carries
+    one. A whole lifecycle is swept — an equivalent provider declined, a
+    re-key, a switch-off — and the replacement key contains the sentinel too,
+    so a leak of either is caught by the same search.
+    """
+    service: EnrichmentService = build_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        provider=AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL)),
+        clock=clock,
+    )
+
+    await service.apply_provider(AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL)))
+    await service.apply_provider(AeroDataBoxProvider(api_key=SecretStr(f"{SECRET_SENTINEL}-two")))
+    await service.apply_provider(None)
+
+    assert SECRET_SENTINEL not in swept(captured_logs.records)
+
+
 def _row_text(row: RouteCache) -> str:
     return " ".join(
         str(value)

@@ -206,6 +206,24 @@ class AeroDataBoxProvider:
         """The §2.6 provenance value for routes this provider supplies."""
         return ROUTE_SOURCE_AERODATABOX
 
+    def configured_like(self, other: AeroDataBoxProvider) -> bool:
+        """True when ``other`` would make exactly the requests this one makes.
+
+        The question :meth:`~flightsite.enrichment.EnrichmentService.
+        apply_provider` asks on every configuration save (issue #161).
+        ``build_provider`` mints a *new* provider each time it is called, so an
+        identity test would tear the worker down and rebuild it on every save
+        of an unrelated setting; what actually matters is whether the host and
+        the key changed.
+
+        The keys are compared through :class:`~pydantic.SecretStr`'s own
+        equality, which is why this method can answer "identical?" without the
+        key being unwrapped, returned, logged or rendered anywhere — the
+        comparison is the only thing that crosses the boundary, and it is one
+        bit wide.
+        """
+        return self._base_url == other._base_url and self._api_key == other._api_key
+
     def url_for(self, callsign: str) -> str:
         """The URL a lookup of ``callsign`` would request.
 
