@@ -31,10 +31,11 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | Version | After Phase | Theme |
 |---|---|---|
 | v0.1.0 | 3 | Live radar MVP: ingestion, sightings, live map, demo mode, setup wizard |
-| v0.2.0 | 4 | Aircraft identity: offline metadata, classification, enrichment, overlays |
-| v0.3.0 | 5 | History & analytics |
-| v0.4.0 | 6 | Alerts & notifications |
-| v0.5.0 | 7 | Operations: backup/restore, maintenance, diagnostics |
+| v0.2.0 | 8 | Consolidated release: identity completion, history & analytics, alerts & notifications, operations, and the Phase 8 hardening pass (the planned v0.2–v0.5 themes shipped together; recorded 2026-09-01) |
+| v0.3.0 | 8 | Fresh-install polish and live-picture correctness from the first real deployment (slices 056–062; recorded 2026-09-02) |
+| v0.3.1 | 8 | Same-day patch: aircraft label stability and the honest position-fix anchor (slices 063–064; recorded 2026-09-02) |
+| v0.3.2 | 8 | Military filter activation on real metadata availability + the clean Pi 5 performance baseline with five budgets promoted to hard gates (slices 065–066; recorded 2026-09-03) |
+| v0.4.0 | 8 | Settings that apply on save and alerts that reach every tab: enrichment hot-apply, stats-poller hot-start, app-shell-owned live socket, Notified marker write path, fix-dated track points, ADR-0014/0015, severity-triaged tracker (slices 067–069; recorded 2026-09-04) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -147,6 +148,9 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 064 | Honest position-fix anchor | 054 | opus | low | Date each position fix by the decode age the frame reports rather than by its arrival, so dead reckoning hands over between fixes without the periodic backwards step (issue #144) |
 | 065 | Raspberry Pi 5 clean performance baseline | 049, 060 | opus | low | Record the first fully-passing on-hardware run in docs/PERFORMANCE.md §5.5 and apply §5.3's promotion rule: five reference budgets become hard gates, SQLite write latency does not (closes issue #132; the clean Pi 4 run that would calibrate it is issue #153) |
 | 066 | Military chip metadata gate | 017, 025 | opus | low | Gate the live map's Military quick-filter chip on whether this install has imported aircraft metadata instead of on the long-lifted slice-017 gate, and refresh the drawer's stale metadata notes (issue #151) |
+| 067 | Open-issue severity triage | 066 | opus | low | Re-verify every open issue against dev, close the ones merged slices already fixed, and label the rest by severity (plus release-gate / decision) so the SPEC §114 bug gate is a label query; records the Pi 5 + SSD runtime environment (issue #157) |
+| 068 | Medium-severity fix bundle | 040, 056, 061, 064, 067 | opus | medium | Five single-concern commits: poller attach after first-run hot-start (#129), fix-dated live track points and no stale seen_pos_s inheritance (#145), a write path for the alert-match 'Notified' marker (#104), the live socket hoisted to the app shell per ADR-0015 (#105), and ADR-0014 accepting the measured track storage cost (#114); tracking issue #159 |
+| 069 | Enrichment hot-apply & honest restart badges | 026, 055, 056, 068 | opus | low | Apply enrichment settings on config save so AeroDataBox route lookup starts, stops or re-keys without a backend restart, and badge every Settings section that still needs one (issue #161) |
 
 ## Parallelization Guide
 
@@ -183,4 +187,5 @@ airport-level historical analytics · period-over-period analytics · aircraft-f
 mode · circling/loitering/repeated-pass detection · complex nested boolean alert
 expressions · user-installable plugins · Prometheus/Grafana integration · automatic
 self-updater · additional decoder adapters (Beast, SBS, remote receiver) · scheduled
-metadata updates
+metadata updates · packed-track on-disk layout revisit (rowid / page_size 16384 with a
+migration path; deferred by ADR-0014)

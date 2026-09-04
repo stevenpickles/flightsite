@@ -311,6 +311,33 @@ Issue (template: `Roadmap slice`) created when the slice starts. The PR links th
 issue (`Closes #N`); merging closes it; the roadmap status is updated in the same
 motion. GitHub Projects is not used for v1.
 
+### Issue labels (slice 067)
+
+Every open issue carries exactly one `severity:*` label, set at triage against the
+code on `dev` (not against the issue text alone). The scale ranks every issue, not
+only bugs: for an enhancement or documentation item it reads as priority.
+
+| Label | Meaning |
+|---|---|
+| `severity:critical` | Data loss or corruption, a crash or hang of the running service, or a secret reaching logs, diagnostics, or the API. Blocks any release. |
+| `severity:high` | A documented feature does not work for real users and there is no workaround. Blocks v1.0.0 (SPEC §114). |
+| `severity:medium` | Wrong or degraded behavior with a workaround or a limited surface. Fix before v1.0.0, or document it as a known limitation and say so on the issue. |
+| `severity:low` | Polish, efficiency, test or demo affordances, cosmetic. Never blocks a release. Bundle candidates. |
+
+Two orthogonal labels qualify the severity:
+
+- `release-gate` — the item blocks a SPEC §114 definition-of-done checkbox regardless
+  of its severity (for example a documentation gap that makes "architecture
+  documentation matches reality" false).
+- `decision` — the item needs an owner or ADR decision before any code is written;
+  the triage comment states the options.
+
+Type labels (`bug`, `enhancement`, `documentation`) keep their GitHub-default
+meaning. SPEC §114's "no known critical/high-severity product bugs remain" is
+answered by the query in `docs/RELEASE.md`; a slice that fixes a labeled issue
+closes it with `Closes #N` in the PR body so the query stays truthful without a
+second triage pass.
+
 ## Parallel development (SPEC §96)
 
 - Parallelize only slices with no unresolved dependency conflicts.

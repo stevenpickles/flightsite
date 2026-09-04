@@ -17,9 +17,10 @@
  * It self-clears without help — an empty picture is a count of zero, which is
  * below the band's lower edge — so a store reset already unlatches on the
  * next drawn frame. {@link resetDensityLatch} exists so teardown does not
- * have to *wait* for that frame (`useLiveConnection` calls it alongside the
- * stores' own resets), and so one test's dense picture can never leak into
- * the next test's sparse one.
+ * have to *wait* for that frame — `features/map/aircraft/AircraftLayer` calls
+ * it on unmount, beside clearing the selection, as the map's own half of the
+ * teardown ADR-0015 split from the socket's — and so one test's dense picture
+ * can never leak into the next test's sparse one.
  */
 
 import { nextDensityLatched } from "@/features/map/labels/priority";

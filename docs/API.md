@@ -477,6 +477,20 @@ An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
 }
 ```
 
+`notified` is delivery state, and it means one specific thing: **at least one
+FlightSite client actually showed a browser `Notification` for this match**. It is
+asserted by that client, once, immediately after the notification was constructed
+(`POST /api/internal/alerts/matches/{id}/notified`, §5) — never by the server when it
+broadcasts the event. A frame accepted by a socket is not a notification a person
+saw: permission may be denied, the severity may be muted, the tab may already have
+shown that event. A match that was recorded but never notified therefore stays
+`false`, which is the honest answer rather than a missing one.
+
+The `alert_triggered` and `emergency_squawk` activity events carry `match_id` on
+their payload — the `alert_matches` row the event is about. It is what lets a client
+holding a live event name the match it needs to mark notified; every other payload
+member is described where its producer builds it.
+
 ### 3.11 Diagnostics — slice 042
 
 `GET /api/v1/diagnostics`
@@ -589,6 +603,9 @@ against the slice-010 protocol ignore this frame type until they support it (§ 
   unaffected, which is precisely the degradation § 6 is written to make safe.
 - There is no replay: these frames are not part of the snapshot/delta picture, and a
   reconnecting client refetches `GET /activity` rather than being re-sent them.
+- An `alert_triggered` or `emergency_squawk` event carries `match_id` on its payload
+  (§ 3.10), which is what a client that showed a browser notification for it posts
+  back to `POST /api/internal/alerts/matches/{id}/notified` (§ 5).
 
 ### 4.5 Keepalive, reconnect, slow consumers
 
@@ -631,10 +648,11 @@ config/domain models the backend uses.
 
 | Group | Endpoints (sketch) | Slice |
 |---|---|---|
-| Config & first-run | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`; carries the `first_run` flag the frontend uses to decide whether to show the wizard), `PUT /config` (masked values ignored unless replaced; secrets never echoed back). There are no dedicated setup endpoints — the wizard reads `GET /config` and finishes with a single `PUT /config` | 004/018/019 |
+| Config & first-run | `GET /config` (secrets fully masked as `"•••"`; per-secret set/unset reported via `secrets_set`; carries the `first_run` flag the frontend uses to decide whether to show the wizard), `PUT /config` (masked values ignored unless replaced; secrets never echoed back). There are no dedicated setup endpoints — the wizard reads `GET /config` and finishes with a single `PUT /config`. A successful save is also *applied*: newly ticked alert templates are instantiated, a first-run save starts decoder ingestion and anchors the live store, and route enrichment is started, stopped or re-keyed to match. An apply step that fails is logged and never fails the save — the configuration is validated, written and live before any of it runs. Which settings apply this way and which still need a restart is [CONFIGURATION.md](CONFIGURATION.md) | 004/018/019 |
 | Connection test | `POST /decoder/test` → reachability, parse result, sample aircraft count | 007/018 |
 | Watchlists | `GET/POST /watchlists`, `PUT/DELETE /watchlists/{id}`, entries CRUD | 037 |
 | Alert rules | `GET/POST /alert-rules`, `PUT/DELETE /alert-rules/{id}`, `GET /alert-templates`, `POST /alert-templates/{key}/rules` (instantiates a shipped template as a rule carrying its `template_key`; empty body — the conditions come from the catalogue, never from the caller; `404` unknown key, `409` built-in or already instantiated) | 038/041 |
+| Alert matches | `POST /alerts/matches/{id}/notified` (records that a browser notification was actually shown for one match; empty body — the assertion *is* the request; `204` whether this call marked the row or found it already marked, `404` for an unknown id) | #104 |
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
 

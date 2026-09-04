@@ -515,5 +515,34 @@ class AlertService:
             await self.reload_rules()
         return deleted
 
+    # ------------------------------------------------------- delivery state
+
+    async def mark_match_notified(self, match_id: int) -> bool:
+        """Record that a client showed a browser notification for one match.
+
+        The write path for ``alert_matches.notified`` (issue #104). The column
+        has existed since slice 040's migration and nothing ever set it, so the
+        Alerts page's "Notified" marker was a field that could only ever say
+        ``false`` — a misleading answer rather than a missing one.
+
+        The semantics are deliberately narrow: ``notified`` means *"at least
+        one FlightSite client actually showed a browser ``Notification`` for
+        this match"*. The client asserts it after the notification was
+        constructed successfully, because that is the only place the fact is
+        known — the server broadcasting an ``activity_batch`` frame knows a
+        socket accepted some bytes, not that a person was shown anything, and
+        a client with notifications muted or permission denied is shown
+        nothing at all.
+
+        Nothing about a rule changes, so this recompiles nothing: unlike every
+        method above it, the engine has no interest in the answer.
+
+        Returns:
+            True when the match exists, whether or not this call was the one
+            that marked it — a repeat is a no-op success. False for an
+            unknown ``match_id``.
+        """
+        return await self._repository.mark_notified(match_id)
+
 
 __all__ = ["AlertRadiusProbe", "AlertService", "ClockFn"]

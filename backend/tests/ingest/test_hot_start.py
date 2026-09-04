@@ -1,4 +1,4 @@
-"""Ingestion starting on the config save that ends the first-run state.
+"""Decoder polling starting on the config save that ends the first-run state.
 
 The defect this pins (issue #122): a fresh install starts no ingestion — it
 has no configuration, so there is no receiver to poll — and *nothing ever
@@ -13,6 +13,13 @@ that first configures the install. Changing the endpoint of an adapter that is
 :func:`test_a_second_save_constructs_no_second_service` is the test that keeps
 it that way — it is the difference between "start what is not running" and
 "reconfigure what is", and only the first is safe to do under a live map.
+
+The receiver-metrics service reads the same decoder, through its own
+``stats.json`` poller, and was built empty on a first run for the same reason.
+Issue #129 is that half: after slice 056 the map filled but the
+decoder-supplied metric columns stayed ``NULL`` until the backend was
+restarted. The tests under *"the statistics poller"* below pin the same
+nothing → running property for it.
 """
 
 from __future__ import annotations
@@ -25,15 +32,21 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from flightsite.api.internal import _apply_ingestion_start
 from flightsite.app import create_app
 from flightsite.config import ConfigStore
-from flightsite.ingest import Position
+from flightsite.ingest import DecoderEndpoint, Position
 from flightsite.ingest import build_ingestion_service as real_build
 from flightsite.ingest.service import READINESS_SUBSYSTEM, IngestionService
 from flightsite.live import LiveStore
+from flightsite.receiver_metrics import (
+    ReceiverMetricsService,
+    StatsJsonPoller,
+    stats_url_for,
+)
 
 from .conftest import CountingClientFactory, ScriptedTransport, json_response
 
@@ -342,6 +355,78 @@ def test_a_save_never_moves_a_location_the_store_already_has(
 
         assert live.receiver_location == Position(latitude=51.5, longitude=-0.12)
         assert app.state.settings.location.latitude == -33.86
+
+
+# ------------------------------------------------ the statistics poller (#129)
+
+
+def stats_poller_of(app: FastAPI) -> StatsJsonPoller | None:
+    """The receiver-metrics service's poller, or ``None`` if it has none."""
+    metrics: ReceiverMetricsService = app.state.receiver_metrics
+    return metrics._poller
+
+
+def test_a_first_run_save_attaches_the_statistics_poller(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, readsb_document: Any
+) -> None:
+    """The other half of the same first-run story (issue #129).
+
+    Without this the metrics service kept the ``poller=None`` it was built
+    with for the life of the process, so a fresh install recorded every
+    FlightSite-computed metric and left messages, positions, RSSI and decoder
+    uptime ``NULL`` until someone restarted the backend.
+    """
+    point_decoder_at(monkeypatch, json_response(readsb_document))
+    app = create_app(isolated_data_dir)
+
+    with TestClient(app) as client:
+        assert stats_poller_of(app) is None
+        assert app.state.receiver_metrics.running is True
+
+        client.put("/api/internal/config", json=FIRST_RUN_SAVE)
+
+        poller = stats_poller_of(app)
+        assert poller is not None
+        # Derived from the endpoint the save wrote, not from the model default
+        # the app booted with.
+        assert poller.url == stats_url_for(
+            DecoderEndpoint(host="decoder.test", port=8080, path="/data/aircraft.json")
+        )
+        # Opened rather than merely held: the sampling loop is already ticking.
+        assert poller._client is not None
+
+
+def test_a_second_save_leaves_the_attached_poller_alone(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, readsb_document: Any
+) -> None:
+    """Repointing a *running* poller is restart-required, exactly as
+    repointing the ingestion adapter beside it is."""
+    point_decoder_at(monkeypatch, json_response(readsb_document))
+    app = create_app(isolated_data_dir)
+
+    with TestClient(app) as client:
+        client.put("/api/internal/config", json=FIRST_RUN_SAVE)
+        attached = stats_poller_of(app)
+
+        moved = {"receiver": {**FIRST_RUN_SAVE["receiver"], "host": "other.test"}}
+        client.put("/api/internal/config", json=moved)
+
+        assert stats_poller_of(app) is attached
+
+
+def test_demo_mode_attaches_no_statistics_poller(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Demo mode has no decoder to ask, and a config save must not invent one
+    (SPEC §76) — the same guard that keeps its simulated traffic."""
+    monkeypatch.setenv("FLIGHTSITE_DEMO", "1")
+    app = create_app(isolated_data_dir)
+
+    with TestClient(app) as client:
+        response = client.put("/api/internal/config", json=FIRST_RUN_SAVE)
+
+        assert response.status_code == 200
+        assert stats_poller_of(app) is None
 
 
 def test_demo_mode_keeps_its_own_ingestion(

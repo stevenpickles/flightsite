@@ -479,6 +479,14 @@ def alert_events(matches: Iterable[AlertMatchFact]) -> ActivityBatch:
     ladder to the thing that actually happened: a ``critical`` emergency and an
     ``info`` first-ever sighting are both alerts, and flattening them would
     throw away the only field either layer sorts on.
+
+    ``match_id`` on the payload is the ``alert_matches`` row this event is
+    about (issue #104). The activity event and the match are two records of one
+    moment, and until this was carried a client holding the event had no way to
+    name the row — which is what a browser notification needs in order to
+    report back that it was shown (``POST
+    /api/internal/alerts/matches/{id}/notified``). Additive per ``docs/API.md``
+    §6: a client that does not read it is unaffected.
     """
     events: list[NewActivityEvent] = []
     for match in matches:
@@ -487,6 +495,7 @@ def alert_events(matches: Iterable[AlertMatchFact]) -> ActivityBatch:
             ActivityEventType.EMERGENCY_SQUAWK if emergency else ActivityEventType.ALERT_TRIGGERED
         )
         payload: dict[str, Any] = {
+            "match_id": match.match_id,
             "icao": match.icao24,
             "callsign": match.callsign,
             "registration": match.registration,

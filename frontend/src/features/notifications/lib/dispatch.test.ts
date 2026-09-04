@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetNotificationDedupe } from "@/features/notifications/lib/dedupe";
 import { dispatchAlertNotification } from "@/features/notifications/lib/dispatch";
+import { registerNavigator } from "@/lib/navigation";
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import {
@@ -34,13 +35,27 @@ function enableAll(): void {
   useNotificationStore.getState().setPreferences(ALL_ON);
 }
 
+/** The internal API a delivered notification reports itself to (issue #104).
+ * Stubbed for every test in the file, not only the ones that assert on it:
+ * without it a delivery would reach the real `fetch` and try the network. */
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function notifiedPosts(): string[] {
+  return fetchMock.mock.calls
+    .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
+    .map(([path]) => String(path));
+}
+
 beforeEach(() => {
   resetNotificationDedupe();
   useNotificationStore.getState().reset();
   useLiveAircraftStore.getState().reset();
+  fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
+  registerNavigator(null);
   vi.unstubAllGlobals();
   resetNotificationDedupe();
   useNotificationStore.getState().reset();
@@ -226,6 +241,33 @@ describe("dispatchAlertNotification", () => {
     expect(shown?.closed).toBe(true);
   });
 
+  it("brings a tab parked on another route back to the Live Map on click", () => {
+    // ADR-0015: the alert can arrive on any route, and a selection is only
+    // visible on the map, so the click has to go there first.
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    const navigate = vi.fn();
+    registerNavigator(navigate);
+
+    dispatchAlertNotification(alertTriggeredEvent({ icao: "ae1463" }));
+    lastNotification()?.onclick?.();
+
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("/");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
+  });
+
+  it("selects without navigating when no shell has lent a router", () => {
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    registerNavigator(null);
+
+    dispatchAlertNotification(alertTriggeredEvent({ icao: "ae1463" }));
+    expect(() => lastNotification()?.onclick?.()).not.toThrow();
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("ae1463");
+  });
+
   it("still focuses for an alert with no ICAO to select", () => {
     installNotificationMock({ permission: "granted" });
     enableAll();
@@ -237,5 +279,145 @@ describe("dispatchAlertNotification", () => {
 
     expect(useLiveAircraftStore.getState().selectedIcao).toBeNull();
     expect(focus).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Issue #104: `alert_matches.notified` had no write path, so the Alerts page's
+ * "Notified" marker could only ever say `false`. The fact it names — *a
+ * browser notification was actually shown* — exists only here, which is why
+ * the client asserts it and the server never does.
+ */
+describe("reporting a delivered notification", () => {
+  it("marks the match notified once the notification exists", () => {
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("delivered");
+
+    expect(notifiedPosts()).toEqual([
+      "/api/internal/alerts/matches/9100/notified",
+    ]);
+  });
+
+  it("marks the emergency counterpart by its own match id", () => {
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    dispatchAlertNotification(emergencySquawkEvent());
+
+    expect(notifiedPosts()).toEqual([
+      "/api/internal/alerts/matches/9200/notified",
+    ]);
+  });
+
+  it("marks nothing when permission is denied", () => {
+    // Nothing was shown, so `notified` would be a lie — and this is the case
+    // the marker exists to distinguish from a delivered one.
+    installNotificationMock({ permission: "denied" });
+    enableAll();
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("blocked");
+
+    expect(notifiedPosts()).toEqual([]);
+  });
+
+  it("marks nothing while the severity is muted", () => {
+    installNotificationMock({ permission: "granted" });
+    useNotificationStore.getState().setPreferences({ ...ALL_ON, high: false });
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("muted");
+
+    expect(notifiedPosts()).toEqual([]);
+  });
+
+  it("marks nothing for an event that is not an alert", () => {
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    dispatchAlertNotification(activityEvent());
+
+    expect(notifiedPosts()).toEqual([]);
+  });
+
+  it("does not repost when the same event arrives twice", () => {
+    // The dedupe claim runs before delivery, so a redelivered frame never
+    // reaches the report at all. Two *tabs* still both post, which is why the
+    // endpoint is idempotent rather than this being the only guard.
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+    const event = alertTriggeredEvent();
+
+    dispatchAlertNotification(event);
+    dispatchAlertNotification(event);
+
+    expect(notifiedPosts()).toHaveLength(1);
+  });
+
+  it("marks nothing when a construction failure means nothing was shown", () => {
+    const api = installNotificationMock({ permission: "granted" });
+    api.constructorError = new Error("Notifications are not supported here");
+    enableAll();
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("failed");
+
+    expect(notifiedPosts()).toEqual([]);
+  });
+
+  it("still delivers when the event carries no match id", () => {
+    // An event from a backend older than the field. There is nothing to
+    // report and nothing to complain about — the notification is unaffected.
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    expect(
+      dispatchAlertNotification(
+        alertTriggeredEvent({ payload: { match_id: null } }),
+      ),
+    ).toBe("delivered");
+
+    expect(notifiedPosts()).toEqual([]);
+    expect(lastNotification()).toBeDefined();
+  });
+
+  it("does not throw, or undo the notification, when the report fails", async () => {
+    // Fire and forget: the notification is already on screen, so a failed
+    // marker must not surface as a rejection on the socket's frame handler.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error("offline"));
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("delivered");
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalled();
+    });
+
+    expect(lastNotification()).toBeDefined();
+    expect(useNotificationStore.getState().delivered).toBe(1);
+    // Not a *notification* error: the user saw the notification. Only the
+    // bookkeeping about it failed.
+    expect(useNotificationStore.getState().lastError).toBeNull();
+    warn.mockRestore();
+  });
+
+  it("swallows a rejected status the same way", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ detail: "no alert match with id 9100" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    installNotificationMock({ permission: "granted" });
+    enableAll();
+
+    expect(dispatchAlertNotification(alertTriggeredEvent())).toBe("delivered");
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalled();
+    });
+
+    expect(useNotificationStore.getState().delivered).toBe(1);
+    warn.mockRestore();
   });
 });

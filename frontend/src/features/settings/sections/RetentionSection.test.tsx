@@ -34,6 +34,15 @@ describe("RetentionSection", () => {
     expect(screen.getByLabelText(/retention/i)).toHaveValue("14");
   });
 
+  it("shows the restart-required badge", () => {
+    // The metrics service reads the window when it is constructed, so the
+    // sweep keeps the old one until the backend restarts
+    // (docs/CONFIGURATION.md, "Which settings need a restart").
+    installConfigApiMock();
+    renderSection();
+    expect(screen.getByText(/applies on next restart/i)).toBeInTheDocument();
+  });
+
   it("blocks Save outside the 7-30 day bounds", async () => {
     installConfigApiMock();
     const user = userEvent.setup();

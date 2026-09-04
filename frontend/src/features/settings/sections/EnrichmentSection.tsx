@@ -28,10 +28,17 @@ export interface EnrichmentSectionProps {
 
 /**
  * Online route enrichment (SPEC §28): the AeroDataBox API key, masked, plus
- * whether enrichment is enabled. Applies immediately. The key input is
- * always empty on load — only `hasStoredKey` says whether one exists — and
- * an explicit "Clear stored key" is the only way to remove one, so a
- * left-blank-and-saved field never silently wipes a stored secret.
+ * whether enrichment is enabled.
+ *
+ * Deliberately carries no "Applies on next restart" badge: the backend
+ * rebuilds the enrichment provider on save, so a key or a toggle takes
+ * effect on the next lookup. It is the only section on this page that
+ * changes a startup-built service without a restart, which is why the
+ * absence of a badge here is a claim worth testing rather than an oversight.
+ *
+ * The key input is always empty on load — only `hasStoredKey` says whether
+ * one exists — and an explicit "Clear stored key" is the only way to remove
+ * one, so a left-blank-and-saved field never silently wipes a stored secret.
  */
 export function EnrichmentSection({
   config,

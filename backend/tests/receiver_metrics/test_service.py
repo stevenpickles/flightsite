@@ -650,6 +650,106 @@ async def test_stopping_before_starting_is_safe(
     await service.stop()
 
 
+# ------------------------------------ attaching a poller afterwards (issue #129)
+
+
+async def parked(_seconds: float) -> None:
+    """A sleeper both loops park on, so no tick happens at an unchosen instant."""
+    await asyncio.Event().wait()
+
+
+async def test_a_poller_attached_to_a_running_service_is_opened_at_once(
+    database: Database, live: LiveStore, clock: SimulatedTime, repository: MetricsRepository
+) -> None:
+    """The first-run hot start: the service is already sampling when its
+    decoder appears, so the poller cannot wait for a ``start()`` that has
+    already happened — the next tick has to find an open client."""
+    service = ReceiverMetricsService(
+        database=database,
+        live=live,
+        sample_interval_s=SAMPLE_INTERVAL_S,
+        flush_interval_s=1.0,
+        clock=clock.epoch_ms,
+        sleep=parked,
+        counters=CounterRegistry(),
+    )
+    poller = stats_poller(documents=[readsb_stats(messages=1_000_000), readsb_stats()])
+    await service.start()
+    try:
+        assert service.stats_supported is None
+
+        await service.attach_poller(poller)
+
+        assert poller._client is not None
+        # And the statistics actually reach the samples from here on.
+        await sample_for(service, clock, ticks=2)
+        await service.flush()
+    finally:
+        await service.stop()
+
+    stored = await repository.samples_between(0, clock.epoch_ms() + 1)
+    assert stored[1].rssi_avg_db == -14.2
+    assert service.stats_supported is True
+    assert service.latest_stats is not None
+
+
+async def test_a_poller_attached_before_start_is_started_by_start(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """The other order — a save that lands before the lifespan starts the
+    service — leaves the poller held, not opened, and ``start`` opens it."""
+    service = ReceiverMetricsService(
+        database=database, live=live, clock=clock.epoch_ms, sleep=parked
+    )
+    poller = stats_poller(documents=[readsb_stats()])
+
+    await service.attach_poller(poller)
+    assert poller._client is None
+
+    await service.start()
+    try:
+        assert poller._client is not None
+    finally:
+        await service.stop()
+
+    # And ``stop`` closes what it was handed late, exactly as it closes a
+    # poller the service was constructed with.
+    assert poller._client is None
+
+
+async def test_attaching_over_an_existing_poller_keeps_the_first(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """Repointing a running poller is restart-required, for the same reason
+    repointing a running ingestion adapter is: the availability verdict and the
+    latest reading belong to the endpoint that produced them."""
+    original = stats_poller(documents=[readsb_stats()])
+    replacement = stats_poller(documents=[dump1090fa_stats()])
+    service = build(database, live, clock, poller=original)
+
+    await service.attach_poller(replacement)
+
+    assert service._poller is original
+    assert replacement._client is None
+
+
+async def test_stopping_closes_a_poller_that_arrived_late(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """A client opened by :meth:`attach_poller` is the service's to close."""
+    service = ReceiverMetricsService(
+        database=database, live=live, clock=clock.epoch_ms, sleep=parked
+    )
+    poller = stats_poller(documents=[readsb_stats()])
+    await service.start()
+    await service.attach_poller(poller)
+    assert poller._client is not None
+
+    await service.stop()
+
+    assert poller._client is None
+
+
 # --------------------------------------------------------- the loops themselves
 
 

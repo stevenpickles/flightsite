@@ -57,6 +57,20 @@ that answers ends the walk:
 Only what survives all four reaches the circuit breaker, the rate limiter and
 the provider.
 
+Configured while it runs
+------------------------
+
+The first gate is decided by an object rather than by a branch, and that stayed
+true when enrichment became a setting a user could change without a restart
+(issue #161). :meth:`EnrichmentService.apply_provider` takes whatever
+:func:`build_provider` made of the configuration that was just saved — a
+provider, or ``None`` — and reconciles the running service with it: switching
+on starts the tasks, switching off stops them and closes the client, and a new
+key swaps the provider and starts again. What it does *not* do is keep an
+enabled flag of its own to consult. "No provider, no external call" is still a
+fact about the object graph, at every instant, which is why turning enrichment
+off leaves nothing behind that could make a request.
+
 Bounded, and honest about it
 ----------------------------
 
@@ -153,11 +167,45 @@ def build_provider(settings: Settings) -> RouteEnrichmentProvider | None:
     Deciding it here rather than inside the service is what makes the
     zero-external-calls guarantee structural — with no provider there is no
     object in the process that knows how to make the request.
+
+    Called twice: once by :func:`flightsite.app.create_app` at boot, and once
+    per configuration save by
+    :func:`flightsite.api.internal._apply_enrichment`, which hands the result
+    to :meth:`EnrichmentService.apply_provider` (issue #161). One function
+    deciding both is the point — the running install and the next boot must not
+    read the same configuration two different ways.
+
+    Constructing a provider opens nothing: the HTTP client is built on the
+    first request, so a provider that is built and then declined has cost a
+    dataclass-sized allocation and no socket.
     """
     enrichment = settings.enrichment
     if not enrichment.aerodatabox_enabled or enrichment.aerodatabox_api_key is None:
         return None
     return AeroDataBoxProvider(api_key=enrichment.aerodatabox_api_key)
+
+
+def _same_configuration(
+    current: RouteEnrichmentProvider | None, candidate: RouteEnrichmentProvider | None
+) -> bool:
+    """True when replacing ``current`` with ``candidate`` would change nothing.
+
+    Configuration, not identity. Every save calls :func:`build_provider`, which
+    returns a fresh object, so identity would report a change on every save of
+    every setting and restart the worker each time.
+
+    Only :class:`~flightsite.enrichment.AeroDataBoxProvider` can answer the
+    question in terms of configuration, and it is the only provider ADR-0006
+    ships; anything else — a test double, a provider added later without a
+    comparison — falls back to identity, which is the safe answer, because a
+    provider wrongly judged *different* costs a restart while one wrongly
+    judged *identical* would keep a superseded provider running.
+    """
+    if current is None or candidate is None:
+        return current is None and candidate is None
+    if isinstance(current, AeroDataBoxProvider) and isinstance(candidate, AeroDataBoxProvider):
+        return current.configured_like(candidate)
+    return current is candidate
 
 
 @dataclass(slots=True)
@@ -216,6 +264,7 @@ class EnrichmentService:
         "_provider",
         "_queue_size",
         "_reader",
+        "_started",
         "_subscription",
         "_worker",
     )
@@ -256,6 +305,12 @@ class EnrichmentService:
         )
 
         self._subscription: EventSubscription | None = None
+        #: True between :meth:`start` and :meth:`stop` — the app's lifespan
+        #: window, recorded even on a disabled install so that
+        #: :meth:`apply_provider` can tell "enrichment is off in a running app"
+        #: (start what is applied now) from "the app has not started yet"
+        #: (install it and let the lifespan's own ``start`` pick it up).
+        self._started = False
         self._reader: asyncio.Task[None] | None = None
         self._worker: asyncio.Task[None] | None = None
         #: Queued keys, oldest first. An ordered mapping rather than a queue so
@@ -319,8 +374,11 @@ class EnrichmentService:
 
         A disabled install returns having subscribed to nothing and created no
         task, which is the structural form of the acceptance criterion
-        *"without key or offline: zero external calls, clean Unknowns"*.
+        *"without key or offline: zero external calls, clean Unknowns"*. It
+        does record that the lifespan is open, which is the one thing a
+        disabled install owes: a provider applied later has somewhere to run.
         """
+        self._started = True
         provider = self._provider
         if provider is None or self.running:
             return
@@ -330,7 +388,115 @@ class EnrichmentService:
         logger.info("enrichment_started", provider=provider.name)
 
     async def stop(self) -> None:
-        """Stop consuming, release the subscription and the client. Idempotent."""
+        """Stop consuming, release the subscription and the client. Idempotent.
+
+        Closes the lifespan window as well as the tasks, so a service stopped
+        at shutdown stays stopped: a configuration applied after this point
+        installs a provider and starts nothing.
+        """
+        self._started = False
+        await self._halt()
+
+    async def apply_provider(self, provider: RouteEnrichmentProvider | None) -> None:
+        """Reconcile the running service with a just-saved configuration (#161).
+
+        ``provider`` is whatever :func:`build_provider` made of the settings the
+        save installed, and this method makes the service match it. Before it
+        existed the provider was read exactly once, in ``create_app``, so an
+        owner who enabled enrichment and pasted a key into the Settings page
+        got a saved file and nothing else until the backend was restarted —
+        the same defect as issues #110, #122 and #129, in the fourth subsystem
+        that had captured a setting at construction.
+
+        Four cases, and the first is the common one
+        -------------------------------------------
+
+        * **Nothing changed.** Compared by configuration rather than by
+          identity (:func:`_same_configuration`), because every save — of the
+          map style, of a watchlist, of anything — arrives here with a freshly
+          built provider object. An equivalent one returns immediately, so the
+          worker keeps its tasks, its subscription, its remembered answers and
+          its place in the queue. ``None`` matching ``None`` is the same
+          no-op, and the one a disabled install takes on every save.
+        * **Switched on.** The tasks start, against the same subscription and
+          the same gates a boot-time start would have used.
+        * **Switched off.** The tasks stop, the subscription is released and
+          the client is closed. What is left is a service holding ``None``,
+          which is exactly what a stock install holds — the guarantee that no
+          object in the process can make the request is restored, not merely
+          asserted.
+        * **Re-keyed.** Both of the above, in order: the old provider is
+          stopped and closed before the new one is installed, so two clients
+          never exist at once.
+
+        Restarting is conditional on the lifespan being open, not on the
+        service having been running: enrichment that was *off* at boot has no
+        tasks to speak of, and starting it is the entire point of the fix. A
+        service that has not been started yet — an app still being built —
+        takes the provider and waits, because its :meth:`start` is still to
+        come and would otherwise start it twice.
+        """
+        current = self._provider
+        if _same_configuration(current, provider):
+            # Constructing a provider opens nothing, so the candidate this call
+            # declines has nothing to leak; closing it anyway keeps that true
+            # of a provider that one day acquires something in its constructor.
+            if provider is not None and provider is not current:
+                await provider.aclose()
+            return
+
+        if self.running:
+            await self._halt()
+        elif current is not None:
+            # Never started, or already stopped: there is no task to cancel,
+            # but a provider built for an earlier save still holds a client.
+            await current.aclose()
+
+        self._provider = provider
+        self._reset_provider_state()
+        if self._started and provider is not None:
+            await self.start()
+        logger.info(
+            "enrichment_reconfigured",
+            provider=provider.name if provider is not None else None,
+            enabled=provider is not None,
+            running=self.running,
+        )
+
+    def _reset_provider_state(self) -> None:
+        """Forget what belonged to the provider that has just been replaced.
+
+        The circuit breaker above all: a run of failures earned by a rejected
+        key is not evidence about the key that replaced it, and an install that
+        re-keyed *because* the old key was refused would otherwise spend its
+        first cooldown refusing every lookup.
+
+        The queued lookups go with it, and their counters. They were queued
+        against the old provider, nothing is draining them while this runs, and
+        dropping them is the policy an open circuit already applies — the next
+        observation of the flight queues it again, which is a retry paced by
+        the sky rather than by a loop.
+
+        Two things deliberately survive. Remembered answers are facts about
+        flights, not about the provider that reported them — ``route_cache``
+        keeps them across a restart already, and re-asking would spend quota to
+        learn what FlightSite knows. And the rate limiter describes the plan
+        rather than the object: refilling its bucket here would make saving the
+        Settings page a way to buy requests per minute.
+        """
+        self._breaker.reset()
+        self._pending.clear()
+        self._overflowed = False
+        self._dropped = 0
+        self._lookups = 0
+
+    async def _halt(self) -> None:
+        """Cancel the tasks, release the subscription, close the provider.
+
+        The teardown :meth:`stop` and :meth:`apply_provider` share. It is
+        idempotent, and it says nothing about whether the service may run
+        again — that is :attr:`_started`, which only :meth:`stop` clears.
+        """
         await self._cancel("_reader")
         await self._cancel("_worker")
 

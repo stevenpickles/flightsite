@@ -42,9 +42,25 @@ had no alert rules until the backend was restarted (issue #110).
 Slice 056 adds the other half of that same first-run story to the same step:
 the save that ends the first-run state now starts decoder ingestion and anchors
 the live store at the saved location, so a user who finishes the setup wizard
-sees aircraft without restarting the backend (issue #122). Endpoint *changes*
-on an already-running adapter remain restart-required — see
+sees aircraft without restarting the backend (issue #122). Slice 068 completes
+that entry: the same save also hands the receiver-metrics service the
+``stats.json`` poller it was built without, so the decoder-supplied metric
+columns stop being ``NULL`` too (issue #129). Endpoint *changes* on an
+already-running adapter remain restart-required — see
 :mod:`flightsite.api.ingestion` for where that line is drawn and why.
+
+Issue #161 adds a fourth entry to the same step, and it does not stop at
+starting: route enrichment is switched on, switched off and re-keyed from the
+same save, because nothing about it is expensive to replace. The provider was
+previously built once at startup, so enabling enrichment on a running install
+wrote the flag and the key and changed nothing until the next restart.
+
+Issue #104 adds the write path for ``alert_matches.notified``, again as its own
+mounted router (:mod:`flightsite.api.alert_matches`). The column shipped with
+slice 040's migration and nothing ever set it, so the Alerts page rendered a
+"Notified" marker that could only say ``false``. It is written by the client
+that showed the browser notification, never by the server on broadcast — that
+module says why.
 """
 
 from __future__ import annotations
@@ -58,11 +74,18 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from pydantic import ValidationError
 
 from flightsite.alerts import AlertService
+from flightsite.api.alert_matches import router as alert_matches_router
 from flightsite.api.alert_rules import router as alert_rules_router
-from flightsite.api.ingestion import ingestion_startable, start_decoder_ingestion
+from flightsite.api.ingestion import (
+    attach_stats_poller,
+    ingestion_startable,
+    start_decoder_ingestion,
+)
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
+from flightsite.enrichment import EnrichmentService
+from flightsite.enrichment.service import build_provider
 from flightsite.ingest import ConnectionTestResult, DecoderEndpoint, Position, check_connection
 from flightsite.live import LiveStore
 from flightsite.metadata import ImportRun, MetadataService
@@ -84,6 +107,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 router.include_router(alert_rules_router)  # slice 038 — see the module docstring
+router.include_router(alert_matches_router)  # issue #104 — see the module docstring
 
 
 def _config_response(store: ConfigStore, settings: Settings) -> dict[str, Any]:
@@ -183,18 +207,38 @@ async def _apply_live_settings(app: FastAPI, settings: Settings) -> None:
     batch can arrive, so no aircraft is ever observed into a store that has no
     receiver location.
 
+    Issue #161 adds the fourth entry, and it is the same kind again: the route
+    enrichment provider was built once in ``create_app`` from a flag and a key,
+    so an owner who enabled enrichment and pasted their key into the Settings
+    page saved both and got nothing until the backend was restarted. Unlike the
+    two above it, that one is not a first-run story — it is a setting an
+    established install changes, turns off, and re-keys — so the entry applies
+    a *state* rather than starting something once.
+
     Each entry is independently guarded and independently isolated: none can
     skip another by returning early, and a failure in one is logged and
     swallowed exactly as
     :meth:`flightsite.watchlists.WatchlistService._notify_index` swallows a
     listener's. The configuration is already validated, written and live by the
     time any of this runs, so an exception here could only turn a save that
-    succeeded into a 500 about it. Three entries is still a short explicit list
-    rather than a registry; a fourth is the point to reconsider that.
+    succeeded into a 500 about it.
+
+    Four entries, and still an explicit list rather than a registry. A registry
+    would have to encode the two things this list states by being a list: the
+    order, which is load-bearing (the anchor before the start), and the call
+    shape, which is not uniform — three of these are coroutines and one is not,
+    three take ``settings`` and one takes only ``app``. That is a table plus a
+    dispatcher in place of four lines read top to bottom, to centralize a
+    guard that :func:`_apply_failed` already centralizes; every entry calls it,
+    and adding one is adding a ``try`` block, not re-deriving the pattern. The
+    thing that would change the answer is an entry that must run
+    *conditionally* on something other than its own state — deciding which
+    entries run is what a dispatcher is actually for.
     """
     await _apply_enabled_templates(app, settings)
     _apply_receiver_location(app, settings)
     await _apply_ingestion_start(app)
+    await _apply_enrichment(app, settings)
 
 
 def _apply_failed(setting: str, exc: Exception, **fields: Any) -> None:
@@ -249,15 +293,28 @@ def _apply_receiver_location(app: FastAPI, settings: Settings) -> None:
 
 
 async def _apply_ingestion_start(app: FastAPI) -> None:
-    """Start decoder ingestion if this save is what made it possible (issue #122).
+    """Start decoder polling if this save is what made it possible (#122, #129).
+
+    Two things poll the decoder and a first-run install builds both of them
+    empty: the ingestion service that fills the live map, and the
+    receiver-metrics service's ``stats.json`` poller that fills the
+    decoder-supplied half of the receiver scorecard. Slice 056 hot-started the
+    first; the second stayed absent for the life of the process, so a fresh
+    install's decoder metric columns were ``NULL`` until the backend was
+    restarted (issue #129).
 
     Hot-*start* only, and :func:`~flightsite.api.ingestion.ingestion_startable`
     is what keeps it that way: nothing → running, never a second service beside
     a running one and never a reconfiguration of one. See
-    :mod:`flightsite.api.ingestion` for why that line is drawn there.
+    :mod:`flightsite.api.ingestion` for why that line is drawn there. Its three
+    conditions govern both halves, because both are built together under
+    exactly those conditions at boot — and the metrics half declines a second
+    time anyway, keeping the poller it already has.
 
-    A failure leaves ``app.state.ingestion`` unassigned rather than poisoned,
-    so a later save simply tries again.
+    The halves are isolated from each other as well as from the save: a failure
+    in one is logged and leaves the other to run. A failed ingestion start
+    leaves ``app.state.ingestion`` unassigned rather than poisoned, so a later
+    save simply tries again.
     """
     if not ingestion_startable(app):
         return
@@ -265,6 +322,38 @@ async def _apply_ingestion_start(app: FastAPI) -> None:
         await start_decoder_ingestion(app)
     except Exception as exc:
         _apply_failed("receiver", exc, action="start_ingestion")
+    try:
+        await attach_stats_poller(app)
+    except Exception as exc:
+        _apply_failed("receiver", exc, action="attach_stats_poller")
+
+
+async def _apply_enrichment(app: FastAPI, settings: Settings) -> None:
+    """Reconcile route enrichment with the configuration just saved (#161).
+
+    Unlike the entry above it this is not hot-*start*: enabling, disabling and
+    re-keying are all applied, because unlike a decoder adapter there is
+    nothing here whose identity a user would lose. Enrichment holds no
+    connection anyone is waiting on, no health history and no readiness
+    registration — it holds a bounded queue of callsigns it has not asked about
+    yet, and the cost of dropping those is that the next observation of each
+    flight queues it again.
+
+    The provider is rebuilt from ``app.state.settings``' successor rather than
+    from the request body, for the reason
+    :mod:`flightsite.api.ingestion` gives for the same choice: a running
+    install and its next boot must not read one configuration two ways.
+    :meth:`~flightsite.enrichment.EnrichmentService.apply_provider` then
+    decides what the new provider *means*, including that a save which did not
+    touch this section means nothing at all.
+    """
+    enrichment: EnrichmentService | None = getattr(app.state, "enrichment", None)
+    if enrichment is None:  # pragma: no cover - the app always builds the service
+        return
+    try:
+        await enrichment.apply_provider(build_provider(settings))
+    except Exception as exc:
+        _apply_failed("enrichment", exc)
 
 
 @router.post("/decoder/test")

@@ -39,6 +39,17 @@ describe("EnrichmentSection", () => {
     expect(screen.getByText(/a key is currently stored/i)).toBeInTheDocument();
   });
 
+  it("carries no restart-required badge — enrichment applies on save", () => {
+    // Slice 069: the backend rebuilds the enrichment provider on save, so
+    // this is the one section on the page that changes a startup-built
+    // service without a restart. A badge here would be a lie.
+    installConfigApiMock();
+    const { container } = renderSection(true);
+
+    expect(screen.queryByText(/applies on next restart/i)).toBeNull();
+    expect(container).not.toHaveTextContent(/restart/i);
+  });
+
   it("shows 'not configured' when no key is stored", () => {
     installConfigApiMock();
     renderSection(false);

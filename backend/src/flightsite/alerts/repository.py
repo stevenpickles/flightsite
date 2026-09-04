@@ -25,6 +25,11 @@ row, so it is applied to the worker's accumulator
 and written by the flush that writes the rest of that row — exactly as an
 enriched route is. One fact, one owner, one transaction each.
 
+:meth:`AlertRepository.mark_notified` takes the same writer for the same
+reason. It is the only writer of ``alert_matches.notified``, and the only
+caller that can honestly reach it is a client that has just constructed a
+browser ``Notification`` — see the method for why the server never sets it.
+
 Idempotency, in SQL
 -------------------
 
@@ -66,7 +71,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import structlog
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from flightsite.alerts.model import AlertRuleRecord, RuleConditions, StoredAlertMatch
@@ -325,6 +330,46 @@ class AlertRepository:
                     )
                 )
         return tuple(created)
+
+    async def mark_notified(self, match_id: int) -> bool:
+        """Record that a browser notification was shown for one match.
+
+        ``alert_matches.notified`` means *"at least one FlightSite client
+        actually showed a browser ``Notification`` for this match"* — a fact
+        about delivery, which only the client that constructed the
+        notification is in a position to assert. Nothing on the server sets it
+        on broadcast: a frame put on a socket is not a notification a person
+        saw, and a marker that meant "we sent a frame somewhere" would say
+        nothing the activity feed does not already say.
+
+        Idempotent in one statement: the ``UPDATE`` is guarded on ``notified =
+        0``, so the second client to deliver the same match — two tabs open on
+        one receiver both fire — writes nothing and races nothing. The
+        ``RETURNING`` says whether *this* call flipped the flag; the follow-up
+        read distinguishes "already notified" from "no such match", which is
+        the only distinction the caller needs (a ``404`` versus a no-op
+        success). ``RETURNING`` rather than a driver rowcount, the same choice
+        :mod:`flightsite.db.meta` makes for the same reason.
+
+        Takes :meth:`~flightsite.db.engine.Database.writer_session`, the
+        process's single serialized writer (ADR-0001, ADR-0008), exactly as
+        every other write in this module does.
+
+        Returns:
+            True when the match exists — whether or not this call was the one
+            that marked it. False when no row has ``match_id``.
+        """
+        async with self.database.writer_session() as session:
+            marked = await session.scalar(
+                update(AlertMatch)
+                .where(AlertMatch.id == match_id, AlertMatch.notified == 0)
+                .values(notified=1)
+                .returning(AlertMatch.id)
+            )
+            if marked is not None:
+                return True
+            existing = await session.scalar(select(AlertMatch.id).where(AlertMatch.id == match_id))
+        return existing is not None
 
     async def open_sighting_match_keys(self) -> dict[int, dict[str, AlertSeverity]]:
         """What each currently-open sighting has already matched.

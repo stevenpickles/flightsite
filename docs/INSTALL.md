@@ -25,7 +25,7 @@ thirty seconds and between them account for most first-install failures.
 |---|---|
 | **Host** | Raspberry Pi 4 (4 GB or better) or any x86-64 Linux box |
 | **OS** | A **64-bit** OS. Raspberry Pi OS (64-bit), Debian 12+, or Ubuntu 22.04+ |
-| **Disk** | 8 GB free to start. The database grows with traffic — see [PERFORMANCE.md §7](PERFORMANCE.md) |
+| **Disk** | 8 GB free to start. The database then grows with traffic — measured at **~1.7 GB/year** for a typical suburban receiver (~1,500 sightings/day) and **~20 GB/year** at the design envelope (~18,000/day), so a busy site wants **128 GB or more, and realistically an SSD**. Allow room for backups and compaction too: an archive is about a fifth of the database, and `VACUUM` needs free space of twice its size. See [DATA_MODEL.md §9](DATA_MODEL.md) and [PERFORMANCE.md §7](PERFORMANCE.md) |
 | **Docker** | Docker Engine 24+ with the Compose v2 plugin |
 | **Decoder** | A running ADS-B decoder that serves `aircraft.json` over HTTP — readsb, dump1090-fa, or a tar1090 install |
 

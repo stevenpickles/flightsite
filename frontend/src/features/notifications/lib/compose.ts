@@ -61,6 +61,17 @@ export interface AlertNotificationContent {
    * alert the backend could not attribute to an ICAO address. */
   icao: string | null;
   severity: AlertSeverity;
+  /**
+   * The `alert_matches` row this notification is about (`docs/API.md` §3.10),
+   * or `null` when the event carries no `match_id` — an older backend, or a
+   * payload that lost the key on its way here.
+   *
+   * Read out here rather than in `dispatch.ts` because this module is already
+   * the whole mapping from an open `payload` to typed values, and because a
+   * `null` has to mean "do not report" rather than "report zero" — which a
+   * caller reaching into `payload` itself would have to re-derive.
+   */
+  matchId: number | null;
 }
 
 type Payload = Record<string, unknown>;
@@ -200,5 +211,6 @@ export function composeAlertNotification(
     tag: `flightsite-alert-${event.id}`,
     icao: event.icao,
     severity: event.severity,
+    matchId: num(payload, "match_id"),
   };
 }

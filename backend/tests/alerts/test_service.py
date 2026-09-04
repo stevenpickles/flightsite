@@ -16,9 +16,11 @@ from datetime import UTC, datetime
 
 import pytest
 import structlog
+from sqlalchemy import text
 
 from flightsite.alerts import AlertRuleNotFoundError, AlertRuleValueError, AlertSeverity
 from flightsite.alerts.model import ClassificationCondition, RarityCondition, RuleConditions
+from flightsite.alerts.repository import AlertRepository, NewAlertMatch
 from flightsite.alerts.templates import TEMPLATES_BY_KEY
 from flightsite.db import Database
 from flightsite.ingest import AircraftStateUpdate, Position
@@ -814,3 +816,85 @@ async def test_the_configured_alert_radius_bounds_a_rule_end_to_end(
         assert (await service.engine.process_pending()).recorded == 0
     finally:
         await service.stop()
+
+
+# ------------------------------------------------------------ delivery state
+
+
+async def seed_match(database: Database) -> int:
+    """One airframe, one sighting, one recorded emergency match; its id.
+
+    Written through the repository over hand-seeded parent rows rather than by
+    running the engine: these tests are about what the service does with a
+    match id, not about how a match came to exist.
+    """
+    async with database.writer_session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO aircraft (id, icao24, first_seen_ms, last_seen_ms) "
+                "VALUES (1, 'ae1463', :now, :now)"
+            ),
+            {"now": NOW_MS},
+        )
+        await session.execute(
+            text("INSERT INTO sightings (id, aircraft_id, started_ms) VALUES (10, 1, :now)"),
+            {"now": NOW_MS},
+        )
+    (match_id,) = await AlertRepository(database).record_matches(
+        [
+            NewAlertMatch(
+                sighting_id=10,
+                aircraft_id=1,
+                matched_ms=NOW_MS,
+                severity=AlertSeverity.CRITICAL,
+                reason="Emergency squawk 7700 (general emergency)",
+                builtin_key="emergency_7700",
+            )
+        ]
+    )
+    assert match_id is not None
+    return match_id
+
+
+async def test_marking_a_match_notified_is_reported_by_the_history(
+    make_service: ServiceFactory, database: Database
+) -> None:
+    """Issue #104's whole point: before this there was no write path, so the
+    Alerts page's "Notified" marker was a field stuck at ``false``."""
+    match_id = await seed_match(database)
+    service = make_service()
+
+    assert await service.mark_match_notified(match_id) is True
+
+    (stored,) = await AlertRepository(database).list_matches(limit=10, offset=0)
+    assert stored.notified is True
+
+
+async def test_marking_a_match_notified_again_is_a_no_op_success(
+    make_service: ServiceFactory, database: Database
+) -> None:
+    """Two tabs on one receiver both deliver and both report; the second says
+    nothing new and must not fail for saying it."""
+    match_id = await seed_match(database)
+    service = make_service()
+    await service.mark_match_notified(match_id)
+
+    assert await service.mark_match_notified(match_id) is True
+
+
+async def test_marking_an_unknown_match_answers_false(
+    make_service: ServiceFactory, database: Database
+) -> None:
+    await seed_match(database)
+
+    assert await make_service().mark_match_notified(9_999) is False
+
+
+async def test_marking_a_match_notified_needs_no_started_service(
+    make_service: ServiceFactory, database: Database
+) -> None:
+    """Nothing about a rule changes, so unlike every CRUD method above it this
+    recompiles nothing — and therefore needs no engine to recompile."""
+    match_id = await seed_match(database)
+
+    assert await make_service().mark_match_notified(match_id) is True

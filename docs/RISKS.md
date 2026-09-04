@@ -51,7 +51,12 @@ Pi storage.
 **Mitigation:** track simplification at sighting close; metric downsampling and
 pruning (slice 033); daily rollups so analytics never scan raw history (slice 031);
 automated maintenance (slice 044); multi-year synthetic qualification before v1.0.0
-(slice 050).
+(slice 050). **Measured (slice 050):** query latency stays flat with history where an
+index covers the read, but growth came in at 1.68 GB/year against the 1.0–1.2
+predicted, because packed track rows spill SQLite overflow pages. Accepted for v1 and
+the documented figures corrected by
+[ADR-0014](adr/0014-track-storage-cost.md) (issue #114); the layout remedy is
+deferred with its revisit triggers, so this risk stays `open`.
 
 ### R-05 — Corruption / power loss
 Homelab Pis lose power without warning.

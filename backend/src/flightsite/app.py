@@ -96,8 +96,10 @@ def _build_metadata_registry(airports: AirportRepository, settings: Settings) ->
     all, which is the point: ADR-0013 keeps that contact a deliberate act by
     the operator, because the dataset's licensing is ambiguous. This mirrors
     how :func:`flightsite.enrichment.service.build_provider` gates its own
-    optional provider, and carries the same consequence — the setting is read
-    at startup, so toggling it takes effect on the next restart.
+    optional provider — but no longer what happens when the setting changes:
+    that one is re-read and applied on every configuration save (issue #161),
+    while this registry is built here and nowhere else, so toggling OpenSky
+    still takes effect on the next restart.
 
     Constructing a provider here opens nothing — it downloads only when an
     import actually runs (:mod:`flightsite.metadata.importer`).
@@ -250,6 +252,12 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     position rates from the live set, and range by bearing — with the
     decoder-supplied columns left ``NULL``. That is the same graceful absence
     SPEC §60 asks for when a decoder serves no statistics document.
+
+    Absent, not absent-until-reboot: the save that ends the first-run state
+    attaches a poller to this service, through
+    :func:`~flightsite.api.ingestion.attach_stats_poller` (issue #129), just as
+    it starts ingestion. Before that, a fresh install's decoder metric columns
+    stayed ``NULL`` for the life of the process.
 
     Constructing it opens nothing: no HTTP client, no session, no task.
     """
@@ -568,9 +576,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     ``app.state.enrichment``. It is a third consumer of the live event stream,
     and it is inert unless ``enrichment.aerodatabox_enabled`` is set *and* a key
     is configured: with no provider it starts no task, opens no socket, and
-    every route stays ``null``. When it is on, routes reach the database through
-    the persistence worker's accumulator rather than a writer session of its
-    own, which is why it is stopped before that worker on shutdown.
+    every route stays ``null``. Both of those are read again on every
+    configuration save and applied in place (issue #161), so switching
+    enrichment on, off or onto a new key needs no restart. When it is on,
+    routes reach the database through the persistence worker's accumulator
+    rather than a writer session of its own, which is why it is stopped before
+    that worker on shutdown.
 
     Analytics rollups (SPEC §58/§59) are constructed as ``app.state.analytics``.
     It is the fifth low-frequency background task: it subscribes to the
@@ -722,7 +733,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # Optional route enrichment (SPEC §28). `build_provider` returns None
     # unless the flag is set *and* a key is present, and a service with no
     # provider starts nothing and subscribes to nothing — so a stock install
-    # cannot make an external call, whatever else happens at runtime.
+    # cannot make an external call, whatever else happens at runtime. This is
+    # the provider the process *boots* with, not the only one it can hold:
+    # `PUT /api/internal/config` runs the same function again on every save and
+    # applies the result (issue #161), so the same rule decides at boot and at
+    # runtime and the guarantee above holds at every instant, not just at this
+    # one.
     route_cache = RouteCacheRepository(app.state.database)
     app.state.enrichment = EnrichmentService(
         live=app.state.live,

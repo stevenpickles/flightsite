@@ -232,8 +232,13 @@ pass, union retained; checkpoint thinning at a 10× tighter tolerance (0.00005°
 25 ft) so it is invisible in the archive.
 
 The packed encoding (delta-encoded scaled integers) costs ~16–21 B/point, so a typical
-simplified track is ~1–1.5 KB in a single clustered row instead of dozens of b-tree
-rows. Reads are always "the whole path for sighting N" (sighting detail, future
+simplified track is a ~1–1.5 KB payload in a single clustered row instead of dozens of
+b-tree rows. **On disk that row costs more than its payload:** a `WITHOUT ROWID` row
+holds at most 1002 bytes inline at SQLite's default 4096-byte page size, so a record
+beyond ~46 points spills a whole 4 KiB overflow page — 54.5% of tracks do, and slice
+050 measured the table at **2,868 B/row** ([ADR-0014](adr/0014-track-storage-cost.md)
+accepts that for v1 and defers the layout remedy; §9 sizes growth from the measured
+figure). Reads are always "the whole path for sighting N" (sighting detail, future
 playback), which the pack/unpack repository interface serves as points-in/points-out —
 callers never see the encoding. `encoding_version` makes future format evolution an
 additive migration.
@@ -499,6 +504,12 @@ the storage layer, surviving restarts. Severity upgrades of built-ins use distin
 `builtin_key`s, which is exactly the allowed "higher-priority condition may notify
 again" path.
 
+`notified` is the one column here that is not a fact about the match: it records that
+at least one FlightSite client actually showed a browser `Notification` for the row.
+Only that client can say so, so it is written by the frontend through
+`POST /api/internal/alerts/matches/{id}/notified` (`docs/API.md` §5) and never by the
+server on broadcast. The transition runs one way, `0` → `1`, and is idempotent.
+
 ---
 
 ## 5. Activity & milestones (slice 035)
@@ -742,67 +753,73 @@ suburban receiver; the second models the SPEC §5 design envelope (peak ~500
 simultaneously visible aircraft). A receiver peaking near 500 plausibly averages
 150–200 concurrent aircraft around the clock; with a ~15-minute mean sighting that
 implies roughly 15,000–20,000 sightings/day (we size at 18,000). Both use the packed
-track design (§2.4): a simplified track averages ~60 points × ~16 B packed ≈ 1 KB,
-~1.3 KB with row overhead.
+track design (§2.4): a simplified track averages ~60 points and ~1.3 KB of packed
+payload, which costs **~2,870 B on disk** once SQLite's overflow pages are counted
+(§2.4 and [ADR-0014](adr/0014-track-storage-cost.md) explain why; that row is 86% of
+the database, so it decides these totals).
+
+**The figures below are the ones slice 050 measured** — see
+[PERFORMANCE.md §7.6](PERFORMANCE.md) for the runs behind them. The original design
+estimate was 1.0–1.2 GB/year for Scenario A and 12–14 GB/year for Scenario B, sized
+on ~1.3 KB per track row; ADR-0014 records why that was 2.2× too low per row, accepts
+the measured cost for v1, and defers the layout remedy. The estimate is quoted here
+and in `perf/storage_qualification/scenarios.py` only so the size of the gap stays
+visible.
 
 *Scenario A — typical suburban receiver (~1,500 sightings/day, ~750 unique/day):*
 
-| Table | Rows/yr | Est. bytes/row (incl. overhead) | ~Size/yr |
+| Table | Rows/yr | Bytes/row measured (incl. overhead) | ~Size/yr |
 |---|---|---|---|
-| sightings | 1,500 × 365 ≈ **550k** | ~300 B | ~165 MB |
-| sighting_tracks (packed) | ≈ **550k** | ~1.3 KB | ~0.7 GB |
-| sighting_events (~3/sighting) | ≈ **1.6M** | ~80 B | ~130 MB |
-| aircraft (new) | ~40k/yr | ~150 B | ~6 MB |
-| activity_events (~200/day) | ~73k | ~150 B | ~11 MB |
-| alert_matches (~100/day) | ~37k | ~120 B | ~4 MB |
-| receiver_metrics_raw | steady-state 14 d × 5,760/day ≈ 81k rows | ~90 B | ~7 MB steady |
-| hourly + daily + rollups + bearing | < 60k | small | < 10 MB |
+| sightings | 1,500 × 365 ≈ **550k** | ~180 B | ~100 MB |
+| sighting_tracks (packed) | ≈ **505k** (~92% of sightings carry a track) | **~2,870 B** | **~1.45 GB** |
+| sighting_events (~2.5/sighting) | ≈ **1.4M** | ~75 B | ~105 MB |
+| aircraft (new) | ~40k/yr | ~100 B | ~4 MB |
+| activity_events (~200/day) | ~73k | ~145 B | ~11 MB |
+| alert_matches (~100/day) | ~37k | ~125 B | ~5 MB |
+| receiver_metrics_raw | steady-state 14 d × 5,760/day ≈ 81k rows | ~70 B | ~6 MB steady |
+| hourly + daily + rollups + bearing | < 60k | small | < 5 MB |
 
-**Scenario A total ≈ 1.0–1.2 GB/year** → a 3-year database is ~3–4 GB. Comfortable on
-any Pi 4 storage.
+**Scenario A total ≈ 1.7 GB/year** (measured: **1.68**) → a 3-year database is
+**~5 GB** (measured: 5.03 GB). Comfortable on any Pi 4 storage, but not the 3–4 GB
+the design estimate promised.
 
 *Scenario B — SPEC §5 envelope (~18,000 sightings/day, ~4,000+ unique/day):*
 
 | Table | Rows/yr | ~Size/yr |
 |---|---|---|
-| sightings | 18k × 365 ≈ **6.6M** | ~2.0 GB |
-| sighting_tracks (packed) | ≈ **6.6M** | ~8.5 GB |
-| sighting_events (~3/sighting) | ≈ **20M** | ~1.6 GB |
-| aircraft (new) | ~200k/yr | ~30 MB |
+| sightings | 18k × 365 ≈ **6.6M** | ~1.2 GB |
+| sighting_tracks (packed) | ≈ **6.1M** | **~17.4 GB** |
+| sighting_events (~2.5/sighting) | ≈ **16.5M** | ~1.2 GB |
+| aircraft (new) | ~200k/yr | ~20 MB |
 | everything else | — | < 100 MB |
 
-**Scenario B total ≈ 12–14 GB/year** → ~36–42 GB over 3 years. This fits commodity
-Pi 4 storage (a 64–128 GB SD card or USB SSD, which such a high-end site would run
-anyway), but *not* a 16–32 GB card — the install documentation states this sizing
-honestly. Without the packed design, Scenario B's track points alone would exceed
-25 GB/year, which is why packing is the v1 design, not a contingency (ADR-0005).
+**Scenario B total ≈ 20 GB/year** (measured over 30 days and projected: **20.06**) →
+**~60 GB over 3 years**, not the 36–42 GB the design estimate promised. Storage
+sizing follows from that: such a site wants **128 GB or more, and realistically a
+USB SSD or NVMe rather than an SD card** — a 64 GB card no longer holds three years,
+and `maintenance.policy` refuses to `VACUUM` without free space of twice the database
+size, so a 60 GB history on a 128 GB card can never be compacted (PERFORMANCE.md
+§7.7). A 16–32 GB card is out of the question for this scenario; the install
+documentation states this sizing honestly. Without the packed design, Scenario B's
+track points alone would exceed 25 GB/year, which is why packing is the v1 design,
+not a contingency (ADR-0005) — the overflow-page cost is a storage-layout defect on
+top of a design that is otherwise doing exactly what it was chosen for.
 
-Slice 050 (multi-year storage qualification) validates both scenarios synthetically.
-If Scenario B still busts budgets there, the remaining lever is a tiered track
-retention policy — which would relax SPEC §65's retain-indefinitely rule and therefore
-requires an ADR plus explicit reconciliation with the spec, not a silent change.
-Simplification epsilon is the main tuning knob and is benchmarked in slice 052.
+Per-sighting cost does **not** depend on traffic density: Scenario A measured 3,064
+bytes/sighting over three years and Scenario B 3,042 over 30 days, a twelvefold
+difference in density and a 0.7% difference in cost. Any receiver's multi-year size
+can therefore be projected from its sightings/day alone.
 
-> **Measured (slice 050; full results in `docs/PERFORMANCE.md` §7.6).** Three years
-> of Scenario A came out at **5.03 GB — 1.68 GB/year**, against the 1.0–1.2 GB/year
-> predicted above. The row counts in this table are right and so is its arithmetic;
-> the discrepancy is entirely `sighting_tracks`, measured at **2,868 B/row** rather
-> than the ~1.3 KB assumed here. A `WITHOUT ROWID` row (§2.4's table is one) holds
-> only 1002 bytes inline at SQLite's default 4096-byte page size, so a packed track
-> beyond ~46 points spills a whole 4 KiB overflow page — and **54.5% of tracks do**,
-> because the retained-point distribution has a real tail (median 50, p90 110,
-> p99 211). Scenario B was measured too, at 30 days: **3,042 bytes/sighting against
-> Scenario A's 3,064**, so the cost per sighting does not depend on traffic density
-> and B inherits the overrun in full — **20.06 GB/year against the 12–14 predicted
-> above, about 60 GB over three years against 36–42**. The sizing advice in the
-> paragraph above is therefore optimistic as things stand.
->
-> The lever is the inline limit, not retention. Giving `sighting_tracks` a rowid, or
-> raising the page size, moves the limit past the distribution; measured at a
-> 16384-byte page the same history is 3.09 GB (1.03 GB/year), inside the prediction
-> above. **The tiered track retention lever is therefore not the one to reach for
-> first**; `docs/PERFORMANCE.md` §7.7 sets out the options, each of which needs an
-> ADR.
+**The lever, if this ever needs one, is the inline payload limit — not retention.**
+Giving `sighting_tracks` a rowid, or raising `page_size` (measured: 16384 brings the
+same three-year history to 3.09 GB, 1.03 GB/year), moves the limit past the retained-
+point distribution. ADR-0014 defers both, with the migration cost of each and the
+triggers that would reopen the question. A tiered track retention policy — which
+would relax SPEC §65's retain-indefinitely rule and therefore needs its own ADR plus
+explicit reconciliation with the spec — is explicitly **not** the lever to reach for
+first: the overrun is slack in a storage parameter, not too much data. Simplification
+epsilon remains the accuracy knob, benchmarked in slice 052, and is likewise not a
+storage remedy.
 
 ---
 

@@ -80,6 +80,31 @@ describe("mergeTrackPoints", () => {
     expect(mergeTrackPoints([point(47, -122, 1)], points)).toBe(points);
   });
 
+  it("joins fix-dated live points to the history with no seam", () => {
+    // Issue #145: a live point is dated by the fix it records, the same event
+    // the checkpointed history dates, so the head of the merged list is the
+    // frame's arrival less the reported age (10 s here, 600 ms old) and still
+    // falls cleanly after everything the history holds.
+    const merged = mergeTrackPoints(
+      [point(47.0, -122, 1_000), point(47.1, -122, 4_000)],
+      [point(47.2, -122, 9_400), point(47.3, -122, 10_400)],
+    );
+    expect(at(merged)).toEqual([1_000, 4_000, 9_400, 10_400]);
+  });
+
+  it("lets the live list own the region a back-dated point opens", () => {
+    // Back-dating moves `newer[0]` earlier, and with it the boundary the clamp
+    // draws — deliberately. The rule is unchanged: everything from the live
+    // list's first point onwards belongs to the points the client watched
+    // arrive, whatever dates them, so a history point inside that window is
+    // dropped rather than interleaved behind a position already drawn.
+    const merged = mergeTrackPoints(
+      [point(47.0, -122, 1_000), point(47.1, -122, 9_000)],
+      [point(47.2, -122, 8_400), point(47.3, -122, 9_400)],
+    );
+    expect(at(merged)).toEqual([1_000, 8_400, 9_400]);
+  });
+
   it("collapses the overlap the checkpoint lag produces", () => {
     // The checkpointed path runs past the moment of selection, so its tail and
     // the live-accumulated head describe the same stretch of flight.

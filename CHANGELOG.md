@@ -5,6 +5,70 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.4.0] — 2026-09-04
+
+Settings that take effect when you save them, and alerts that reach you
+wherever the tab is. Route enrichment, decoder statistics and browser
+notifications no longer depend on a backend restart or on which page happens
+to be open — and every open issue is now triaged by severity.
+
+### Added
+- **The Alerts page's "Notified" marker now means something**: a match is
+  marked notified when a browser notification was actually shown for it, via
+  a new idempotent internal endpoint
+  (`POST /api/internal/alerts/matches/{id}/notified`); alert activity events
+  carry the `match_id` the client needs (#104)
+- "Applies on next restart" badges on every Settings section or field that
+  still needs one — Retention, the timezone selector, the OpenSky toggle —
+  and none on the Enrichment section, which no longer does (#161)
+- ADR-0015 (the app shell owns the live WebSocket) and ADR-0014 (the measured
+  `sighting_tracks` storage cost is accepted for v1): `docs/DATA_MODEL.md` §9
+  now predicts ~1.7 GB/year for a typical receiver and ~20 GB/year at the
+  SPEC §5 envelope, replacing the 1.0–1.2 / 12–14 GB/year design estimate,
+  with the page-size and rowid remedies recorded as a backlog item (#114)
+- A severity scale for the issue tracker (`severity:critical/high/medium/low`,
+  `release-gate`, `decision`), documented in `docs/DEVELOPMENT.md`; SPEC §114's
+  bug gate is now a label query named in `docs/RELEASE.md` (slice 067)
+
+### Changed
+- **Browser notifications arrive on every FlightSite route**, not only while a
+  tab sits on the Live Map — SPEC §48's "while FlightSite is open in the
+  browser" as written. Clicking one brings the tab back to the map with the
+  aircraft selected. The live picture and activity tail now reset on
+  connection loss rather than on navigation; the selection and its track
+  reset when leaving the map (#105)
+
+### Fixed
+- **Route enrichment applies when you save it.** Enabling AeroDataBox,
+  disabling it, or pasting a new key takes effect immediately; previously the
+  provider was built once at startup, so a key added after boot produced no
+  origin/destination until a restart, with the Settings section claiming
+  "Applies immediately" all the while (#161)
+- **Decoder statistics populate after the setup wizard** (messages,
+  positions, RSSI, decoder uptime) without a restart: the receiver-metrics
+  service can now be given its `stats.json` poller after it has started
+  (#129)
+- **Aircraft marker and trail share one clock**: live track points are dated
+  by the decoder's fix time rather than arrival, so the marker no longer
+  leads its own trail head by up to a nautical mile, a backfilled history
+  merges with no seam, and a new position never inherits a stale age from the
+  previous report (#145)
+- `docs/CONFIGURATION.md` tells the truth about alert templates (they apply
+  on save since 0.3.0) and about which settings still need a restart
+
+### Upgrade notes
+- No database migration in this release: `docker compose pull && docker
+  compose up -d`.
+- Alert matches recorded before this release keep reading "not notified";
+  the marker is written only from this release on.
+- Every open FlightSite tab now holds one WebSocket whichever route it is on;
+  previously only Live Map tabs did.
+
+### Known issues
+- Six low-severity items remain open (#96, #98, #100, #112, #138, #147). The
+  Raspberry Pi 4 SSD qualification (#153) is deferred by the owner; the Pi 5
+  NVMe baseline (`docs/PERFORMANCE.md` §5.5) is the current reference run.
+
 ## [0.3.2] — 2026-09-03
 
 The Military filter comes alive, and the performance story gets its first

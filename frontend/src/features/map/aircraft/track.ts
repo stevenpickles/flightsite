@@ -24,7 +24,17 @@
 export interface TrackPoint {
   lat: number;
   lon: number;
-  /** UTC milliseconds at which the client applied the update carrying it. */
+  /**
+   * UTC milliseconds at which the position was *fixed* — not at which anything
+   * learned about it.
+   *
+   * A live point carries the store's `positionChangedAt`, the arrival of the
+   * frame that first brought this fix less the age the decoder reported for it
+   * (issue #145, and see that store's docstring); a backfilled one carries the
+   * receiver's own checkpoint timestamp. The two are therefore *measuring* the
+   * same thing while *reading* different clocks, which is the whole of what
+   * {@link mergeTrackPoints} has to reconcile.
+   */
   at: number;
 }
 
@@ -65,6 +75,11 @@ function isDistinct(
  * {@link TRACK_MAX_POINTS}. Returns the original array unchanged when the point
  * repeats the last one, so an unchanged position costs no allocation and no
  * `setData` churn.
+ *
+ * Appends in call order and never inspects `at`: keeping the list ascending is
+ * the caller's job, and the store does it by holding each live point strictly
+ * after the one it follows (issue #145 — a fix-dated point can otherwise
+ * anchor behind its predecessor when the reported age jumps between polls).
  */
 export function appendTrackPoint(
   points: readonly TrackPoint[],
@@ -125,16 +140,20 @@ function ascendingByAt(points: readonly TrackPoint[]): readonly TrackPoint[] {
  *
  * * **Clock skew** (step 2), and not as a corner case. The two lists are dated
  *   by *different clocks*: `older` carries the receiver's timestamps
- *   (`path[].t`) and `newer` the browser's `Date.now()` (the store's docstring
- *   explains why the live picture is dated locally). A receiver clock running
- *   ahead of the browser by more than the sighting's pre-selection age lands
- *   the *whole* history after the live points, and an unclamped merge then
- *   draws the current position, folds back to where the aircraft was minutes
- *   ago, and re-traces forward — tens of nautical miles of polyline that no
- *   aircraft flew. Clamping degrades gracefully instead: a skew that large
- *   backfills nothing, which is the pre-slice-061 picture rather than a wrong
- *   one. The clamp also subsumes the checkpoint-lag overlap, where the tail of
- *   `older` and the head of `newer` describe the same stretch of flight.
+ *   (`path[].t`) and `newer` the browser's, back-dated to the fix the point
+ *   records (the store's docstring explains why the live picture is dated
+ *   locally, and issue #145 why it is dated at the fix). Both lists therefore
+ *   date the same event — the decode — and the residue is the skew alone,
+ *   where before #145 a systematic `seen_pos_s` of offset rode on top of it.
+ *   A receiver clock running ahead of the browser by more than the sighting's
+ *   pre-selection age lands the *whole* history after the live points, and an
+ *   unclamped merge then draws the current position, folds back to where the
+ *   aircraft was minutes ago, and re-traces forward — tens of nautical miles of
+ *   polyline that no aircraft flew. Clamping degrades gracefully instead: a
+ *   skew that large backfills nothing, which is the pre-slice-061 picture
+ *   rather than a wrong one. The clamp also subsumes the checkpoint-lag
+ *   overlap, where the tail of `older` and the head of `newer` describe the
+ *   same stretch of flight.
  * * **Out-of-order input** (step 1). Neither list is trusted to be sorted: a
  *   response is server data, not an invariant this module established. Sorting
  *   keeps that distrust *local* to the offending point. Dropping any point

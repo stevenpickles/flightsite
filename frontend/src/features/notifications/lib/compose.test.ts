@@ -34,6 +34,27 @@ describe("composeAlertNotification", () => {
     expect(content?.tag).toBe("flightsite-alert-91");
   });
 
+  it("carries the alert match the event names, for the notified marker", () => {
+    // Issue #104: the event and the `alert_matches` row are two records of one
+    // moment, and the match id is what lets a shown notification report itself.
+    expect(
+      composeAlertNotification(alertTriggeredEvent(), "aviation")?.matchId,
+    ).toBe(9100);
+    expect(
+      composeAlertNotification(emergencySquawkEvent(), "aviation")?.matchId,
+    ).toBe(9200);
+  });
+
+  it("reports no match id when the payload carries none", () => {
+    // An event from a backend older than the field: absent, not zero.
+    const content = composeAlertNotification(
+      alertTriggeredEvent({ payload: { match_id: null } }),
+      "aviation",
+    );
+
+    expect(content?.matchId).toBeNull();
+  });
+
   it("leads an emergency squawk with its code and keeps the reason in the body", () => {
     const content = composeAlertNotification(
       emergencySquawkEvent(),

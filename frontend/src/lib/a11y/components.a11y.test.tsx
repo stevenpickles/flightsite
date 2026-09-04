@@ -19,7 +19,9 @@ import { PresetSelector } from "@/features/analytics/components/PresetSelector";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
 import { ConfirmDangerDialog } from "@/features/settings/components/ConfirmDangerDialog";
+import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
+import { SettingsSection } from "@/features/settings/components/SettingsSection";
 
 /** axe's own async work plus jsdom is slower than the 5s default. */
 const AXE_TIMEOUT = 20_000;
@@ -121,6 +123,42 @@ describe("component accessibility", () => {
         >
           <p>This removes every cached metadata row.</p>
         </ConfirmDangerDialog>,
+      );
+      await expectNoViolations(container);
+    },
+    AXE_TIMEOUT,
+  );
+
+  it(
+    "a restart-badged settings section is accessible",
+    async () => {
+      const { container } = render(
+        <SettingsSection
+          id="a-section"
+          title="A section"
+          description="Every setting here waits for a restart."
+          restartRequired
+        >
+          <p>Body.</p>
+        </SettingsSection>,
+      );
+      await expectNoViolations(container);
+    },
+    AXE_TIMEOUT,
+  );
+
+  it(
+    "a field-level restart badge is a valid description target",
+    async () => {
+      // The section-level badge is announced as text beside its heading; a
+      // field-level one is only reachable through `aria-describedby`, so the
+      // reference has to actually resolve (axe's aria-valid-attr-value).
+      const { container } = render(
+        <>
+          <label htmlFor="a-field">A field</label>
+          <input id="a-field" aria-describedby="a-field-restart" />
+          <RestartRequiredBadge id="a-field-restart" />
+        </>,
       );
       await expectNoViolations(container);
     },
