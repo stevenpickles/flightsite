@@ -82,6 +82,7 @@ def test_a_rule_events_payload_carries_everything_a_notification_needs() -> None
     (event,) = alert_events([RULE_MATCH]).events
 
     assert event.payload == {
+        "match_id": 1,
         "icao": "ae1463",
         "callsign": "RCH492",
         "registration": "05-8153",
@@ -106,6 +107,15 @@ def test_an_emergency_events_payload_names_the_code_rather_than_a_rule() -> None
     assert event.payload["squawk"] == "7700"
     assert event.payload["builtin_key"] == "emergency_7700"
     assert "rule_id" not in event.payload
+
+
+def test_both_event_types_name_the_alert_match_row_they_are_about() -> None:
+    """Issue #104: a client holding a live event has to be able to name the
+    match, or it cannot report that it showed a notification for it. Carried on
+    both types, because both become notifications."""
+    events = alert_events([RULE_MATCH, EMERGENCY_MATCH]).events
+
+    assert [event.payload["match_id"] for event in events] == [1, 2]
 
 
 @pytest.mark.parametrize(

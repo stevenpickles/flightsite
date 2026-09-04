@@ -45,6 +45,13 @@ the live store at the saved location, so a user who finishes the setup wizard
 sees aircraft without restarting the backend (issue #122). Endpoint *changes*
 on an already-running adapter remain restart-required — see
 :mod:`flightsite.api.ingestion` for where that line is drawn and why.
+
+Issue #104 adds the write path for ``alert_matches.notified``, again as its own
+mounted router (:mod:`flightsite.api.alert_matches`). The column shipped with
+slice 040's migration and nothing ever set it, so the Alerts page rendered a
+"Notified" marker that could only say ``false``. It is written by the client
+that showed the browser notification, never by the server on broadcast — that
+module says why.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from pydantic import ValidationError
 
 from flightsite.alerts import AlertService
+from flightsite.api.alert_matches import router as alert_matches_router
 from flightsite.api.alert_rules import router as alert_rules_router
 from flightsite.api.ingestion import ingestion_startable, start_decoder_ingestion
 from flightsite.api.serializers import iso_utc
@@ -84,6 +92,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 router.include_router(alert_rules_router)  # slice 038 — see the module docstring
+router.include_router(alert_matches_router)  # issue #104 — see the module docstring
 
 
 def _config_response(store: ConfigStore, settings: Settings) -> dict[str, Any]:

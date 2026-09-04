@@ -61,6 +61,14 @@ beforeEach(() => {
   useActivityFeedStore.getState().reset();
   useLiveAircraftStore.getState().reset();
   useNotificationStore.getState().reset();
+  // A delivered notification reports itself to the internal API (issue #104).
+  // Stubbed so this suite exercises the socket path without reaching the
+  // network; `features/notifications/lib/dispatch.test.ts` owns the assertions
+  // about what is posted.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
+  );
 });
 
 afterEach(() => {

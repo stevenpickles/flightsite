@@ -688,6 +688,88 @@ async def test_the_match_history_rejects_a_malformed_icao(rest: AsyncClient) -> 
     assert response.status_code == 422
 
 
+# ------------------------------------------------------------ notified marker
+
+
+def _notified_path(match_id: int) -> str:
+    return f"/api/internal/alerts/matches/{match_id}/notified"
+
+
+async def _one_match(live_app: LiveApp, rest: AsyncClient) -> dict[str, Any]:
+    """Fire one built-in emergency and return the history row it produced."""
+    live_app.feed(_update("ae1463", squawk="7600"))
+    await live_app.evaluate_alerts()
+    (match,) = (await rest.get(MATCHES_PATH)).json()["items"]
+    row: dict[str, Any] = match
+    return row
+
+
+async def test_marking_a_match_notified_is_visible_in_the_history(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Issue #104. Until this endpoint existed the ``notified`` field could
+    only ever read ``false``, so the Alerts page rendered a marker that was
+    guaranteed to be wrong for every match a user had actually been shown."""
+    match = await _one_match(live_app, rest)
+    assert match["notified"] is False
+
+    response = await rest.post(_notified_path(match["id"]))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    (after,) = (await rest.get(MATCHES_PATH)).json()["items"]
+    assert after["notified"] is True
+
+
+async def test_marking_a_match_notified_twice_is_a_no_op_success(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Two tabs open on one receiver both deliver the same match and both
+    report it; the second is not a conflict, because "someone was notified"
+    does not become more true the second time it is asserted."""
+    match = await _one_match(live_app, rest)
+    await rest.post(_notified_path(match["id"]))
+
+    response = await rest.post(_notified_path(match["id"]))
+
+    assert response.status_code == 204
+    (after,) = (await rest.get(MATCHES_PATH)).json()["items"]
+    assert after["notified"] is True
+
+
+async def test_marking_an_unknown_match_notified_is_a_404(rest: AsyncClient) -> None:
+    response = await rest.post(_notified_path(4_242))
+
+    assert response.status_code == 404
+    assert "4242" in response.json()["detail"]
+
+
+async def test_marking_a_match_notified_touches_no_other_row(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    live_app.feed(_update("ae1463", squawk="7600"), _update("000002", squawk="7700"))
+    await live_app.evaluate_alerts()
+    matches = (await rest.get(MATCHES_PATH)).json()["items"]
+    assert len(matches) == 2
+
+    await rest.post(_notified_path(matches[0]["id"]))
+
+    after = (await rest.get(MATCHES_PATH)).json()["items"]
+    assert {row["id"]: row["notified"] for row in after} == {
+        matches[0]["id"]: True,
+        matches[1]["id"]: False,
+    }
+
+
+async def test_the_notified_endpoint_stays_off_the_published_schema(rest: AsyncClient) -> None:
+    """ADR-0007: ``/api/internal`` is excluded from the OpenAPI document the
+    app publishes for ``/api/v1``, and mounting a new router must not be a way
+    around that."""
+    paths = (await rest.get("/api/v1/openapi.json")).json()["paths"]
+
+    assert not any("notified" in path for path in paths)
+
+
 async def test_the_read_endpoints_are_in_the_published_schema(rest: AsyncClient) -> None:
     paths = (await rest.get("/api/v1/openapi.json")).json()["paths"]
 

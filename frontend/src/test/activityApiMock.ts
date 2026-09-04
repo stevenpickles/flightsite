@@ -46,6 +46,9 @@ export function alertTriggeredEvent(
     icao: "ae1463",
     sighting_id: 88213,
     payload: {
+      // The `alert_matches` row the event is about (issue #104) — what a
+      // delivered notification posts back to mark itself notified.
+      match_id: 9100,
       icao: "ae1463",
       callsign: "RCH485",
       registration: "05-5153",
@@ -81,6 +84,7 @@ export function emergencySquawkEvent(
     icao: "4ca7b3",
     sighting_id: 88301,
     payload: {
+      match_id: 9200,
       icao: "4ca7b3",
       callsign: "RYR8213",
       registration: "EI-DYK",

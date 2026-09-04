@@ -504,6 +504,12 @@ the storage layer, surviving restarts. Severity upgrades of built-ins use distin
 `builtin_key`s, which is exactly the allowed "higher-priority condition may notify
 again" path.
 
+`notified` is the one column here that is not a fact about the match: it records that
+at least one FlightSite client actually showed a browser `Notification` for the row.
+Only that client can say so, so it is written by the frontend through
+`POST /api/internal/alerts/matches/{id}/notified` (`docs/API.md` §5) and never by the
+server on broadcast. The transition runs one way, `0` → `1`, and is idempotent.
+
 ---
 
 ## 5. Activity & milestones (slice 035)
