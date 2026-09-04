@@ -96,9 +96,13 @@ into a live rule (see the note below for what that does *not* do).
 | `enrichment.*` | The enrichment provider is built once at startup |
 | `metadata.opensky_enabled` | The metadata source registry is built once at startup |
 
-The Settings UI marks the Decoder and Receiver sections **"Applies on next
-restart"**. The other rows above are not badged in the UI — when in doubt, restart; it
-costs a few seconds and loses nothing.
+Every row above that the Settings UI can edit is badged **"Applies on next restart"**
+there, so you never have to consult this table to find out. The badge sits on the
+section header where the whole section waits — Decoder (`receiver.*`), Receiver
+(`location.*`), Retention (`retention.high_res_metric_days`) — and on the individual
+field where only part of a section does: the timezone under **Units & time**, and the
+OpenSky toggle under **Aircraft Metadata**. `sighting.*`, `log_level` and
+`log_file_enabled` have no Settings UI at all and are edited in `config.yaml`.
 
 **The first-run exception.** `receiver.*` and `location.*` are restart-required only
 once there is something running to disturb. On a fresh install nothing is polling yet,

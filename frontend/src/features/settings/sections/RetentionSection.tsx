@@ -25,8 +25,10 @@ export interface RetentionSectionProps {
 
 /** High-resolution receiver-metric retention window (SPEC §64 / ADR-0009).
  * Sighting history itself is retained indefinitely and is not user-tunable
- * (SPEC §65). Applies immediately — the next retention sweep uses the new
- * window. */
+ * (SPEC §65). Restart required: the metrics service reads the window when it
+ * is constructed at startup, so the sweep keeps using the old one until the
+ * backend restarts. This section's only field is that window, so the caveat
+ * belongs on the section header. */
 export function RetentionSection({ config }: RetentionSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickRetention(draftFromConfig(config)),
@@ -56,6 +58,7 @@ export function RetentionSection({ config }: RetentionSectionProps) {
       id="settings-retention"
       title="Retention"
       description="How long high-resolution receiver metrics are kept (7–30 days)."
+      restartRequired
     >
       <div className="flex max-w-lg flex-col gap-1.5">
         <Label htmlFor="settings-retention-days">

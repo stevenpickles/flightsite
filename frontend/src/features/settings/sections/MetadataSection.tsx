@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
+import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
 import {
@@ -195,6 +196,13 @@ function MetadataAgeLine({
  * the decision of whether that fits a given deployment is the operator's to
  * make. So the constraint is stated where the choice is made — factually,
  * without advising them what it means for them.
+ *
+ * This toggle is the one restart-required setting in a section whose other
+ * control (Update Aircraft Metadata) acts immediately, so it carries the
+ * badge itself rather than the section header wearing one it would only
+ * half-earn. The badge sits outside the wrapping `<label>` — inside, its
+ * text would join the checkbox's accessible name — and is reached instead
+ * through the checkbox's `aria-describedby`.
  */
 function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
   const [baseline, setBaseline] = useState(() =>
@@ -224,6 +232,7 @@ function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
           className="mt-0.5"
           data-testid="metadata-opensky-toggle"
           checked={draft.openskyEnabled}
+          aria-describedby="settings-opensky-restart"
           onChange={(event) => {
             setDraft({ ...draft, openskyEnabled: event.target.checked });
           }}
@@ -238,10 +247,12 @@ function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
           <span className="text-xs text-muted-foreground">
             Fills gaps only: it adds an operator, owner, model or build year
             where Mictronics and the FAA registry have none, and never replaces
-            what they provide. Takes effect after a restart.
+            what they provide.
           </span>
         </span>
       </label>
+
+      <RestartRequiredBadge id="settings-opensky-restart" />
 
       <SectionSaveBar
         isDirty={isDirty}
@@ -267,7 +278,9 @@ function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
  * Slice 059 adds the opt-in OpenSky source's toggle. Its card only appears
  * once the source is actually registered, which happens at backend startup,
  * so a freshly-enabled source shows up after a restart rather than
- * immediately — the toggle's own copy says so.
+ * immediately — the toggle carries the "Applies on next restart" badge for
+ * exactly that reason. Nothing else here waits, so the section header does
+ * not.
  */
 export function MetadataSection({ timezone, config }: MetadataSectionProps) {
   const statusQuery = useMetadataStatusQuery();

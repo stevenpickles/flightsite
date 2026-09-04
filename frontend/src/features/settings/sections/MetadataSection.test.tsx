@@ -283,7 +283,7 @@ describe("MetadataSection — the opt-in OpenSky source (ADR-0013)", () => {
     expect(screen.getByText(/provided as-is/i)).toBeInTheDocument();
   });
 
-  it("tells the user it only fills gaps and needs a restart", async () => {
+  it("tells the user it only fills gaps", async () => {
     installConfigApiMock();
     renderSection();
 
@@ -291,7 +291,30 @@ describe("MetadataSection — the opt-in OpenSky source (ADR-0013)", () => {
     expect(
       screen.getByText(/never replaces what they provide/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/after a restart/i)).toBeInTheDocument();
+  });
+
+  it("badges the OpenSky toggle as restart-required, and describes it with the badge", async () => {
+    // The source registry is built at startup, so a freshly-enabled source
+    // appears only after a restart. Nothing else in this section waits, so
+    // the badge sits on the toggle rather than the section header.
+    installConfigApiMock();
+    renderSection();
+
+    expect(
+      await screen.findByText(/applies on next restart/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("metadata-opensky-toggle"),
+    ).toHaveAccessibleDescription(/applies on next restart/i);
+  });
+
+  it("keeps the badge out of the toggle's accessible name", async () => {
+    installConfigApiMock();
+    renderSection();
+
+    expect(
+      await screen.findByTestId("metadata-opensky-toggle"),
+    ).not.toHaveAccessibleName(/applies on next restart/i);
   });
 
   it("saves the toggle and reflects the persisted value", async () => {
