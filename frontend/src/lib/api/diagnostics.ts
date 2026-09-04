@@ -169,6 +169,24 @@ export interface DiagnosticsNotifications {
   permission_known_by: "client";
 }
 
+/** The daily provider-call allowance (slice 070). `limit` and `remaining`
+ * are `null` together when no cap is configured; `resets_at` is the ISO-8601
+ * UTC instant the counter next rolls over (midnight UTC). */
+export interface DiagnosticsEnrichmentBudget {
+  limit: number | null;
+  used_today: number;
+  remaining: number | null;
+  resets_at: string;
+}
+
+/** Route-cache effectiveness (slice 070): `learned` counts routes the cache
+ * holds that were never paid for with a provider call. */
+export interface DiagnosticsEnrichmentCache {
+  hits: number;
+  misses: number;
+  learned: number;
+}
+
 export interface DiagnosticsEnrichment {
   enabled: boolean;
   running: boolean;
@@ -177,6 +195,10 @@ export interface DiagnosticsEnrichment {
   dropped: number;
   pending: number;
   failures: number;
+  /** Absent from a backend older than slice 070 — the Health card renders
+   * the rows it has rather than inventing zeroes for the ones it does not. */
+  budget?: DiagnosticsEnrichmentBudget;
+  cache?: DiagnosticsEnrichmentCache;
 }
 
 export interface DiagnosticsWebSocket {

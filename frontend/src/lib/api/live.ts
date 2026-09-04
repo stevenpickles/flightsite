@@ -48,6 +48,13 @@ export interface Classification {
 export interface RouteInfo {
   origin: string | null;
   destination: string | null;
+  /** The airport's name, resolved locally from the airports metadata table
+   * (slice 070). `null` whenever the ident is `null` or is not one this
+   * install knows, and **absent entirely** from a payload produced by a
+   * backend older than slice 070 — hence optional here, and normalised to
+   * `null` at every render site. */
+  origin_name?: string | null;
+  destination_name?: string | null;
 }
 
 /** Locally inferred flight phase relative to a nearby field (slice 027).

@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FieldError } from "@/features/setup/components/FieldError";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
 import {
@@ -15,6 +16,12 @@ import {
   fieldErrorsFrom,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
+import {
+  ROUTE_TTL_MAX_DAYS,
+  ROUTE_TTL_MIN_DAYS,
+  validateDailyLookupBudget,
+  validateRouteTtlDays,
+} from "@/features/settings/lib/validation";
 import { usePutConfigMutation } from "@/lib/api/config";
 import type { FlightSiteConfig } from "@/lib/api/config";
 
@@ -27,12 +34,14 @@ export interface EnrichmentSectionProps {
 }
 
 /**
- * Online route enrichment (SPEC §28): the AeroDataBox API key, masked, plus
- * whether enrichment is enabled.
+ * Online route enrichment (SPEC §28): the AeroDataBox API key, masked,
+ * whether enrichment is enabled, and the two dials that decide what it
+ * costs — the daily lookup budget and how long a cached route is reused
+ * (slice 070).
  *
  * Deliberately carries no "Applies on next restart" badge: the backend
- * rebuilds the enrichment provider on save, so a key or a toggle takes
- * effect on the next lookup. It is the only section on this page that
+ * rebuilds the enrichment provider on save, so a key, a toggle, a budget or
+ * a cache lifetime takes effect on the next lookup. It is the only section on this page that
  * changes a startup-built service without a restart, which is why the
  * absence of a badge here is a claim worth testing rather than an oversight.
  *
@@ -54,6 +63,17 @@ export function EnrichmentSection({
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
   const enabledError = fieldErrors["enrichment.aerodatabox_enabled"] ?? null;
+
+  // Client-side bounds are what block a save; a server-side message for the
+  // same field is still shown, but never disables the button — a rejection
+  // the user cannot see the cause of would otherwise leave the section
+  // unsavable until an unrelated edit.
+  const budgetBoundsError = validateDailyLookupBudget(draft.dailyLookupBudget);
+  const ttlBoundsError = validateRouteTtlDays(draft.routeTtlDays);
+  const budgetError =
+    budgetBoundsError ?? fieldErrors["enrichment.daily_lookup_budget"] ?? null;
+  const ttlError =
+    ttlBoundsError ?? fieldErrors["enrichment.route_ttl_days"] ?? null;
 
   const hasUsableKey =
     storedKeyPresent || draft.aerodataboxKeyInput.trim().length > 0;
@@ -173,12 +193,78 @@ export function EnrichmentSection({
         )}
       </div>
 
+      {/* The lookup economy (slice 070). Both fields apply on save for the
+       * same reason the key does — the provider is rebuilt, not restarted —
+       * so neither carries a restart caveat. */}
+      <div className="flex max-w-lg flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="settings-enrichment-budget">
+            Daily lookup budget
+          </Label>
+          <Input
+            id="settings-enrichment-budget"
+            inputMode="numeric"
+            value={draft.dailyLookupBudget}
+            aria-invalid={budgetError !== null}
+            aria-describedby={
+              budgetError !== null
+                ? "settings-enrichment-budget-error"
+                : "settings-enrichment-budget-help"
+            }
+            onChange={(event) => {
+              setDraft({ ...draft, dailyLookupBudget: event.target.value });
+            }}
+          />
+          <p
+            id="settings-enrichment-budget-help"
+            className="text-xs text-muted-foreground"
+          >
+            A lookup is one call to the provider for a flight whose route is not
+            already cached. The count resets at midnight UTC. Use 0 for
+            unlimited.
+          </p>
+          <FieldError
+            id="settings-enrichment-budget-error"
+            message={budgetError}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="settings-enrichment-ttl">
+            Route cache lifetime (days)
+          </Label>
+          <Input
+            id="settings-enrichment-ttl"
+            inputMode="numeric"
+            value={draft.routeTtlDays}
+            aria-invalid={ttlError !== null}
+            aria-describedby={
+              ttlError !== null
+                ? "settings-enrichment-ttl-error"
+                : "settings-enrichment-ttl-help"
+            }
+            onChange={(event) => {
+              setDraft({ ...draft, routeTtlDays: event.target.value });
+            }}
+          />
+          <p
+            id="settings-enrichment-ttl-help"
+            className="text-xs text-muted-foreground"
+          >
+            How long a cached route is reused before it is looked up again (
+            {ROUTE_TTL_MIN_DAYS}–{ROUTE_TTL_MAX_DAYS} days). Longer spends less
+            budget; shorter picks up schedule changes sooner.
+          </p>
+          <FieldError id="settings-enrichment-ttl-error" message={ttlError} />
+        </div>
+      </div>
+
       <SectionSaveBar
         isDirty={isDirty}
         isPending={mutation.isPending}
         justSaved={mutation.isSuccess && !isDirty}
         errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
-        hasBlockingError={false}
+        hasBlockingError={budgetBoundsError !== null || ttlBoundsError !== null}
         onSave={handleSave}
       />
     </SettingsSection>

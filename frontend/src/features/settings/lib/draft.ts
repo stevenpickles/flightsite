@@ -48,6 +48,8 @@ export function draftFromConfig(config: FlightSiteConfig): SettingsDraft {
     aerodataboxEnabled: config.enrichment.aerodatabox_enabled,
     aerodataboxKeyInput: "",
     aerodataboxKeyTouched: false,
+    dailyLookupBudget: String(config.enrichment.daily_lookup_budget),
+    routeTtlDays: String(config.enrichment.route_ttl_days),
 
     openskyEnabled: config.metadata.opensky_enabled,
 
@@ -105,6 +107,8 @@ export function pickEnrichment(draft: SettingsDraft) {
     aerodataboxEnabled: draft.aerodataboxEnabled,
     aerodataboxKeyInput: draft.aerodataboxKeyInput,
     aerodataboxKeyTouched: draft.aerodataboxKeyTouched,
+    dailyLookupBudget: draft.dailyLookupBudget,
+    routeTtlDays: draft.routeTtlDays,
   };
 }
 
@@ -199,7 +203,15 @@ export function buildEnrichmentPatch(
   draft: ReturnType<typeof pickEnrichment>,
 ): ConfigPatch {
   const patch: ConfigPatch = {
-    enrichment: { aerodatabox_enabled: draft.aerodataboxEnabled },
+    enrichment: {
+      aerodatabox_enabled: draft.aerodataboxEnabled,
+      daily_lookup_budget: Math.trunc(
+        parseNumber(draft.dailyLookupBudget) ?? 0,
+      ),
+      route_ttl_days: Math.trunc(
+        parseNumber(draft.routeTtlDays) ?? ROUTE_TTL_DEFAULT_DAYS,
+      ),
+    },
   };
   if (draft.aerodataboxKeyTouched) {
     const trimmed = draft.aerodataboxKeyInput.trim();
@@ -232,3 +244,8 @@ export function buildRetentionPatch(
 }
 
 const RETENTION_DEFAULT_DAYS = 14;
+
+/** Only ever reached when the field is unparseable, which the section's own
+ * validation blocks before a save can fire — a value rather than a throw so
+ * the patch builder stays total. */
+const ROUTE_TTL_DEFAULT_DAYS = 7;

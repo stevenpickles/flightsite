@@ -5,6 +5,7 @@ import {
   HealthCard,
   StatTile,
 } from "@/features/health/components/HealthCard";
+import { EnrichmentHealthCard } from "@/features/health/components/EnrichmentHealthCard";
 import { NotificationHealthCard } from "@/features/health/components/NotificationHealthCard";
 import { RecentErrorsSection } from "@/features/health/components/RecentErrorsSection";
 import { StatusPill } from "@/features/health/components/StatusPill";
@@ -372,28 +373,10 @@ export function HealthPage() {
 
         <NotificationHealthCard notifications={data.notifications} />
 
-        <HealthCard
-          titleId="health-enrichment"
-          title="Route enrichment"
-          description="Optional external route lookups (SPEC §28)."
-        >
-          <DetailRow
-            label="Enabled"
-            value={data.enrichment.enabled ? "Yes" : "No"}
-          />
-          <DetailRow
-            label="Lookups"
-            value={formatCount(data.enrichment.lookups)}
-          />
-          <DetailRow
-            label="Failures"
-            value={formatCount(data.enrichment.failures)}
-          />
-          <DetailRow
-            label="Circuit breaker"
-            value={data.enrichment.circuit_open ? "Open" : "Closed"}
-          />
-        </HealthCard>
+        <EnrichmentHealthCard
+          enrichment={data.enrichment}
+          timezone={timezone}
+        />
       </div>
 
       <section

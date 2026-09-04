@@ -4,6 +4,7 @@ import type {
   Diagnostics,
   DiagnosticsDatabase,
   DiagnosticsDecoder,
+  DiagnosticsEnrichment,
   DiagnosticsErrorEntry,
   DiagnosticsMetadata,
   DiagnosticsMetadataSource,
@@ -140,6 +141,31 @@ export function errorEntry(
   };
 }
 
+/** Enrichment as a slice-070 backend reports it: switched off, with a
+ * capped daily budget and a cache that has seen some traffic. Tests for an
+ * older backend drop `budget`/`cache` explicitly. */
+export function enrichment(
+  overrides: Partial<DiagnosticsEnrichment> = {},
+): DiagnosticsEnrichment {
+  return {
+    enabled: false,
+    running: false,
+    circuit_open: false,
+    lookups: 0,
+    dropped: 0,
+    pending: 0,
+    failures: 0,
+    budget: {
+      limit: 100,
+      used_today: 12,
+      remaining: 88,
+      resets_at: "2026-09-01T00:00:00.000Z",
+    },
+    cache: { hits: 340, misses: 42, learned: 17 },
+    ...overrides,
+  };
+}
+
 /** A healthy install. Every test starts here and overrides the one thing it
  * is about, which is what keeps a degraded-state test readable. */
 export function diagnostics(overrides: Partial<Diagnostics> = {}): Diagnostics {
@@ -180,15 +206,7 @@ export function diagnostics(overrides: Partial<Diagnostics> = {}): Diagnostics {
       },
       permission_known_by: "client",
     },
-    enrichment: {
-      enabled: false,
-      running: false,
-      circuit_open: false,
-      lookups: 0,
-      dropped: 0,
-      pending: 0,
-      failures: 0,
-    },
+    enrichment: enrichment(),
     websocket: {
       clients: 1,
       running: true,

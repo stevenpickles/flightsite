@@ -70,6 +70,18 @@ describe("HealthPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("puts the enrichment budget and cache counters on the page", async () => {
+    installDiagnosticsApiMock();
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", {
+      name: "Route enrichment",
+    });
+    expect(within(card).getByText("12 / 100 used")).toBeInTheDocument();
+    expect(within(card).getByText("88 left today")).toBeInTheDocument();
+    expect(within(card).getByText("Routes learned")).toBeInTheDocument();
+  });
+
   it("shows the overall status as healthy when nothing is wrong", async () => {
     installDiagnosticsApiMock();
     renderApp("/health");

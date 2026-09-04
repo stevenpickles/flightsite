@@ -1,8 +1,27 @@
 import { vi } from "vitest";
 
-import type { ConfigResponse, FlightSiteConfig } from "@/lib/api/config";
+import type {
+  ConfigResponse,
+  EnrichmentConfig,
+  FlightSiteConfig,
+} from "@/lib/api/config";
 import type { ConnectionTestResult } from "@/lib/api/decoder";
 import type { MetadataStatusResponse } from "@/lib/api/metadata";
+
+/** The schema-default enrichment block. A helper of its own because tests
+ * that care about one enrichment field still have to supply the whole
+ * section when overriding it. */
+export function defaultEnrichmentConfig(
+  overrides: Partial<EnrichmentConfig> = {},
+): EnrichmentConfig {
+  return {
+    aerodatabox_enabled: false,
+    aerodatabox_api_key: null,
+    daily_lookup_budget: 0,
+    route_ttl_days: 7,
+    ...overrides,
+  };
+}
 
 /** A schema-default `FlightSiteConfig`, mirroring
  * `flightsite.config.models.Settings()` — used as the base every test
@@ -36,7 +55,7 @@ export function defaultFlightSiteConfig(
       range_rings_enabled: true,
       range_ring_radii_nm: [50, 100, 150, 200],
     },
-    enrichment: { aerodatabox_enabled: false, aerodatabox_api_key: null },
+    enrichment: defaultEnrichmentConfig(),
     metadata: { opensky_enabled: false },
     notifications: {
       enabled: true,

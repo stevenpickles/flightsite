@@ -22,7 +22,10 @@ import {
   pickRetention,
   pickUnitsAndTime,
 } from "@/features/settings/lib/draft";
-import { defaultFlightSiteConfig } from "@/test/configApiMock";
+import {
+  defaultEnrichmentConfig,
+  defaultFlightSiteConfig,
+} from "@/test/configApiMock";
 
 describe("draftFromConfig", () => {
   it("carries every server section into its corresponding draft field", () => {
@@ -83,7 +86,10 @@ describe("draftFromConfig", () => {
   it("never prefills the AeroDataBox key input, even when one is stored", () => {
     const draft = draftFromConfig(
       defaultFlightSiteConfig({
-        enrichment: { aerodatabox_enabled: true, aerodatabox_api_key: "•••" },
+        enrichment: defaultEnrichmentConfig({
+          aerodatabox_enabled: true,
+          aerodatabox_api_key: "•••",
+        }),
       }),
     );
     expect(draft.aerodataboxKeyInput).toBe("");
@@ -198,7 +204,11 @@ describe("buildEnrichmentPatch", () => {
 
   it("omits the key entirely when untouched", () => {
     const patch = buildEnrichmentPatch(base);
-    expect(patch.enrichment).toEqual({ aerodatabox_enabled: false });
+    expect(patch.enrichment).toEqual({
+      aerodatabox_enabled: false,
+      daily_lookup_budget: 0,
+      route_ttl_days: 7,
+    });
     expect(patch.enrichment).not.toHaveProperty("aerodatabox_api_key");
   });
 
@@ -212,6 +222,8 @@ describe("buildEnrichmentPatch", () => {
     expect(patch.enrichment).toEqual({
       aerodatabox_enabled: true,
       aerodatabox_api_key: "sk-new-key",
+      daily_lookup_budget: 0,
+      route_ttl_days: 7,
     });
   });
 
@@ -225,6 +237,8 @@ describe("buildEnrichmentPatch", () => {
     expect(patch.enrichment).toEqual({
       aerodatabox_enabled: false,
       aerodatabox_api_key: null,
+      daily_lookup_budget: 0,
+      route_ttl_days: 7,
     });
   });
 });
