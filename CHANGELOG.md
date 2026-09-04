@@ -5,6 +5,69 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.5.0] — 2026-09-04
+
+A credit-economy release for route enrichment, plus airport names. Measured
+on the owner's receiver, v0.4.0 spent roughly one AeroDataBox lookup per
+airline callsign per day — 2,200 to 2,650 a day — faster than the feeder
+programme earned them. This release makes each scheduled flight cost one
+lookup a week, then one a month, caps the daily spend, and stops paying for
+flights the provider will never describe.
+
+### Added
+- **Daily lookup budget** (`enrichment.daily_lookup_budget`, Settings →
+  Enrichment; 0 = uncapped): lookups stop when the day's budget is spent and
+  resume at midnight UTC. The count is taken from the route cache, so it
+  survives restarts. Pending lookups are spent in priority order — aircraft
+  matching an alert rule first, then aircraft inside the display radius, then
+  the rest, with refreshes of already-known routes last
+- **Route cache lifetime** (`enrichment.route_ttl_days`, default 7, 1–30):
+  a found route is kept for a week, keyed by callsign alone instead of
+  callsign-plus-day, so a callsign seen twice in one day costs one lookup and
+  a daily flight costs one a week. Both settings apply on save
+- **Learned schedules**: a route confirmed identical on three separate days
+  is frozen for thirty days (migration 0014 adds `confirmations` and
+  `first_fetched_ms` to `route_cache`)
+- **Airport names beside route idents**: every `route` object carries
+  `origin_name` and `destination_name` resolved from the local airports
+  table (slice 027), and the aircraft detail panel and sighting detail show
+  "KATL · Hartsfield-Jackson Atlanta Intl" instead of the ident alone. No
+  provider call is involved; names are `null` until an airports import has
+  run
+- Health page: the enrichment card shows budget used and remaining, the
+  reset time, and cache hits / misses / learned routes; diagnostics gain
+  `enrichment.budget` and `enrichment.cache`
+
+### Fixed
+- **Legally restricted flights no longer burn credits or trip the breaker**
+  (#165): an HTTP 451 from AeroDataBox is now cached as `restricted` for the
+  route lifetime, logged with its own reason, and never counted as a provider
+  failure. Before, one blocked business jet was retried nine times in twelve
+  minutes and paused every other lookup for five minutes, twice
+- A cached route contradicted by the aircraft's own behaviour — a latched
+  departure or arrival at an airport that is neither end of the route — is
+  invalidated and re-fetched once, so a changed schedule is caught without
+  waiting out the cache lifetime
+- Negative answers (no schedule for a callsign) are remembered for 24 hours
+  instead of one
+
+### Upgrade notes
+- **Migration 0014** rebuilds `route_cache` (a few thousand rows at most).
+  Take a backup first: `docker compose exec flightsite-backend
+  flightsite-backup create`, then `docker compose pull && docker compose up -d`.
+- After upgrading, set **Settings → Enrichment → Daily lookup budget** to
+  what your credit source sustains; the default is uncapped, which preserves
+  the previous behaviour apart from the cache changes above.
+- Cached routes from before the upgrade keep their day-bucketed keys and
+  expire within hours; the new cache warms over the first week.
+
+### Known issues
+- The `ingest_duty_cycle` performance gate has no CI headroom and can fail
+  on a contended shared runner (#166); a re-run is the remedy until headroom
+  lands. Six low-severity items and the deferred Pi 4 SSD qualification
+  (#153) remain open. A free route source ahead of AeroDataBox is an owner
+  decision (#168).
+
 ## [0.4.0] — 2026-09-04
 
 Settings that take effect when you save them, and alerts that reach you

@@ -95,6 +95,12 @@ releases:
       socket with click-to-map, the alert-match Notified marker's write path,
       fix-dated track points, ADR-0014/0015, and the severity-triaged tracker
       (slices 067-069). Recorded 2026-09-04."
+  - version: "v0.5.0"
+    after_phase: 8
+    theme: "Route enrichment credit economy: week-long callsign cache, learned
+      schedules, a daily lookup budget spent in priority order, restricted
+      flights cached instead of retried, and airport names beside route idents
+      (slice 070; migration 0014). Recorded 2026-09-04."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
