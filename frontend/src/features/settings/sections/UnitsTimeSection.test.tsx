@@ -37,6 +37,27 @@ describe("UnitsTimeSection", () => {
     expect(screen.getByLabelText(/timezone/i)).toHaveValue("Europe/London");
   });
 
+  it("badges the timezone as restart-required, and describes the field with it", () => {
+    // Units apply on save; the timezone is also what analytics and
+    // receiver-metric day bucketing bind at construction, so only that half
+    // of the section waits — hence a field-level badge, not a section one.
+    installConfigApiMock();
+    renderSection();
+
+    expect(screen.getByText(/applies on next restart/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/timezone/i)).toHaveAccessibleDescription(
+      /applies on next restart/i,
+    );
+  });
+
+  it("leaves the units radiogroup unbadged", () => {
+    installConfigApiMock();
+    renderSection();
+
+    const radiogroup = screen.getByRole("radiogroup", { name: /units/i });
+    expect(radiogroup).not.toHaveTextContent(/applies on next restart/i);
+  });
+
   it("saves a changed unit system", async () => {
     const { fetchMock } = installConfigApiMock();
     const user = userEvent.setup();

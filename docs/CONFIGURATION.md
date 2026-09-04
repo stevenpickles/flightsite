@@ -83,6 +83,18 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 does ticking a new template under `alerts.enabled_templates`: the save instantiates it
 into a live rule (see the note below for what that does *not* do).
 
+So does `enrichment.*`. Enabling it, disabling it, and pasting a new
+`aerodatabox_api_key` all take effect on save: the backend rebuilds the route provider
+from what you just wrote and hands it to the running enrichment worker, which starts,
+stops, or swaps to the new key accordingly. Routes begin appearing on the next eligible
+callsign the receiver sees, with no restart
+([issue #161](https://github.com/stevenpickles/flightsite/issues/161)). Turning it off
+is equally immediate, and equally complete: the worker stops and the API client is
+closed, so what [SECURITY.md §10](SECURITY.md) promises — that FlightSite contacts
+AeroDataBox *only* while enrichment is enabled and a key is set — is unchanged and now
+true from the moment you save rather than from the next restart. Lookups already
+answered stay in the route cache, and sightings that were enriched keep their routes.
+
 ### Needs a restart
 
 | Setting | Why |
@@ -93,12 +105,15 @@ into a live rule (see the note below for what that does *not* do).
 | `retention.high_res_metric_days` | Read when the metrics service is constructed |
 | `timezone` | Analytics and receiver-metric day bucketing bind the zone at construction |
 | `log_level`, `log_file_enabled` | Logging is configured before the app is built |
-| `enrichment.*` | The enrichment provider is built once at startup |
 | `metadata.opensky_enabled` | The metadata source registry is built once at startup |
 
-The Settings UI marks the Decoder and Receiver sections **"Applies on next
-restart"**. The other rows above are not badged in the UI — when in doubt, restart; it
-costs a few seconds and loses nothing.
+Every row above that the Settings UI can edit is badged **"Applies on next restart"**
+there, so you never have to consult this table to find out. The badge sits on the
+section header where the whole section waits — Decoder (`receiver.*`), Receiver
+(`location.*`), Retention (`retention.high_res_metric_days`) — and on the individual
+field where only part of a section does: the timezone under **Units & time**, and the
+OpenSky toggle under **Aircraft Metadata**. `sighting.*`, `log_level` and
+`log_file_enabled` have no Settings UI at all and are edited in `config.yaml`.
 
 **The first-run exception.** `receiver.*` and `location.*` are restart-required only
 once there is something running to disturb. On a fresh install nothing is polling yet,
@@ -225,6 +240,9 @@ storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 FlightSite is fully functional with enrichment off. This is the only setting that
 sends anything about observed aircraft to a third party — see
 [SECURITY.md §10](SECURITY.md).
+
+Both settings apply on save, in either direction and including a change of key;
+nothing here needs a restart. See [Applies immediately](#applies-immediately) above.
 
 ### `metadata` — aircraft metadata sources
 

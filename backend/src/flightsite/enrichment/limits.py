@@ -179,6 +179,18 @@ class CircuitBreaker:
 
     def record_success(self) -> None:
         """Close the circuit and forget the failure run."""
+        self.reset()
+
+    def reset(self) -> None:
+        """Return to the closed, no-failures state without a success.
+
+        For when the thing being protected is *replaced* rather than proved
+        working: :meth:`~flightsite.enrichment.EnrichmentService.apply_provider`
+        calls this after swapping a provider, because a run of failures earned
+        by a rejected key says nothing about the key that replaced it. Without
+        it a re-keyed install would begin life refusing every lookup for a
+        cooldown the new key did not earn.
+        """
         self._failures = 0
         self._opened_at_s = None
         self._probing = False

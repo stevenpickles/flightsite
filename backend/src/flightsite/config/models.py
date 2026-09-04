@@ -156,6 +156,12 @@ class EnrichmentSettings(_ConfigModel):
     ``aerodatabox_api_key`` is the only v1 secret (SPEC §29). It is never
     written to ``config.yaml`` and never serialized by
     :meth:`Settings.dump_public`.
+
+    Both fields apply on save. ``PUT /api/internal/config`` rebuilds the
+    provider from them and hands it to
+    :meth:`~flightsite.enrichment.EnrichmentService.apply_provider`, so
+    enabling, disabling and re-keying all take effect in the running process
+    (issue #161).
     """
 
     aerodatabox_enabled: bool = False
@@ -187,8 +193,11 @@ class MetadataSettings(_ConfigModel):
 
     Read at startup by :func:`flightsite.app._build_metadata_registry`, which
     constructs the provider only when this is set, so a change takes effect on
-    the next backend restart — the same contract as
-    ``enrichment.aerodatabox_enabled``.
+    the next backend restart. ``enrichment.aerodatabox_enabled`` gates its
+    provider the same way but no longer shares that half of the contract: it is
+    re-read and applied on every configuration save (issue #161), because
+    enrichment holds nothing a swap would cost, while the metadata registry is
+    wired into a service at construction.
     """
 
     opensky_enabled: bool = False

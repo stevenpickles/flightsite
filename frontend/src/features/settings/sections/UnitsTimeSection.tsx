@@ -6,6 +6,7 @@ import {
   detectBrowserTimezone,
   listTimezones,
 } from "@/features/setup/lib/timezones";
+import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
 import {
@@ -33,8 +34,13 @@ const UNIT_OPTIONS: readonly { value: UnitSystem; label: string }[] = [
 ];
 
 /** Display units and IANA timezone. A display preference only — storage
- * stays UTC / nm / ft / kt regardless, and this applies immediately
- * (no restart required). */
+ * stays UTC / nm / ft / kt regardless.
+ *
+ * The two halves differ on when they take effect, so the badge is
+ * field-level rather than on the section header: units are applied by the
+ * browser and change on save, while the timezone is also the zone analytics
+ * and receiver-metric day bucketing bind at construction, so those keep
+ * bucketing in the old zone until the backend restarts. */
 export function UnitsTimeSection({ config }: UnitsTimeSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickUnitsAndTime(draftFromConfig(config)),
@@ -116,7 +122,9 @@ export function UnitsTimeSection({ config }: UnitsTimeSectionProps) {
             value={draft.timezone}
             aria-invalid={timezoneError !== null}
             aria-describedby={
-              timezoneError ? "settings-timezone-error" : undefined
+              timezoneError
+                ? "settings-timezone-restart settings-timezone-error"
+                : "settings-timezone-restart"
             }
             onChange={(event) => {
               setDraft({ ...draft, timezone: event.target.value });
@@ -133,6 +141,7 @@ export function UnitsTimeSection({ config }: UnitsTimeSectionProps) {
               </option>
             ))}
           </select>
+          <RestartRequiredBadge id="settings-timezone-restart" />
           {timezoneError && (
             <p
               id="settings-timezone-error"

@@ -1,16 +1,21 @@
-import { RotateCw } from "lucide-react";
 import type { ReactNode } from "react";
+
+import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 
 export interface SettingsSectionProps {
   id: string;
   title: string;
   description: string;
-  /** Shown when a change in this section only takes effect after the
+  /** Shown when *every* setting in this section only takes effect after the
    * backend restarts — the decoder endpoint and receiver location, which a
    * running ingestion loop and live store hold for their lifetime (see
-   * `flightsite.api.ingestion`). This is about *changing* a value: a fresh
-   * install's first save starts ingestion in place, which is why the setup
-   * wizard makes no such promise. */
+   * `flightsite.api.ingestion`), and the high-resolution metric window, read
+   * once when the metrics service is built. This is about *changing* a
+   * value: a fresh install's first save starts ingestion in place, which is
+   * why the setup wizard makes no such promise.
+   *
+   * A section where only some settings wait leaves this off and renders
+   * `RestartRequiredBadge` under the fields that do. */
   restartRequired?: boolean;
   children: ReactNode;
 }
@@ -38,12 +43,7 @@ export function SettingsSection({
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-            {restartRequired && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                <RotateCw className="size-3" aria-hidden="true" />
-                Applies on next restart
-              </span>
-            )}
+            {restartRequired && <RestartRequiredBadge />}
           </div>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
