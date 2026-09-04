@@ -95,6 +95,15 @@ map:
 # FLIGHTSITE_ENRICHMENT__AERODATABOX_API_KEY — never in this file.
 enrichment:
   aerodatabox_enabled: false
+  # How long a found route stays cached, in days (1-30). A scheduled flight
+  # number flies the same airports for a season, so a week of cache is one
+  # lookup instead of one or two a day; a route confirmed on three separate
+  # days is then frozen for 30 days automatically.
+  route_ttl_days: 7
+  # Provider lookups allowed per UTC day. 0 is uncapped; set it if your
+  # AeroDataBox credits are finite. When it is spent, lookups stop until
+  # midnight UTC and cached routes keep being applied.
+  daily_lookup_budget: 0
 
 # Aircraft metadata sources. Mictronics and the FAA registry are always active
 # and need nothing here. OpenSky is opt-in because its licensing is unclear:

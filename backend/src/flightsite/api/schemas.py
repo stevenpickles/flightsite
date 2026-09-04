@@ -68,13 +68,27 @@ class RouteView(_Model):
     deliberately a different field: SPEC §41 keeps what somebody told
     FlightSite structurally apart from what FlightSite guessed.
 
-    Both keys are always present; either may be ``null`` on its own — a
+    Both idents are always present; either may be ``null`` on its own — a
     provider that named one airport and not the other is reporting half a
     route, which is information, not an error.
+
+    ``origin_name`` and ``destination_name`` (slice 070) are those idents
+    resolved against the **local** ``airports`` table (slice 027), which is the
+    only place FlightSite looks: no second provider call, and no name at all
+    until an airports import has run. A name is therefore ``null`` far more
+    often than its ident is, and it never replaces one — a client renders the
+    name when there is one and the code when there is not.
     """
 
     origin: str | None = None
+    #: Local name of :attr:`origin`, or ``null`` when the ident is unknown
+    #: locally (or absent). Carries no provenance of its own: the ident's
+    #: ``route`` entry names where the route came from, and this is a label
+    #: for it, not a second claim.
+    origin_name: str | None = None
     destination: str | None = None
+    #: Local name of :attr:`destination` — see :attr:`origin_name`.
+    destination_name: str | None = None
 
 
 class NearestAirportView(_Model):
@@ -1169,8 +1183,34 @@ class DiagnosticsNotifications(_Model):
     permission_known_by: Literal["client"] = "client"
 
 
+class DiagnosticsEnrichmentBudget(_Model):
+    """The day's lookup allowance (``enrichment.daily_lookup_budget``).
+
+    ``limit`` and ``remaining`` are ``null`` on an uncapped install — the
+    default — which is not the same as ``0``: one means there is no ceiling,
+    the other would mean the ceiling has been reached.
+    """
+
+    limit: int | None = None
+    used_today: int = 0
+    remaining: int | None = None
+    #: The next 00:00 UTC, when ``used_today`` returns to zero. The collector
+    #: always names an instant; the key is nullable for the same reason every
+    #: other one here is (§2.7 — a stable key, never a missing one).
+    resets_at: IsoTimestamp | None = None
+
+
+class DiagnosticsEnrichmentCache(_Model):
+    """How the route cache is performing (slice 070)."""
+
+    hits: int = 0
+    misses: int = 0
+    #: Rows confirmed on enough separate days to be frozen for 30 days.
+    learned: int = 0
+
+
 class DiagnosticsEnrichment(_Model):
-    """SPEC §67: enrichment failures."""
+    """SPEC §67: enrichment failures, plus what the day's credits bought."""
 
     enabled: bool = False
     running: bool = False
@@ -1179,6 +1219,8 @@ class DiagnosticsEnrichment(_Model):
     dropped: int = 0
     pending: int = 0
     failures: int = 0
+    budget: DiagnosticsEnrichmentBudget = Field(default_factory=DiagnosticsEnrichmentBudget)
+    cache: DiagnosticsEnrichmentCache = Field(default_factory=DiagnosticsEnrichmentCache)
 
 
 class DiagnosticsWebSocket(_Model):
@@ -1272,6 +1314,8 @@ __all__ = [
     "DiagnosticsDatabase",
     "DiagnosticsDecoder",
     "DiagnosticsEnrichment",
+    "DiagnosticsEnrichmentBudget",
+    "DiagnosticsEnrichmentCache",
     "DiagnosticsError",
     "DiagnosticsLive",
     "DiagnosticsMaintenance",

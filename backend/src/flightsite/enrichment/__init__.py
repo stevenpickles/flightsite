@@ -19,7 +19,7 @@ Module map:
 ========================================== =====================================
 Module                                     Responsibility
 ========================================== =====================================
-:mod:`~flightsite.enrichment.model`        the three answers a lookup can give
+:mod:`~flightsite.enrichment.model`        the four answers a lookup can give
 :mod:`~flightsite.enrichment.policy`       who may be looked up, under what key
 :mod:`~flightsite.enrichment.provider`     the ``RouteEnrichmentProvider`` protocol
 :mod:`~flightsite.enrichment.aerodatabox`  the one implementation, and the key
@@ -42,7 +42,8 @@ the database through
 persistence worker's cycle rather than opening a writer session of their own.
 
 **It never invents a route.** A provider that cannot be reached, answers with
-an error, or reports no airports leaves the sighting's route columns ``NULL``.
+an error, withholds a flight for legal reasons, or reports no airports leaves
+the sighting's route columns ``NULL``.
 There is exactly one place a route can be written from
 (:meth:`~flightsite.enrichment.service.EnrichmentService._apply`) and exactly
 one thing it can write: what the provider said. SPEC §28's *Unknown when
@@ -68,10 +69,14 @@ from flightsite.enrichment.aerodatabox import (
     parse_route,
 )
 from flightsite.enrichment.cache import (
+    DEFAULT_ROUTE_TTL_DAYS,
+    LEARNED_CONFIRMATIONS,
+    LEARNED_TTL_S,
     NEGATIVE_TTL_S,
     POSITIVE_TTL_S,
     CachedRoute,
     RouteCacheRepository,
+    RouteWrite,
 )
 from flightsite.enrichment.limits import (
     DEFAULT_COOLDOWN_S,
@@ -86,31 +91,49 @@ from flightsite.enrichment.model import (
     RouteInfo,
     RouteLookup,
     RouteNotFound,
+    RouteRestricted,
     RouteUnavailable,
 )
-from flightsite.enrichment.policy import cache_key, eligible_callsign, normalize_callsign
+from flightsite.enrichment.policy import (
+    cache_key,
+    contradicts_route,
+    eligible_callsign,
+    normalize_callsign,
+)
 from flightsite.enrichment.provider import RouteEnrichmentProvider
 from flightsite.enrichment.service import (
+    BUDGET_EXHAUSTED_EVENT,
     ENRICHMENT_FAILURES_COUNTER,
+    BudgetStatus,
+    CacheStats,
+    EnrichmentEconomy,
     EnrichmentService,
+    build_economy,
     build_provider,
 )
 
 __all__ = [
     "API_BASE_URL",
     "API_KEY_HEADER",
+    "BUDGET_EXHAUSTED_EVENT",
     "DEFAULT_COOLDOWN_S",
     "DEFAULT_FAILURE_THRESHOLD",
     "DEFAULT_RATE_PER_MINUTE",
+    "DEFAULT_ROUTE_TTL_DAYS",
     "ENRICHMENT_FAILURES_COUNTER",
     "FLIGHT_BY_CALLSIGN_PATH",
+    "LEARNED_CONFIRMATIONS",
+    "LEARNED_TTL_S",
     "NEGATIVE_TTL_S",
     "POSITIVE_TTL_S",
     "REQUEST_TIMEOUT_S",
     "ROUTE_SOURCE_AERODATABOX",
     "AeroDataBoxProvider",
+    "BudgetStatus",
+    "CacheStats",
     "CachedRoute",
     "CircuitBreaker",
+    "EnrichmentEconomy",
     "EnrichmentService",
     "RouteCacheRepository",
     "RouteCacheStatus",
@@ -118,10 +141,14 @@ __all__ = [
     "RouteInfo",
     "RouteLookup",
     "RouteNotFound",
+    "RouteRestricted",
     "RouteUnavailable",
+    "RouteWrite",
     "TokenBucket",
+    "build_economy",
     "build_provider",
     "cache_key",
+    "contradicts_route",
     "eligible_callsign",
     "normalize_callsign",
     "parse_route",

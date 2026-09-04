@@ -188,6 +188,114 @@ describe("AircraftDetailPanel", () => {
     );
   });
 
+  it("names each end of the route beside its ident", () => {
+    // Slice 070: an ident is only meaningful to someone who already knows
+    // the airport. The name carries the meaning, the ident stays the value.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: {
+          origin: "KATL",
+          destination: "KSLC",
+          origin_name: "Hartsfield–Jackson Atlanta International",
+          destination_name: "Salt Lake City International",
+        },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getByText("KATL")).toBeInTheDocument();
+    const originName = within(section).getByText(
+      "Hartsfield–Jackson Atlanta International",
+    );
+    // The full name is the accessible text and the tooltip; only the pixels
+    // are clipped, so a screen reader never reads a half-name.
+    expect(originName).toHaveAttribute(
+      "title",
+      "Hartsfield–Jackson Atlanta International",
+    );
+    expect(originName).toHaveClass("truncate");
+    expect(
+      within(section).getByText("Salt Lake City International"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the ident alone when the airport name is unknown", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: {
+          origin: "ZZZZ",
+          destination: "KSLC",
+          origin_name: null,
+          destination_name: "Salt Lake City International",
+        },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    // An unresolvable ident is still the truth the provider filed — it is
+    // shown, not replaced by `Unknown`.
+    expect(within(section).getByText("ZZZZ")).toBeInTheDocument();
+    expect(within(section).queryAllByText("Unknown")).toHaveLength(0);
+  });
+
+  it("renders a name-less payload from an older backend unchanged", () => {
+    // The name keys are absent, not null: a frontend ahead of its backend
+    // must degrade to exactly the pre-070 row rather than render "undefined".
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "EGLL", destination: "KJFK" },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getByText("EGLL")).toBeInTheDocument();
+    expect(within(section).getByText("KJFK")).toBeInTheDocument();
+    expect(section.textContent).not.toContain("undefined");
+  });
+
+  it("keeps Unknown for a null ident even when a name would fit beside it", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: {
+          origin: null,
+          destination: "KSLC",
+          origin_name: null,
+          destination_name: "Salt Lake City International",
+        },
+        provenance: { route: "aerodatabox" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getAllByText("Unknown")).toHaveLength(1);
+    expect(
+      within(section).getByText("Salt Lake City International"),
+    ).toBeInTheDocument();
+  });
+
   it("renders half a route as half a route, not as nothing", () => {
     renderPanel();
     seedSnapshot([

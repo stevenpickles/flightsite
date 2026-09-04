@@ -39,7 +39,14 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from flightsite.app import create_app
-from flightsite.enrichment import AeroDataBoxProvider, EnrichmentService, RouteCacheRepository
+from flightsite.enrichment import (
+    AeroDataBoxProvider,
+    EnrichmentEconomy,
+    EnrichmentService,
+    RouteCacheRepository,
+    RouteInfo,
+)
+from flightsite.enrichment.cache import MS_PER_SECOND, SECONDS_PER_DAY
 from flightsite.enrichment.model import RouteUnavailable
 from flightsite.live import LiveStore
 from flightsite.sightings import PersistenceWorker
@@ -285,6 +292,143 @@ async def test_swapping_the_provider_resets_the_failure_circuit(
     assert failing.closed is True
 
 
+# --------------------------------------------------- applying a spending plan
+
+
+async def test_a_changed_budget_applies_without_restarting_the_worker(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """Slice 070's numbers are adopted in place, not by a teardown.
+
+    A budget is not a provider: nothing about it invalidates the subscription,
+    the queue or the remembered answers, and restarting for it would shed a
+    queue of callsigns for a setting that does not change who is asked.
+    """
+    provider = AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL))
+    service = build_service(live=live, worker=worker, cache=cache, provider=provider, clock=clock)
+    await service.start()
+    tasks = (service._reader, service._worker)
+
+    await service.apply_provider(
+        AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL)),
+        EnrichmentEconomy(route_ttl_days=3, daily_lookup_budget=25),
+    )
+
+    try:
+        assert service.economy == EnrichmentEconomy(route_ttl_days=3, daily_lookup_budget=25)
+        assert service._provider is provider
+        assert (service._reader, service._worker) == tasks
+        assert service.budget.limit == 25
+    finally:
+        await service.stop()
+
+
+async def test_an_unchanged_budget_is_still_the_no_op_every_save_takes(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """The whole configuration is compared, so an unrelated save changes nothing."""
+    economy = EnrichmentEconomy(route_ttl_days=3, daily_lookup_budget=25)
+    provider = AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL))
+    service = build_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        provider=provider,
+        clock=clock,
+        economy=economy,
+    )
+    await service.start()
+    tasks = (service._reader, service._worker)
+
+    await service.apply_provider(AeroDataBoxProvider(api_key=SecretStr(SECRET_SENTINEL)), economy)
+
+    try:
+        assert service._provider is provider
+        assert (service._reader, service._worker) == tasks
+    finally:
+        await service.stop()
+
+
+async def test_a_changed_ttl_is_used_by_the_next_answer_stored(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """A setting that applied on the next restart would be a setting in a file."""
+    provider = FakeProvider({AIRLINE_CALLSIGN: route_answer()})
+    service = build_service(live=live, worker=worker, cache=cache, provider=provider, clock=clock)
+
+    await service.apply_provider(provider, EnrichmentEconomy(route_ttl_days=2))
+    observe(live, clock)
+    feed(service, live)
+    await pump(service)
+
+    row = await cache.get(AIRLINE_CALLSIGN, now_ms=clock.epoch_ms())
+    assert row is not None
+    assert row.expires_ms == clock.epoch_ms() + 2 * SECONDS_PER_DAY * MS_PER_SECOND
+
+
+async def test_raising_a_spent_budget_resumes_lookups_on_the_save(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """Otherwise the owner who noticed the cap would wait until midnight."""
+    provider = FakeProvider(default=route_answer())
+    service = build_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        provider=provider,
+        clock=clock,
+        economy=EnrichmentEconomy(daily_lookup_budget=1),
+    )
+    for index in range(2):
+        clock.advance(1.0)
+        observe(live, clock, f"a0000{index:x}", callsign=f"DAL{index}00")
+        feed(service, live)
+        await pump(service)
+    assert provider.calls == ["DAL000"]
+
+    await service.apply_provider(provider, EnrichmentEconomy(daily_lookup_budget=5))
+    await pump(service)
+
+    assert provider.calls == ["DAL000", "DAL100"]
+    assert service.budget.used_today == 2
+    assert service.budget.remaining == 3
+
+
+async def test_lowering_the_budget_below_what_is_spent_stops_lookups(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """``remaining`` is clamped at zero rather than going negative."""
+    await cache.store_route("DAL000", RouteInfo("KATL", "KSLC"), now_ms=clock.epoch_ms())
+    await cache.store_route("DAL100", RouteInfo("KATL", "KSLC"), now_ms=clock.epoch_ms())
+    provider = FakeProvider(default=route_answer())
+    service = build_service(live=live, worker=worker, cache=cache, provider=provider, clock=clock)
+    await service.start()
+
+    await service.apply_provider(provider, EnrichmentEconomy(daily_lookup_budget=1))
+    observe(live, clock, "a00003", callsign="DAL300")
+    feed(service, live)
+    await pump(service)
+    await service.stop()
+
+    assert provider.calls == []
+    assert service.budget.remaining == 0
+
+
 # ------------------------------------------------------- applying through PUT
 
 
@@ -366,6 +510,37 @@ def test_a_save_that_disables_enrichment_stops_the_worker(client: TestClient) ->
     assert service.enabled is False
     # The key is still stored — it is the flag that was turned off.
     assert response.json()["secrets_set"] == {"enrichment.aerodatabox_api_key": True}
+
+
+def test_a_saved_budget_and_ttl_reach_the_running_worker(client: TestClient) -> None:
+    """Issue #167 end to end: type two numbers, save, and they are in force."""
+    service = enrichment_of(client)
+    client.put("/api/internal/config", json=ENABLE)
+    provider, reader = service._provider, service._reader
+
+    response = client.put(
+        "/api/internal/config",
+        json={"enrichment": {"route_ttl_days": 14, "daily_lookup_budget": 500}},
+    )
+
+    assert response.status_code == 200
+    assert service.economy.route_ttl_days == 14
+    assert service.economy.daily_lookup_budget == 500
+    assert service.budget.limit == 500
+    # And the worker kept everything it was doing: a number is not a re-key.
+    assert service._provider is provider
+    assert service._reader is reader
+    assert service.running is True
+
+
+def test_the_budget_can_be_set_before_enrichment_is_enabled(client: TestClient) -> None:
+    """The Settings page can be filled in in any order, as it always could."""
+    service = enrichment_of(client)
+
+    client.put("/api/internal/config", json={"enrichment": {"daily_lookup_budget": 40}})
+
+    assert service.enabled is False
+    assert service.economy.daily_lookup_budget == 40
 
 
 def test_a_save_about_another_section_leaves_the_worker_untouched(client: TestClient) -> None:

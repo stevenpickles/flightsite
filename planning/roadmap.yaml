@@ -95,6 +95,12 @@ releases:
       socket with click-to-map, the alert-match Notified marker's write path,
       fix-dated track points, ADR-0014/0015, and the severity-triaged tracker
       (slices 067-069). Recorded 2026-09-04."
+  - version: "v0.5.0"
+    after_phase: 8
+    theme: "Route enrichment credit economy: week-long callsign cache, learned
+      schedules, a daily lookup budget spent in priority order, restricted
+      flights cached instead of retried, and airport names beside route idents
+      (slice 070; migration 0014). Recorded 2026-09-04."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -1944,6 +1950,62 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner-requested on 2026-09-04 before v0.4.0: origin/destination were not appearing on fermi.local because enrichment had been enabled (and its key stored) after the last backend start, and the provider is built only at startup; a restart made routes flow within a minute (21 sightings enriched in the first sixty seconds). Same bug class as issues #110, #122 and #129: a config save that should apply live and did not. Added by Fable outside the phase plan."
+
+  - id: "070"
+    title: "Route enrichment credit economy & airport names"
+    phase: 8
+    branch: "070-enrichment-economy"
+    status: merged
+    depends_on: ["026", "027", "042", "069"]
+    objective: "Cut AeroDataBox usage by roughly three quarters and cap it hard — a week-long per-callsign cache, learned schedules, a daily lookup budget spent in priority order, and restricted flights cached instead of retried (#165) — and show airport names beside route idents from the local airports table (issue #167)."
+    scope:
+      - "route cache keyed by callsign alone (no UTC-day bucket) with a positive TTL of `enrichment.route_ttl_days` (default 7, 1-30), so a scheduled flight costs one lookup per week instead of one or two per day; negative results (204/404) cached 24 h instead of 1 h"
+      - "#165: AeroDataBox HTTP 451 (legally restricted flight) is a definitive per-callsign answer — cached with status `restricted` for the positive TTL, logged with its own reason, never fed to the circuit breaker, never counted as a provider failure"
+      - "learned schedules: a cached route confirmed identical on three separate calendar days is frozen for 30 days (`route_cache` gains `confirmations` and `first_fetched_ms`; migration 0014, linear on 0013); provenance stays `aerodatabox`"
+      - "a cheap consistency check invalidates a cached route early when the airport-context service latches a departure or approach at an airport that is neither the cached origin nor destination, so a changed schedule is caught by the aircraft's own behaviour rather than by waiting out the TTL"
+      - "`enrichment.daily_lookup_budget` (int, default 0 = uncapped): lookups per UTC day, counted from `route_cache.fetched_ms` so the count survives restarts; when spent, lookups stop until midnight UTC, one `enrichment_budget_exhausted` log line per day, and the pending queue keeps only what fits"
+      - "pending lookups drain in priority order rather than FIFO: aircraft currently matching an alert rule first, then aircraft inside `display_radius_nm`, then everything else, with refreshes of expired-but-known routes last; the alerts probe is a closure over app state in the `_alert_radius` style, not a service dependency"
+      - "diagnostics (`GET /api/v1/diagnostics` `enrichment` section) gains `budget: {limit, used_today, remaining, resets_at}` and `cache: {hits, misses, learned}` counters; the Health page's enrichment card shows budget used/remaining and the reset time; the Settings Enrichment section edits the budget and TTL (both apply on save via slice 069's apply path)"
+      - "airport names: every serialized `route` object (`/api/v1/aircraft` live payloads, aircraft detail, sighting rows and detail) gains `origin_name` and `destination_name`, resolved from the local `airports` table (slice 027) through the airport-context service's in-memory index — never from the provider; `null` when the ident is unknown locally. The detail panel, sighting detail and aircraft page render ident and name together, name truncated with a title tooltip"
+      - "docs: API.md §2.6 route shape and the diagnostics section, CONFIGURATION.md's enrichment table, SECURITY.md §10's request-frequency statement (now bounded by the budget), DATA_MODEL.md §7 route cache"
+    out_of_scope:
+      - "a second or free route provider (adsbdb.com, adsb.lol): SPEC §28 names AeroDataBox as the one v1 provider — owner decision tracked separately"
+      - "presence-gated lookups and overflight filtering: measured as low value for this receiver (1 % transient contacts); a `decision` note, no code"
+      - "a route sanity check against the live track geometry; only the airport-context latch is used"
+      - "changing the eligibility policy or the 10/min rate limiter"
+    acceptance_criteria:
+      - "a callsign looked up today is not looked up again for `route_ttl_days` days, across restarts, and a callsign seen twice in one day costs one lookup"
+      - "a 451 response caches a `restricted` row, the breaker's failure count does not move, `enrichment_failures` does not move, and the callsign is not re-requested for the TTL"
+      - "after three confirming days a route's expiry is 30 days out; a differing answer resets the confirmation count"
+      - "with `daily_lookup_budget: 5`, the sixth eligible callsign of the day is not requested, diagnostics report `remaining: 0`, and the next UTC day's first callsign is requested"
+      - "with an alert-matching aircraft and ten other pending callsigns, the alert-matching one is requested first"
+      - "`route.origin_name` is the airports-table name for a known ident and `null` for an unknown one, on every endpoint that carries `route`"
+      - "`alembic heads` shows exactly one head (0014); up and down migrate cleanly"
+      - "`Closes #167` and `Closes #165` in the PR body"
+    required_tests:
+      - cache tests for callsign-only keys, TTL from settings, negative 24 h, restricted status, confirmation counting and the 30-day freeze, and the consistency invalidation
+      - provider test for the 451 branch and a service test that the breaker is not fed by it
+      - budget tests (cap reached, restart survives, midnight reset via injected clock) and priority-order tests
+      - diagnostics passthrough test for `budget` and `cache`; config apply test that a changed budget/TTL applies on save
+      - serializer tests for `origin_name`/`destination_name` on live, detail and sighting payloads
+      - frontend tests for the detail-panel and sighting-detail rendering, the Health enrichment card, and the Settings fields
+    expected_artifacts:
+      - backend/src/flightsite/enrichment/
+      - backend/src/flightsite/db/migrations/versions/ (rev 0014)
+      - backend/src/flightsite/config/models.py
+      - backend/src/flightsite/diagnostics/service.py
+      - backend/src/flightsite/api/serializers.py
+      - backend/src/flightsite/airports/service.py
+      - frontend/src/features/aircraft-detail/
+      - frontend/src/features/health/
+      - frontend/src/features/settings/sections/EnrichmentSection.tsx
+      - docs/API.md
+      - docs/CONFIGURATION.md
+      - docs/DATA_MODEL.md
+      - docs/SECURITY.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner-requested 2026-09-04 after v0.4.0: enrichment consumed AeroDataBox feeder credits faster than the feeder earns them. Measured on fermi.local: 2,200-2,650 distinct airline callsigns/day, ~190 lookups/hour, 62 % of a day's callsigns seen the previous day after only four days of history, 1 % transient contacts, and one restricted business jet retried nine times in twelve minutes (#165). The airport-name request came in the same conversation. Migration-bearing (0014): serialized against other migration slices per DEVELOPMENT.md. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

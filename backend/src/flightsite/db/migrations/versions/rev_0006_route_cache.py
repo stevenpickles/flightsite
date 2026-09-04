@@ -30,12 +30,18 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from flightsite.db.models import ROUTE_CACHE_STATUS_CHECK
-
 revision: str = "0006"
 down_revision: str | None = "0005"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+#: The vocabulary **this** revision created, spelled out rather than imported
+#: from :data:`flightsite.db.models.ROUTE_CACHE_STATUS_CHECK`. A migration is a
+#: record of what an install actually ran: importing the live constant meant
+#: that when 0014 added ``restricted`` to it, a database freshly migrated to
+#: 0006 got a constraint no 0006 install ever had, and the upgrade path stopped
+#: being the one real installs take.
+_STATUS_CHECK = "status IN ('ok', 'not_found', 'error')"
 
 
 def upgrade() -> None:
@@ -48,7 +54,7 @@ def upgrade() -> None:
         sa.Column("payload_json", sa.Text(), nullable=True),
         sa.Column("fetched_ms", sa.Integer(), nullable=False),
         sa.Column("expires_ms", sa.Integer(), nullable=False),
-        sa.CheckConstraint(ROUTE_CACHE_STATUS_CHECK, name="ck_route_cache_status"),
+        sa.CheckConstraint(_STATUS_CHECK, name="ck_route_cache_status"),
         sa.PrimaryKeyConstraint("cache_key"),
         sqlite_with_rowid=False,
     )

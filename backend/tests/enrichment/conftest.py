@@ -55,8 +55,9 @@ from tests.conftest import SECRET_SENTINEL
 BASE_TIME = datetime(2026, 8, 30, 22, 0, 0, tzinfo=UTC)
 BASE_EPOCH_MS = to_epoch_ms(BASE_TIME)
 
-#: The UTC day :data:`BASE_TIME` falls in — the date half of every cache key
-#: the fixtures produce.
+#: The UTC day :data:`BASE_TIME` falls in. No longer part of a cache key —
+#: slice 070 made the key the callsign alone — but still the day the
+#: confirmation and budget rules are measured against.
 BASE_DATE = "2026-08-30"
 
 SEATTLE = Position(latitude=47.4502, longitude=-122.3088)

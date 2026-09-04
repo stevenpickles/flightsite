@@ -31,7 +31,10 @@ REVISION = "0006"
 PREVIOUS = "0005"
 TABLE = "route_cache"
 
-#: ``docs/DATA_MODEL.md`` §7, column for column.
+#: The table as **this revision** creates it. Later revisions add to it —
+#: 0014 adds the learned-schedule columns — so the shape assertions below
+#: upgrade to 0006 rather than to head, and stay a statement about what 0006
+#: is responsible for.
 EXPECTED_COLUMNS = {
     "cache_key": "TEXT",
     "status": "TEXT",
@@ -75,7 +78,7 @@ async def test_the_schema_at_head_matches_the_models(db_path: Path) -> None:
 
 
 async def test_the_table_matches_the_data_model(db_path: Path) -> None:
-    await upgrade_empty_database(db_path)
+    await upgrade_empty_database(db_path, REVISION)
 
     assert column_types(db_path, TABLE) == EXPECTED_COLUMNS
     assert primary_key_columns(db_path, TABLE) == ["cache_key"]
@@ -84,7 +87,7 @@ async def test_the_table_matches_the_data_model(db_path: Path) -> None:
 
 async def test_only_the_answer_columns_are_nullable(db_path: Path) -> None:
     """A cached row always knows *what* it is and *when* it expires."""
-    await upgrade_empty_database(db_path)
+    await upgrade_empty_database(db_path, REVISION)
 
     assert not_null_columns(db_path, TABLE) == {
         "cache_key",
@@ -96,7 +99,7 @@ async def test_only_the_answer_columns_are_nullable(db_path: Path) -> None:
 
 async def test_expiry_is_indexed_for_pruning(db_path: Path) -> None:
     """The one query that is not a point lookup."""
-    await upgrade_empty_database(db_path)
+    await upgrade_empty_database(db_path, REVISION)
 
     assert "ix_route_cache_expiry" in index_names(db_path, TABLE)
     assert "expires_ms" in index_sql(db_path, "ix_route_cache_expiry")
@@ -115,7 +118,12 @@ async def test_the_status_check_is_enforced_by_sqlite(db_path: Path) -> None:
 
 @pytest.mark.parametrize("status", list(RouteCacheStatus))
 async def test_every_vocabulary_value_is_accepted(db_path: Path, status: RouteCacheStatus) -> None:
-    """The runtime enum and the SQL ``CHECK`` name the same three values."""
+    """The runtime enum and the SQL ``CHECK`` name the same values.
+
+    At head, not at 0006: ``restricted`` joined the vocabulary in 0014, and the
+    claim worth testing is that the enum and the constraint the application
+    runs against agree.
+    """
     await upgrade_empty_database(db_path)
 
     with sqlite3.connect(db_path) as connection:

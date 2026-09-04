@@ -198,6 +198,24 @@ class AirportContextService:
         """
         return self._answers.get(icao)
 
+    def name_for(self, ident: str) -> str | None:
+        """The local name of the airport with this ident, or ``None``.
+
+        The lookup behind ``route.origin_name``/``route.destination_name``
+        (``docs/API.md`` §2.6). Unrelated to the nearest-airport inference this
+        service otherwise makes: it answers a question about an ident somebody
+        *else* supplied — the route enrichment provider — from the same
+        in-memory dataset, and it makes no claim of its own.
+
+        A dictionary access on
+        :meth:`~flightsite.airports.index.AirportIndex.name_for`, with no
+        ``await`` and no session, because the live aircraft serializer calls it
+        twice per aircraft per frame. ``None`` on an install that has never
+        imported the airport dataset, and for any ident the dataset does not
+        carry.
+        """
+        return self._index.name_for(ident)
+
     # ------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:

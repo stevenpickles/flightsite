@@ -41,7 +41,12 @@ const BASE: LiveAircraft = {
   operator: null,
   operator_group: null,
   classification: null,
-  route: { origin: null, destination: null },
+  route: {
+    origin: null,
+    destination: null,
+    origin_name: null,
+    destination_name: null,
+  },
   nearest_airport: null,
   interesting: null,
   watchlists: [],

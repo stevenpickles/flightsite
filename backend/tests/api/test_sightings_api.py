@@ -415,7 +415,12 @@ async def test_detail_reports_no_route_provenance_when_there_is_no_route(
 
     body = (await rest.get(f"/api/v1/sightings/{seeded[0]}")).json()
 
-    assert body["route"] == {"origin": None, "destination": None}
+    assert body["route"] == {
+        "origin": None,
+        "origin_name": None,
+        "destination": None,
+        "destination_name": None,
+    }
     assert "route" not in body["provenance"]
 
 

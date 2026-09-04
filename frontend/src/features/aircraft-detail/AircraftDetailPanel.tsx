@@ -29,6 +29,7 @@ import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { InterestingSection } from "@/features/aircraft-detail/components/InterestingSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
+import { routeEndpointValue } from "@/features/aircraft-detail/components/RouteEndpointValue";
 import { NearestAirportSection } from "@/features/aircraft-detail/components/NearestAirportSection";
 import { TrackStats } from "@/features/aircraft-detail/components/TrackStats";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
@@ -270,12 +271,18 @@ export function AircraftDetailPanel() {
               <DetailSection title="Route">
                 <FieldRow
                   label="Origin"
-                  value={aircraft.route.origin}
+                  value={routeEndpointValue({
+                    ident: aircraft.route.origin,
+                    name: aircraft.route.origin_name,
+                  })}
                   provenanceSource={aircraft.provenance.route}
                 />
                 <FieldRow
                   label="Destination"
-                  value={aircraft.route.destination}
+                  value={routeEndpointValue({
+                    ident: aircraft.route.destination,
+                    name: aircraft.route.destination_name,
+                  })}
                   provenanceSource={aircraft.provenance.route}
                 />
               </DetailSection>

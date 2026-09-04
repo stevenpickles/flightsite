@@ -30,18 +30,29 @@ the pattern is the strict one.
 The cache key
 -------------
 
-``docs/DATA_MODEL.md`` §7 keys the cache on the normalized callsign **plus a
-date bucket**. The date is not decoration: ``DAL1234`` is a different pair of
-airports next month, so a key without it would eventually answer a question
-nobody asked. The bucket is the UTC day of the observation, which is the same
-day the provider's own schedule lookup defaults to.
+``docs/DATA_MODEL.md`` §7 keys the cache on the normalized callsign, and on
+nothing else. It carried a UTC date bucket until slice 070, on the reasoning
+that ``DAL1234`` is a different pair of airports next month — which is true,
+and was the wrong bound. Measured on the owner's receiver: 2,200-2,650 distinct
+airline callsigns a day at ~190 lookups an hour, of which **62 % had been seen
+the previous day** after only four days of history. A dated key was therefore
+re-buying two thirds of yesterday's answers every morning, to protect against a
+schedule change that happens on the scale of an airline season.
+
+So the drift is now bounded by an *expiry* rather than by the key —
+``enrichment.route_ttl_days`` (default 7) — and by two things the date bucket
+could never do: a refresh that agrees on three separate days freezes the row
+for 30 days, and an aircraft that departs or lands somewhere the cached route
+does not name invalidates it immediately
+(:func:`contradicts_route`). Rows written under the old dated keys are left to
+expire; nothing reads them again.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Final
 
+from flightsite.airports.model import AirportContext, InferredPhase
 from flightsite.classification.operators import CALLSIGN_PATTERN
 
 #: Longest callsign a decoder can legitimately transmit (ADS-B flight id is
@@ -83,22 +94,58 @@ def airline_designator(callsign: str) -> str | None:
     return None if match is None else match.group(1)
 
 
-def cache_key(callsign: str, at: datetime) -> str:
-    """The ``route_cache.cache_key`` for ``callsign`` observed at ``at``.
+def cache_key(callsign: str) -> str:
+    """The ``route_cache.cache_key`` for ``callsign``.
 
-    ``at`` must be timezone-aware; the bucket is its UTC calendar day, so two
-    observations either side of local midnight in different zones still share
-    one key when they share a UTC day.
+    The normalized callsign itself. A function rather than the bare string
+    because the key is a storage contract with one place that decides it: the
+    lookup, the write and the invalidation must agree on the spelling, and
+    three call sites normalizing on their own is how they come to disagree.
     """
-    if at.tzinfo is None:
-        raise ValueError("refusing to bucket a naive datetime; timestamps must be UTC")
-    return f"{callsign}:{at.astimezone(UTC).strftime('%Y-%m-%d')}"
+    return callsign.strip().upper()
+
+
+def contradicts_route(
+    context: AirportContext | None,
+    *,
+    origin_ident: str | None,
+    destination_ident: str | None,
+) -> bool:
+    """True when an aircraft's own behaviour disproves its cached route.
+
+    The consistency check of slice 070, and the one thing that catches a
+    changed schedule faster than the TTL does. Two readings count, both from
+    the airport-context service's *latched* phase
+    (:mod:`flightsite.airports.service`), which is an inference the trend gate
+    has already committed to:
+
+    * a **departure** from a field the cached route does not call the origin;
+    * an **arrival** at a field it does not call the destination.
+
+    Everything else is silence. A phase inferred for an unnamed half of the
+    route (a route with only a destination, say) contradicts nothing, because
+    the cache never claimed anything about that end — and a route being right
+    about one airport is not evidence against the other, which is why each
+    reading is checked against its own end alone.
+
+    Idents are compared case-insensitively and nothing is derived: an IATA code
+    cached against an ICAO-identified field reads as a contradiction, which
+    costs one lookup and is the safe direction to be wrong in.
+    """
+    if context is None or context.phase is None:
+        return False
+    departing = context.phase is InferredPhase.DEPARTING
+    expected = origin_ident if departing else destination_ident
+    if expected is None:
+        return False
+    return expected.strip().upper() != context.ident.strip().upper()
 
 
 __all__ = [
     "MAX_CALLSIGN_LENGTH",
     "airline_designator",
     "cache_key",
+    "contradicts_route",
     "eligible_callsign",
     "normalize_callsign",
 ]

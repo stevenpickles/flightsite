@@ -134,7 +134,7 @@ FlightSite is local-first. The complete list of optional outbound traffic:
 
 | Traffic | When | What is sent |
 |---|---|---|
-| AeroDataBox route enrichment | Only when `enrichment.aerodatabox_enabled` is on **and** an API key is set; then at most once per airline callsign per UTC day, capped at 10 requests/minute | One `GET https://api.aerodatabox.com/flights/callsign/{callsign}` per lookup: the transmitted callsign in the URL path and your API key in the `X-Api-Key` header. No request body, no query parameters. |
+| AeroDataBox route enrichment | Only when `enrichment.aerodatabox_enabled` is on **and** an API key is set; then at most once per airline callsign per `enrichment.route_ttl_days` (default 7 days), capped by `enrichment.daily_lookup_budget` lookups per UTC day when you set one, and by 10 requests/minute always | One `GET https://api.aerodatabox.com/flights/callsign/{callsign}` per lookup: the transmitted callsign in the URL path and your API key in the `X-Api-Key` header. No request body, no query parameters. |
 | Basemap tiles | When using internet basemaps (default) | Standard tile HTTP requests, which reveal the viewed map area (and therefore approximately your receiver's region) to the tile provider |
 | Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, and airport-data sources; nothing about your receiver is uploaded |
 
@@ -149,9 +149,12 @@ name or identity. The request carries no body and no query string, so the callsi
 the key are the entire payload; the response is read and discarded except for the two
 airport identifiers and the flight number, which are cached locally.
 
-Answers are cached in the local `route_cache` table keyed by callsign and UTC date,
-including "no route found", so one flight costs at most one request a day however many
-times it is seen. Turning the feature off, or removing the key, stops every request: the
+Answers are cached in the local `route_cache` table keyed by callsign, including "no
+route found" (24 hours) and "legally restricted" (the same week as a route), so one
+flight costs at most one request per `route_ttl_days` however many times it is seen — and
+a route confirmed identical on three separate days is frozen for 30 days. If you set
+`daily_lookup_budget`, no request at all is made once that many lookups have been spent
+in a UTC day. Turning the feature off, or removing the key, stops every request: the
 provider is not constructed at all, so no socket is opened.
 
 Everything else — aircraft observations, sightings, analytics, alerts, configuration —

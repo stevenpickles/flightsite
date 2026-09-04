@@ -61,6 +61,11 @@ export interface MapDocConfig {
 export interface EnrichmentConfig {
   aerodatabox_enabled: boolean;
   aerodatabox_api_key: string | null;
+  /** Provider lookups allowed per UTC day; `0` means uncapped (slice 070).
+   * Applied on save — the enrichment provider is rebuilt, not restarted. */
+  daily_lookup_budget: number;
+  /** How long a cached route stays usable, 1–30 days. */
+  route_ttl_days: number;
 }
 
 /** Mirrors `MetadataSettings`. The two default aircraft-metadata sources need

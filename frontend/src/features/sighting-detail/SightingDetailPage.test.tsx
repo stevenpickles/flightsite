@@ -181,6 +181,69 @@ describe("SightingDetailPage", () => {
     expect(screen.getByText("PHIK")).toBeInTheDocument();
   });
 
+  it("names the route's airports beside their idents", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          route: {
+            origin: "KTCM",
+            destination: "PHIK",
+            origin_name: "Tacoma McChord Field",
+            destination_name: "Hickam Air Force Base",
+          },
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    expect(await screen.findByText("KTCM")).toBeInTheDocument();
+    const originName = screen.getByText("Tacoma McChord Field");
+    expect(originName).toHaveAttribute("title", "Tacoma McChord Field");
+    expect(originName).toHaveClass("truncate");
+    expect(screen.getByText("Hickam Air Force Base")).toBeInTheDocument();
+  });
+
+  it("shows the ident alone when only one end has a name", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          route: {
+            origin: "KTCM",
+            destination: "PHIK",
+            origin_name: null,
+            destination_name: "Hickam Air Force Base",
+          },
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    expect(await screen.findByText("KTCM")).toBeInTheDocument();
+    expect(screen.getByText("Hickam Air Force Base")).toBeInTheDocument();
+  });
+
+  it("renders a pre-070 payload with no name keys at all", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          route: { origin: "KTCM", destination: "PHIK" },
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    const route = (await screen.findByText("Route")).closest(
+      "section",
+    ) as HTMLElement;
+    expect(route.textContent).not.toContain("undefined");
+  });
+
   it("omits the route section entirely when there is no route", async () => {
     installSightingsApiMock({
       detail: {

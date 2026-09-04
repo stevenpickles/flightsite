@@ -12,6 +12,7 @@ import type { StatusTone } from "@/features/health/components/StatusPill";
 import type { NotificationPermissionState } from "@/features/notifications/lib/permission";
 import type {
   DecoderState,
+  DiagnosticsEnrichmentBudget,
   DiagnosticsStatus,
   MetadataSourceState,
 } from "@/lib/api/diagnostics";
@@ -166,4 +167,31 @@ export function errorCountPresentation(count: number): StatusPresentation {
   return count > 0
     ? { tone: "warn", label: `${count} recent` }
     : { tone: "ok", label: "None" };
+}
+
+/**
+ * The enrichment daily budget (slice 070).
+ *
+ * A spent budget is a `warn`, never a `bad`: enrichment is optional, the
+ * cap is one the operator chose, and reaching it means the economy worked —
+ * lookups stop, cached and locally-learned routes keep being served, and the
+ * counter rolls over at midnight UTC. Calling that an error would train
+ * people to ignore the one tone this page reserves for real breakage.
+ *
+ * `undefined` (a backend older than this slice) yields `null` so the card
+ * shows no pill at all rather than an invented state.
+ */
+export function enrichmentBudgetPresentation(
+  budget: DiagnosticsEnrichmentBudget | undefined,
+): StatusPresentation | null {
+  if (budget === undefined) {
+    return null;
+  }
+  if (budget.limit === null) {
+    return { tone: "idle", label: "Uncapped" };
+  }
+  if ((budget.remaining ?? 0) <= 0) {
+    return { tone: "warn", label: "Budget spent" };
+  }
+  return { tone: "ok", label: `${budget.remaining ?? 0} left today` };
 }

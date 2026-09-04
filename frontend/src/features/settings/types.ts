@@ -59,6 +59,10 @@ export interface SettingsDraft {
    * submitted patch entirely, so a previously-stored key is never
    * disturbed just by opening the section. */
   aerodataboxKeyTouched: boolean;
+  /** Provider lookups allowed per UTC day, as typed; "0" means unlimited. */
+  dailyLookupBudget: string;
+  /** How long a learned route stays usable, 1–30 days. */
+  routeTtlDays: string;
 
   // Metadata sources.
   /** Whether the opt-in OpenSky aircraft database takes part in "Update

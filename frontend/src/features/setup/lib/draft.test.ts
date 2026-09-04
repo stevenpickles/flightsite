@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ENABLED_TEMPLATE_IDS } from "@/features/setup/constants";
 import { buildConfigPatch, draftFromConfig } from "@/features/setup/lib/draft";
-import { defaultFlightSiteConfig } from "@/test/configApiMock";
+import {
+  defaultEnrichmentConfig,
+  defaultFlightSiteConfig,
+} from "@/test/configApiMock";
 
 describe("draftFromConfig", () => {
   it("carries every server value into its corresponding draft field", () => {
@@ -74,7 +77,10 @@ describe("draftFromConfig", () => {
     const draft = draftFromConfig({
       first_run: false,
       config: defaultFlightSiteConfig({
-        enrichment: { aerodatabox_enabled: true, aerodatabox_api_key: "•••" },
+        enrichment: defaultEnrichmentConfig({
+          aerodatabox_enabled: true,
+          aerodatabox_api_key: "•••",
+        }),
       }),
       secrets_set: { "enrichment.aerodatabox_api_key": true },
     });
