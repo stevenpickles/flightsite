@@ -114,7 +114,9 @@ v1.0.0 may be proposed only when **all** of the following hold:
 - [ ] Upgrade path works
 - [ ] Demo mode works
 - [ ] Live readsb/dump1090-fa ingestion is validated
-- [ ] No known critical/high-severity product bugs remain
+- [ ] No known critical/high-severity product bugs remain — the query
+      `gh issue list --state open --search 'label:severity:critical,severity:high label:bug'`
+      returns nothing (label definitions: `docs/DEVELOPMENT.md`, GitHub Issues)
 - [ ] Architecture documentation matches reality
 - [ ] API documentation matches reality
 - [ ] Deployment documentation matches reality

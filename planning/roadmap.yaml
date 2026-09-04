@@ -30,7 +30,7 @@
 #   - Documentation relevant to the slice is updated within the slice.
 
 version: 2  # v2: Phase 0 review-gate corrections (dependency completions, 009 split into 009/052/053, packed track storage, numeric perf criteria, licensing register)
-updated: "2026-08-31"
+updated: "2026-09-04"
 
 phases:
   - number: 0
@@ -1809,6 +1809,40 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner-reported at v0.3.1: the chip had been disabled since slice 017, when no metadata system existed; slices 022-025 landed one and nobody lifted the gate. Fixes GitHub issue #151. Frontend-only. Added by Fable outside the phase plan."
+
+  - id: "067"
+    title: "Open-issue severity triage"
+    phase: 8
+    branch: "067-issue-triage"
+    status: merged
+    depends_on: ["066"]
+    objective: "Triage every open GitHub issue against the current dev tree, close the ones merged slices already fixed, label the rest by severity so SPEC §114's 'no known critical/high-severity product bugs' gate becomes a label query instead of a judgement call, and record that the owner's runtime environment is now a Raspberry Pi 5 with an SSD (issue #157)."
+    scope:
+      - "a severity label set (`severity:critical`, `severity:high`, `severity:medium`, `severity:low`) with definitions in docs/DEVELOPMENT.md's GitHub Issues section, plus `release-gate` for items that block the SPEC §114 definition of done regardless of severity and `decision` for items that need an owner or ADR decision rather than code"
+      - "every open issue re-verified against the code on dev before labeling: issues that merged slices already resolved but whose PRs carried no closing keyword (#91 via slice 038, #101 via slice 060, #111 via slice 055, #107/#115/#116/#117/#121 via slice 058) are closed with a comment naming the fixing PR; the partially resolved #112 gets a comment saying which items remain"
+      - "each remaining open issue gets exactly one severity label, a type label (bug / enhancement / documentation), `release-gate` and/or `decision` where they apply, and a triage comment with the rationale and the on-dev verification"
+      - "docs/RELEASE.md's §114 checklist item for critical/high bugs names the label query that answers it"
+      - "the roadmap records that the owner's runtime environment is now a Raspberry Pi 5 with an SSD (the hardware of the §5.5 baseline), so the pending Pi 4 SSD run (#153) and SPEC §5/§114's Pi 4 wording are an explicit owner decision rather than an assumed next step"
+      - "docs/ROADMAP.md's release-checkpoints table re-synced with the releases roadmap.yaml actually records (SPEC §92)"
+    out_of_scope:
+      - "fixing any triaged issue; each fix is its own slice or bundle slice"
+      - "amending SPEC.md §5 or §114 for the Pi 5 environment: the SPEC is the owner's verbatim contract, so this slice asks the question on #153 and does not answer it"
+      - "GitHub Projects, milestones, or label automation"
+    acceptance_criteria:
+      - "no open issue lacks a severity label"
+      - "no open issue describes a defect that dev already fixes"
+      - "the label definitions are documented and the release checklist points at the query that answers the §114 bug gate"
+      - "docs/ROADMAP.md agrees with roadmap.yaml on slices and on recorded releases"
+    required_tests:
+      - none — documentation and issue-tracker changes only; the existing suites stay green
+    expected_artifacts:
+      - planning/roadmap.yaml
+      - docs/ROADMAP.md
+      - docs/DEVELOPMENT.md
+      - docs/RELEASE.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "First slice after v0.3.2, opened because every phase-plan slice is merged and the road to v1.0.0 runs through SPEC §114, whose bug gate needs a severity vocabulary to be answerable. Triage outcome on 2026-09-04: 20 open issues, 8 closed as already fixed, 12 labeled; none critical, one high (#153, a release-gate decision, not a defect), five medium (#104, #105, #114, #129, #145), six low. Owner statement recorded the same day: the production runtime is now a Raspberry Pi 5 with an SSD. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
