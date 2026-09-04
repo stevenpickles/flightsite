@@ -116,6 +116,7 @@ backlog:
   - automatic self-updater
   - additional decoder adapters (BeastAdapter, SbsAdapter, RemoteReceiverAdapter)
   - scheduled (automatic) aircraft metadata updates
+  - packed-track on-disk layout revisit (rowid for sighting_tracks and/or page_size 16384, with a migration path for existing databases and a re-run of the PERFORMANCE.md §7 qualification) — deferred by ADR-0014, revisit triggers listed there
 
 slices:
   # ---------------------------------------------------------------- Phase 1
@@ -1843,6 +1844,60 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "First slice after v0.3.2, opened because every phase-plan slice is merged and the road to v1.0.0 runs through SPEC §114, whose bug gate needs a severity vocabulary to be answerable. Triage outcome on 2026-09-04: 20 open issues, 8 closed as already fixed, 12 labeled; none critical, one high (#153, a release-gate decision, not a defect), five medium (#104, #105, #114, #129, #145), six low. Owner statement recorded the same day: the production runtime is now a Raspberry Pi 5 with an SSD. Added by Fable outside the phase plan."
+
+  - id: "068"
+    title: "Medium-severity fix bundle"
+    phase: 8
+    branch: "068-medium-fixes"
+    status: merged
+    depends_on: ["040", "056", "061", "064", "067"]
+    objective: "Clear the five issues slice 067 triaged as severity:medium in one branch, one single-concern commit each, and settle the three of them that were waiting on a decision (issues #104, #105, #114, #129, #145; tracking issue #159)."
+    scope:
+      - "#129: `ReceiverMetricsService` gains an attach-and-start path for a `StatsJsonPoller` on an already-running service, and the config save that ends the first-run state (slice 056's hot-start) attaches one, so decoder `stats.json` columns fill without a backend restart; `docs/CONFIGURATION.md`'s two `alerts.enabled_templates` rows stop saying templates instantiate only at startup (slice 055 made config save instantiate them)"
+      - "#145 F3: live track points are dated with the same fix-time anchor the marker uses (`positionChangedAt`, slice 064) instead of arrival time, so the trail head and the marker share one clock and a slice-061 backfill splices onto like-dated points"
+      - "#145 F4: a position-bearing update that omits `seen_pos_s` no longer inherits the previous record's value in `live/aircraft.py`; a stale age is never attached to a new fix"
+      - "#104 (decision: keep the marker, give it a write path): a new internal endpoint marks an alert match as notified, idempotently; the browser-notification dispatch calls it once a `Notification` has actually been shown, so the Alerts page's 'Notified' marker reports delivery instead of a constant default; the alert activity events carry the match id the client needs"
+      - "#105 (decision: hoist, per SPEC §48's 'while FlightSite is open in the browser'): ADR-0015 moves ownership of the live WebSocket from the Live Map's `AircraftLayer` to the app shell, so alert notifications and the live activity tail are delivered on every FlightSite route; the map-specific teardown (density latch, selection) stays with the map, the stores are reset on socket loss rather than on route change, and the memory a long-lived non-map tab can accumulate stays bounded; `docs/PRODUCT.md` §4.8 and the activity store's ownership note tell the new truth"
+      - "#114 (decision: accept the measured cost for v1, document it): ADR-0014 records slice 050's measurement — `sighting_tracks` at ~2.9 KB/row, 2.2× ADR-0005's estimate, 86 % of the file — accepts it for v1, corrects `docs/DATA_MODEL.md` §9's growth prediction and any retention guidance derived from it, and records the page-size and rowid-table remedies with their measured numbers as a backlog item rather than a v1 change"
+    out_of_scope:
+      - "any storage-layout change for tracks (page size, rowid table): ADR-0014 defers it with numbers, a later slice implements it if the owner wants it"
+      - "server-side push while no FlightSite tab is open (SPEC §48 scopes v1 to an open browser)"
+      - "the low-severity follow-ups (#96, #98, #100, #112, #138, #147) and the #153 decision"
+      - "changing the WebSocket protocol or adding a subscription scope; the shell opens the same socket the map did"
+    acceptance_criteria:
+      - "completing the setup wizard on a fresh install populates decoder statistics columns within one poll interval, with no restart, and demo mode and already-configured installs are unchanged"
+      - "on a selected aircraft the newest live track point carries the marker's fix time, not its arrival time; a backfilled history merges with no dating seam"
+      - "an update carrying a position but no `seen_pos_s` yields a record whose `seen_pos_s` is `None`, never the previous record's value"
+      - "after a browser notification is shown for a match, `GET /api/v1/alerts/matches` reports it `notified: true`; a match that was never shown stays `false`; marking twice is a no-op"
+      - "with a tab on /analytics (or any non-map route) an alert match raises a browser notification and appears in the activity tail on returning to the map; the connection-status chip on the map still reflects the shared socket"
+      - "ADR-0014 and ADR-0015 are accepted and indexed in docs/adr/README.md; DATA_MODEL §9's growth figures agree with PERFORMANCE §7.7's measurements"
+      - "`Closes #104`, `#105`, `#114`, `#129`, `#145` in the PR body so slice 067's label query stays truthful"
+    required_tests:
+      - receiver-metrics service tests for attach-on-running (poller starts, stats arrive) and attach-before-start, plus a config-save path test that the hot-start attaches a poller
+      - live-store tests pinning track-point dating to the fix anchor and the backfill merge across the seam
+      - aircraft record test for the no-inherit rule on seen_pos_s, alongside the existing inherit-when-no-position case
+      - internal endpoint tests (mark, idempotent re-mark, unknown id) and a dispatch test that the client marks only after a shown notification
+      - shell-level connection tests (socket opens once per app, survives route changes, resets on loss) and a notification-on-non-map-route test
+      - documentation consistency checks that already exist stay green
+    expected_artifacts:
+      - backend/src/flightsite/receiver_metrics/service.py
+      - backend/src/flightsite/api/ingestion.py
+      - backend/src/flightsite/live/aircraft.py
+      - backend/src/flightsite/alerts/
+      - backend/src/flightsite/api/internal.py
+      - frontend/src/features/map/aircraft/store/useLiveAircraftStore.ts
+      - frontend/src/features/map/aircraft/useLiveConnection.ts
+      - frontend/src/components/shell/RootLayout.tsx
+      - frontend/src/features/notifications/lib/dispatch.ts
+      - docs/adr/0014-track-storage-cost.md
+      - docs/adr/0015-app-shell-live-socket.md
+      - docs/DATA_MODEL.md
+      - docs/PRODUCT.md
+      - docs/CONFIGURATION.md
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Bundle slice for the five severity:medium issues from slice 067's triage. The three decision items are settled here by Fable, each the option that makes a shipped surface tell the truth at the least structural cost: #104 keeps the marker and writes it, #105 follows SPEC §48's wording over PRODUCT.md's narrower gloss, #114 documents the measured cost and defers the remedy. One commit per issue. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

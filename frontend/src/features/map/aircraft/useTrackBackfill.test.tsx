@@ -208,7 +208,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -222,7 +222,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     await waitFor(() => {
       expect(points()).toHaveLength(3);
@@ -248,7 +248,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -264,7 +264,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -281,7 +281,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -308,7 +308,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -337,10 +337,10 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+      useLiveAircraftStore.getState().selectAircraft(null);
     });
 
     await act(async () => {
@@ -366,10 +366,10 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("bbbbbb", T0 + 10);
+      useLiveAircraftStore.getState().selectAircraft("bbbbbb");
     });
 
     await act(async () => {
@@ -379,7 +379,9 @@ describe("useTrackBackfill", () => {
 
     expect(useLiveAircraftStore.getState().track).toEqual({
       icao: "bbbbbb",
-      points: [{ lat: 10, lon: 10, at: T0 + 10 }],
+      // The snapshot landed at T0 and the fixture reports a 0.6 s fix age,
+      // so the seed point is dated by the fix, not by the click at T0 + 10.
+      points: [{ lat: 10, lon: 10, at: T0 - 600 }],
     });
   });
 
@@ -391,7 +393,7 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     await waitFor(() => {
       expect(points()).toHaveLength(3);
@@ -399,10 +401,10 @@ describe("useTrackBackfill", () => {
     const afterFirst = fetchMock.mock.calls.length;
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+      useLiveAircraftStore.getState().selectAircraft(null);
     });
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0 + 20);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {
@@ -441,17 +443,17 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     await waitFor(() => {
       expect(points()).toHaveLength(3);
     });
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+      useLiveAircraftStore.getState().selectAircraft(null);
     });
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0 + 20);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     // Sighting N's two points are replaced by N+1's single one, over the live
@@ -469,17 +471,17 @@ describe("useTrackBackfill", () => {
     mount();
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     await waitFor(() => {
       expect(points()).toHaveLength(3);
     });
 
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft(null, T0 + 10);
+      useLiveAircraftStore.getState().selectAircraft(null);
     });
     act(() => {
-      useLiveAircraftStore.getState().selectAircraft("aaaaaa", T0 + 20);
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
 
     await waitFor(() => {

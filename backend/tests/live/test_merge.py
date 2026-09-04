@@ -73,6 +73,55 @@ def test_a_position_survives_an_update_that_carries_none() -> None:
     assert merged.position_age_s(5.0) == 5.0
 
 
+def test_a_position_age_survives_an_update_that_carries_no_position() -> None:
+    # The sticky rule applies: the record's position has not changed, so the
+    # last age the decoder reported for it is still the age of the fix on file.
+    current = first(position=AIRBORNE_POSITION, seen_pos_s=30.0)
+
+    merged, _ = merge(
+        current, make_update(offset_s=5.0), now=5.0, stale_s=DEFAULT_STALE_S, receiver=SEATTLE
+    )
+
+    assert merged.seen_pos_s == 30.0
+
+
+def test_a_new_position_does_not_inherit_the_previous_positions_age() -> None:
+    # seen_pos_s is the age of *a* position. Carrying 30 s forward onto a fix
+    # the decoder has just reported would publish an age measured against the
+    # fix before it — always too large, and clients back-date by it, so the
+    # aircraft would be drawn behind where it was just placed. Unknown is the
+    # honest answer, and consumers already handle it.
+    current = first(position=AIRBORNE_POSITION, seen_pos_s=30.0)
+
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, position=Position(latitude=49.1, longitude=-121.0)),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=SEATTLE,
+    )
+
+    assert merged.position == Position(latitude=49.1, longitude=-121.0)
+    assert merged.seen_pos_s is None
+    # And the record's own dating agrees: with no reported lag the position is
+    # dated with the update rather than 30 s behind it.
+    assert merged.position_seen == merged.last_seen
+
+
+def test_a_reported_position_age_is_used_whenever_one_is_given() -> None:
+    current = first(position=AIRBORNE_POSITION, seen_pos_s=30.0)
+
+    merged, _ = merge(
+        current,
+        make_update(offset_s=1.0, position=AIRBORNE_POSITION, seen_pos_s=2.0),
+        now=1.0,
+        stale_s=DEFAULT_STALE_S,
+        receiver=SEATTLE,
+    )
+
+    assert merged.seen_pos_s == 2.0
+
+
 def test_a_callsign_change_is_reported_as_a_changed_field() -> None:
     current = first(callsign="RCH492")
 

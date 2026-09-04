@@ -399,6 +399,78 @@ async def test_recording_nothing_writes_nothing(repository: AlertRepository) -> 
     assert await repository.record_matches([]) == ()
 
 
+# ------------------------------------------------------------ delivery state
+
+
+async def test_marking_a_match_notified_shows_in_the_history(
+    repository: AlertRepository, sighting: tuple[int, int]
+) -> None:
+    """Issue #104: the column had no write path, so the Alerts page's
+    "Notified" marker could only ever say ``false``."""
+    (match_id,) = await repository.record_matches(
+        [match(sighting, builtin_key="emergency_7700", severity=AlertSeverity.CRITICAL)]
+    )
+    assert match_id is not None
+
+    assert await repository.mark_notified(match_id) is True
+
+    (stored,) = await repository.list_matches(limit=10, offset=0)
+    assert stored.notified is True
+
+
+async def test_marking_a_match_notified_twice_is_a_no_op(
+    repository: AlertRepository, sighting: tuple[int, int]
+) -> None:
+    """Two tabs open on one receiver both deliver the same match and both
+    report it. The second says nothing new, and must not fail for saying it."""
+    (match_id,) = await repository.record_matches(
+        [match(sighting, builtin_key="emergency_7700", severity=AlertSeverity.CRITICAL)]
+    )
+    assert match_id is not None
+    await repository.mark_notified(match_id)
+
+    assert await repository.mark_notified(match_id) is True
+
+    (stored,) = await repository.list_matches(limit=10, offset=0)
+    assert stored.notified is True
+
+
+async def test_marking_an_unknown_match_reports_that_it_does_not_exist(
+    repository: AlertRepository,
+) -> None:
+    """The one distinction the caller acts on: a ``404`` rather than a no-op
+    success. Nothing is written either way."""
+    assert await repository.mark_notified(4_242) is False
+    assert await repository.list_matches(limit=10, offset=0) == ()
+
+
+async def test_marking_one_match_leaves_the_others_alone(
+    repository: AlertRepository, database: Database, sighting: tuple[int, int]
+) -> None:
+    async with database.writer_session() as session:
+        await session.execute(
+            text("INSERT INTO sightings (id, aircraft_id, started_ms) VALUES (11, 1, :now)"),
+            {"now": NOW_MS},
+        )
+    first, second = await repository.record_matches(
+        [
+            match(sighting, builtin_key="emergency_7700", severity=AlertSeverity.CRITICAL),
+            match(
+                sighting,
+                builtin_key="emergency_7700",
+                severity=AlertSeverity.CRITICAL,
+                sighting_id=11,
+            ),
+        ]
+    )
+    assert first is not None and second is not None
+
+    await repository.mark_notified(first)
+
+    stored = {row.id: row.notified for row in await repository.list_matches(limit=10, offset=0)}
+    assert stored == {first: True, second: False}
+
+
 # ------------------------------------------------------------- open sightings
 
 

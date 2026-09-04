@@ -42,9 +42,19 @@ had no alert rules until the backend was restarted (issue #110).
 Slice 056 adds the other half of that same first-run story to the same step:
 the save that ends the first-run state now starts decoder ingestion and anchors
 the live store at the saved location, so a user who finishes the setup wizard
-sees aircraft without restarting the backend (issue #122). Endpoint *changes*
-on an already-running adapter remain restart-required — see
+sees aircraft without restarting the backend (issue #122). Slice 068 completes
+that entry: the same save also hands the receiver-metrics service the
+``stats.json`` poller it was built without, so the decoder-supplied metric
+columns stop being ``NULL`` too (issue #129). Endpoint *changes* on an
+already-running adapter remain restart-required — see
 :mod:`flightsite.api.ingestion` for where that line is drawn and why.
+
+Issue #104 adds the write path for ``alert_matches.notified``, again as its own
+mounted router (:mod:`flightsite.api.alert_matches`). The column shipped with
+slice 040's migration and nothing ever set it, so the Alerts page rendered a
+"Notified" marker that could only say ``false``. It is written by the client
+that showed the browser notification, never by the server on broadcast — that
+module says why.
 """
 
 from __future__ import annotations
@@ -58,8 +68,13 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from pydantic import ValidationError
 
 from flightsite.alerts import AlertService
+from flightsite.api.alert_matches import router as alert_matches_router
 from flightsite.api.alert_rules import router as alert_rules_router
-from flightsite.api.ingestion import ingestion_startable, start_decoder_ingestion
+from flightsite.api.ingestion import (
+    attach_stats_poller,
+    ingestion_startable,
+    start_decoder_ingestion,
+)
 from flightsite.api.serializers import iso_utc
 from flightsite.config import ConfigError, ConfigStore, ReceiverSettings, Settings
 from flightsite.db import from_epoch_ms, utc_now_ms
@@ -84,6 +99,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 router.include_router(alert_rules_router)  # slice 038 — see the module docstring
+router.include_router(alert_matches_router)  # issue #104 — see the module docstring
 
 
 def _config_response(store: ConfigStore, settings: Settings) -> dict[str, Any]:
@@ -249,15 +265,28 @@ def _apply_receiver_location(app: FastAPI, settings: Settings) -> None:
 
 
 async def _apply_ingestion_start(app: FastAPI) -> None:
-    """Start decoder ingestion if this save is what made it possible (issue #122).
+    """Start decoder polling if this save is what made it possible (#122, #129).
+
+    Two things poll the decoder and a first-run install builds both of them
+    empty: the ingestion service that fills the live map, and the
+    receiver-metrics service's ``stats.json`` poller that fills the
+    decoder-supplied half of the receiver scorecard. Slice 056 hot-started the
+    first; the second stayed absent for the life of the process, so a fresh
+    install's decoder metric columns were ``NULL`` until the backend was
+    restarted (issue #129).
 
     Hot-*start* only, and :func:`~flightsite.api.ingestion.ingestion_startable`
     is what keeps it that way: nothing → running, never a second service beside
     a running one and never a reconfiguration of one. See
-    :mod:`flightsite.api.ingestion` for why that line is drawn there.
+    :mod:`flightsite.api.ingestion` for why that line is drawn there. Its three
+    conditions govern both halves, because both are built together under
+    exactly those conditions at boot — and the metrics half declines a second
+    time anyway, keeping the poller it already has.
 
-    A failure leaves ``app.state.ingestion`` unassigned rather than poisoned,
-    so a later save simply tries again.
+    The halves are isolated from each other as well as from the save: a failure
+    in one is logged and leaves the other to run. A failed ingestion start
+    leaves ``app.state.ingestion`` unassigned rather than poisoned, so a later
+    save simply tries again.
     """
     if not ingestion_startable(app):
         return
@@ -265,6 +294,10 @@ async def _apply_ingestion_start(app: FastAPI) -> None:
         await start_decoder_ingestion(app)
     except Exception as exc:
         _apply_failed("receiver", exc, action="start_ingestion")
+    try:
+        await attach_stats_poller(app)
+    except Exception as exc:
+        _apply_failed("receiver", exc, action="attach_stats_poller")
 
 
 @router.post("/decoder/test")

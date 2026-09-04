@@ -8,14 +8,19 @@
  * honest — TanStack Query owns the fetched page and its cache, and this owns a
  * stream that has no cache and no replay.
  *
- * **Where the socket actually is.** Only `features/map/aircraft/AircraftLayer`
- * mounts `useLiveConnection`, so events flow into this store only while the
- * Live Map is mounted. That is intentional and not an oversight to be "fixed"
- * by hoisting socket ownership: the standalone `/activity` route reads the
- * same events from `GET /api/v1/activity`, where they are already durable, and
- * opening a second live socket for a page that renders history would cost a
- * connection to deliver rows the REST call already returned. `lib/api/receiver.ts`
- * documents the same division for `ReceiverInfo`.
+ * **Where the socket actually is.** `components/shell/AppShell` mounts
+ * `features/live/useLiveConnection`, so events flow into this store on every
+ * route inside the app chrome — one socket for the tab, not one per page. It
+ * was owned by `features/map/aircraft/AircraftLayer` until ADR-0015: that made
+ * this store a Live-Map-only stream, which was defensible for the *feed* (the
+ * standalone `/activity` route reads the same events from
+ * `GET /api/v1/activity`, where they are already durable) but not for the
+ * notifications carried on the same frames, which SPEC §48 wants delivered
+ * while any FlightSite tab is open — issue #105.
+ *
+ * The REST half of the division is unchanged: this store is the tail since the
+ * current connection opened, history comes from the API, and the panel merges
+ * them ({@link mergeActivityEvents}).
  *
  * Written once per frame through `getState()`, like the live aircraft store,
  * so the socket never causes a render of its own for a component that is not
@@ -30,7 +35,7 @@ import type { ActivityEvent } from "@/lib/api/activity";
  * How many live events are kept.
  *
  * The panel shows a handful and the standalone page pages through the REST
- * history, so this only has to be deep enough that a user who leaves the map
+ * history, so this only has to be deep enough that a user who leaves a tab
  * open for an afternoon can scroll the panel back over what they missed. A
  * hundred is a few hours of a busy receiver at the rate these events actually
  * fire (a few an hour once a receiver is past its first days), and it bounds
@@ -55,8 +60,16 @@ export interface ActivityFeedState {
    * prepended reversed to keep this list newest-first.
    */
   addEvents: (events: readonly ActivityEvent[]) => void;
-  /** Returns the store to its initial state — used when the socket is torn
-   * down, so a remount never shows a stream from a dead connection. */
+  /**
+   * Returns the store to its initial state — on connection loss, and on the
+   * shell's own teardown (ADR-0015).
+   *
+   * Loss and not a route change: these frames have no replay (`docs/API.md`
+   * §4.4), so nothing can fill the gap an outage leaves. Keeping the
+   * pre-outage tail beside whatever arrives after the reconnect would read as
+   * one continuous list with a silent hole in it; dropping it hands the panel
+   * back to `GET /api/v1/activity`, which is where the durable answer lives.
+   */
   reset: () => void;
 }
 

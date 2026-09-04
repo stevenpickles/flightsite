@@ -18,6 +18,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
+import { apiFetch } from "@/lib/api/client";
 import type { AlertSeverity } from "@/lib/api/sightings";
 
 /** The rule an alert match names. `null` on the match itself for a built-in
@@ -41,7 +42,15 @@ export interface AlertMatch {
   /** `null` for a rule match; a built-in detector's key (e.g.
    * `"emergency_7700"`) otherwise. */
   builtin_key: string | null;
-  /** Whether a browser notification has been delivered for this match. */
+  /**
+   * Whether at least one FlightSite client actually showed a browser
+   * `Notification` for this match.
+   *
+   * Not "the backend broadcast it": permission may be denied, the severity
+   * may be muted, the tab may already have shown that event. The client that
+   * constructed the notification is the only party that knows, so it is the
+   * one that asserts it — see {@link markAlertMatchNotified}.
+   */
   notified: boolean;
 }
 
@@ -116,6 +125,28 @@ export function getAlertMatches(
   return apiV1Fetch<AlertMatchListResponse>(
     `/api/v1/alerts/matches?${query(params)}`,
   );
+}
+
+/**
+ * Records that a browser notification was actually shown for one match —
+ * `POST /api/internal/alerts/matches/{id}/notified` (docs/API.md §5, issue
+ * #104).
+ *
+ * The one write on this module, and the one call that reaches the *internal*
+ * surface rather than `/api/v1`, which is why it goes through `apiFetch`
+ * (`lib/api/client.ts`) instead of the read helper above: the two surfaces
+ * shape their errors differently (§2.5's envelope versus FastAPI's `detail`),
+ * and each is parsed by the helper written for it.
+ *
+ * Empty body on purpose: the assertion *is* the request, and there is no value
+ * a caller could set. Resolves for a repeat too — the endpoint is idempotent,
+ * because "someone was notified" does not become more true the second time two
+ * tabs both say it.
+ */
+export function markAlertMatchNotified(matchId: number): Promise<void> {
+  return apiFetch<void>(`/api/internal/alerts/matches/${matchId}/notified`, {
+    method: "POST",
+  });
 }
 
 export const alertMatchesQueryKeys = {

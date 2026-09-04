@@ -300,6 +300,46 @@ class ReceiverMetricsService:
 
     # ------------------------------------------------------------- lifecycle
 
+    async def attach_poller(self, poller: StatsJsonPoller) -> None:
+        """Give a service built without a decoder the poller it can now use.
+
+        The first-run case, and only it (issue #129). The service is
+        constructed before the install has a receiver, so it is built with
+        ``poller=None`` and records every FlightSite-computed metric with the
+        decoder columns ``NULL``. The save that ends the first-run state is the
+        moment a decoder exists — and until this method existed there was no
+        way to tell an already-running service so, which left the
+        decoder-supplied columns ``NULL`` until the backend was restarted. It
+        is the metrics half of the hot-start
+        :mod:`flightsite.api.ingestion` performs for the aircraft stream.
+
+        A service that already has a poller **keeps it**: this logs and
+        returns, rather than replacing it. Replacing would mean stopping an
+        in-flight poll and discarding the availability state and latest reading
+        that belong to the old endpoint, and changing the endpoint of a running
+        poller is restart-required for exactly the same reason it is for the
+        ingestion adapter.
+
+        Before :meth:`start`, the poller is simply held and started there. On a
+        running service it is opened here, because the sampling loop is already
+        ticking and the next tick must find an open client. Either way
+        :meth:`stop` closes it. A failure to open propagates to the caller and
+        leaves nothing half-attached: :meth:`StatsJsonPoller.poll` opens the
+        client itself if it is still closed, so the next sample recovers.
+        """
+        if self._poller is not None:
+            logger.info("receiver_stats_poller_already_attached", url=self._poller.url)
+            return
+        self._poller = poller
+        # A poller that has never been asked has told us nothing: no
+        # availability verdict, no reading. Stated rather than assumed, so the
+        # bookkeeping cannot outlive the poller it describes.
+        self._stats_supported = None
+        self._latest_stats = None
+        if self.running:
+            await poller.start()
+        logger.info("receiver_stats_poller_attached", url=poller.url, running=self.running)
+
     async def start(self) -> None:
         """Start sampling and maintenance. Idempotent.
 

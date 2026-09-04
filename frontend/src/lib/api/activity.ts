@@ -62,6 +62,15 @@ export type ReceiverRecordKind =
  * type stops at `Record<string, unknown>` and does not attempt a
  * discriminated union it would have to widen every time a producer learns to
  * say something more.
+ *
+ * One payload member is worth naming here because it is an *identifier*
+ * rather than something to render: `alert_triggered` and `emergency_squawk`
+ * carry `match_id`, the `alert_matches` row the event is about (docs/API.md
+ * §3.10). `features/notifications/lib/compose.ts` reads it out, and
+ * `dispatch.ts` posts it back to
+ * `POST /api/internal/alerts/matches/{id}/notified` once a browser
+ * notification has actually been shown. Like every other member it degrades:
+ * an event from an older backend simply has no such key.
  */
 export interface ActivityEvent {
   id: number;

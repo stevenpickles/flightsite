@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
+import { useLiveConnection } from "@/features/live/useLiveConnection";
 import {
   AIRCRAFT_SOURCE_ID,
   AIRCRAFT_SYMBOL_LAYER_ID,
@@ -47,6 +49,18 @@ import { getLastWebSocket, resetWebSocketMock } from "@/test/webSocketMock";
 // The `maplibre-gl` and `WebSocket` mocks are registered globally in
 // src/test/setup.ts (jsdom has neither a WebGL context nor a socket server).
 
+/**
+ * Stands in for the app shell, which owns the live socket since ADR-0015 —
+ * reduced to the one hook these tests need above the page, so they can keep
+ * driving real protocol frames into it. That the *shell* is what mounts this,
+ * and what it means for navigation, is asserted in
+ * `components/shell/AppShell.test.tsx`; here it is scaffolding.
+ */
+function LiveConnectionHost({ children }: { children: ReactNode }) {
+  useLiveConnection();
+  return <>{children}</>;
+}
+
 /** `LiveMapPage` uses `react-router`'s `useSearchParams` for filter URL sync
  * (`features/filters/hooks/useFilterUrlSync`), so every render needs a
  * router in the tree — a plain `MemoryRouter` here, distinct from
@@ -62,7 +76,9 @@ function renderPage(initialPath = "/") {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialPath]}>
-        <LiveMapPage />
+        <LiveConnectionHost>
+          <LiveMapPage />
+        </LiveConnectionHost>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -137,11 +153,6 @@ describe("LiveMapPage", () => {
     expect(
       screen.getByRole("radiogroup", { name: /basemap/i }),
     ).toBeInTheDocument();
-  });
-
-  it("opens the live socket against the documented path", () => {
-    renderPage();
-    expect(getLastWebSocket().url).toMatch(/\/api\/v1\/ws\/live$/);
   });
 
   it("attaches the aircraft layers once the style has loaded", async () => {
@@ -439,21 +450,10 @@ describe("LiveMapPage", () => {
     expect(map.images.size).toBeGreaterThan(0);
   });
 
-  it("closes the socket and clears the picture on unmount", async () => {
-    const { unmount } = renderPage();
-    const socket = getLastWebSocket();
-    await act(async () => {
-      socket.emitFrame(snapshotFrame(1, [makeAircraft()]));
-    });
-    expect(Object.keys(useLiveAircraftStore.getState().aircraft)).toHaveLength(
-      1,
-    );
-
-    unmount();
-
-    expect(socket.closed).toBe(true);
-    expect(useLiveAircraftStore.getState().aircraft).toEqual({});
-  });
+  // Socket ownership moved to the app shell in ADR-0015, so "opens the socket
+  // on the documented path" and "closes it on teardown" are asserted in
+  // `components/shell/AppShell.test.tsx` and `features/live/`, and what the
+  // *map* tears down on unmount in `features/map/aircraft/AircraftLayer.test.tsx`.
 });
 
 describe("aviation overlays (roadmap slice 028)", () => {

@@ -1329,8 +1329,13 @@ class AlertMatch(Base):
     the allowed "a newly matched higher-priority condition may notify again"
     path: two different keys are two different rows, not one rule firing twice.
 
-    ``notified`` is delivery state for the browser notifications of slice 040;
-    this slice writes every row with the default and never reads it back.
+    ``notified`` is delivery state for the browser notifications of slice 040:
+    true once at least one FlightSite client has actually shown a browser
+    ``Notification`` for this match. It is written by that client, through
+    ``POST /api/internal/alerts/matches/{id}/notified`` (issue #104), and never
+    by the server on broadcast — putting a frame on a socket is not the same
+    fact. Rows are inserted with the default; the transition only ever runs
+    ``0`` → ``1``.
     """
 
     __tablename__ = "alert_matches"

@@ -1,7 +1,9 @@
 # ADR-0005: Track checkpointing, simplification, and packed storage at sighting close
 
 **Status:** Accepted (2026-08-31; revised at the Phase 0 review gate — packed
-row-per-sighting storage promoted from contingency to the v1 design)
+row-per-sighting storage promoted from contingency to the v1 design). The
+per-row storage figure below is **superseded in part by
+[ADR-0014](0014-track-storage-cost.md)** (2026-09-04).
 
 ## Context
 
@@ -40,9 +42,16 @@ for Pi-class storage — while a packed per-sighting encoding keeps the same dat
 
 ## Consequences
 
-- Per-sighting track storage is **~1–2 KB** in a single clustered row — roughly 20×
-  smaller than row-per-point storage of the same simplified track — which is what
-  makes multi-year retention feasible at the SPEC §5 envelope (see DATA_MODEL §9).
+- Per-sighting track storage is **~1–2 KB of packed payload** in a single clustered
+  row — roughly 20× smaller than row-per-point storage of the same simplified track —
+  which is what makes multi-year retention feasible at the SPEC §5 envelope (see
+  DATA_MODEL §9). **Amendment (slice 068, [ADR-0014](0014-track-storage-cost.md)):**
+  that is the payload, not the cost on disk. Because this table is `WITHOUT ROWID`,
+  its inline payload limit is 1002 bytes at SQLite's default 4096-byte page size, so
+  54.5% of tracks spill a whole 4 KiB overflow page and slice 050 measured
+  **2,868 B/row** — about 2.2× this figure, and 86% of a three-year database.
+  ADR-0014 accepts that cost for v1 and defers the layout remedy; the packed encoding
+  and the 20× improvement over row-per-point storage are unaffected.
 - Simplification error is bounded and tested; extreme maneuvering keeps more points
   by construction of Douglas-Peucker. `encoding_version` makes format evolution an
   additive migration.

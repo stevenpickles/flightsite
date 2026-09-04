@@ -944,7 +944,10 @@ class AlertMatchView(_Model):
     rule: AlertMatchRuleRef | None = None
     #: ``null`` for a rule match; a built-in detector's key otherwise.
     builtin_key: str | None = None
-    #: Whether a browser notification has been delivered (slice 040 owns it).
+    #: Whether at least one FlightSite client actually showed a browser
+    #: notification for this match. Asserted by that client after the
+    #: ``Notification`` was constructed (issue #104), never by the server on
+    #: broadcast.
     notified: bool = False
 
 

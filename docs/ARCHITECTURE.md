@@ -241,12 +241,19 @@ assumption ([ADR-0010](adr/0010-no-auth-trusted-lan.md), `docs/SECURITY.md`).
 
 Vite + React 18 + TypeScript (strict), Tailwind CSS + shadcn/ui + Lucide, feature-folder
 layout under `frontend/src/features/` (map, aircraft-detail, filters, setup, settings,
-analytics, receiver, activity, interesting, alerts, watchlists, health, …).
+analytics, receiver, activity, live, interesting, alerts, watchlists, health, …).
 
 State model:
 
 - **Live data**: a WebSocket client (reconnect + backoff, snapshot-then-delta) feeds a
-  Zustand live store. Map layers and live panels subscribe to it. Position
+  Zustand live store. The connection is opened once by the **app shell**, not by the
+  map, so it spans every route and a tab parked on Analytics still receives alert
+  notifications and live activity events (SPEC §48,
+  [ADR-0015](adr/0015-app-shell-live-socket.md)); the setup wizard renders outside
+  the shell and opens none. Socket-owned state (the live picture, the activity tail)
+  is dropped when the *connection* is lost; map-owned state (selection, track,
+  label-density latch) is dropped when the map unmounts. Map layers and live panels
+  subscribe to the store. Position
   interpolation happens client-side, between successive position *fixes* rather
   than between 1 Hz frames: frames arrive every second, but a distant aircraft
   decodes a new position only every 2-10 s, and the store dates the two

@@ -79,7 +79,9 @@ docker compose restart flightsite-backend
 
 `display_radius_nm`, `map.*`, `notifications.*`, and `units` / `timezone` as far as
 the browser's own rendering is concerned. Alert **rules** and **watchlists** edited on
-the Alerts page also apply immediately — the engine reloads them on every change.
+the Alerts page also apply immediately — the engine reloads them on every change. So
+does ticking a new template under `alerts.enabled_templates`: the save instantiates it
+into a live rule (see the note below for what that does *not* do).
 
 ### Needs a restart
 
@@ -93,7 +95,6 @@ the Alerts page also apply immediately — the engine reloads them on every chan
 | `log_level`, `log_file_enabled` | Logging is configured before the app is built |
 | `enrichment.*` | The enrichment provider is built once at startup |
 | `metadata.opensky_enabled` | The metadata source registry is built once at startup |
-| `alerts.enabled_templates` | Shipped templates are instantiated at startup |
 
 The Settings UI marks the Decoder and Receiver sections **"Applies on next
 restart"**. The other rows above are not badged in the UI — when in doubt, restart; it
@@ -101,7 +102,8 @@ costs a few seconds and loses nothing.
 
 **The first-run exception.** `receiver.*` and `location.*` are restart-required only
 once there is something running to disturb. On a fresh install nothing is polling yet,
-so the setup wizard's save starts ingestion in place and anchors the live store at the
+so the setup wizard's save starts ingestion in place, points the receiver-metric
+statistics poller at the decoder it just wrote, and anchors the live store at the
 location it just wrote — finishing the wizard needs no restart. It is *changing* an
 endpoint or a location afterwards that waits: the running adapter owns its connection
 and its health history, and every already-observed aircraft carries a distance measured
@@ -109,15 +111,14 @@ from the old reference point until it is seen again.
 
 ### Two behaviors that will surprise you
 
-**Alert templates.** `alerts.enabled_templates` is read at startup, *and* templates
-are only ever auto-instantiated while an install has no template-derived rules at all.
-Adding a template in Settings after first boot therefore does nothing, even across a
-restart — the Settings page says "Applies immediately", which is wrong for this field
-([issue #110](https://github.com/stevenpickles/flightsite/issues/110)).
+**Alert templates.** `alerts.enabled_templates` is applied as a *delta*: a save
+instantiates each template that save *added* to the list, and only those — which is
+what stops a shipped rule you deleted from reappearing after some later, unrelated
+save ([issue #110](https://github.com/stevenpickles/flightsite/issues/110)).
 
-To add a shipped template to an install that already has rules, use the **Templates
-tab on the Alerts page**, which instantiates one into a live rule immediately and
-needs no restart. That path works correctly.
+To get a deleted rule back, use the **Templates tab on the Alerts page**, which
+instantiates one into a live rule immediately — or untick the template, save, tick it
+again, and save.
 
 **`alert_radius_nm`.** It reaches the alert engine only when rules are reloaded, which
 happens at startup and on any alert-rule or watchlist change. Changing the radius
@@ -200,7 +201,11 @@ Must strictly increase: `stale_s < remove_s < close_s`.
 | `high_res_metric_days` | int, **7–30** | `14` | High-resolution receiver telemetry kept before downsampling to hourly/daily |
 
 Only receiver telemetry is ever pruned. Sightings, tracks and lifetime statistics are
-kept indefinitely.
+kept indefinitely, so the database grows for as long as you run it — measured at
+~1.7 GB/year for a typical suburban receiver and ~20 GB/year at the SPEC §5 design
+envelope. Neither figure is tunable from here: this setting only moves the
+high-resolution telemetry window, which is a fixed-size fraction of the total. Plan
+storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 
 ### `map`
 
@@ -262,16 +267,16 @@ or Settings — never on page load.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `enabled_templates` | list of string | `[]` | Shipped templates to instantiate at first startup |
+| `enabled_templates` | list of string | `[]` | Shipped templates to instantiate; a save instantiates the ones it adds |
 
 Valid ids: `military`, `government`, `police`, `first_ever`, `locally_rare`,
 `locally_rare_type`, `watchlist`. Emergency squawks (7500/7600/7700) are always
 reported and need no template.
 
 Ids are not checked against the catalogue when saved — an unrecognised id is
-persisted, then skipped at startup with an `alert_template_unknown` warning in the
-logs, creating no rule. If a template you enabled produced no rule, check the backend
-log for that warning, and prefer the Alerts page's Templates tab.
+persisted, then skipped with an `alert_template_unknown` warning in the logs, creating
+no rule. If a template you enabled produced no rule, check the backend log for that
+warning, and prefer the Alerts page's Templates tab.
 
 ---
 

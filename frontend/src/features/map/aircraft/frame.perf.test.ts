@@ -79,7 +79,7 @@ describe("500-aircraft frame cost", () => {
     const store = useLiveAircraftStore.getState();
     const start = Date.now();
     store.applySnapshot({ aircraft: fleet(0), receiver: null }, start);
-    store.selectAircraft("000001", start);
+    store.selectAircraft("000001");
 
     const samples: number[] = [];
     for (let tick = 1; tick <= FRAMES; tick += 1) {

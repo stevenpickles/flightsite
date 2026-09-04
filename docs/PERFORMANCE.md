@@ -774,6 +774,14 @@ a busy machine does not make a window wider or a summary disappear.
 | `backup_size_ratio` | backup size | ≤ 1.0 | max | A gzipped snapshot must be smaller than the database it came from. Answers how much room a backup needs beside the live data — `docs/BACKUP.md` rotates nothing. |
 | `wal_bytes_mib` | Pi storage I/O | ≤ 64 MiB | max | The maintenance cycle truncates the WAL past 16 MiB, so several times that means checkpointing is not keeping up. |
 
+`db_bytes_per_sighting` is **knowingly exceeded** as things stand — §7.7's first
+finding, decided by
+[ADR-0014](adr/0014-track-storage-cost.md). Its budget stays at the design figure
+rather than being re-baselined onto the measured 3,064: re-baselining would make
+every future run report "within budget" and quietly retire the deferred layout
+remedy, whereas leaving it means each run keeps printing the overrun. A reference
+budget fails nothing (§1), so this costs nothing but honesty.
+
 ### 7.3 One growth budget for both scenarios
 
 `docs/DATA_MODEL.md` §9 states two calibration receivers and says slice 050
@@ -791,6 +799,12 @@ rounding error beside them. That makes bytes-per-sighting the scale-free form
 of the growth budget: one number judging a fortnight of Scenario A and three
 years of Scenario B on identical terms, which a per-year budget could not do
 without quietly passing every short run.
+
+The predictions in that table are the **design estimate**, which
+[ADR-0014](adr/0014-track-storage-cost.md) has since recorded as 2.2× too low per
+track row; `docs/DATA_MODEL.md` §9 now documents the measured figures beside it. The
+estimate is what this budget still judges against, deliberately — see the note under
+§7.2.2.
 
 Growth is stated in decimal **GB** (10⁹), because §9 is, and a figure is only
 comparable to the document it is checked against. Memory in §2 is in MiB; the
@@ -1022,11 +1036,15 @@ number really does judge both receivers. It also means Scenario B inherits the
 overrun exactly — **20.06 GB/year against §9's predicted 12–14**, or about
 60 GB over three years against the 36–42 GB §9 sizes for.
 
-That matters more for B than for A, because it is the scenario §9 says needs a
+That matters more for B than for A, because it was the scenario §9 sized at a
 "64–128 GB SD card or USB SSD": at 60 GB before any backup, three years does
-not comfortably fit the card §9 recommends. With the page size corrected as
-§7.7 describes, the same history projects to ~12.3 GB/year — 37 GB over three
-years, back inside §9's figure and back inside its sizing advice.
+not comfortably fit that card. With the page size corrected as §7.7 describes,
+the same history projects to ~12.3 GB/year — 37 GB over three years, back
+inside §9's *original prediction* and inside the sizing advice derived from it.
+That correction was deferred by
+[ADR-0014](adr/0014-track-storage-cost.md), so §9 now documents the measured
+~20 GB/year and recommends 128 GB or more, realistically an SSD, for this
+scenario.
 
 The unindexed sorts behave as expected at this scale too: 3.8 s over 541,980
 sightings, against 8.0 s over the 1,642,500 of the Scenario A run. Both figures
@@ -1139,6 +1157,19 @@ should weigh, in the order they seem cheapest:
 
 Each needs an ADR and a re-run of this qualification; the first two also need a
 migration story for existing installs. Worth a roadmap entry against storage.
+
+**Decided by [ADR-0014](adr/0014-track-storage-cost.md) (slice 068, issue #114):
+option 3.** The measured cost is accepted for v1 and the documents are corrected
+to it — `docs/DATA_MODEL.md` §9 now predicts 1.68 GB/year for Scenario A and
+~20 GB/year for Scenario B and sizes storage from those, and ADR-0005's
+"~1–2 KB" is annotated as the payload rather than the row. The layout remedies
+stay deferred with the numbers above: each buys space that the Pi 5 NVMe
+baseline (§5.5) already has, at the price of a migration executed against a
+user's history on a Pi. The ADR lists the triggers that would reopen it — a Pi
+storage baseline worse than ~3,200 B/row, growth above 2.0 GB/year, a user
+report of storage exhaustion, or any other change that has to migrate
+`sighting_tracks` anyway — and carries the roadmap backlog line. Nothing in
+this section's measurements changes; only their disposition.
 
 **Two documented sort options had no index and took eight seconds on a
 three-year database.** This was the `history_query_ms` overrun in §7.6, and it
