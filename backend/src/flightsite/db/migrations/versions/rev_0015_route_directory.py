@@ -25,13 +25,18 @@ SQLite cannot alter a ``CHECK`` in place — the lesson revision 0014 spelled ou
 for ``route_cache``. The same remedy is the only one available here, and it is
 materially more expensive: ``sightings`` is the second-largest table in the
 database (1.64M rows at the three-year Scenario A mark measured in slice 050)
-and carries five indexes, all of which are rebuilt with it. That is a one-time
-cost measured in tens of seconds on a Pi, paid once, at the upgrade that
-introduces the second route source. The alternatives were to write a source
-the vocabulary forbids, to drop the constraint entirely — the same rebuild for
-less safety — or to edit the schema in place through ``PRAGMA
-writable_schema``, which is O(1) and is not a thing to do to a user's primary
-history table unattended.
+and carries four indexes, all of which are rebuilt with it.
+
+**Measured**, on a seeded database at revision 0014: 200,000 sightings (a 24 MB
+file) upgrade in **1.02 s** and downgrade in **1.51 s** on a developer SSD, so
+the three-year Scenario A database is on the order of ten seconds there and
+correspondingly longer on a Pi's SD card. A one-time cost, paid once, at the
+upgrade that introduces the second route source.
+
+The alternatives were to write a source the vocabulary forbids, to drop the
+constraint entirely — the same rebuild for less safety — or to edit the schema
+in place through ``PRAGMA writable_schema``, which is O(1) and is not a thing to
+do to a user's primary history table unattended.
 
 The copy is ``INSERT … SELECT`` over every column, in the order below, and the
 new shape is spelled out here rather than imported from

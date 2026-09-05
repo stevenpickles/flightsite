@@ -151,11 +151,12 @@ of the user's — no callsign, no position, no key. `docs/SECURITY.md` §10 stat
 **Storage and one expensive migration.** The directory is ~620k narrow rows; the staging
 table doubles that transiently during an import. Migration 0015 also **rebuilds
 `sightings`** to widen `ck_sightings_route_source`, because SQLite cannot alter a `CHECK`
-in place. On a three-year Scenario A database (1.64M sightings, five indexes) that is a
-one-time cost measured in tens of seconds at the upgrade. It is paid once, and the
-alternatives were to write a value the schema forbids or to edit the schema in place
-through `PRAGMA writable_schema`, which is not a thing to do to a user's primary history
-table unattended.
+in place. Measured on a seeded database: 200,000 sightings upgrade in **1.02 s** and
+downgrade in **1.51 s** on a developer SSD, so a three-year Scenario A database (1.64M
+sightings, four indexes) is on the order of ten seconds there and longer on a Pi's SD
+card. It is paid once, and the alternatives were to write a value the schema forbids or
+to edit the schema in place through `PRAGMA writable_schema`, which is not a thing to do
+to a user's primary history table unattended.
 
 **No scheduled refresh in v1.** The directory updates only when the user runs "Update
 Aircraft Metadata", which is SPEC §79's existing backlog item for scheduled metadata
