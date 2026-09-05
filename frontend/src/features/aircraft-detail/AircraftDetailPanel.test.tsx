@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { makeAircraft } from "@/test/liveAircraftFixtures";
+import { makeAircraft, makeNearestAirport } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
   useLiveAircraftStore.getState().reset();
@@ -316,6 +316,187 @@ describe("AircraftDetailPanel", () => {
     expect(within(section as HTMLElement).getAllByText("Unknown").length).toBe(
       1,
     );
+  });
+
+  it("stands a departure field in for an unreported origin", () => {
+    // SPEC §28 as amended for slice 071: where no source knows the callsign,
+    // the airport context may say where the aircraft left from — provided it
+    // says so as an inference and not as a filed route.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        nearest_airport: makeNearestAirport({
+          ident: "KPAE",
+          name: "Paine Field",
+          phase: "departing",
+        }),
+        provenance: { nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getByText("KPAE")).toBeInTheDocument();
+    expect(within(section).getByText("Paine Field")).toBeInTheDocument();
+    expect(within(section).getByText("inferred")).toBeInTheDocument();
+    // Destination is untouched: a departure says nothing about where the
+    // aircraft is going, so that end stays honestly Unknown.
+    expect(within(section).getAllByText("Unknown")).toHaveLength(1);
+    // Attributed to the heuristic that produced it, never to a route source.
+    expect(
+      within(section).getByRole("button", {
+        name: /Source: Heuristic\./i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("stands an arrival field in for an unreported destination", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        nearest_airport: makeNearestAirport({ phase: "arriving" }),
+        provenance: { nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getByText("KBFI")).toBeInTheDocument();
+    expect(within(section).getByText("inferred")).toBeInTheDocument();
+    expect(within(section).getAllByText("Unknown")).toHaveLength(1);
+  });
+
+  it("labels the inferred end in text, not by styling alone", () => {
+    // SPEC §80 forbids colour-only signalling, and a muted ident on its own
+    // is exactly that. The tag is real text inside the row, and the sentence
+    // explaining it is on the element rather than only in a hover popup.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        nearest_airport: makeNearestAirport({ phase: "departing" }),
+        provenance: { nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    const originRow = within(section).getByText("Origin")
+      .parentElement as HTMLElement;
+    expect(originRow.textContent).toContain("inferred");
+
+    const tag = within(section).getByText("inferred");
+    expect(tag).toHaveAttribute(
+      "title",
+      "Inferred from the aircraft's departure at this field; not a reported route.",
+    );
+  });
+
+  it("lets a reported ident win over an inference for the same end", () => {
+    // Inference fills a hole; it never overwrites an answer. A directory or
+    // provider route is what somebody filed, and that outranks a guess even
+    // when the guess is about the very same end.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "KATL", destination: null },
+        nearest_airport: makeNearestAirport({
+          ident: "KPAE",
+          name: "Paine Field",
+          phase: "departing",
+        }),
+        provenance: { route: "vrs", nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getByText("KATL")).toBeInTheDocument();
+    expect(within(section).queryByText("KPAE")).not.toBeInTheDocument();
+    expect(within(section).queryByText("inferred")).not.toBeInTheDocument();
+    expect(
+      within(section).getByRole("button", {
+        name: /Source: VRS standing data\./i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("infers nothing from an airport the aircraft is merely near", () => {
+    // `phase: null` is the common case — cruise, or on the ground — and it
+    // is not evidence of anything. The rows stay exactly as they were.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        nearest_airport: makeNearestAirport({ phase: null }),
+        provenance: { nearest_airport: "heuristic" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getAllByText("Unknown")).toHaveLength(2);
+    expect(within(section).queryByText("KBFI")).not.toBeInTheDocument();
+  });
+
+  it("infers nothing when the payload carries no airport context at all", () => {
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: null, destination: null },
+        nearest_airport: null,
+        provenance: {},
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(within(section).getAllByText("Unknown")).toHaveLength(2);
+    expect(within(section).queryByText("inferred")).not.toBeInTheDocument();
+  });
+
+  it("labels a route the offline directory answered for", () => {
+    // Slice 071: `provenance.route` is now `vrs` or `aerodatabox`, and the
+    // panel must name which — the offline directory and the online provider
+    // are different claims about the same field.
+    renderPanel();
+    seedSnapshot([
+      makeAircraft({
+        icao: "aaaaaa",
+        route: { origin: "EGLL", destination: "KJFK" },
+        provenance: { route: "vrs" },
+      }),
+    ]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    const section = screen.getByText("Route").closest("section") as HTMLElement;
+    expect(
+      within(section).getAllByRole("button", {
+        name: /Source: VRS standing data\. Matched against the Virtual Radar Server/i,
+      }),
+    ).toHaveLength(2);
   });
 
   it("keeps the inferred airport in its own section, apart from the route", () => {

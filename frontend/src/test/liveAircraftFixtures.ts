@@ -12,7 +12,7 @@
  */
 
 import type { LiveAircraftRecord } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import type { LiveAircraft } from "@/lib/api/live";
+import type { LiveAircraft, NearestAirportInfo } from "@/lib/api/live";
 
 const BASE: LiveAircraft = {
   icao: "ae1463",
@@ -57,6 +57,23 @@ export function makeAircraft(
   overrides: Partial<LiveAircraft> = {},
 ): LiveAircraft {
   return { ...BASE, ...overrides };
+}
+
+/** The §3.3 `nearest_airport` block, defaulting to a field the aircraft is
+ * on final for. `phase` is the field most tests vary — it is what decides
+ * whether the airport can stand in for a route end (slice 071) — so it is
+ * spelled out in the default rather than left to a `null` a caller would
+ * have to overwrite every time. */
+export function makeNearestAirport(
+  overrides: Partial<NearestAirportInfo> = {},
+): NearestAirportInfo {
+  return {
+    ident: "KBFI",
+    name: "Boeing Field",
+    distance_nm: 3.4,
+    phase: "arriving",
+    ...overrides,
+  };
 }
 
 /** Timestamps for {@link makeRecord}. `positionChangedAt` defaults to
