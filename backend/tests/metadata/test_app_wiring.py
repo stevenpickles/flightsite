@@ -169,6 +169,7 @@ async def test_a_disabled_opensky_takes_no_part_in_an_update_run(
     _mock_mictronics(monkeypatch)
     _refuse_network(monkeypatch, "flightsite.metadata.sources.faa.build_client")
     _refuse_network(monkeypatch, "flightsite.airports.ourairports.build_client")
+    _refuse_network(monkeypatch, "flightsite.metadata.sources.routes.build_client")
     app = create_app(isolated_data_dir)
 
     with TestClient(app):
