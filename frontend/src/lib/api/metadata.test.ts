@@ -172,6 +172,55 @@ describe("hasImportedMetadata", () => {
     ).toBe(false);
   });
 
+  it("ignores the routes source, whose rows are routes rather than airframes", () => {
+    // Slice 071 adds `routes` to the same importer. A callsign-to-airport
+    // directory says nothing about whether this install can tell a C-17 from
+    // a Cessna, so it must not open the metadata-backed filters on its own.
+    expect(
+      hasImportedMetadata({
+        sources: [
+          metadataSource({
+            name: "routes",
+            status: "ok",
+            row_count: 118_402,
+            last_success_ms: 1_756_600_000_000,
+          }),
+          metadataSource({
+            name: "mictronics",
+            status: "failed",
+            last_error: "download failed",
+          }),
+          metadataSource({
+            name: "faa",
+            status: "failed",
+            last_error: "download failed",
+          }),
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("is true for routes alongside an airframe source with rows", () => {
+    expect(
+      hasImportedMetadata({
+        sources: [
+          metadataSource({
+            name: "routes",
+            status: "ok",
+            row_count: 118_402,
+            last_success_ms: 1_756_600_000_000,
+          }),
+          metadataSource({
+            name: "mictronics",
+            status: "ok",
+            row_count: 42_000,
+            last_success_ms: 1_756_600_000_000,
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("is true for airports alongside an airframe source with rows", () => {
     expect(
       hasImportedMetadata({

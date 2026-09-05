@@ -37,6 +37,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.3.2 | 8 | Military filter activation on real metadata availability + the clean Pi 5 performance baseline with five budgets promoted to hard gates (slices 065–066; recorded 2026-09-03) |
 | v0.4.0 | 8 | Settings that apply on save and alerts that reach every tab: enrichment hot-apply, stats-poller hot-start, app-shell-owned live socket, Notified marker write path, fix-dated track points, ADR-0014/0015, severity-triaged tracker (slices 067–069; recorded 2026-09-04) |
 | v0.5.0 | 8 | Route enrichment credit economy: week-long callsign cache, learned schedules, daily lookup budget with priority, restricted flights cached, airport names beside route idents (slice 070; migration 0014; recorded 2026-09-04) |
+| v0.6.0 | 8 | Offline route directory: VRS standing-data routes as the primary origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only for misses, inferred route end, last-known route, CI perf-gate headroom (slice 071; migration 0015; recorded 2026-09-05) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -153,6 +154,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 068 | Medium-severity fix bundle | 040, 056, 061, 064, 067 | opus | medium | Five single-concern commits: poller attach after first-run hot-start (#129), fix-dated live track points and no stale seen_pos_s inheritance (#145), a write path for the alert-match 'Notified' marker (#104), the live socket hoisted to the app shell per ADR-0015 (#105), and ADR-0014 accepting the measured track storage cost (#114); tracking issue #159 |
 | 069 | Enrichment hot-apply & honest restart badges | 026, 055, 056, 068 | opus | low | Apply enrichment settings on config save so AeroDataBox route lookup starts, stops or re-keys without a backend restart, and badge every Settings section that still needs one (issue #161) |
 | 070 | Route enrichment credit economy & airport names | 026, 027, 042, 069 | opus | medium | Week-long per-callsign route cache, learned schedules, a daily lookup budget spent in priority order, restricted flights cached instead of retried (#165), and airport names beside route idents from the local airports table (issue #167) |
+| 071 | Offline route directory (VRS standing data) & enrichment resilience | 021, 027, 049, 070 | opus | medium | VRS standing-data routes as the primary origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only for misses, inferred route end shown where no source knows the callsign, last known route served when a refresh cannot happen, CI headroom for the flaky perf gates (issue #173; #166, #170) |
 
 ## Parallelization Guide
 

@@ -40,7 +40,13 @@ from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
-from flightsite.enrichment import EnrichmentService, RouteCacheRepository
+from flightsite.enrichment import (
+    ROUTES_SOURCE,
+    EnrichmentService,
+    RouteCacheRepository,
+    RouteDirectoryImportSink,
+    RouteDirectoryRepository,
+)
 from flightsite.enrichment.service import build_economy, build_provider
 from flightsite.ingest import IngestionService, Position
 from flightsite.ingest.health import AdapterHealth
@@ -49,7 +55,12 @@ from flightsite.logging import DEFAULT_LOG_DIR, configure_logging, install_error
 from flightsite.maintenance import MaintenanceService, RouteCachePruner
 from flightsite.metadata import ImportListener, ImportRun, MetadataService
 from flightsite.metadata.registry import SourceRegistry
-from flightsite.metadata.sources import FaaRegistryProvider, MictronicsProvider, OpenSkyProvider
+from flightsite.metadata.sources import (
+    FaaRegistryProvider,
+    MictronicsProvider,
+    OpenSkyProvider,
+    VrsRoutesProvider,
+)
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 from flightsite.reset import apply_pending_reset
@@ -79,7 +90,11 @@ def _build_live_store(settings: Settings) -> LiveStore:
     )
 
 
-def _build_metadata_registry(airports: AirportRepository, settings: Settings) -> SourceRegistry:
+def _build_metadata_registry(
+    airports: AirportRepository,
+    routes: RouteDirectoryRepository,
+    settings: Settings,
+) -> SourceRegistry:
     """The datasets this build ships.
 
     Slice 022 registers ``mictronics`` (the offline primary source); slice 023
@@ -102,6 +117,13 @@ def _build_metadata_registry(airports: AirportRepository, settings: Settings) ->
     while this registry is built here and nowhere else, so toggling OpenSky
     still takes effect on the next restart.
 
+    Slice 071 adds ``routes``, the offline route directory (ADR-0016). Like
+    ``airports`` it is not aircraft metadata: it brings its own sink, so it is
+    excluded from the airframe precedence model
+    (:meth:`~flightsite.metadata.registry.SourceRegistry.precedence`) and
+    cannot claim a ``*_src`` column. Unconditional, unlike ``opensky``, because
+    the dataset is CC0 with nothing ambiguous to opt into.
+
     Constructing a provider here opens nothing — it downloads only when an
     import actually runs (:mod:`flightsite.metadata.importer`).
     """
@@ -111,6 +133,7 @@ def _build_metadata_registry(airports: AirportRepository, settings: Settings) ->
     if settings.metadata.opensky_enabled:
         registry.register("opensky", OpenSkyProvider())
     registry.register(AIRPORTS_SOURCE, OurAirportsProvider(), sink=AirportImportSink(airports))
+    registry.register(ROUTES_SOURCE, VrsRoutesProvider(), sink=RouteDirectoryImportSink(routes))
     return registry
 
 
@@ -758,6 +781,11 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # registers with, and the post-import listener that rebuilds this
     # service's index.
     airport_repository = AirportRepository(app.state.database)
+    # The offline route directory (SPEC §28 as amended, ADR-0016, slice 071).
+    # Constructed here for the same reason the airport repository is: the
+    # registry below binds its import sink, and the enrichment service below
+    # reads it.
+    route_directory = RouteDirectoryRepository(app.state.database)
     app.state.airports = AirportContextService(
         live=app.state.live,
         persistence=app.state.persistence,
@@ -774,7 +802,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         database=app.state.database,
         live=app.state.live,
         data_dir=store.data_dir,
-        registry=_build_metadata_registry(airport_repository, settings),
+        registry=_build_metadata_registry(airport_repository, route_directory, settings),
         # Both listeners read `app.state` when they run rather than closing
         # over an object, so registering them here — before the services they
         # reach for even exist — is safe and keeps the wiring in one place.
@@ -799,6 +827,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         live=app.state.live,
         persistence=app.state.persistence,
         cache=route_cache,
+        directory=route_directory,
         provider=build_provider(settings),
         economy=build_economy(settings),
         alerting=_aircraft_is_alerting(app),

@@ -5,6 +5,73 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.6.0] — 2026-09-05
+
+Origin and destination without an API key. The Virtual Radar Server
+standing-data route directory becomes the primary source of routes — imported
+on demand, 620,000 scheduled callsigns under a public-domain licence — and
+AeroDataBox is consulted only for callsigns the directory does not know.
+SPEC §28 was amended by the owner to admit it (ADR-0016).
+
+### Added
+- **Offline route directory**: a `routes` dataset under Settings → Metadata,
+  fetched by *Update Aircraft Metadata* from the VRS standing-data repository
+  (7 MB, routes only; CC0-1.0). Once imported, every scheduled callsign is
+  resolved locally with provenance `vrs`; the route worker runs with or
+  without an AeroDataBox key, and with no key it makes no external call at
+  all. Migration 0015 adds `route_directory`, `route_cache.source`, and
+  admits `vrs` on `sightings.route_source`
+- **Inferred route end**: when no source knows a callsign but the aircraft
+  has been seen departing or arriving at a field, the detail panel shows
+  that airport as the inferred origin or destination, visibly marked as
+  inferred and never written as a route (SPEC §28)
+- **Last-known route**: an expired cached route is kept when neither the
+  directory nor the provider can answer — budget spent, breaker open, rate
+  limited, offline, or no key — logged once a day and counted on the Health
+  page
+- Health page: the enrichment card names the provider (AeroDataBox or
+  "Directory only"), directory hits, and last-known routes served; Settings
+  → Metadata shows the routes dataset with its credit and honest row-count
+  nouns
+
+### Changed
+- A directory route contradicted by the aircraft's own departure or arrival
+  is invalidated and re-asked of AeroDataBox once, so a changed schedule is
+  caught by the sky rather than by waiting for the next dataset import
+- Adding or removing the AeroDataBox key is adopted in place: removing it
+  no longer stops directory lookups, adding it starts online lookups for
+  misses without a restart
+- CI performance gates carry headroom sized from their recorded flakes
+  (`ingest_duty_cycle` asserts 0.9 of a poll, `ingest_apply_ms` 800 ms; the
+  metadata latency test gates the median); the Raspberry Pi budgets are
+  unchanged (#166, #170)
+
+### Fixed
+- A provider swap closed the old HTTP client before installing the new
+  provider, so a lookup racing the swap could rebuild a client with the key
+  that had just been removed; the new provider is now installed first
+- Frontend runtime image: every Alpine package with a published fix is
+  upgraded at build time (seven HIGH util-linux advisories on the pinned
+  nginx base)
+
+### Upgrade notes
+- **Migration 0015 rebuilds the `sightings` table** to admit the new route
+  source (measured: about a second per 200,000 sightings on an SSD, so of
+  the order of ten seconds for a three-year history; longer on an SD card).
+  **Take a backup first**: `docker compose exec flightsite-backend
+  flightsite-backup create`, then `docker compose pull && docker compose
+  up -d`.
+- After upgrading, run **Settings → Metadata → Update Aircraft Metadata**
+  once to import the routes dataset; until then the directory is empty and
+  behaviour matches 0.5.0. Re-run it every few weeks to pick up schedule
+  changes.
+- Diagnostics gain `enrichment.provider`, `cache.directory_hits` and
+  `cache.stale_served`; `provenance.route` may now be `vrs`.
+
+### Known issues
+- Six low-severity items remain open (#96, #98, #100, #112, #138, #147);
+  the Raspberry Pi 4 SSD qualification (#153) is deferred by the owner.
+
 ## [0.5.0] — 2026-09-04
 
 A credit-economy release for route enrichment, plus airport names. Measured

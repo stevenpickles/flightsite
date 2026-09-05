@@ -2,7 +2,7 @@
  * Plain-language descriptions for the §2.6 provenance vocabulary.
  *
  * `docs/API.md` §2.6 pins the current value set (`decoder | derived |
- * mictronics | faa | aerodatabox | heuristic`) but explicitly says a field
+ * mictronics | faa | aerodatabox | vrs | heuristic`) but explicitly says a field
  * without an entry in the `provenance` map is decoder-direct — so "decoder"
  * is a synthesized label here, not a value the API ever sends. §6 promises
  * the key set only grows, so an unrecognized string (a future source) falls
@@ -25,6 +25,7 @@ const KNOWN_DESCRIPTIONS: Record<string, string> = {
   mictronics: "Matched against the Mictronics aircraft database.",
   faa: "Matched against the FAA aircraft registry.",
   aerodatabox: "Looked up from the AeroDataBox flight-data service.",
+  vrs: "Matched against the Virtual Radar Server standing-data route directory held on this install.",
   heuristic: "Inferred using a best-effort heuristic — may be imprecise.",
 };
 
@@ -34,6 +35,7 @@ const KNOWN_LABELS: Record<string, string> = {
   mictronics: "Mictronics",
   faa: "FAA",
   aerodatabox: "AeroDataBox",
+  vrs: "VRS standing data",
   heuristic: "Heuristic",
 };
 

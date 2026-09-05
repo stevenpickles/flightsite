@@ -1,6 +1,7 @@
 """Clear Metadata Cache (SPEC §73): the non-destructive-to-history reset action.
 
-Deletes every row a metadata import or an airport-dataset import produces,
+Deletes every row a metadata import, an airport-dataset import or a
+route-directory import produces,
 then invalidates the two in-memory caches built from them — the live metadata
 & rarity cache (:class:`~flightsite.metadata.cache.MetadataCache`) and the
 nearest-airport index (:class:`~flightsite.airports.service.AirportContextService`)
@@ -26,6 +27,7 @@ from flightsite.airports.repository import AirportRepository
 from flightsite.airports.service import AirportContextService
 from flightsite.db.engine import Database
 from flightsite.enrichment.cache import RouteCacheRepository
+from flightsite.enrichment.directory import RouteDirectoryRepository
 from flightsite.metadata.repository import MetadataRepository
 from flightsite.metadata.service import MetadataService
 
@@ -43,6 +45,7 @@ class ClearMetadataResult:
     operator_rows: int
     operator_group_rows: int
     route_cache_rows: int
+    route_directory_rows: int
     airport_rows: int
     sources_reset: int
 
@@ -57,6 +60,7 @@ class ClearMetadataResult:
             "operator_rows": self.operator_rows,
             "operator_group_rows": self.operator_group_rows,
             "route_cache_rows": self.route_cache_rows,
+            "route_directory_rows": self.route_directory_rows,
             "airport_rows": self.airport_rows,
             "sources_reset": self.sources_reset,
         }
@@ -70,9 +74,11 @@ async def clear_metadata_cache(
 ) -> ClearMetadataResult:
     """Delete imported metadata, the route cache and airports; invalidate caches.
 
-    Three independent deletions run through the writer — the metadata tables
+    Four independent deletions run through the writer — the metadata tables
     (:meth:`~flightsite.metadata.repository.MetadataRepository.clear_all`),
-    ``route_cache`` (:meth:`~flightsite.enrichment.cache.RouteCacheRepository.clear_all`)
+    ``route_cache`` (:meth:`~flightsite.enrichment.cache.RouteCacheRepository.clear_all`),
+    ``route_directory``
+    (:meth:`~flightsite.enrichment.directory.RouteDirectoryRepository.clear_all`)
     and ``airports`` (:meth:`~flightsite.airports.repository.AirportRepository.clear_all`)
     — followed by invalidating the live metadata cache and rebuilding the
     nearest-airport index from the now-empty table, in that order, so neither
@@ -85,6 +91,7 @@ async def clear_metadata_cache(
     """
     metadata_counts = await MetadataRepository(database).clear_all()
     route_cache_rows = await RouteCacheRepository(database).clear_all()
+    route_directory_rows = await RouteDirectoryRepository(database).clear_all()
     airport_rows = await AirportRepository(database).clear_all()
 
     await metadata.cache.invalidate()
@@ -98,6 +105,7 @@ async def clear_metadata_cache(
         operator_rows=metadata_counts.operator_rows,
         operator_group_rows=metadata_counts.operator_group_rows,
         route_cache_rows=route_cache_rows,
+        route_directory_rows=route_directory_rows,
         airport_rows=airport_rows,
         sources_reset=metadata_counts.sources_reset,
     )

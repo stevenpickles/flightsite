@@ -36,9 +36,22 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
-#: ``sightings.route_source`` for a route this provider supplied
+#: ``sightings.route_source`` for a route the online provider supplied
 #: (``docs/API.md`` §2.8 provenance vocabulary, ``ROUTE_SOURCE_CHECK``).
 ROUTE_SOURCE_AERODATABOX: Final = "aerodatabox"
+
+#: ``sightings.route_source`` for a route the offline Virtual Radar Server
+#: standing-data directory supplied (slice 071, ADR-0016). The *primary*
+#: source since SPEC §28's 2026-09-05 amendment: a callsign the directory knows
+#: never reaches AeroDataBox at all.
+ROUTE_SOURCE_VRS: Final = "vrs"
+
+#: The whole ``route_source`` / ``provenance.route`` vocabulary, in the order
+#: the two sources are consulted. Mirrors
+#: :data:`flightsite.db.models.ROUTE_SOURCE_CHECK`, which cannot be imported
+#: here without inverting the ``enrichment`` → ``db`` dependency; a test
+#: asserts the two agree.
+ROUTE_SOURCES: Final = (ROUTE_SOURCE_VRS, ROUTE_SOURCE_AERODATABOX)
 
 
 class RouteCacheStatus(StrEnum):
@@ -72,13 +85,23 @@ class RouteInfo:
     cased and stripped; nothing here derives, completes or corrects a code.
 
     ``extras`` is the small provider-specific detail kept in
-    ``route_cache.payload_json`` for diagnostics — the flight number and status,
-    never the request and therefore never the API key.
+    ``route_cache.payload_json`` for diagnostics — the flight number and status
+    from AeroDataBox, the full multi-leg ``path`` from the offline directory —
+    never the request, and therefore never the API key.
+
+    ``source`` names which of :data:`ROUTE_SOURCES` reported it, and it is the
+    value that reaches ``sightings.route_source`` and the API's
+    ``provenance.route``. It is ``None`` when the answer came from a provider
+    rather than from the directory, because a provider does not name itself in
+    its own reply — the worker fills it in from the provider it asked, which is
+    the one place that knows. A route read back out of ``route_cache`` always
+    carries it, because the row remembers who answered.
     """
 
     origin_ident: str | None = None
     destination_ident: str | None = None
     extras: dict[str, str] = field(default_factory=dict)
+    source: str | None = None
 
     def __post_init__(self) -> None:
         if self.origin_ident is None and self.destination_ident is None:
@@ -127,7 +150,9 @@ RouteLookup = RouteInfo | RouteNotFound | RouteRestricted | RouteUnavailable
 
 
 __all__ = [
+    "ROUTE_SOURCES",
     "ROUTE_SOURCE_AERODATABOX",
+    "ROUTE_SOURCE_VRS",
     "RouteCacheStatus",
     "RouteInfo",
     "RouteLookup",

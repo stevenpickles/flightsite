@@ -233,22 +233,34 @@ storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 | `range_rings_enabled` | bool | `true` | |
 | `range_ring_radii_nm` | list of float | `[50, 100, 150, 200]` | Up to 10, all > 0, unique; sorted on save |
 
-### `enrichment` — optional online route lookup
+### `enrichment` — optional **online** route lookup
+
+**Route lookup works without a key.** Run "Update Aircraft Metadata" once and the
+`routes` dataset — the offline Virtual Radar Server route directory, CC0 — is imported
+locally and consulted first for every flight; importing it *is* the opt-in, and there is
+no setting for it ([ADR-0016](adr/0016-offline-route-directory.md)). Routes it supplies
+are labelled `vrs` and cost nothing, because nothing leaves your network to fetch them.
+
+The settings below add **AeroDataBox** on top: an online lookup for the callsigns the
+directory does not know. That half is off by default and needs your own API key.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `aerodatabox_enabled` | bool | `false` | |
 | `aerodatabox_api_key` | secret | — | **Belongs in `secrets.yaml`, not here.** Required when enabled |
 | `route_ttl_days` | int | `7` | 1–30. How long a found route stays cached before it is bought again |
-| `daily_lookup_budget` | int | `0` | `0` = uncapped. Provider lookups allowed per UTC day |
+| `daily_lookup_budget` | int | `0` | `0` = uncapped. **Provider** lookups allowed per UTC day; directory hits are free and uncounted |
 
-FlightSite is fully functional with enrichment off. This is the only setting that
-sends anything about observed aircraft to a third party — see
-[SECURITY.md §10](SECURITY.md).
+FlightSite is fully functional with all of this off, and substantially useful with only
+the directory imported. AeroDataBox is the only part that sends anything about observed
+aircraft to a third party — see [SECURITY.md §10](SECURITY.md).
 
 Every setting here applies on save, in either direction and including a change of key
 or of either number; nothing in this section needs a restart. See
-[Applies immediately](#applies-immediately) above.
+[Applies immediately](#applies-immediately) above. Turning the key off stops the online
+lookups and **not** the directory ones — removing a key is not a request to stop
+enriching — and turning it on installs the provider without interrupting anything the
+worker is already doing.
 
 **The two numbers are the credit economy** (slice 070). They bound spending from
 opposite ends: `route_ttl_days` decides how *often* one callsign may be asked about, and
@@ -277,8 +289,27 @@ already-known routes last.
 |---|---|---|---|
 | `opensky_enabled` | bool | `false` | Opt in to the OpenSky aircraft database as a supplementary source |
 
-The two default sources (Mictronics and the FAA registry) are always active and need
-no configuration. OpenSky is separate because its licensing is genuinely unclear:
+**What "Update Aircraft Metadata" fetches.** One click runs every registered source,
+each independently — a failure in one leaves the others' data and status untouched
+(SPEC §27), and each reports its own row count, dataset version and last error on the
+Settings page:
+
+| Source | What it supplies | Configuration |
+|---|---|---|
+| `mictronics` | Type, registration, operator and the military/interesting/PIA/LADD flags | Always active |
+| `faa` | US registration, year, owner, make/model | Always active |
+| `airports` | The airport dataset behind nearest-airport context, the map overlay and route airport names | Always active |
+| `routes` | The **offline route directory** — origin and destination per airline callsign, from the Virtual Radar Server standing data (CC0). Consulted before AeroDataBox, so a callsign it knows costs no API credit at all ([ADR-0016](adr/0016-offline-route-directory.md)) | Always active |
+| `opensky` | Supplementary operator, owner, model and build year | Off by default — see below |
+
+All of them are **fetched on demand**: nothing is downloaded until you run the update,
+and nothing is bundled in the container image
+([licensing register](LICENSES.md)). The route directory is a ~7 MB archive of which
+only the route files are read; it is not refreshed automatically, so re-run the update
+when you want newer schedules.
+
+The four default sources are always active and need no configuration. OpenSky is
+separate because its licensing is genuinely unclear:
 OpenSky's general Terms of Use restrict their data to non-profit research and
 education and require a written licence for commercial use, while the aircraft
 database's own page states it "is unlicensed and does not fall under our terms of

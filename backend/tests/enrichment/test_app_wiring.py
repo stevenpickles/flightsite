@@ -4,6 +4,14 @@ The claim being tested is a negative one, and it is the slice's most important:
 a FlightSite with no AeroDataBox key must make **zero external calls**. So
 these tests build the real app and assert on what it constructed and started,
 rather than on what a service would do if asked.
+
+Slice 071 sharpened that claim rather than weakening it. A key-less install now
+*runs* the enrichment worker — it has the offline route directory to consult,
+which is a table in its own database — so "starts nothing" is no longer the
+right assertion. What is asserted instead is the thing that actually matters
+and always did: no provider object exists, so no request can be made. The
+guarantee is structural either way; only the observable it is checked through
+moved from ``running`` to ``provider_name``.
 """
 
 from __future__ import annotations
@@ -46,10 +54,18 @@ def test_the_service_is_constructed_without_touching_anything(
 
 
 def test_a_stock_install_has_no_provider_at_all(isolated_data_dir: Path) -> None:
-    """Zero external calls as a property of the object graph, not of luck."""
+    """Zero external calls as a property of the object graph, not of luck.
+
+    ``enabled`` is nevertheless true, and that is not a contradiction: the app
+    always wires the offline route directory, so route lookup is operating —
+    from a local table — with nothing in the process that could reach the
+    network. The two facts are separate keys for exactly this reason.
+    """
     app = create_app(isolated_data_dir)
 
-    assert app.state.enrichment.enabled is False
+    assert app.state.enrichment.provider_name is None
+    assert app.state.enrichment._provider is None
+    assert app.state.enrichment.enabled is True
 
 
 def test_a_key_with_the_flag_unset_still_has_no_provider(isolated_data_dir: Path) -> None:
@@ -58,7 +74,7 @@ def test_a_key_with_the_flag_unset_still_has_no_provider(isolated_data_dir: Path
 
     app = create_app(isolated_data_dir)
 
-    assert app.state.enrichment.enabled is False
+    assert app.state.enrichment.provider_name is None
 
 
 def test_the_flag_and_a_key_together_build_the_aerodatabox_provider(
@@ -68,8 +84,8 @@ def test_the_flag_and_a_key_together_build_the_aerodatabox_provider(
 
     app = create_app(isolated_data_dir)
 
-    assert app.state.enrichment.enabled is True
-    # Reaching for the provider itself rather than trusting `enabled`: the
+    assert app.state.enrichment.provider_name == "aerodatabox"
+    # Reaching for the provider itself rather than trusting the name: the
     # point is *which* provider a key builds (ADR-0006 ships exactly one).
     provider = app.state.enrichment._provider
     assert isinstance(provider, AeroDataBoxProvider)
@@ -85,14 +101,41 @@ def test_the_flag_without_a_key_is_rejected_by_configuration(
         ConfigStore(isolated_data_dir).load()
 
 
-def test_a_disabled_install_starts_and_stops_the_app_cleanly(
+def test_a_key_less_install_runs_the_worker_for_the_directory(
     isolated_data_dir: Path,
 ) -> None:
-    """The lifespan runs the start/stop calls even with nothing to start."""
+    """The slice-071 change, stated: no key, and the worker still runs.
+
+    It has the offline route directory to consult, which is the primary source
+    (SPEC §28 as amended, ADR-0016). Before this the lifespan started nothing
+    without a key, which left an install that had imported 619,770 routes
+    showing Unknown for every one of them.
+    """
     app = create_app(isolated_data_dir)
 
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code == 200
+        service = app.state.enrichment
+        assert service.running is True
+        assert service.provider_name is None
+        # The whole of "zero external calls": there is no object to call with.
+        assert service._provider is None
+        assert service.lookups == 0
+
+
+def test_an_install_with_nothing_to_consult_starts_nothing(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No provider *and* no directory is still a worker with no reason to run.
+
+    Not a shape ``create_app`` produces — it always wires the directory — but
+    the one the service must handle, and the one every test double takes.
+    """
+    app = create_app(isolated_data_dir)
+    monkeypatch.setattr(app.state.enrichment, "_directory", None)
+
+    with TestClient(app):
+        assert app.state.enrichment.enabled is False
         assert app.state.enrichment.running is False
 
 

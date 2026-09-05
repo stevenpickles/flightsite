@@ -80,6 +80,65 @@ describe("MetadataSection", () => {
     );
   });
 
+  it("names the flight-route directory and credits where its data came from", async () => {
+    // Slice 071: `routes` rides the same importer as every other source, so
+    // it must read as a dataset in its own right — with a label that says
+    // whose routes these are and a credit for the people who published them.
+    installMetadataApiMock({
+      statusSequence: [
+        {
+          sources: [
+            metadataSource({
+              name: "routes",
+              status: "ok",
+              last_success_ms: OK_SUCCESS_MS,
+              dataset_version: "2026-09-01",
+              row_count: 118_402,
+            }),
+          ],
+        },
+      ],
+    });
+    renderSection();
+
+    expect(await screen.findByText("Flight routes (VRS)")).toBeInTheDocument();
+    // Its rows are routes, not airframes — the count says which.
+    expect(
+      screen.getByText("Version 2026-09-01 · 118,402 routes"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("metadata-source-credit")).toHaveTextContent(
+      "Route data from Virtual Radar Server standing data (CC0).",
+    );
+  });
+
+  it("labels the airports directory from its own name and counts airports", async () => {
+    // `airports` carries no entry in the label map on purpose: capitalising
+    // the source name already reads correctly, and this pins that it does.
+    installMetadataApiMock({
+      statusSequence: [
+        {
+          sources: [
+            metadataSource({
+              name: "airports",
+              status: "ok",
+              last_success_ms: OK_SUCCESS_MS,
+              dataset_version: "2026-08-01",
+              row_count: 80_412,
+            }),
+          ],
+        },
+      ],
+    });
+    renderSection();
+
+    expect(await screen.findByText("Airports")).toBeInTheDocument();
+    expect(
+      screen.getByText("Version 2026-08-01 · 80,412 airports"),
+    ).toBeInTheDocument();
+    // Only the datasets FlightSite serves the contents of carry a credit.
+    expect(screen.queryByTestId("metadata-source-credit")).toBeNull();
+  });
+
   it("renders a failing source with its error and a data-safety reassurance, independent of a healthy source", async () => {
     installMetadataApiMock({
       statusSequence: [

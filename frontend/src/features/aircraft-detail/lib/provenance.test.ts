@@ -12,11 +12,22 @@ describe("describeProvenance", () => {
     ["mictronics", "Mictronics"],
     ["faa", "FAA"],
     ["aerodatabox", "AeroDataBox"],
+    ["vrs", "VRS standing data"],
     ["heuristic", "Heuristic"],
   ])("labels the documented source %s as %s", (source, label) => {
     const info = describeProvenance(source);
     expect(info.label).toBe(label);
     expect(info.description.length).toBeGreaterThan(0);
+  });
+
+  it("tells the two route sources apart (slice 071)", () => {
+    // `provenance.route` now carries either the offline VRS directory or the
+    // online provider, and the panel must not blur them into "route data".
+    const vrs = describeProvenance("vrs");
+    const aerodatabox = describeProvenance("aerodatabox");
+    expect(vrs.label).not.toBe(aerodatabox.label);
+    expect(vrs.description).toMatch(/Virtual Radar Server/);
+    expect(aerodatabox.description).toMatch(/AeroDataBox/);
   });
 
   it("title-cases and describes an undocumented future source gracefully", () => {

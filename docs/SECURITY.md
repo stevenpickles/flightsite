@@ -136,7 +136,29 @@ FlightSite is local-first. The complete list of optional outbound traffic:
 |---|---|---|
 | AeroDataBox route enrichment | Only when `enrichment.aerodatabox_enabled` is on **and** an API key is set; then at most once per airline callsign per `enrichment.route_ttl_days` (default 7 days), capped by `enrichment.daily_lookup_budget` lookups per UTC day when you set one, and by 10 requests/minute always | One `GET https://api.aerodatabox.com/flights/callsign/{callsign}` per lookup: the transmitted callsign in the URL path and your API key in the `X-Api-Key` header. No request body, no query parameters. |
 | Basemap tiles | When using internet basemaps (default) | Standard tile HTTP requests, which reveal the viewed map area (and therefore approximately your receiver's region) to the tile provider |
-| Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, and airport-data sources; nothing about your receiver is uploaded |
+| Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, airport-data and route-directory sources; nothing about your receiver is uploaded |
+| Route directory download | Only on the manual "Update Aircraft Metadata" action | One `GET https://github.com/vradarserver/standing-data/archive/refs/heads/main.zip` — a ~7 MB public archive of Virtual Radar Server standing data (CC0). No headers of yours, no key, no query string, no body: the request says nothing except which file is wanted. Nothing is uploaded, and the file is read into the local `route_directory` table and discarded ([ADR-0016](adr/0016-offline-route-directory.md)). |
+
+### The offline directory comes first, so most callsigns are never sent
+
+Since slice 071 FlightSite imports a local route directory and consults it before
+AeroDataBox ([ADR-0016](adr/0016-offline-route-directory.md)). A callsign the directory
+knows is answered from your own database and **never leaves your network at all** — no
+request is made, no credit is spent, and the route is labelled `vrs` rather than
+`aerodatabox` wherever it is shown. AeroDataBox is asked only for the callsigns the
+directory does not know, and only under the limits in the table above.
+
+**With no API key at all, route lookup still runs — and still sends nothing.** The
+worker consults your own two tables and writes what it finds onto sightings. It holds no
+provider object, so there is nothing in the process that knows how to make a request:
+"no key, no external call" is a fact about the object graph, exactly as it has been since
+slice 026, and it did not change when the worker stopped being gated on the key. What a
+key adds is the ability to ask about the flights your local directory has never heard of.
+
+The directory's own download is the one new outbound request, and it is the least
+revealing one here: a single unauthenticated GET for a public file, made only when you
+press "Update Aircraft Metadata", carrying nothing about your receiver, your aircraft or
+you. It is not scheduled and never happens on its own.
 
 ### What route enrichment does *not* send
 
@@ -154,8 +176,10 @@ route found" (24 hours) and "legally restricted" (the same week as a route), so 
 flight costs at most one request per `route_ttl_days` however many times it is seen — and
 a route confirmed identical on three separate days is frozen for 30 days. If you set
 `daily_lookup_budget`, no request at all is made once that many lookups have been spent
-in a UTC day. Turning the feature off, or removing the key, stops every request: the
-provider is not constructed at all, so no socket is opened.
+in a UTC day — and where an answer has expired that FlightSite cannot refresh, the
+expired one is served for another day rather than a fresh request being forced. Turning
+the feature off, or removing the key, stops every request: the provider is not
+constructed at all, so no socket is opened.
 
 Everything else — aircraft observations, sightings, analytics, alerts, configuration —
 stays on your host. FlightSite has no telemetry, no phone-home, and no account system.
