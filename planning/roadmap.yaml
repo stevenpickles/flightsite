@@ -2007,6 +2007,56 @@ slices:
     risk_level: medium
     notes: "Owner-requested 2026-09-04 after v0.4.0: enrichment consumed AeroDataBox feeder credits faster than the feeder earns them. Measured on fermi.local: 2,200-2,650 distinct airline callsigns/day, ~190 lookups/hour, 62 % of a day's callsigns seen the previous day after only four days of history, 1 % transient contacts, and one restricted business jet retried nine times in twelve minutes (#165). The airport-name request came in the same conversation. Migration-bearing (0014): serialized against other migration slices per DEVELOPMENT.md. Added by Fable outside the phase plan."
 
+  - id: "071"
+    title: "Offline route directory (VRS standing data) & enrichment resilience"
+    phase: 8
+    branch: "071-offline-routes"
+    status: merged
+    depends_on: ["021", "027", "049", "070"]
+    objective: "Make the Virtual Radar Server standing-data route directory the primary origin/destination source (SPEC §28 as amended by the owner on 2026-09-05, ADR-0016), keep AeroDataBox only for callsigns the directory does not know, show a locally inferred route end where no source knows the callsign, serve the last known route when a refresh cannot happen, and give the two flaky CI perf gates the headroom their history justifies (issue #173; #166, #170)."
+    scope:
+      - "a `routes` metadata source in the slice-021 registry, fetch-on-demand from the VRS standing-data repository (CC0-1.0) through the existing Update Aircraft Metadata action, staged and promoted like the others; excluded from the airframe precedence model and from slice 066's `hasImportedMetadata` allowlist; `docs/LICENSES.md` row with the research trail"
+      - "`route_directory` table (migration 0015, linear on 0014): callsign PK, airline code, the hyphen-separated airport-code path, dataset version; origin is the first code and destination the last, intermediate stops kept for diagnostics; `route_cache` gains a `source` column so a cached route remembers whether `vrs` or `aerodatabox` answered"
+      - "the enrichment worker consults, in order, the route cache, the directory, then the provider (under slice 070's budget and priority); a directory hit is cached with `source: vrs` for the positive TTL and is subject to the slice-070 consistency invalidation, which is what routes a schedule change to the provider"
+      - "`sightings.route_source` and the API's `provenance.route` carry `vrs` or `aerodatabox`; the frontend labels both"
+      - "locally inferred route end: where `route.origin` (or `destination`) is null and the slice-027 airport context has latched a departure (or approach) at a field, the detail panel and sighting detail show that ident as the inferred end, visibly distinct from a reported route (SPEC §28); no route data is written from inference"
+      - "last known route: when a cached route has expired and neither the directory nor the provider can answer now (budget spent, breaker open, 429, transport error), the expired row is served and its expiry bumped by a day, logged once per callsign per day and counted in diagnostics `cache.stale_served`"
+      - "#166 / #170: `ingest_duty_cycle` and `ingest_apply_ms` get CI headroom sized from the four observed flakes (p95 0.539, 0.542, 0.645, 0.73 and 585, 658 ms) with the Pi budgets unchanged; the metadata cache latency test's CI bound is widened or moved to the median with the same reasoning; `docs/PERFORMANCE.md` §1/§2.1 and the docs-consistency tests follow"
+      - "docs: SPEC §28 amendment note (owner decision), ADR-0016, DATA_MODEL (route_directory, route_cache.source), CONFIGURATION (metadata sources), API (metadata status source list, provenance values, `cache.stale_served`), SECURITY §10 (the standing-data download is a new outbound request, on demand only)"
+    out_of_scope:
+      - "online free route APIs (adsb.lol routeset, adsbdb.com): the offline directory gives the same coverage without a network dependency, and adsbdb's route data carries a republication restriction (#168)"
+      - "scheduled automatic refresh of the directory (SPEC §79 backlog: scheduled metadata updates)"
+      - "writing inferred airports into `origin_ident`/`destination_ident`"
+      - "the six low-severity tracker items (#96, #98, #100, #112, #138, #147)"
+    acceptance_criteria:
+      - "after Update Aircraft Metadata, the `routes` source reports its row count and dataset version, and a callsign present in the directory is enriched with `route_source: vrs` without any AeroDataBox request"
+      - "a callsign absent from the directory falls through to AeroDataBox under the budget; a directory route contradicted by the airport context is invalidated and the provider is asked once"
+      - "the detail panel shows a directory route and a provider route with distinct provenance labels, and an inferred end where no route is known"
+      - "with the breaker open and an expired cached route, the sighting keeps its route and diagnostics count one stale serve"
+      - "`alembic heads` shows exactly one head (0015); up and down migrate cleanly"
+      - "the perf harness gates carry the new headroom, the Pi budgets are unchanged, and `docs/PERFORMANCE.md` states both"
+      - "`Closes #173`, `Closes #166`, `Closes #170` in the PR body"
+    required_tests:
+      - source tests (parse a schema-01 fixture incl. multi-leg and split files, stage/promote, row count, status), registry exclusion tests
+      - worker chain tests (cache → directory → provider order, directory hit cached with source, miss falls through, contradiction invalidates and re-asks), stale-served tests, diagnostics passthrough
+      - serializer/API tests for `provenance.route` values; migration 0015 up/down
+      - frontend tests for provenance labels, the metadata source row, and the inferred-end rendering (live and sighting detail)
+      - perf budget/docs consistency tests updated for the new headroom
+    expected_artifacts:
+      - backend/src/flightsite/metadata/sources/routes.py
+      - backend/src/flightsite/enrichment/
+      - backend/src/flightsite/db/migrations/versions/ (rev 0015)
+      - backend/src/flightsite/perf/budgets.py
+      - backend/tests/metadata/test_cache_latency.py
+      - frontend/src/features/aircraft-detail/
+      - frontend/src/features/settings/sections/MetadataSection.tsx
+      - docs/adr/0016-offline-route-directory.md
+      - docs/LICENSES.md
+      - planning/SPEC.md (§28 amendment note only)
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner decision 2026-09-05 after the route-source research on #168: amend SPEC §28 to admit an offline route directory as the primary source. Bundled with the resilience items proposed in the same conversation (inferred end, last-known route) and the CI headroom for #166/#170, whose flakes cost four re-runs during the v0.4.0 and v0.5.0 trains. Migration-bearing (0015). Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other

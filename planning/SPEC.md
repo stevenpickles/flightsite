@@ -263,6 +263,14 @@ provider limits; never block live tracking on enrichment; degrade gracefully; di
 information from locally inferred airport context; document what information leaves the
 user's network.
 
+> **Amendment (2026-09-05, owner decision recorded by Fable):** origin and
+> destination may additionally be sourced from an offline, periodically imported
+> route directory — the Virtual Radar Server standing-data routes (CC0-1.0) — as
+> the **primary** source, with AeroDataBox consulted only for callsigns the
+> directory does not know. Provenance distinguishes the two sources; every other
+> rule in this section applies unchanged. Recorded in ADR-0016; implemented in
+> slice 071.
+
 # 29. Secrets
 
 Canonical non-secret configuration: `/opt/flightsite/data/config.yaml`. Secrets are
