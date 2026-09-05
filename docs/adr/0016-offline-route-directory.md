@@ -87,9 +87,24 @@ AeroDataBox for the callsigns it does not know.**
    is skipped in the directory for the cache TTL, so a wrong row cannot be re-read,
    re-cached, re-contradicted and re-read forever.
 6. **Last known route.** When a cached row has expired and neither the directory nor the
-   provider can answer *now* — budget spent, breaker open, 429, timeout — the expired row
-   is served, its expiry pushed 24 h out, logged once per callsign per UTC day, and
-   counted in the diagnostics `enrichment.cache.stale_served` block.
+   provider can answer *now* — budget spent, breaker open, 429, timeout, or no provider
+   at all — the expired row is served, its expiry pushed 24 h out, logged once per
+   callsign per UTC day, and counted in the diagnostics
+   `enrichment.cache.stale_served` block.
+7. **The worker runs without a provider.** A key-less install consults the cache and the
+   directory and enriches from them; only the *provider* half is gated on a key. Slice
+   026's guarantee is unchanged and is restated where it belongs: **no provider, no
+   external call** — `build_provider` returns `None`, so no object in the process knows
+   how to make a request. What stopped being true is *no provider, no work*, which had
+   the effect of showing Unknown for all 619,770 routes an install had just imported.
+   The service starts whenever it has any source to consult, so an install with neither
+   a provider nor a directory still subscribes to nothing and creates no task.
+   `enrichment.enabled` accordingly means "route lookup is operating" and the additive
+   `enrichment.provider` names the online provider or is `null`. A save applies in place
+   in both directions: pasting a key installs the provider without a restart, and
+   removing one drops it while the directory goes on answering. Directory hits are
+   counted separately from cache hits, as `enrichment.cache.directory_hits`, because on
+   a key-less install that column is the only evidence the imported dataset is working.
 
 ## Alternatives considered
 
@@ -162,9 +177,23 @@ to a user's primary history table unattended.
 Aircraft Metadata", which is SPEC §79's existing backlog item for scheduled metadata
 updates and not this slice's business.
 
-**The directory is consulted by the enrichment worker, which still requires a
-configured provider to run.** An install with no AeroDataBox key gets no routes at all,
-directory or otherwise, because the worker does not start without one — the structural
-form of slice 026's "no key, no external call" guarantee. Letting the worker run
-directory-only is a natural follow-up and is deliberately not in this slice: it changes
-what "enrichment is off" means, which is a decision of the same kind as this one.
+**"Enrichment is off" now means something narrower.** Before this decision, no API key
+meant no enrichment subsystem at all: no subscription, no task, no routes. That was the
+right shape while a provider was the only source and the wrong one the moment the
+directory became the primary source, so the worker now runs on the directory alone. Two
+consequences follow and are worth stating plainly.
+
+The first is that a **stock install does work it did not do before** — one bounded
+subscription, and up to two indexed point reads per new airline callsign. On a key-less
+install with no routes imported, a callsign nobody can answer is left alone for a minute
+rather than re-walked on every observation, which keeps a sky of two hundred callsigns to
+a few reads a second instead of several hundred. That backoff is in memory only: "this
+install cannot find a route" is not the same claim as "there is no route", and writing
+the latter into `route_cache` would be a lie a reader could not detect.
+
+The second is that **`enabled` changed meaning**, which is a compatibility-relevant
+change to a documented field. It now says route lookup is operating rather than "a key is
+configured", and the additive `enrichment.provider` carries the question it used to
+answer. The Health page's "Enabled" row therefore reads *Yes* on a key-less install,
+which is true but incomplete without a provider row beside it — a frontend follow-up,
+noted rather than made here.

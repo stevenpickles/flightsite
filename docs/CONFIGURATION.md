@@ -233,22 +233,34 @@ storage from [DATA_MODEL.md §9](DATA_MODEL.md) instead.
 | `range_rings_enabled` | bool | `true` | |
 | `range_ring_radii_nm` | list of float | `[50, 100, 150, 200]` | Up to 10, all > 0, unique; sorted on save |
 
-### `enrichment` — optional online route lookup
+### `enrichment` — optional **online** route lookup
+
+**Route lookup works without a key.** Run "Update Aircraft Metadata" once and the
+`routes` dataset — the offline Virtual Radar Server route directory, CC0 — is imported
+locally and consulted first for every flight; importing it *is* the opt-in, and there is
+no setting for it ([ADR-0016](adr/0016-offline-route-directory.md)). Routes it supplies
+are labelled `vrs` and cost nothing, because nothing leaves your network to fetch them.
+
+The settings below add **AeroDataBox** on top: an online lookup for the callsigns the
+directory does not know. That half is off by default and needs your own API key.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `aerodatabox_enabled` | bool | `false` | |
 | `aerodatabox_api_key` | secret | — | **Belongs in `secrets.yaml`, not here.** Required when enabled |
 | `route_ttl_days` | int | `7` | 1–30. How long a found route stays cached before it is bought again |
-| `daily_lookup_budget` | int | `0` | `0` = uncapped. Provider lookups allowed per UTC day |
+| `daily_lookup_budget` | int | `0` | `0` = uncapped. **Provider** lookups allowed per UTC day; directory hits are free and uncounted |
 
-FlightSite is fully functional with enrichment off. This is the only setting that
-sends anything about observed aircraft to a third party — see
-[SECURITY.md §10](SECURITY.md).
+FlightSite is fully functional with all of this off, and substantially useful with only
+the directory imported. AeroDataBox is the only part that sends anything about observed
+aircraft to a third party — see [SECURITY.md §10](SECURITY.md).
 
 Every setting here applies on save, in either direction and including a change of key
 or of either number; nothing in this section needs a restart. See
-[Applies immediately](#applies-immediately) above.
+[Applies immediately](#applies-immediately) above. Turning the key off stops the online
+lookups and **not** the directory ones — removing a key is not a request to stop
+enriching — and turning it on installs the provider without interrupting anything the
+worker is already doing.
 
 **The two numbers are the credit economy** (slice 070). They bound spending from
 opposite ends: `route_ttl_days` decides how *often* one callsign may be asked about, and

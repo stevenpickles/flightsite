@@ -43,6 +43,7 @@ from flightsite.enrichment.model import (
 from flightsite.enrichment.service import (
     DIRECTORY_CONTRADICTED_EVENT,
     STALE_SERVED_EVENT,
+    UNANSWERABLE_BACKOFF_S,
 )
 from flightsite.live import LiveStore
 from flightsite.sightings import PersistenceWorker
@@ -51,6 +52,7 @@ from tests.enrichment.conftest import (
     DESTINATION,
     ICAO,
     ORIGIN,
+    OTHER_ICAO,
     FakeProvider,
     SimulatedTime,
     build_service,
@@ -79,6 +81,14 @@ VRS_DESTINATION = "KJFK"
 @pytest.fixture
 def directory(database: Database) -> RouteDirectoryRepository:
     return RouteDirectoryRepository(database)
+
+
+#: The key-less tests below pass ``provider=None`` rather than a fake that
+#: refuses to answer. That is not a shortcut: ``None`` is exactly what
+#: :func:`~flightsite.enrichment.service.build_provider` returns for a stock
+#: install and exactly what ``create_app`` hands the service, so "zero external
+#: calls" is proved by there being no object to call rather than by an empty
+#: call list on a double that could have been called.
 
 
 @pytest.fixture
@@ -844,3 +854,303 @@ async def test_a_directory_hit_answers_before_anything_goes_stale(
     sighting = await only_sighting(database)
     assert (sighting.origin_ident, sighting.destination_ident) == (VRS_ORIGIN, VRS_DESTINATION)
     assert sighting.route_source == ROUTE_SOURCE_VRS
+
+
+# ------------------------------------------------------ without any provider
+
+
+async def test_a_key_less_install_enriches_from_the_directory(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    database: Database,
+    probes: Probes,
+) -> None:
+    """The point of the whole slice: no API key, and routes appear anyway.
+
+    ``provider=None`` is not a stand-in here — it is exactly what
+    :func:`~flightsite.enrichment.service.build_provider` returns for a stock
+    install, and what ``create_app`` hands the service.
+    """
+    await seed_directory(directory, vrs_row())
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+    assert service.enabled is True
+    assert service.provider_name is None
+
+    await observe_once(service, live, worker, clock)
+
+    sighting = await only_sighting(database)
+    assert (sighting.origin_ident, sighting.destination_ident) == (VRS_ORIGIN, VRS_DESTINATION)
+    assert sighting.route_source == ROUTE_SOURCE_VRS
+    assert service.lookups == 0
+    assert service.cache_stats.directory_hits == 1
+
+
+async def test_a_key_less_install_with_an_empty_directory_does_nothing_observable(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    database: Database,
+    probes: Probes,
+) -> None:
+    """A stock install that has never imported routes: clean Unknowns.
+
+    No route on the sighting, no row in the cache — nothing is invented, and
+    nothing negative is filed either, because "this install cannot find a
+    route" is not the same claim as "there is no route".
+    """
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+
+    await observe_once(service, live, worker, clock)
+
+    sighting = await only_sighting(database)
+    assert sighting.origin_ident is None
+    assert sighting.route_source is None
+    assert service.lookups == 0
+    assert service.cache_stats.directory_hits == 0
+    assert await cache.size() == 0
+
+
+async def test_a_key_less_install_holds_no_provider_to_call(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    probes: Probes,
+) -> None:
+    """Zero external calls, proved by there being nothing to call."""
+    await seed_directory(directory, vrs_row())
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+
+    for _ in range(4):
+        await observe_once(service, live, worker, clock)
+
+    assert service._provider is None
+    assert service.lookups == 0
+    assert service.circuit_open is False
+
+
+async def test_an_unanswerable_callsign_is_left_alone_for_a_while(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    probes: Probes,
+) -> None:
+    """A key-less miss must not cost two table reads on every observation.
+
+    The backoff is in memory and nowhere else: the assertion is that the key
+    stops being queued, *and* that no negative row was filed to achieve it.
+    """
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+
+    await observe_once(service, live, worker, clock)
+    for _ in range(5):
+        clock.advance(1.0)
+        observe(live, clock)
+        feed(service, live)
+
+    assert service.pending == 0
+    assert await cache.size() == 0
+
+    # Past the window, the worker is willing to look again — which is what
+    # makes importing the routes dataset take effect without a restart.
+    clock.advance(UNANSWERABLE_BACKOFF_S + 1)
+    observe(live, clock)
+    feed(service, live)
+
+    assert service.pending == 1
+
+
+async def test_the_last_known_route_survives_with_no_provider(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    database: Database,
+    probes: Probes,
+    logs: RecordedLogs,
+) -> None:
+    """A key-less install has no source that can answer *now*, by definition.
+
+    So the stale rule applies to it in full — and it is the case where it
+    matters most, because there is no provider to come back later and refresh.
+    """
+    await expired_row(cache, clock)
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+
+    await observe_once(service, live, worker, clock)
+
+    sighting = await only_sighting(database)
+    assert (sighting.origin_ident, sighting.destination_ident) == (ORIGIN, DESTINATION)
+    assert service.cache_stats.stale_served == 1
+    assert logs.named(STALE_SERVED_EVENT) == [
+        {"callsign": AIRLINE_CALLSIGN, "reason": "no_provider", "extended_s": STALE_EXTENSION_S}
+    ]
+
+
+async def test_a_provider_saved_later_answers_the_misses_without_a_restart(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    database: Database,
+    probes: Probes,
+) -> None:
+    """Issue #161's rule, now in the direction slice 071 opened up.
+
+    A key-less install misses; the owner pastes a key and saves; the very next
+    observation reaches the provider. Without a teardown — the reader task and
+    its subscription are the same ones — and without waiting out the backoff
+    the miss installed, which is why :meth:`_reset_provider_state` clears it.
+    """
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+    await service.start()
+    reader = service._reader
+    await observe_once(service, live, worker, clock)
+    assert service.pending == 0
+
+    provider = FakeProvider({AIRLINE_CALLSIGN: route_answer()})
+    try:
+        await service.apply_provider(provider)
+
+        assert service._reader is reader
+        assert service.running is True
+        await observe_once(service, live, worker, clock)
+    finally:
+        await service.stop()
+
+    assert provider.calls == [AIRLINE_CALLSIGN]
+    sighting = await only_sighting(database)
+    assert (sighting.origin_ident, sighting.destination_ident) == (ORIGIN, DESTINATION)
+    assert sighting.route_source == ROUTE_SOURCE_AERODATABOX
+
+
+async def test_removing_the_key_leaves_the_directory_answering(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    directory: RouteDirectoryRepository,
+    database: Database,
+    probes: Probes,
+) -> None:
+    """Removing an API key is not a request to stop enriching."""
+    await seed_directory(directory, vrs_row(callsign="BAW1"))
+    provider = FakeProvider({AIRLINE_CALLSIGN: route_answer()})
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=directory,
+        provider=provider,
+        clock=clock,
+        probes=probes,
+    )
+    await service.start()
+
+    try:
+        await service.apply_provider(None)
+
+        assert provider.closed is True
+        assert service.running is True
+        assert service.enabled is True
+        # An aircraft flying a callsign the directory *does* know is still
+        # enriched, with no provider anywhere in the process.
+        observe(live, clock, icao=OTHER_ICAO, callsign="BAW1")
+        await worker.process_pending()
+        feed(service, live)
+        await pump(service)
+        await worker.process_pending()
+    finally:
+        await service.stop()
+
+    sighting = await only_sighting(database, OTHER_ICAO)
+    assert sighting.route_source == ROUTE_SOURCE_VRS
+    assert provider.calls == []
+
+
+async def test_a_service_with_neither_source_starts_nothing(
+    live: LiveStore,
+    clock: SimulatedTime,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    probes: Probes,
+) -> None:
+    """The one shape that still has no reason to run."""
+    service = directory_service(
+        live=live,
+        worker=worker,
+        cache=cache,
+        directory=None,
+        provider=None,
+        clock=clock,
+        probes=probes,
+    )
+
+    await service.start()
+
+    try:
+        assert service.enabled is False
+        assert service.running is False
+        observe(live, clock)
+        feed(service, live)
+        assert service.pending == 0
+    finally:
+        await service.stop()

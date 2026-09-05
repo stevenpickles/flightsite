@@ -564,28 +564,49 @@ Two contract details worth knowing:
 
   ```json
   "enrichment": {
-    "enabled": true, "running": true, "circuit_open": false,
+    "enabled": true, "provider": "aerodatabox", "running": true,
+    "circuit_open": false,
     "lookups": 308, "dropped": 0, "pending": 2, "failures": 0,
     "budget": {
       "limit": 500, "used_today": 137, "remaining": 363,
       "resets_at": "2026-09-05T00:00:00.000Z"
     },
-    "cache": { "hits": 4112, "misses": 308, "learned": 57, "stale_served": 0 }
+    "cache": {
+      "hits": 4112, "misses": 308, "learned": 57,
+      "stale_served": 0, "directory_hits": 1904
+    }
   }
   ```
+
+  `enabled` and `provider` answer two different questions since slice 071. `enabled`
+  says route lookup is **operating** — which the offline route directory alone
+  satisfies, so an install that has imported the `routes` dataset and holds no API key
+  reports `enabled: true, provider: null` and enriches happily from its own tables.
+  `provider` names the **online** provider (`"aerodatabox"`) or is `null`. A client that
+  reads `enabled` as "an API key is configured" will misreport a directory-only install;
+  read `provider` for that.
 
   `limit` and `remaining` are `null` on an uncapped install (`daily_lookup_budget: 0`,
   the default) — which is not the same as `0`: one means there is no ceiling, the other
   means today's ceiling has been reached. `used_today` counts route-cache rows fetched
   in the current UTC day, so it survives a restart, and `resets_at` is the next UTC
-  midnight. `cache.learned` is the number of cached routes confirmed on enough separate
-  days to be frozen for 30 days ([DATA_MODEL.md §7](DATA_MODEL.md)). `cache.hits`
-  counts every lookup answered without spending a credit, which since slice 071
-  includes hits on the offline route directory.
+  midnight. The budget, the priority order and the circuit breaker govern **provider
+  requests only** — a directory hit is free and is unaffected by a spent budget or an
+  open circuit. `cache.learned` is the number of cached routes confirmed on enough
+  separate days to be frozen for 30 days ([DATA_MODEL.md §7](DATA_MODEL.md)).
+
+  The three ways a lookup can be answered are counted separately and do not overlap:
+  `cache.hits` is the route cache (in memory or in the table), `cache.directory_hits`
+  is the offline route directory, and `cache.misses` is what had to reach the provider.
+  `directory_hits` is deliberately not folded into `hits` — both are free, but only one
+  of them says the imported routes dataset is earning its place. On a key-less install
+  it is also the only one that ever counts a *new* answer: `misses` never moves at all,
+  and `hits` records only the repeat sightings of what the directory already supplied.
 
   `cache.stale_served` (slice 071) counts expired routes that were kept on their
   sightings because nothing could refresh them — the day's budget spent, the circuit
-  breaker open, a 429, or a timeout. The routes on screen are still real, but they are
+  breaker open, a 429, a timeout, or, on an install with no API key, nobody left to ask
+  once the directory has come up empty. The routes on screen are still real, but they are
   the last ones a source reported, so a number that climbs is the signal that something
   upstream has been unavailable. Each serve pushes that row's expiry a day out, so this
   counts callsigns rather than observations.

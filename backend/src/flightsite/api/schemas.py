@@ -1212,12 +1212,26 @@ class DiagnosticsEnrichmentCache(_Model):
     #: a timeout (slice 071). The sighting keeps last week's route rather than
     #: losing it; a climbing number says something upstream is unavailable.
     stale_served: int = 0
+    #: Lookups the offline route directory answered (slice 071). Separate from
+    #: ``hits`` on purpose: both cost nothing, but this is the one that says
+    #: the imported routes dataset is earning its place — and on an install
+    #: with no API key it is the only column that counts a *new* answer,
+    #: ``misses`` never moving and ``hits`` recording only the repeat sightings
+    #: of what the directory already supplied.
+    directory_hits: int = 0
 
 
 class DiagnosticsEnrichment(_Model):
     """SPEC §67: enrichment failures, plus what the day's credits bought."""
 
+    #: Route lookup is operating — there is a source to consult. Since slice
+    #: 071 that is satisfied by the offline route directory alone, so this is
+    #: ``true`` on a key-less install with the routes dataset imported.
     enabled: bool = False
+    #: The **online** provider's name, or ``null`` where there is none. The
+    #: other half of ``enabled``: together they distinguish "enriching from the
+    #: local directory only" from "enriching with AeroDataBox as well".
+    provider: str | None = None
     running: bool = False
     circuit_open: bool = False
     lookups: int = 0

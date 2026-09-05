@@ -355,6 +355,7 @@ class TestEnrichmentSection:
     def _service(cls, **overrides: Any) -> Any:
         state: dict[str, Any] = {
             "enabled": True,
+            "provider_name": "aerodatabox",
             "running": True,
             "circuit_open": False,
             "lookups": 308,
@@ -363,7 +364,9 @@ class TestEnrichmentSection:
             "budget": SimpleNamespace(
                 limit=500, used_today=137, remaining=363, resets_at_ms=cls.MIDNIGHT_MS
             ),
-            "cache_stats": SimpleNamespace(hits=4_112, misses=308, learned=57, stale_served=9),
+            "cache_stats": SimpleNamespace(
+                hits=4_112, misses=308, learned=57, stale_served=9, directory_hits=1_904
+            ),
         }
         state.update(overrides)
         return SimpleNamespace(**state)
@@ -387,11 +390,31 @@ class TestEnrichmentSection:
             "misses": 308,
             "learned": 57,
             "stale_served": 9,
+            "directory_hits": 1_904,
         }
+        assert payload["enrichment"]["provider"] == "aerodatabox"
 
     @pytest.mark.asyncio
-    async def test_a_service_from_before_the_stale_counter_still_reports_zero(self) -> None:
-        """The key is additive; a stats object without it is not a failure."""
+    async def test_a_key_less_install_is_enabled_with_no_provider(self) -> None:
+        """The two keys answer different questions (slice 071).
+
+        ``enabled`` says route lookup is operating — the offline directory is
+        enough for that — and ``provider`` says whether anything can reach past
+        it. Reading one for the other would report a directory-only install as
+        switched off.
+        """
+        service = self._service(provider_name=None)
+
+        payload = await collect_diagnostics(
+            _app(enrichment=service), counters=CounterRegistry(), ring=ErrorRing(), now=NOW
+        )
+
+        assert payload["enrichment"]["enabled"] is True
+        assert payload["enrichment"]["provider"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_service_from_before_the_new_counters_still_reports_zero(self) -> None:
+        """Both keys are additive; a stats object without them is not a failure."""
         service = self._service(cache_stats=SimpleNamespace(hits=1, misses=2, learned=3))
 
         payload = await collect_diagnostics(
@@ -399,6 +422,7 @@ class TestEnrichmentSection:
         )
 
         assert payload["enrichment"]["cache"]["stale_served"] == 0
+        assert payload["enrichment"]["cache"]["directory_hits"] == 0
 
     @pytest.mark.asyncio
     async def test_an_uncapped_budget_reports_null_rather_than_zero(self) -> None:
@@ -435,7 +459,9 @@ class TestEnrichmentSection:
             "misses": 0,
             "learned": 0,
             "stale_served": 0,
+            "directory_hits": 0,
         }
+        assert payload["enrichment"]["provider"] is None
 
 
 class TestCountersAndErrors:

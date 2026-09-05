@@ -148,6 +148,13 @@ request is made, no credit is spent, and the route is labelled `vrs` rather than
 `aerodatabox` wherever it is shown. AeroDataBox is asked only for the callsigns the
 directory does not know, and only under the limits in the table above.
 
+**With no API key at all, route lookup still runs — and still sends nothing.** The
+worker consults your own two tables and writes what it finds onto sightings. It holds no
+provider object, so there is nothing in the process that knows how to make a request:
+"no key, no external call" is a fact about the object graph, exactly as it has been since
+slice 026, and it did not change when the worker stopped being gated on the key. What a
+key adds is the ability to ask about the flights your local directory has never heard of.
+
 The directory's own download is the one new outbound request, and it is the least
 revealing one here: a single unauthenticated GET for a public file, made only when you
 press "Update Aircraft Metadata", carrying nothing about your receiver, your aircraft or
