@@ -40,7 +40,7 @@ export function EnrichmentHealthCard({
     <HealthCard
       titleId="health-enrichment"
       title="Route enrichment"
-      description="Optional external route lookups (SPEC §28)."
+      description="Route lookups: the offline route directory, plus AeroDataBox when configured (SPEC §28)."
       status={
         budgetStatus !== null ? (
           <StatusPill tone={budgetStatus.tone} label={budgetStatus.label} />
@@ -48,6 +48,16 @@ export function EnrichmentHealthCard({
       }
     >
       <DetailRow label="Enabled" value={enrichment.enabled ? "Yes" : "No"} />
+      {enrichment.provider !== undefined && (
+        <DetailRow
+          label="Provider"
+          value={
+            enrichment.provider === "aerodatabox"
+              ? "AeroDataBox"
+              : "Directory only"
+          }
+        />
+      )}
       <DetailRow label="Lookups" value={formatCount(enrichment.lookups)} />
       <DetailRow label="Failures" value={formatCount(enrichment.failures)} />
       <DetailRow
@@ -84,6 +94,18 @@ export function EnrichmentHealthCard({
             label="Routes learned"
             value={formatCount(cache.learned)}
           />
+          {cache.directory_hits !== undefined && (
+            <DetailRow
+              label="Directory hits"
+              value={formatCount(cache.directory_hits)}
+            />
+          )}
+          {cache.stale_served !== undefined && (
+            <DetailRow
+              label="Last-known routes served"
+              value={formatCount(cache.stale_served)}
+            />
+          )}
         </>
       )}
     </HealthCard>

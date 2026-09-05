@@ -36,9 +36,9 @@ Pi 4 run on non-SD storage that would calibrate it is issue #153.
 CI headroom
 -----------
 
-Hard gates that measure *time* are asserted against ``budget x ci_headroom``,
-the convention already used by ``tests/alerts/test_perf.py`` and
-``tests/metadata/test_cache_latency.py``: a shared runner under coverage
+Hard gates that measure *time* are asserted against ``budget x ci_headroom``.
+The default multiplier is :data:`CI_HEADROOM`, five — the convention
+``tests/alerts/test_perf.py`` also uses: a shared runner under coverage
 instrumentation is slow and noisy, and a bound five times the budget still
 catches every structural regression (a hot-path await, a per-aircraft query, a
 superlinear scan) while never failing on a busy machine.
@@ -47,6 +47,39 @@ Budgets that measure a *quantity* rather than a duration get
 :data:`NO_HEADROOM`. A 1 GB memory ceiling relaxed five-fold is not a gate, and
 the live population a deterministic scenario produces does not vary with how
 loaded the machine is.
+
+Two gates carry a multiplier sized from their own CI history instead of the
+default, because the default was not the right number for either (issues #166
+and #170). The reference-hardware budgets are untouched — 0.5 of a poll and
+100 ms, exactly as before — and ``docs/PERFORMANCE.md`` §5 reads every figure
+against the budget at face value on the hardware being qualified; what moved is
+only the bound the shared-runner suite asserts.
+
+``ingest_duty_cycle`` gets :data:`DUTY_CYCLE_CI_HEADROOM`, 1.8, so 0.9 of a
+poll. It was the one hard gate with no headroom at all, and across the v0.4.0
+and v0.5.0 release trains it flaked at p95 0.539, 0.542, 0.645 and 0.73 against
+0.5, beside medians of 0.08-0.11 — every time on a commit whose other 4,400
+tests passed and which passed this gate on re-run. 0.9 clears the worst of the
+four by 1.23x. The multiplier is fractional, and cannot be larger, because this
+budget is a fraction of a poll rather than a duration: at 1.0 the tick consumes
+the whole poll, so a multiplier of 2 or more would assert a bound that a
+pipeline losing ground could still pass, and "ingestion keeps up" would stop
+meaning anything.
+
+``ingest_apply_ms`` gets :data:`APPLY_CI_HEADROOM`, 8, so 800 ms. The default
+five bounded it at 500 ms and shared runners crossed that twice, at p95 585 ms
+and 658 ms beside medians of 37-41 ms, on the same kind of otherwise-green run.
+800 ms clears the worse of the two by 1.22x, and stays inside
+``ingest_duty_cycle``'s 900 ms: the apply is one term of that sum, so its own
+bound has no business exceeding the sum's.
+
+Neither widening hides a regression, because what those runs show is one
+contended tick beside a healthy median rather than a slower pipeline. A
+regression that doubled the median *and* carried the tail with it in the same
+proportion would put ``ingest_apply_ms`` near 1.2 s and ``ingest_duty_cycle``
+near 1.4 of a poll — outside the new bounds by half again and more. Nor do the
+new bounds rewrite the record: §5.4's Pi 4 duty cycle of 0.99 fails at 0.9
+exactly as it failed at 0.5, so issue #132's finding stands.
 
 ``startup_s`` and ``recovery_s`` are durations that also carry
 :data:`NO_HEADROOM`. Slice 065 promoted both at their stated 30 s rather than
@@ -74,6 +107,15 @@ CI_HEADROOM: Final = 5
 
 #: Applied to budgets a loaded machine cannot legitimately miss.
 NO_HEADROOM: Final = 1
+
+#: ``ingest_apply_ms``'s own allowance, sized from the shared-runner p95s that
+#: crossed the default multiplier's 500 ms bound (see the module docstring).
+APPLY_CI_HEADROOM: Final = 8
+
+#: ``ingest_duty_cycle``'s own allowance, and the only fractional one in the
+#: table: the budget is a fraction of a poll, so the multiplier has to leave the
+#: asserted bound below 1.0 for the gate to keep meaning "ingestion keeps up".
+DUTY_CYCLE_CI_HEADROOM: Final = 1.8
 
 #: The load envelope every scenario runs at (SPEC §5): concurrent aircraft.
 TARGET_AIRCRAFT: Final = 500
@@ -113,6 +155,9 @@ class Budget:
         direction: ceiling or floor.
         gate: hard gate or trend-tracked reference.
         ci_headroom: multiplier (ceiling) or divisor (floor) applied in-suite.
+            Usually :data:`CI_HEADROOM` or :data:`NO_HEADROOM`; two gates carry
+            an allowance sized from their own CI history, which is why this is a
+            float rather than an int.
         rationale: why this number, in one sentence.
         also_enforced_by: existing suite tests that already guard some part of
             this budget in isolation, so the table shows what is new here and
@@ -127,7 +172,7 @@ class Budget:
     statistic: Statistic
     direction: Direction
     gate: GateKind
-    ci_headroom: int
+    ci_headroom: float
     rationale: str
     also_enforced_by: tuple[str, ...] = ()
 
@@ -178,11 +223,14 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         statistic=Statistic.P95,
         direction=Direction.CEILING,
         gate=GateKind.HARD,
-        ci_headroom=CI_HEADROOM,
+        ci_headroom=APPLY_CI_HEADROOM,
         rationale=(
             "docs/ARCHITECTURE.md §3.3: the adapter normalizes and applies a batch between "
             "polls, so an apply approaching the 1 s poll interval turns the live picture into "
-            "a backlog. A tenth of a poll leaves room for every other consumer."
+            "a backlog. A tenth of a poll leaves room for every other consumer. In-suite it "
+            "carries 8x rather than the default 5x: shared runners twice put the p95 at 585 "
+            "and 658 ms beside medians of 37-41 ms, so the 500 ms the default asserted sat "
+            "below the runner noise headroom exists to absorb (issues #166, #170)."
         ),
         also_enforced_by=("tests/live/test_perf.py",),
     ),
@@ -195,13 +243,16 @@ BUDGETS: Final[tuple[Budget, ...]] = (
         statistic=Statistic.P95,
         direction=Direction.CEILING,
         gate=GateKind.HARD,
-        ci_headroom=NO_HEADROOM,
+        ci_headroom=DUTY_CYCLE_CI_HEADROOM,
         rationale=(
             "The whole synchronous hot path — apply, event dispatch, every live consumer — "
             "measured against one 1 Hz poll. Above 1.0 the pipeline is losing ground; the "
             "budget is half a poll so a Pi 4 at several times dev-machine cost still keeps up. "
-            "No headroom: this is already expressed as a ratio to the poll, so a slow machine "
-            "is the thing being measured, not noise to be forgiven. Gated on the p95 rather "
+            "In-suite it asserts 0.9 of a poll: it ran with no headroom at all and flaked four "
+            "times on shared runners at p95 0.539, 0.542, 0.645 and 0.73 beside medians of "
+            "0.08-0.11 (issue #166). The multiplier is fractional and can be no larger, "
+            "because a bound at or above one whole poll would tolerate a pipeline that is "
+            "losing ground. Gated on the p95 rather "
             "than the maximum because the sum assumes the stages run serially, as this harness "
             "drives them: in the product the write-behind worker is a separate task and cannot "
             "block live.apply (ADR-0008), so the periodic 30 s flush spike delays the next "
@@ -397,8 +448,10 @@ def reference_budgets() -> tuple[Budget, ...]:
 
 
 __all__ = [
+    "APPLY_CI_HEADROOM",
     "BUDGETS",
     "CI_HEADROOM",
+    "DUTY_CYCLE_CI_HEADROOM",
     "NO_HEADROOM",
     "TARGET_AIRCRAFT",
     "TICK_INTERVAL_S",

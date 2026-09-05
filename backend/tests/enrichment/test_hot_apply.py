@@ -23,6 +23,14 @@ The negative half matters as much as the positive one. Switching enrichment off
 must leave no object in the process that knows how to make the request, which
 is the same guarantee ``test_app_wiring.py`` makes about a stock install — only
 now it has to hold at every instant of the process's life rather than at boot.
+
+Slice 071 changed what "off" *stops*, and these tests were rewritten to say so.
+The offline route directory needs no key, so a save that removes one drops the
+provider and leaves the worker running; a save that adds one installs the
+provider in place, without cancelling the reader or shedding the queue. The
+guarantee above is untouched — what changed is that it is now about the
+provider alone rather than about the whole subsystem, which is why the
+assertions below moved from ``enabled`` to ``provider_name``.
 """
 
 from __future__ import annotations
@@ -190,7 +198,16 @@ async def test_a_key_change_swaps_the_provider_and_starts_again(
     cache: RouteCacheRepository,
     clock: SimulatedTime,
 ) -> None:
-    """Re-keying is a stop and a start, in that order — never two clients."""
+    """Re-keying swaps the client in place — never two clients, never a restart.
+
+    Slice 071 changed the *how* and not the guarantee. It used to be a stop and
+    a start, which cost a cancelled reader, a released subscription and a lost
+    queue for a change no running task holds a reference to: ``_request`` reads
+    ``self._provider`` at the moment it asks. Now the new provider is installed
+    and the old one's client closed, and the tasks never notice — so the
+    assertion that matters, that the replaced provider is closed and the new
+    one is not, is unchanged, and the reader identity assertion is inverted.
+    """
     first = FakeProvider({AIRLINE_CALLSIGN: route_answer()})
     service = build_service(live=live, worker=worker, cache=cache, provider=first, clock=clock)
     await service.start()
@@ -204,11 +221,49 @@ async def test_a_key_change_swaps_the_provider_and_starts_again(
         assert first.closed is True
         assert second.closed is False
         assert service.running is True
-        # A new reader task, on a new subscription: the old one was cancelled
-        # before the new provider was installed.
-        assert service._reader is not reader
+        # The same reader, on the same subscription: nothing was torn down.
+        assert service._reader is reader
     finally:
         await service.stop()
+
+
+async def test_the_new_provider_is_installed_before_the_old_client_is_closed(
+    live: LiveStore,
+    worker: PersistenceWorker,
+    cache: RouteCacheRepository,
+    clock: SimulatedTime,
+) -> None:
+    """The swap's ordering, which the worker's survival depends on (slice 071).
+
+    Closing a client is the one ``await`` in the swap, and since slice 071 the
+    worker runs right through it. ``AeroDataBoxProvider`` builds its client
+    lazily, so a drain that reached :meth:`_request` during that await, while
+    ``self._provider`` still named the provider being closed, would build it a
+    *fresh* client and send the key the owner had just removed. Installing
+    first closes that window: whoever asks during the close asks the new
+    provider, or asks nobody.
+    """
+    closed_against: list[Any] = []
+
+    class RecordingProvider(FakeProvider):
+        async def aclose(self) -> None:
+            closed_against.append(service._provider)
+            await super().aclose()
+
+    first = RecordingProvider({AIRLINE_CALLSIGN: route_answer()})
+    service = build_service(live=live, worker=worker, cache=cache, provider=first, clock=clock)
+    second = RecordingProvider({AIRLINE_CALLSIGN: route_answer()})
+
+    await service.apply_provider(second)
+
+    assert closed_against == [second]
+    assert first.closed is True
+
+    # And the same the other way: removing the key leaves nothing to ask
+    # while the client that could have answered is still closing.
+    await service.apply_provider(None)
+
+    assert closed_against == [second, None]
 
 
 async def test_an_unchanged_configuration_leaves_the_running_worker_alone(
@@ -461,15 +516,22 @@ def emitted_events(output: str) -> list[dict[str, Any]]:
     return events
 
 
-def test_a_save_that_enables_enrichment_starts_the_worker(client: TestClient) -> None:
-    """The owner's report, end to end: tick the box, paste the key, save."""
+def test_a_save_that_enables_enrichment_starts_the_provider(client: TestClient) -> None:
+    """The owner's report, end to end: tick the box, paste the key, save.
+
+    What the save changes since slice 071 is the *provider*, not whether
+    enrichment runs: the app always wires the offline route directory, so the
+    worker was already going and ``enabled`` was already true. ``provider_name``
+    is the assertion that means "this install can now reach AeroDataBox".
+    """
     service = enrichment_of(client)
-    assert service.enabled is False
+    assert service.provider_name is None
+    assert service.enabled is True
 
     response = client.put("/api/internal/config", json=ENABLE)
 
     assert response.status_code == 200
-    assert service.enabled is True
+    assert service.provider_name == "aerodatabox"
     assert service.running is True
     assert isinstance(service._provider, AeroDataBoxProvider)
     # The key was stored, and the response still does not carry it.
@@ -477,28 +539,39 @@ def test_a_save_that_enables_enrichment_starts_the_worker(client: TestClient) ->
     assert SECRET_SENTINEL not in response.text
 
 
-def test_the_flag_starts_the_worker_when_the_key_is_already_stored(client: TestClient) -> None:
+def test_the_flag_builds_the_provider_when_the_key_is_already_stored(
+    client: TestClient,
+) -> None:
     """The other order the Settings page allows: key first, consent second.
 
-    Holding a key is not consent to use it, so the first save must start
-    nothing — and the second must not need the key sent again.
+    Holding a key is not consent to use it, so the first save must build no
+    provider — and the second must not need the key sent again. The worker runs
+    throughout either way, because the directory needs no key.
     """
     service = enrichment_of(client)
 
     client.put(
         "/api/internal/config", json={"enrichment": {"aerodatabox_api_key": SECRET_SENTINEL}}
     )
-    assert service.enabled is False
-    assert service.running is False
+    assert service.provider_name is None
+    assert service.running is True
 
     client.put("/api/internal/config", json={"enrichment": {"aerodatabox_enabled": True}})
 
-    assert service.enabled is True
+    assert service.provider_name == "aerodatabox"
     assert service.running is True
 
 
-def test_a_save_that_disables_enrichment_stops_the_worker(client: TestClient) -> None:
-    """Withdrawing consent takes effect on the save, like granting it."""
+def test_a_save_that_disables_enrichment_drops_the_provider_not_the_worker(
+    client: TestClient,
+) -> None:
+    """Withdrawing consent takes effect on the save, like granting it.
+
+    What it withdraws is the *online* provider. Removing an API key is not a
+    request to stop enriching, and since slice 071 it does not: the directory
+    is the primary source and keeps answering, so the worker keeps running and
+    only the object that could have made a request is closed and dropped.
+    """
     service = enrichment_of(client)
     client.put("/api/internal/config", json=ENABLE)
     assert service.running is True
@@ -506,8 +579,9 @@ def test_a_save_that_disables_enrichment_stops_the_worker(client: TestClient) ->
     response = client.put("/api/internal/config", json=DISABLE)
 
     assert response.status_code == 200
-    assert service.running is False
-    assert service.enabled is False
+    assert service.provider_name is None
+    assert service.running is True
+    assert service.enabled is True
     # The key is still stored — it is the flag that was turned off.
     assert response.json()["secrets_set"] == {"enrichment.aerodatabox_api_key": True}
 
@@ -539,7 +613,7 @@ def test_the_budget_can_be_set_before_enrichment_is_enabled(client: TestClient) 
 
     client.put("/api/internal/config", json={"enrichment": {"daily_lookup_budget": 40}})
 
-    assert service.enabled is False
+    assert service.provider_name is None
     assert service.economy.daily_lookup_budget == 40
 
 
@@ -584,7 +658,9 @@ def test_a_failing_apply_still_saves_the_configuration(
 
         assert response.status_code == 200
         assert app.state.settings.enrichment.aerodatabox_enabled is True
-        assert app.state.enrichment.running is False
+        # No provider was built, so none was installed — and the worker goes on
+        # answering from the directory, which is not what failed.
+        assert app.state.enrichment.provider_name is None
 
     captured = capsys.readouterr()
     failures = [

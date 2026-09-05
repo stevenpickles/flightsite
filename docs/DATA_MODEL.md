@@ -707,7 +707,8 @@ CREATE TABLE route_cache (
   fetched_ms   INTEGER NOT NULL,
   expires_ms   INTEGER NOT NULL,
   confirmations    INTEGER NOT NULL DEFAULT 0,  -- separate days agreeing (0014)
-  first_fetched_ms INTEGER                      -- when this answer first arrived
+  first_fetched_ms INTEGER,                     -- when this answer first arrived
+  source       TEXT                             -- 'vrs' | 'aerodatabox' (0015)
 ) WITHOUT ROWID;
 CREATE INDEX ix_route_cache_expiry ON route_cache(expires_ms);
 ```
@@ -734,12 +735,31 @@ A provider *unavailability* — timeout, 429, 5xx, open circuit — is never sto
 fact about the network, not about the flight, and caching it would turn one bad minute
 into hours of false "no route" (SPEC §28: Unknown when uncertain).
 
+**Who answered.** `source` (rev 0015) records which of the two sources named the route —
+`vrs` for the offline directory below, `aerodatabox` for the online provider — so a cache
+hit reaches `sightings.route_source` and the API's `provenance.route` correctly a week
+later and across a restart, without the worker having to remember. It is deliberately
+**not** given a `CHECK`: widening one costs a table rebuild (rev 0014 rebuilt this table
+for exactly that reason), and a wrong value here could at worst leave a cached route
+un-attributed until it expires. Rows written before rev 0015 carry `NULL` and are
+re-attributed the next time their callsign is answered.
+
 **Learned schedules.** A refresh returning the same origin/destination as the stored row
 on a **different calendar day** increments `confirmations`; at **three** the row's expiry
 is set **30 days** out, so a scheduled service costs one lookup a month rather than one a
 week. A differing answer resets `confirmations` to 0 and `first_fetched_ms` to now, and
-the row returns to the ordinary TTL. Provenance stays `aerodatabox` throughout — the
-answer is the provider's, confirmed against itself, never FlightSite's inference.
+the row returns to the ordinary TTL. Provenance is unchanged by confirmation — the answer
+is still the source's, confirmed against itself, never FlightSite's inference.
+
+**Last known route (rev 0015).** When a row has expired and neither the directory nor the
+provider can answer *now* — the day's budget is spent, the circuit breaker is open, the
+provider returned 429 or timed out — the expired row is served anyway and its `expires_ms`
+pushed **24 h** out; `fetched_ms` is left alone, so an outage can move neither the daily
+budget ledger nor the confirmation count. The sighting keeps the route it had rather than
+dropping to Unknown, with the provenance the original source earned. One serve per
+callsign per day, logged once per callsign per UTC day as `route_cache_stale_served` and
+counted in the diagnostics `enrichment.cache.stale_served` block. An expired `not_found`
+row is never served this way: "nobody knows" is not a last known route.
 
 **Early invalidation.** When the airport-context service (§3.6, slice 027) latches a
 *departure* from a field the cached route does not call the origin, or an *arrival* at
@@ -749,6 +769,70 @@ a request per observation. This is the only path that deletes an unexpired row.
 
 Expired rows are not deleted on read; they are simply not returned, and maintenance
 prunes them by expiry.
+
+---
+
+## 7.1 Offline route directory (slice 071)
+
+```sql
+CREATE TABLE route_directory (
+  callsign        TEXT PRIMARY KEY,  -- normalized, as route_cache keys it
+  airline_code    TEXT,              -- upstream's ICAO designator; diagnostics only
+  airport_codes   TEXT NOT NULL,     -- 'EGLL-KJFK', or 'VHHH-UACC-EBLG' for a milk run
+  dataset_version TEXT NOT NULL      -- the artifact this row was imported from
+) WITHOUT ROWID;
+
+CREATE TABLE route_directory_staging (
+  callsign      TEXT PRIMARY KEY,
+  airline_code  TEXT,
+  airport_codes TEXT NOT NULL
+) WITHOUT ROWID;
+```
+
+**The primary origin/destination source** since SPEC §28's 2026-09-05 amendment
+([ADR-0016](adr/0016-offline-route-directory.md)): the enrichment worker consults
+`route_cache`, then this table, then AeroDataBox — so a callsign upstream knows costs one
+indexed point lookup and no API credit, ever, and the provider is spent only on callsigns
+nobody has filed a public schedule for.
+
+Imported from the **Virtual Radar Server standing data** (CC0 1.0) by
+`flightsite/metadata/sources/routes.py`, through the same slice-025 "Update Aircraft
+Metadata" action every other dataset uses, with its own `metadata_sources` row and its own
+independent outcome (SPEC §27). Measured against the live upstream on 2026-09-05: 619,828
+rows, all with distinct callsigns; **619,770 imported** (58 dropped as callsigns no lookup
+could ever ask for); 585,303 two-leg paths, 30,499 three-leg, out to twelve.
+
+**`airport_codes` is upstream's own spelling** — ICAO idents separated by `-`. The origin
+is the first code and the destination the last; intermediate stops are kept rather than
+dropped, because they are the only record of why a flight that left Hong Kong landed in
+Belgium, and they ride along in `route_cache.payload_json` for a multi-leg route. Nothing
+derives, completes or corrects a code.
+
+**`dataset_version` is stamped onto every row at promotion.** The table is replaced whole
+by each import, so a row cannot outlive its snapshot, and "which version said this?" is
+answerable without a join.
+
+**Why a staging table**, unlike `airports` (§3.6), which buffers its 71,190 rows in
+memory: the parsed route corpus measures **138 MB** as Python objects — the
+aircraft-snapshot magnitude, not the airport one. So rows are staged in short writer
+transactions and promoted with one `DELETE` + `INSERT … SELECT` inside a single
+transaction, exactly as `aircraft_metadata_staging` is (§3.2). Peak memory during an
+import is one batch. The staging table carries no `dataset_version` (the version is known
+only once the artifact has validated) and no `source` column (exactly one source writes
+routes; a second one would need it here).
+
+**Read only off the hot path.** The lookup is made on the enrichment worker's own task,
+once per callsign per cache TTL — a directory hit is written straight into `route_cache`,
+so the next observation of the same flight is answered by the gate in front of this table.
+Nothing in the live path, ingestion or the API serializers touches it
+(`docs/ARCHITECTURE.md` §3.1).
+
+**Staleness is the accepted cost.** This is community-corrected data with no freshness
+guarantee. Two things bound it: `provenance.route` publishes `vrs` so a client can say
+where the route came from, and the slice-070 airport-context check invalidates a
+contradicted row immediately — routing the re-ask to the **provider** and skipping the
+directory for that callsign for the cache TTL, because re-reading a file cannot produce a
+newer answer.
 
 ---
 
@@ -766,9 +850,12 @@ per-field provenance table (unbounded growth, join-heavy reads, no query need):
 2. **Aircraft metadata**: per-source rows (`aircraft_metadata`) plus `_src` columns on
    every resolved field (`aircraft_metadata_resolved`, `aircraft_classification`),
    giving true field-level provenance for everything enrichment-derived.
-3. **Sighting flight context**: `route_source` (external provider) vs
-   `inferred_*` columns (local heuristic) keep externally-reported routes and local
-   inference structurally separate; enrichment arrival is also a `sighting_event`.
+3. **Sighting flight context**: `route_source` — `vrs` for the offline route directory
+   (§7.1) or `aerodatabox` for the online provider — vs the `inferred_*` columns
+   (local heuristic) keep externally-reported routes and local inference structurally
+   separate; enrichment arrival is also a `sighting_event`. Both route values are
+   *reported*; neither is FlightSite's own inference, which is what the separate
+   columns exist to say.
 
 The API composes these into per-field provenance for the detail UI.
 
@@ -920,3 +1007,4 @@ field names; ingest normalizes before anything is persisted.
 | 037 | `watchlists`, `watchlist_entries` |
 | 038 | `alert_rules`, `alert_matches` |
 | 070 | `route_cache` gains `confirmations` / `first_fetched_ms` and the `restricted` status (rev 0014, a table rebuild) |
+| 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |

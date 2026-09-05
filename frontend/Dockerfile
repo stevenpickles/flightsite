@@ -29,10 +29,14 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 FROM nginxinc/nginx-unprivileged:1.31.4-alpine AS runtime
 
-# Patch base-image packages with published fixes (CVE-2026-66046: libexpat
-# 2.8.3 DoS, fixed 2.8.4-r0) until the pinned nginx tag ships them.
+# Patch every base-image package that has a published fix until the pinned
+# nginx tag ships them. Targeted upgrades (libexpat for CVE-2026-66046, then
+# util-linux/libuuid for CVE-2026-53612..78408) kept lagging the Trivy gate
+# by one advisory each, so this upgrades the whole Alpine package set: the
+# image is rebuilt on every push and the scan in .github/workflows/docker.yml
+# fails on any fixed HIGH/CRITICAL finding left behind (docs/SECURITY.md §7).
 USER root
-RUN apk upgrade --no-cache libexpat
+RUN apk upgrade --no-cache
 USER 101
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf

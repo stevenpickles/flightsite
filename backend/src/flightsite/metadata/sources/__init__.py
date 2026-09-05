@@ -12,6 +12,12 @@ the application only ever sees what it yields through the
 * :mod:`~flightsite.metadata.sources.opensky` — the OpenSky aircraft database
   (slice 059). Opt-in and off by default; unlike the two above it is registered
   only when ``metadata.opensky_enabled`` is set (ADR-0013).
+* :mod:`~flightsite.metadata.sources.routes` — the Virtual Radar Server
+  standing-data route directory (slice 071, ADR-0016). Not aircraft metadata
+  at all: like slice 027's ``airports`` it supplies its own
+  :class:`~flightsite.metadata.sink.ImportSink` and is excluded from the
+  airframe precedence model, and it is the only source here whose rows the
+  *enrichment* subsystem reads rather than the metadata cache.
 
 This package is deliberately just an export point: *which* provider gets
 registered under which name, and with what per-field priority, is decided at
@@ -25,5 +31,11 @@ from __future__ import annotations
 from flightsite.metadata.sources.faa import FaaRegistryProvider
 from flightsite.metadata.sources.mictronics import MictronicsProvider
 from flightsite.metadata.sources.opensky import OpenSkyProvider
+from flightsite.metadata.sources.routes import VrsRoutesProvider
 
-__all__ = ["FaaRegistryProvider", "MictronicsProvider", "OpenSkyProvider"]
+__all__ = [
+    "FaaRegistryProvider",
+    "MictronicsProvider",
+    "OpenSkyProvider",
+    "VrsRoutesProvider",
+]

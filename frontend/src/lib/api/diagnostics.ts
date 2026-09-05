@@ -180,11 +180,18 @@ export interface DiagnosticsEnrichmentBudget {
 }
 
 /** Route-cache effectiveness (slice 070): `learned` counts routes the cache
- * holds that were never paid for with a provider call. */
+ * holds that were never paid for with a provider call. `directory_hits` and
+ * `stale_served` are offline-route additions (slice 071) — absent from a
+ * backend that predates them. */
 export interface DiagnosticsEnrichmentCache {
   hits: number;
   misses: number;
   learned: number;
+  /** Routes answered from the bundled VRS standing-data directory rather
+   * than a cache row or a provider call. */
+  directory_hits?: number;
+  /** Routes answered from a last-known route rather than a fresh lookup. */
+  stale_served?: number;
 }
 
 export interface DiagnosticsEnrichment {
@@ -195,6 +202,10 @@ export interface DiagnosticsEnrichment {
   dropped: number;
   pending: number;
   failures: number;
+  /** `"aerodatabox"` when the provider key is configured, `null` when the
+   * worker runs key-less off the offline route directory alone. Absent from
+   * a backend older than slice 071 (§67). */
+  provider?: "aerodatabox" | null;
   /** Absent from a backend older than slice 070 — the Health card renders
    * the rows it has rather than inventing zeroes for the ones it does not. */
   budget?: DiagnosticsEnrichmentBudget;

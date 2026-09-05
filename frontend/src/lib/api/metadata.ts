@@ -99,9 +99,14 @@ export function useMetadataStatusQuery(): UseQueryResult<MetadataStatusResponse>
  * metadata as available over an empty `aircraft_metadata` table — exactly
  * the silently-empty-map hazard the original chip gate existed to prevent.
  *
+ * `routes` (slice 071, the offline VRS standing-data directory) is the same
+ * kind of neighbour and is excluded for the same reason: its rows are
+ * callsign-to-airport routes, and a route directory says nothing about
+ * whether this install can tell a C-17 from a Cessna.
+ *
  * The frontend already draws this line in `MetadataSection`'s
- * `SOURCE_LABELS`, which names these three and lets `airports` fall through
- * to the generic label. An unrecognized name is treated as
+ * `SOURCE_LABELS`, which names the airframe sources and lets `airports` fall
+ * through to the generic label. An unrecognized name is treated as
  * not-an-airframe-source: a new aircraft source arrives together with the
  * frontend change that names it, and failing closed until then only leaves a
  * filter unavailable, where failing open would leave it lying. */

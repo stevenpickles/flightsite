@@ -27,6 +27,10 @@ import { EmergencySquawkBadge } from "@/features/aircraft-detail/components/Emer
 import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/ExternalTrackerLinks";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
+import {
+  inferredRouteEnd,
+  inferredRouteEndValue,
+} from "@/features/aircraft-detail/components/InferredRouteEndValue";
 import { InterestingSection } from "@/features/aircraft-detail/components/InterestingSection";
 import { PositionSourceBadge } from "@/features/aircraft-detail/components/PositionSourceBadge";
 import { routeEndpointValue } from "@/features/aircraft-detail/components/RouteEndpointValue";
@@ -50,6 +54,7 @@ import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
+import type { LiveAircraft } from "@/lib/api/live";
 import { cn } from "@/lib/utils";
 
 /** Vertical-rate direction glyph. Text/symbol-first (▲/▼/—), not a bare
@@ -263,29 +268,14 @@ export function AircraftDetailPanel() {
 
               <IdentityMetadataSection aircraft={aircraft} />
 
-              {/* External route only (§2.6). Both rows always render: a
-               * route the provider has not answered for is `Unknown`, which
-               * is the same thing the panel says about every other optional
-               * field, and is what a stock install with enrichment switched
-               * off shows for every aircraft. */}
-              <DetailSection title="Route">
-                <FieldRow
-                  label="Origin"
-                  value={routeEndpointValue({
-                    ident: aircraft.route.origin,
-                    name: aircraft.route.origin_name,
-                  })}
-                  provenanceSource={aircraft.provenance.route}
-                />
-                <FieldRow
-                  label="Destination"
-                  value={routeEndpointValue({
-                    ident: aircraft.route.destination,
-                    name: aircraft.route.destination_name,
-                  })}
-                  provenanceSource={aircraft.provenance.route}
-                />
-              </DetailSection>
+              {/* Reported route first (§2.6), with a locally inferred end
+               * standing in only where no source answered — SPEC §28 as
+               * amended for slice 071. Both rows always render: an end
+               * neither a source nor the airport context can supply is
+               * `Unknown`, which is the same thing the panel says about
+               * every other optional field, and is what a stock install with
+               * enrichment switched off shows for every aircraft. */}
+              <RouteSection aircraft={aircraft} />
 
               {/* Local inference only (SPEC §41), and deliberately not part of
                * the Route section above: what somebody told FlightSite and
@@ -320,5 +310,62 @@ export function AircraftDetailPanel() {
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * The Route section: what a source reported, or — where nothing did — what
+ * the slice-027 airport context can stand in for (SPEC §28 as amended for
+ * slice 071).
+ *
+ * Split out of the panel body because each row now answers two questions
+ * (is there a reported ident? is there an inference that may fill the gap?)
+ * and the answers drive both the value *and* its provenance: a reported end
+ * is attributed to whichever source filed it (`vrs` or `aerodatabox`), an
+ * inferred one to the `heuristic` that produced the airport context. The two
+ * never blur, because a reported ident always wins.
+ */
+function RouteSection({ aircraft }: { aircraft: LiveAircraft }) {
+  const inferredOrigin = inferredRouteEnd(aircraft, "origin");
+  const inferredDestination = inferredRouteEnd(aircraft, "destination");
+
+  return (
+    <DetailSection title="Route">
+      <FieldRow
+        label="Origin"
+        value={
+          inferredOrigin === null
+            ? routeEndpointValue({
+                ident: aircraft.route.origin,
+                name: aircraft.route.origin_name,
+              })
+            : inferredRouteEndValue({ airport: inferredOrigin, end: "origin" })
+        }
+        provenanceSource={
+          inferredOrigin === null
+            ? aircraft.provenance.route
+            : aircraft.provenance.nearest_airport
+        }
+      />
+      <FieldRow
+        label="Destination"
+        value={
+          inferredDestination === null
+            ? routeEndpointValue({
+                ident: aircraft.route.destination,
+                name: aircraft.route.destination_name,
+              })
+            : inferredRouteEndValue({
+                airport: inferredDestination,
+                end: "destination",
+              })
+        }
+        provenanceSource={
+          inferredDestination === null
+            ? aircraft.provenance.route
+            : aircraft.provenance.nearest_airport
+        }
+      />
+    </DetailSection>
   );
 }

@@ -42,15 +42,49 @@ export interface MetadataSectionProps {
   config: FlightSiteConfig;
 }
 
+/** Display names for sources whose own name does not read as one.
+ *
+ * `airports` is deliberately absent: capitalising it gives "Airports", which
+ * is exactly right, and a map entry restating that would be one more thing to
+ * keep in step. `routes` cannot fall through the same way — "Routes" would not
+ * say whose routes these are, and slice 071 makes the answer part of the
+ * point: they come from an offline directory this install holds, not from the
+ * online provider configured under Enrichment. */
 const SOURCE_LABELS: Record<string, string> = {
   mictronics: "Mictronics",
   faa: "FAA",
   opensky: "OpenSky",
+  routes: "Flight routes (VRS)",
 };
 
 function sourceLabel(name: string): string {
   return SOURCE_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
+
+/** What a source's `row_count` counts. Sources not named here count
+ * airframes, which is what every source counted before slice 027. */
+const SOURCE_ROW_NOUNS: Record<string, string> = {
+  airports: "airports",
+  routes: "routes",
+};
+
+function rowNoun(name: string): string {
+  return SOURCE_ROW_NOUNS[name] ?? "aircraft";
+}
+
+/** Attribution for the datasets whose *contents* FlightSite serves back.
+ *
+ * The VRS standing data is CC0, which asks for no attribution at all. The
+ * credit is here anyway: taking someone's gift unattributed because you may
+ * is a poor way to treat it, and an operator reading a route off the map
+ * deserves to be able to find out who filed it. It sits on the source's own
+ * card rather than in a credits page of its own — this is where the dataset
+ * is named, updated and reported on, so it is where the question gets
+ * asked. */
+const SOURCE_CREDITS: Record<string, string> = {
+  routes:
+    "Route data from Virtual Radar Server standing data (CC0). Imported once and read locally — looking a route up sends nothing off this install.",
+};
 
 function epochMsToIso(epochMs: number): string {
   return new Date(epochMs).toISOString();
@@ -108,6 +142,7 @@ function SourceCard({ source, timezone }: SourceCardProps) {
       ? null
       : epochMsToIso(source.last_success_ms);
   const relativeAge = useRelativeAge(lastSuccessIso);
+  const credit = SOURCE_CREDITS[source.name];
 
   return (
     <div
@@ -140,7 +175,16 @@ function SourceCard({ source, timezone }: SourceCardProps) {
             source.row_count !== null &&
             " · "}
           {source.row_count !== null &&
-            `${source.row_count.toLocaleString()} aircraft`}
+            `${source.row_count.toLocaleString()} ${rowNoun(source.name)}`}
+        </p>
+      )}
+
+      {credit !== undefined && (
+        <p
+          data-testid="metadata-source-credit"
+          className="text-xs text-muted-foreground"
+        >
+          {credit}
         </p>
       )}
 
@@ -268,7 +312,8 @@ function OpenSkyToggle({ config }: { config: FlightSiteConfig }) {
 
 /**
  * Aircraft metadata sources (roadmap slice 025): a status card per
- * registered source (Mictronics, FAA), an overall "last updated" line (the
+ * registered source (Mictronics and FAA, plus the airports and flight-route
+ * directories that ride the same importer), an overall "last updated" line (the
  * age surface slice 042's health page reads), and the "Update Aircraft
  * Metadata" action. The action polls `GET /metadata/status` until every
  * source has settled — see `@/lib/api/metadata` — and each source's card

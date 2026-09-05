@@ -450,10 +450,18 @@ def _enrichment_section(
     ``limit`` and ``remaining`` are ``null`` on an uncapped install, which is
     the default and is not the same as ``0``: one means "no ceiling", the other
     would mean "no lookups left today".
+
+    ``enabled`` and ``provider`` are two questions since slice 071, and reading
+    one for the other would misreport a key-less install: ``enabled`` says
+    route lookup is operating at all, ``provider`` names the *online* one or is
+    ``null``. An install with the routes dataset imported and no API key
+    reports ``enabled: true, provider: null`` — enriching, from its own tables,
+    with nothing leaving the network.
     """
     service = _state(app, "enrichment")
     return {
         "enabled": bool(getattr(service, "enabled", False)),
+        "provider": _provider_name(service),
         "running": bool(getattr(service, "running", False)),
         "circuit_open": bool(getattr(service, "circuit_open", False)),
         "lookups": int(getattr(service, "lookups", 0)),
@@ -484,14 +492,39 @@ def _enrichment_budget(budget: Any, now: datetime) -> dict[str, Any]:
     }
 
 
+def _provider_name(service: Any) -> str | None:
+    """The online provider's name, or ``None`` on a key-less install.
+
+    Read through ``getattr`` like everything else here, so a process whose
+    enrichment service predates the field — or has none at all — degrades to
+    ``null`` rather than failing the whole diagnostics payload.
+    """
+    name = getattr(service, "provider_name", None)
+    return None if name is None else str(name)
+
+
 def _enrichment_cache(stats: Any) -> dict[str, int]:
-    """Cache hits, misses and learned schedules."""
+    """Cache hits, misses, learned schedules and stale serves.
+
+    ``stale_served`` and ``directory_hits`` are slice 071's additions. The
+    first counts expired routes kept on their sightings because neither the
+    offline directory nor the provider could answer at the time — a number that
+    climbs is the honest signal that something upstream has been unavailable,
+    and the routes on screen are still real but are last week's. The second
+    counts lookups the offline directory answered, and is deliberately separate
+    from ``hits``: both are free, but only this one says the imported routes
+    dataset is earning its place, and on a key-less install it is the only
+    column that counts a *new* answer — ``misses`` never moves at all, and
+    ``hits`` records only the repeat sightings of what the directory supplied.
+    """
     if stats is None:
-        return {"hits": 0, "misses": 0, "learned": 0}
+        return {"hits": 0, "misses": 0, "learned": 0, "stale_served": 0, "directory_hits": 0}
     return {
         "hits": int(stats.hits),
         "misses": int(stats.misses),
         "learned": int(stats.learned),
+        "stale_served": int(getattr(stats, "stale_served", 0)),
+        "directory_hits": int(getattr(stats, "directory_hits", 0)),
     }
 
 
