@@ -23,6 +23,7 @@ from flightsite.perf.budgets import (
     TARGET_AIRCRAFT,
     Budget,
     GateKind,
+    hard_budgets,
     reference_budgets,
 )
 
@@ -111,6 +112,31 @@ def test_each_documented_row_quotes_its_own_budget_value(budget: Budget, documen
     rendered = f"{value:g}"
     assert any(rendered in row for row in rows), (
         f"{budget.metric}'s row does not quote its budget of {rendered} {budget.unit}"
+    )
+
+
+@pytest.mark.parametrize("budget", hard_budgets(), ids=lambda budget: budget.metric)
+def test_each_hard_gate_row_quotes_the_bound_the_suite_actually_asserts(
+    budget: Budget, document: str
+) -> None:
+    """§2.1's in-suite bound column, checked the way its budget column is.
+
+    The budget alone is not the whole row. CI headroom is what separates the
+    figure the reference hardware is held to from the figure a shared runner
+    is, and after issues #166 and #170 two gates carry a multiplier of their
+    own rather than the suite default — so a table that quoted only the budget,
+    or quoted a multiple of it nobody applies, would misdescribe every failure
+    a contributor is shown. Scoped to §2.1 so a bound quoted elsewhere in the
+    document cannot satisfy it, and formatted the way the document writes a
+    number.
+    """
+    hard = section(document, HARD_HEADING, REFERENCE_HEADING)
+    rows = [line for line in hard.splitlines() if f"`{budget.metric}`" in line]
+    assert rows, f"no §2.1 row for {budget.metric}"
+    rendered = f"{budget.asserted:g}"
+    assert any(rendered in row for row in rows), (
+        f"{budget.metric}'s row does not quote the bound the suite asserts: "
+        f"{rendered} {budget.unit} ({budget.value:g} x {budget.ci_headroom} CI headroom)"
     )
 
 

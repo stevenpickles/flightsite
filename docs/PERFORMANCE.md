@@ -46,19 +46,64 @@ promotion argument.
 
 ### CI headroom
 
-Hard gates that measure *time* are asserted against `budget x CI_HEADROOM`,
-where `CI_HEADROOM` is 5 — the convention already used by
-`tests/alerts/test_perf.py` and `tests/metadata/test_cache_latency.py`. A
-shared runner under coverage instrumentation is slow and noisy, and a bound
-five times the budget still catches every structural regression (a hot-path
-await, a per-aircraft query, a superlinear scan) while never failing on a busy
-machine. In practice the measured figures sit one to two orders of magnitude
-inside the asserted bound; see §5.6.
+Hard gates that measure *time* are asserted against `budget x ci_headroom`.
+The default multiplier is 5 — the convention `tests/alerts/test_perf.py` also
+uses. A shared runner under coverage instrumentation is slow and noisy, and a
+bound five times the budget still catches every structural regression (a
+hot-path await, a per-aircraft query, a superlinear scan) while never failing
+on a busy machine. In practice the measured figures sit one to two orders of
+magnitude inside the asserted bound; see §5.6. Headroom is a property of the
+*suite* and not of the budget: on the reference hardware, §5's procedure reads
+every figure against the budget at face value.
 
 Budgets that measure a *quantity* rather than a duration get no headroom at
 all. A 1 GB memory ceiling relaxed fivefold is not a gate, and the live
 population a deterministic scenario produces does not vary with how loaded the
 machine is.
+
+**Two gates carry a multiplier sized from their own CI history** rather than
+the default, because the default was the wrong number for both (issues #166 and
+#170). Their reference-hardware budgets are untouched — 0.5 of a poll and
+100 ms, exactly as §2.1 states them — and only the bound the suite asserts
+moved.
+
+`ingest_duty_cycle` × **1.8**, asserting **0.9 of a poll**. It was the one hard
+gate with no headroom at all, and across the v0.4.0 and v0.5.0 release trains it
+failed four otherwise-green runs at p95 0.539, 0.542, 0.645 and 0.73 against
+0.5 — each beside a median of 0.08–0.11, and each passing the same gate on
+re-run. 0.9 clears the worst of the four by 1.23×. The multiplier is fractional
+and cannot be larger, because this budget is a fraction of a poll rather than a
+duration: at 1.0 a tick consumes the whole poll, so 0.5 × 2 — or anything above
+it — would assert a bound that a pipeline losing ground could still pass, and
+"ingestion keeps up" would stop meaning anything.
+
+`ingest_apply_ms` × **8**, asserting **800 ms**. The default bounded it at
+500 ms and shared runners crossed that twice, at p95 585 ms and 658 ms beside
+medians of 37–41 ms. 800 ms clears the worse of the two by 1.22×, and stays
+inside the 900 ms the duty cycle now allows the whole hot path: the apply is
+one term of that sum (§3.1), so its own bound has no business exceeding the
+sum's.
+
+Neither widening hides a regression. What those runs record is one contended
+tick beside a healthy median, not a pipeline that got slower — so a regression
+that doubled the median *and* carried the tail with it in the same proportion
+would put `ingest_apply_ms` near 1.2 s and `ingest_duty_cycle` near 1.4 of a
+poll, half again outside the new bounds and more. Nor does the widening rewrite
+the record: §5.4's Pi 4 duty cycle of 0.99 fails at 0.9 exactly as it failed at
+0.5, so issue #132's finding stands.
+
+The metadata appear-resolution gate
+(`tests/metadata/test_cache_latency.py`, ≤ 1 ms per appear) took the other
+available route out of the same problem (issue #170). Its samples are ten
+resolution rounds, so a "p99" across them is arithmetically the worst round,
+and one contended round put it at 9.8 ms against a 5 ms bound on a run whose
+other 4,466 tests passed. It now gates the **median** round against the ≤ 1 ms
+criterion itself, with no headroom, because the median is the statistic runner
+contention does not move; the p99 is still measured and printed, under a loose
+structural backstop. That bound is sharper than the one it replaces rather than
+looser: 1 ms sits ~20× above the healthy median this suite measures (50–55 µs),
+and just below the 0.8–1 ms per event that losing the batching would cost —
+which is the regression the criterion exists to catch.
 
 Two timing gates carry no headroom either, and the reason is arithmetic rather
 than principle. `startup_s` and `recovery_s` are budgeted at 30 seconds;
@@ -103,8 +148,8 @@ crossing one now fails.
 | Metric | SPEC §85 item | Budget | Statistic | In-suite bound | What it protects |
 |---|---|---|---|---|---|
 | `live_population` | 500-aircraft workload remains functional | ≥ 500 aircraft | min | ≥ 500 | That the run applied the load it claims to. Everything else is meaningless otherwise. |
-| `ingest_apply_ms` | live-state update latency | ≤ 100 ms | p95 | ≤ 500 ms | `docs/ARCHITECTURE.md` §3.3: an apply approaching the 1 s poll turns the live picture into a backlog. |
-| `ingest_duty_cycle` | ingestion throughput | ≤ 0.5 of a poll | p95 | ≤ 0.5 | The whole per-tick hot path against one 1 Hz poll. Above 1.0 the pipeline is losing ground; half a poll leaves a Pi 4 room at several times dev-machine cost. |
+| `ingest_apply_ms` | live-state update latency | ≤ 100 ms | p95 | ≤ 800 ms | `docs/ARCHITECTURE.md` §3.3: an apply approaching the 1 s poll turns the live picture into a backlog. The in-suite bound is 8× the budget, sized from the shared-runner p95s that crossed 500 ms (§1, issues #166/#170). |
+| `ingest_duty_cycle` | ingestion throughput | ≤ 0.5 of a poll | p95 | ≤ 0.9 of a poll | The whole per-tick hot path against one 1 Hz poll. Above 1.0 the pipeline is losing ground; half a poll leaves a Pi 4 room at several times dev-machine cost. The in-suite bound is 1.8× the budget and deliberately under one whole poll (§1, issue #166). |
 | `live_sweep_ms` | live-state update latency | ≤ 100 ms | max | ≤ 500 ms | The lifecycle sweep runs every second over the whole live set, so it shares the apply budget. |
 | `api_live_ms` | core APIs responsive | ≤ 250 ms | p95 | ≤ 1250 ms | `/api/v1/aircraft/current` answers from memory, so under load this is serialization and nothing else. Past a quarter second the map feels stalled. |
 | `memory_rss_mib` | memory use | ≤ 1024 MiB | max | ≤ 1024 MiB | SPEC §5. An absolute ceiling on a 4 GB Pi shared with the frontend container and the decoder. |
@@ -150,7 +195,8 @@ adds.
 Related budgets outside this table, enforced by their own slices' tests:
 alert-engine evaluation cycle (`tests/alerts/test_perf.py`, ≤ 50 ms over 500
 aircraft) and metadata appear-resolution (`tests/metadata/test_cache_latency.py`,
-≤ 1 ms p99 per event).
+≤ 1 ms per appear event — gated on the median round in CI and reported at the
+p99, for the reason §1 gives).
 
 ---
 
@@ -638,6 +684,12 @@ future Pi 4 row is itself useful.
 | `recovery_s` | 2.33 (539 open sightings) | — | — | max 2.33 | ≤ 30 | pass |
 
 Every gated statistic sits one to two orders of magnitude inside its bound.
+The Bound column is the in-suite bound in force on the date of the run: the two
+that changed afterwards are `ingest_apply_ms` (500 → 800 ms) and
+`ingest_duty_cycle` (0.5 → 0.9 of a poll), widened for the CI flakes §1
+describes. Neither budget moved, and neither figure here comes close to either
+bound.
+
 Three features of this run are worth reading rather than skipping:
 
 **The live set is larger than the batch.** The scenario delivers ~520–600

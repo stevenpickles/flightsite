@@ -12,10 +12,13 @@ from __future__ import annotations
 import pytest
 
 from flightsite.perf.budgets import (
+    APPLY_CI_HEADROOM,
     BUDGETS,
     CI_HEADROOM,
+    DUTY_CYCLE_CI_HEADROOM,
     NO_HEADROOM,
     TARGET_AIRCRAFT,
+    TICK_INTERVAL_S,
     Direction,
     GateKind,
     budget_for,
@@ -169,22 +172,72 @@ def test_quantity_budgets_carry_no_ci_headroom() -> None:
     population floor does not vary with how loaded the machine is."""
     assert budget_for("memory_rss_mib").ci_headroom == NO_HEADROOM
     assert budget_for("live_population").ci_headroom == NO_HEADROOM
-    assert budget_for("ingest_duty_cycle").ci_headroom == NO_HEADROOM
 
 
 def test_timing_gates_use_the_suite_wide_headroom() -> None:
-    """The same allowance tests/alerts and tests/metadata already use."""
-    assert budget_for("ingest_apply_ms").ci_headroom == CI_HEADROOM
+    """The same allowance tests/alerts/test_perf.py already uses."""
     assert budget_for("api_live_ms").ci_headroom == CI_HEADROOM
+    assert budget_for("db_read_ms").ci_headroom == CI_HEADROOM
+    assert budget_for("ws_fanout_ms").ci_headroom == CI_HEADROOM
+
+
+def test_the_two_sized_headrooms_clear_every_flake_on_record() -> None:
+    """Issues #166 and #170: the bound has to sit above the runner, not the run.
+
+    Both gates failed release-train runs on shared GitHub runners while their
+    medians stayed healthy, which is one contended tick setting a p95 rather
+    than a pipeline that got slower. The numbers below are those runs. Pinned
+    here because the argument for a non-default multiplier is entirely in them:
+    a later edit that tightened either bound back towards the flakes would
+    reopen the issues, and one that widened it much further would be asserting
+    a bound the product could not fail.
+    """
+    duty = budget_for("ingest_duty_cycle")
+    apply_ = budget_for("ingest_apply_ms")
+    assert duty.ci_headroom == DUTY_CYCLE_CI_HEADROOM
+    assert apply_.ci_headroom == APPLY_CI_HEADROOM
+
+    # p95 fractions of a poll observed on 2026-09-02 and 2026-09-04, beside
+    # medians of 0.08-0.11.
+    for flake in (0.539, 0.542, 0.645, 0.73):
+        assert duty.satisfied_by(flake), f"{flake} would still flake against {duty.asserted}"
+    # p95 milliseconds from the same runs, beside medians of 37-41 ms.
+    for flake_ms in (585.0, 658.0):
+        assert apply_.satisfied_by(flake_ms), (
+            f"{flake_ms} ms would still flake against {apply_.asserted} ms"
+        )
+
+    # A regression that doubles the median and carries the tail with it, i.e.
+    # the flaking runs at twice their cost, still fails both.
+    assert not duty.satisfied_by(0.73 * 2)
+    assert not apply_.satisfied_by(658.0 * 2)
+
+    # The budgets themselves — what the Pi is held to in docs/PERFORMANCE.md
+    # §5 — are untouched by the widening.
+    assert duty.value == 0.5
+    assert apply_.value == 100.0
+
+
+def test_the_apply_gate_stays_inside_the_duty_cycle_it_is_part_of() -> None:
+    """The apply is one stage of the sum ``ingest_duty_cycle`` measures (§3.1).
+
+    A component bound above the bound on the whole hot path would be dead
+    text: the sum would fail first, every time.
+    """
+    apply_ms = budget_for("ingest_apply_ms").asserted
+    duty_ms = budget_for("ingest_duty_cycle").asserted * TICK_INTERVAL_S * 1_000.0
+    assert apply_ms < duty_ms
 
 
 def test_a_duty_cycle_over_one_poll_can_never_pass() -> None:
     """The gate's whole purpose: a pipeline that cannot keep up must fail.
 
-    Stated explicitly because the budget carries no headroom by design, and a
-    later well-meaning edit that gave it some could push the asserted bound
-    past 1.0 -- at which point "ingestion keeps up" would tolerate a pipeline
-    that does not.
+    Stated explicitly because the budget is a fraction of a poll, so its CI
+    headroom is bounded from above by arithmetic rather than by taste: 0.5 x 2
+    would assert a whole poll, at which point "ingestion keeps up" would
+    tolerate a pipeline that does not. The multiplier is fractional for that
+    reason alone: 1.8 asserts 0.9, which clears the worst flake on record by
+    1.23x and stays strictly inside the poll being measured.
     """
     budget = budget_for("ingest_duty_cycle")
     assert budget.asserted < 1.0

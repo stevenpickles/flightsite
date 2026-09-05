@@ -24,12 +24,40 @@ measured figure is printed either way.
 
 Both figures are printed so a regression shows how much slower, not merely that
 a line was crossed.
+
+Which statistic the criterion is read off in CI
+-----------------------------------------------
+
+The criterion says p99, and on the hardware the budget is stated for that is
+what to read. In this suite the batched measurement gates the **median** round
+instead, and prints the p99 beside it. Two reasons, and neither is a widened
+bound:
+
+*Arithmetic.* 500 appears arrive as ten bursts of fifty, and every event in a
+burst is charged the same share of that burst's wall time, so the sample is ten
+distinct values wearing five hundred hats. A p99 over ten values is the worst
+of the ten by construction — a maximum with a percentile's name on it, and the
+statistic most exposed to a single contended moment on a shared runner. Issue
+#170 is exactly that: 9.8 ms p99 on a GitHub runner, on a commit whose other
+4,466 tests passed and which passed on re-run.
+
+*Sharpness.* Gating the median lets the bound be the criterion's own 1 ms with
+no CI headroom at all, because runner contention moves the worst round and not
+the middle one. That is a tighter bound than the 5 ms the p99 was held to, and
+tight where it matters: the healthy median here is 50-55 µs, while the regression
+this criterion exists to catch — resolution ceasing to batch, one round trip
+per event — costs 0.8 to 1 ms per event on the same machine, which
+:func:`test_isolated_appear_resolution_latency_stays_bounded` measures directly
+below. A 5 ms bound sits *above* that regression and would not have caught it.
+The p99 keeps a loose structural backstop so a tail blow-up is still a failure
+rather than a printed number nobody reads.
 """
 
 from __future__ import annotations
 
 import time
-from statistics import mean
+from statistics import mean, median
+from typing import NamedTuple
 
 import pytest
 
@@ -40,14 +68,20 @@ from flightsite.metadata.cache import MetadataCache
 from tests.metadata.conftest import record, seed_aircraft, settle, updates
 from tests.metadata.provider import InMemoryMetadataProvider
 
-#: The acceptance criterion's budget, in seconds — the ≤1 ms p99 figure holds
-#: on dev hardware (measured ~48 µs p99) and is formally enforced on calibrated
-#: hardware by the slice-049 performance harness. In-suite, the assertion uses
-#: CI_HEADROOM x BUDGET_S: shared CI runners are noisy (a real run measured
-#: 2.1 ms p99 on a runner vs 48 µs locally), and a 5 ms bound still catches any
-#: structural regression from the tens-of-microseconds baseline.
+#: The acceptance criterion's budget, in seconds. It holds on dev hardware with
+#: room to spare (50-55 µs median, ~65 µs p99) and is formally enforced on
+#: calibrated hardware by the slice-049 performance harness. In-suite it is
+#: asserted against the median round, at face value and with no CI headroom —
+#: see the module docstring for why that is the sharper of the two available
+#: readings rather than the looser one.
 BUDGET_S = 0.001
-CI_HEADROOM = 5
+
+#: Structural backstop on the batched p99, which on a shared runner is one
+#: contended round out of ten (issue #170 recorded 9.8 ms). Deliberately far
+#: above anything a runner has produced — 2.6x the worst on record — because
+#: the criterion is gated on the median and this exists only so that a tail
+#: blowing up by two orders of magnitude fails rather than merely prints.
+TAIL_BOUND_S = 0.025
 
 #: Regression bound on a solitary appear's end-to-end latency. Roughly five
 #: times what one task hand-off and one SQLite round trip cost, so it catches a
@@ -71,15 +105,22 @@ def percentile(samples: list[float], fraction: float) -> float:
     return ordered[index]
 
 
-def report(label: str, samples: list[float], budget: float) -> float:
-    """Print the measurement and return its p99."""
-    p99 = percentile(samples, 0.99)
+class Summary(NamedTuple):
+    """The statistics a measurement is read off: the middle and the tail."""
+
+    median: float
+    p99: float
+
+
+def report(label: str, samples: list[float], budget: float) -> Summary:
+    """Print the measurement and return its median and p99."""
+    summary = Summary(median(samples), percentile(samples, 0.99))
     print(
         f"\n{label} over {len(samples)} events: "
-        f"mean {mean(samples) * 1e6:.1f} us, p99 {p99 * 1e6:.1f} us "
-        f"(bound {budget * 1e6:.0f} us)"
+        f"mean {mean(samples) * 1e6:.1f} us, median {summary.median * 1e6:.1f} us, "
+        f"p99 {summary.p99 * 1e6:.1f} us (bound {budget * 1e6:.0f} us)"
     )
-    return p99
+    return summary
 
 
 @pytest.fixture
@@ -144,8 +185,17 @@ async def test_batched_appear_resolution_costs_under_a_millisecond_per_event(
         assert cache.get(dataset[0]) is not None
 
         with capsys.disabled():
-            p99 = report("batched appear resolution", samples, BUDGET_S)
-        assert p99 < BUDGET_S * CI_HEADROOM
+            summary = report("batched appear resolution", samples, BUDGET_S)
+        assert summary.median < BUDGET_S, (
+            f"batched appear resolution cost {summary.median * 1e6:.1f} us per event at the "
+            f"median against the {BUDGET_S * 1e6:.0f} us criterion; a median this high is the "
+            "batching being lost, not a busy runner"
+        )
+        assert summary.p99 < TAIL_BOUND_S, (
+            f"the worst of {APPEARS // BURST} resolution rounds cost "
+            f"{summary.p99 * 1e6:.1f} us per event, past the {TAIL_BOUND_S * 1e6:.0f} us "
+            f"structural backstop, against a median of {summary.median * 1e6:.1f} us"
+        )
     finally:
         await cache.stop()
 
@@ -172,8 +222,8 @@ async def test_isolated_appear_resolution_latency_stays_bounded(
             assert cache.get(icao) is not None
 
         with capsys.disabled():
-            p99 = report("isolated appear resolution", samples, ISOLATED_BOUND_S)
-        assert p99 < ISOLATED_BOUND_S
+            summary = report("isolated appear resolution", samples, ISOLATED_BOUND_S)
+        assert summary.p99 < ISOLATED_BOUND_S
     finally:
         await cache.stop()
 
