@@ -19,6 +19,38 @@ function card(): HTMLElement {
 }
 
 describe("EnrichmentHealthCard", () => {
+  it("describes the offline directory and the optional AeroDataBox lookups", () => {
+    renderCard();
+
+    expect(
+      within(card()).getByText(
+        "Route lookups: the offline route directory, plus AeroDataBox when configured (SPEC §28).",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows AeroDataBox as the provider when one is configured", () => {
+    renderCard({ provider: "aerodatabox" });
+
+    const section = card();
+    expect(within(section).getByText("Provider")).toBeInTheDocument();
+    expect(within(section).getByText("AeroDataBox")).toBeInTheDocument();
+  });
+
+  it("shows directory-only when no provider key is configured", () => {
+    renderCard({ provider: null });
+
+    const section = card();
+    expect(within(section).getByText("Provider")).toBeInTheDocument();
+    expect(within(section).getByText("Directory only")).toBeInTheDocument();
+  });
+
+  it("omits the provider row for a backend older than slice 071", () => {
+    renderCard({ provider: undefined });
+
+    expect(within(card()).queryByText("Provider")).toBeNull();
+  });
+
   it("keeps the slice 042 counters", () => {
     renderCard({ enabled: true, lookups: 1240, failures: 3 });
 
@@ -90,7 +122,15 @@ describe("EnrichmentHealthCard", () => {
   });
 
   it("reports the cache counters", () => {
-    renderCard({ cache: { hits: 340, misses: 42, learned: 17 } });
+    renderCard({
+      cache: {
+        hits: 340,
+        misses: 42,
+        learned: 17,
+        directory_hits: 91,
+        stale_served: 6,
+      },
+    });
 
     const section = card();
     expect(within(section).getByText("Cache hits")).toBeInTheDocument();
@@ -98,19 +138,47 @@ describe("EnrichmentHealthCard", () => {
     expect(within(section).getByText("42")).toBeInTheDocument();
     expect(within(section).getByText("Routes learned")).toBeInTheDocument();
     expect(within(section).getByText("17")).toBeInTheDocument();
+    expect(within(section).getByText("Directory hits")).toBeInTheDocument();
+    expect(within(section).getByText("91")).toBeInTheDocument();
+    expect(
+      within(section).getByText("Last-known routes served"),
+    ).toBeInTheDocument();
+    expect(within(section).getByText("6")).toBeInTheDocument();
+  });
+
+  it("omits the directory-hits and last-known-route rows when the cache doesn't report them", () => {
+    // An older backend sends `cache` without the slice-071 additions — the
+    // card must not invent zeroes for keys it does not have.
+    renderCard({
+      cache: {
+        hits: 340,
+        misses: 42,
+        learned: 17,
+        directory_hits: undefined,
+        stale_served: undefined,
+      },
+    });
+
+    const section = card();
+    expect(within(section).getByText("Cache hits")).toBeInTheDocument();
+    expect(within(section).queryByText("Directory hits")).toBeNull();
+    expect(within(section).queryByText("Last-known routes served")).toBeNull();
   });
 
   it("degrades to the pre-070 card when the backend sends neither block", () => {
     // A frontend ahead of its backend must not render zeroes: "the cache
     // never hits" and "this backend does not say" are different claims.
-    renderCard({ budget: undefined, cache: undefined });
+    renderCard({ provider: undefined, budget: undefined, cache: undefined });
 
     const section = card();
     expect(within(section).getByText("Lookups")).toBeInTheDocument();
+    expect(within(section).queryByText("Provider")).toBeNull();
     expect(within(section).queryByText("Daily budget")).toBeNull();
     expect(within(section).queryByText("Budget resets")).toBeNull();
     expect(within(section).queryByText("Cache hits")).toBeNull();
     expect(within(section).queryByText("Routes learned")).toBeNull();
+    expect(within(section).queryByText("Directory hits")).toBeNull();
+    expect(within(section).queryByText("Last-known routes served")).toBeNull();
     expect(section.querySelector("[data-tone]")).toBeNull();
   });
 });

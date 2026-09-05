@@ -141,9 +141,11 @@ export function errorEntry(
   };
 }
 
-/** Enrichment as a slice-070 backend reports it: switched off, with a
- * capped daily budget and a cache that has seen some traffic. Tests for an
- * older backend drop `budget`/`cache` explicitly. */
+/** Enrichment as a slice-071 backend reports it: switched off, with a
+ * capped daily budget, a provider configured, and a cache that has seen
+ * some traffic including offline-directory and last-known-route hits.
+ * Tests for an older backend drop `provider`/`budget`/`cache` (or the
+ * cache's `directory_hits`/`stale_served`) explicitly. */
 export function enrichment(
   overrides: Partial<DiagnosticsEnrichment> = {},
 ): DiagnosticsEnrichment {
@@ -155,13 +157,20 @@ export function enrichment(
     dropped: 0,
     pending: 0,
     failures: 0,
+    provider: "aerodatabox",
     budget: {
       limit: 100,
       used_today: 12,
       remaining: 88,
       resets_at: "2026-09-01T00:00:00.000Z",
     },
-    cache: { hits: 340, misses: 42, learned: 17 },
+    cache: {
+      hits: 340,
+      misses: 42,
+      learned: 17,
+      directory_hits: 91,
+      stale_served: 6,
+    },
     ...overrides,
   };
 }
