@@ -850,9 +850,12 @@ per-field provenance table (unbounded growth, join-heavy reads, no query need):
 2. **Aircraft metadata**: per-source rows (`aircraft_metadata`) plus `_src` columns on
    every resolved field (`aircraft_metadata_resolved`, `aircraft_classification`),
    giving true field-level provenance for everything enrichment-derived.
-3. **Sighting flight context**: `route_source` (external provider) vs
-   `inferred_*` columns (local heuristic) keep externally-reported routes and local
-   inference structurally separate; enrichment arrival is also a `sighting_event`.
+3. **Sighting flight context**: `route_source` — `vrs` for the offline route directory
+   (§7.1) or `aerodatabox` for the online provider — vs the `inferred_*` columns
+   (local heuristic) keep externally-reported routes and local inference structurally
+   separate; enrichment arrival is also a `sighting_event`. Both route values are
+   *reported*; neither is FlightSite's own inference, which is what the separate
+   columns exist to say.
 
 The API composes these into per-field provenance for the detail UI.
 
