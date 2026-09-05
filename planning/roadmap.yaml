@@ -107,6 +107,11 @@ releases:
       origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only
       for misses, inferred route end, last-known route, CI perf-gate headroom
       (slice 071; migration 0015). Recorded 2026-09-05."
+  - version: "v0.6.1"
+    after_phase: 8
+    theme: "Same-day hotfix superseding v0.6.0: migration 0015's sightings
+      rebuild runs with foreign keys off and checked, and resumes from a
+      failed v0.6.0 attempt (slice 072). Recorded 2026-09-05."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2062,6 +2067,42 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Owner decision 2026-09-05 after the route-source research on #168: amend SPEC §28 to admit an offline route directory as the primary source. Bundled with the resilience items proposed in the same conversation (inferred end, last-known route) and the CI headroom for #166/#170, whose flakes cost four re-runs during the v0.4.0 and v0.5.0 trains. Migration-bearing (0015). Added by Fable outside the phase plan."
+
+  - id: "072"
+    title: "Migration 0015 rebuild fix"
+    phase: 8
+    branch: "072-migration-0015-fix"
+    status: merged
+    depends_on: ["071"]
+    objective: "Make migration 0015's `sightings` rebuild correct on a populated database — foreign keys off around the rebuild and checked afterwards, resumable from the partial state a v0.6.0 attempt leaves — and make the migration test suite incapable of missing this class of defect again (issue #178; supersedes v0.6.0 with v0.6.1)."
+    scope:
+      - "`rev_0015`: `PRAGMA foreign_keys=OFF` before the rebuild, issued while no transaction is open (pysqlite opens one implicitly at the first DML and the pragma is a no-op inside one), `PRAGMA foreign_key_check` after the rename with a hard failure on any row, `PRAGMA foreign_keys=ON` at the end; the same discipline in `downgrade`; the docstring's false claim about migration pragmas replaced by the truth"
+      - "resumable from the v0.6.0 partial state (directory tables and `route_cache.source` already present, `sightings` indexes already dropped, empty `sightings_rebuild` present, `alembic_version` 0014): every step tolerates its own prior completion"
+      - "a shared helper (or documented pattern) for SQLite table rebuilds in `db/migrations/`, so the next rebuild inherits the discipline instead of re-deriving it"
+      - "migration tests seed **every** child of `sightings` (`sighting_tracks`, `sighting_track_checkpoints`, `sighting_events`, `activity_events`, `alert_matches`) with rows referencing real sightings before upgrading, assert every child row survives with its FK intact and `foreign_key_check` is empty after both upgrade and downgrade, bound the wall time on a few thousand sightings with children, and upgrade from a fixture reproducing the recorded partial state"
+      - "`docs/DEVELOPMENT.md` Database migrations: a rebuild must disable foreign keys, check them afterwards and be tested against populated child tables; migration cost is measured against the slice-050 synthetic dataset, never an empty seed; a note that Alembic on SQLite autocommits DDL statement by statement so a failed migration leaves partial DDL behind"
+      - "`docs/RELEASE.md`: the adjacent-version upgrade test must run against a populated data directory before the release PR is opened, not only on the owner's host after publish"
+    out_of_scope:
+      - "indexes on `activity_events.sighting_id` and `sighting_track_checkpoints.sighting_id` (would also have masked the symptom; worth a separate measured decision, tracked as a follow-up)"
+      - "any change to slice 071's behaviour"
+    acceptance_criteria:
+      - "on a database with 5,000 sightings and populated children, 0014→0015 completes in seconds, keeps every child row, and `foreign_key_check` returns nothing; 0015→0014 likewise"
+      - "on a copy of the recorded v0.6.0 partial state, 0015 completes and the end state is byte-for-byte the shape of a clean upgrade"
+      - "`alembic heads` shows exactly one head (0015)"
+      - "the upgrade of fermi.local's restored v0.5.0 database to v0.6.1 completes at startup within the health-check window"
+      - "`Closes #178` in the PR body"
+    required_tests:
+      - populated-children migration tests (up, down, timing, foreign_key_check), partial-state resume test, helper unit tests
+    expected_artifacts:
+      - backend/src/flightsite/db/migrations/versions/rev_0015_route_directory.py
+      - backend/src/flightsite/db/migrations/ (rebuild helper)
+      - backend/tests/enrichment/test_migration_economy.py
+      - backend/tests/db/
+      - docs/DEVELOPMENT.md
+      - docs/RELEASE.md
+    preferred_agent: opus
+    risk_level: high
+    notes: "Hotfix slice. v0.6.0 was released 2026-09-05 with migration 0015 rebuilding `sightings` under foreign_keys=ON: the DROP TABLE's implicit DELETE scanned unindexed children per parent row and would end in a constraint error; fermi.local hung for five minutes and was rolled back from its pre-upgrade backup with no data loss. The slice-071 measurement and its 18 migration tests all used a database with empty child tables. v0.6.0 is marked pre-release and superseded; v0.6.1 carries this fix. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
