@@ -107,6 +107,11 @@ releases:
       origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only
       for misses, inferred route end, last-known route, CI perf-gate headroom
       (slice 071; migration 0015). Recorded 2026-09-05."
+  - version: "v0.6.1"
+    after_phase: 8
+    theme: "Same-day hotfix superseding v0.6.0: migration 0015's sightings
+      rebuild runs with foreign keys off and checked, and resumes from a
+      failed v0.6.0 attempt (slice 072). Recorded 2026-09-05."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
