@@ -155,6 +155,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 069 | Enrichment hot-apply & honest restart badges | 026, 055, 056, 068 | opus | low | Apply enrichment settings on config save so AeroDataBox route lookup starts, stops or re-keys without a backend restart, and badge every Settings section that still needs one (issue #161) |
 | 070 | Route enrichment credit economy & airport names | 026, 027, 042, 069 | opus | medium | Week-long per-callsign route cache, learned schedules, a daily lookup budget spent in priority order, restricted flights cached instead of retried (#165), and airport names beside route idents from the local airports table (issue #167) |
 | 071 | Offline route directory (VRS standing data) & enrichment resilience | 021, 027, 049, 070 | opus | medium | VRS standing-data routes as the primary origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only for misses, inferred route end shown where no source knows the callsign, last known route served when a refresh cannot happen, CI headroom for the flaky perf gates (issue #173; #166, #170) |
+| 072 | Migration 0015 rebuild fix | 071 | opus | high | Hotfix: run the `sightings` rebuild with foreign keys off and checked afterwards, resumable from the v0.6.0 partial state, with migration tests that seed every child table (issue #178; v0.6.1) |
 
 ## Parallelization Guide
 

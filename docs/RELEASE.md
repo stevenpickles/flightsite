@@ -70,7 +70,12 @@ Every release branch must complete all applicable items:
 - [ ] Docker Compose deployment validated (arm64 and amd64 images)
 - [ ] Backup test: backup taken during active ingestion, manifest valid
 - [ ] Restore test: backup restores and passes integrity checks
-- [ ] Adjacent-version upgrade test: previous release's data dir upgrades in place
+- [ ] Adjacent-version upgrade test: previous release's data dir upgrades in place —
+      run against a **populated** data directory (a real deployment's backup, or a
+      slice-050 synthetic dataset), not a fresh or lightly seeded one, and **before the
+      release PR is opened**. Record the wall time of the migration step. An empty
+      database exercises none of the per-row work a schema change does, which is how
+      v0.6.0 shipped a migration that hung and failed on any real install (issue #178)
 - [ ] Demo-mode validation: full stack runs and exercises scenarios
 - [ ] Live-decoder validation against readsb/dump1090-fa where appropriate
 - [ ] Raspberry Pi 4 qualification where required — run the procedure in
