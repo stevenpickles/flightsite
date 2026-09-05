@@ -485,13 +485,21 @@ def _enrichment_budget(budget: Any, now: datetime) -> dict[str, Any]:
 
 
 def _enrichment_cache(stats: Any) -> dict[str, int]:
-    """Cache hits, misses and learned schedules."""
+    """Cache hits, misses, learned schedules and stale serves.
+
+    ``stale_served`` is slice 071's addition: expired routes kept on their
+    sightings because neither the offline directory nor the provider could
+    answer at the time. A number that climbs is the honest signal that
+    something upstream has been unavailable — the routes on screen are still
+    real, but they are last week's.
+    """
     if stats is None:
-        return {"hits": 0, "misses": 0, "learned": 0}
+        return {"hits": 0, "misses": 0, "learned": 0, "stale_served": 0}
     return {
         "hits": int(stats.hits),
         "misses": int(stats.misses),
         "learned": int(stats.learned),
+        "stale_served": int(getattr(stats, "stale_served", 0)),
     }
 
 

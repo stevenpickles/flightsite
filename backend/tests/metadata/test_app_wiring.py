@@ -84,18 +84,23 @@ def test_the_service_is_constructed_without_touching_anything(
     service = app.state.metadata
     assert isinstance(service, MetadataService)
     assert not service.cache.running
-    assert len(service.registry) == 3
+    assert len(service.registry) == 4
 
 
 def test_the_registry_ships_every_dataset_this_build_imports(isolated_data_dir: Path) -> None:
-    """Slice 022 registers the offline primary source, 023 adds FAA, 027 airports.
+    """022 registers the offline primary source, 023 FAA, 027 airports, 071 routes.
+
+    Two of those four are not aircraft metadata at all — ``airports`` and
+    ``routes`` bring their own sinks — and they are registered here anyway,
+    because SPEC §27's per-source reporting and slice 025's one update action
+    are what a user actually operates.
 
     Slice 059's ``opensky`` is deliberately absent: it is opt-in and off by
-    default (ADR-0013), so a stock install registers exactly these three.
+    default (ADR-0013), so a stock install registers exactly these four.
     """
     app = create_app(isolated_data_dir)
 
-    assert app.state.metadata.registry.names == ("airports", "faa", "mictronics")
+    assert app.state.metadata.registry.names == ("airports", "faa", "mictronics", "routes")
 
 
 # ------------------------------------------------------- opensky, default-off
@@ -141,7 +146,13 @@ def test_enabling_opensky_registers_it_alongside_the_default_sources(
     app = create_app(isolated_data_dir)
 
     assert len(built) == 1
-    assert app.state.metadata.registry.names == ("airports", "faa", "mictronics", "opensky")
+    assert app.state.metadata.registry.names == (
+        "airports",
+        "faa",
+        "mictronics",
+        "opensky",
+        "routes",
+    )
 
 
 async def test_a_disabled_opensky_takes_no_part_in_an_update_run(
@@ -217,6 +228,7 @@ async def test_an_import_runs_through_the_started_app(
     _mock_mictronics(monkeypatch)
     _refuse_network(monkeypatch, "flightsite.metadata.sources.faa.build_client")
     _refuse_network(monkeypatch, "flightsite.airports.ourairports.build_client")
+    _refuse_network(monkeypatch, "flightsite.metadata.sources.routes.build_client")
     app = create_app(isolated_data_dir)
 
     with TestClient(app):
@@ -224,16 +236,22 @@ async def test_an_import_runs_through_the_started_app(
         run = await service.update()
 
         by_result = {result.source: result for result in run.results}
-        assert set(by_result) == {"mictronics", "faa", "airports"}
+        assert set(by_result) == {"mictronics", "faa", "airports", "routes"}
         assert by_result["mictronics"].ok
         assert by_result["mictronics"].rows_imported == 2
-        assert set(run.failed) == {"faa", "airports"}
+        assert set(run.failed) == {"faa", "airports", "routes"}
 
         statuses = await service.statuses()
-        assert {status.source for status in statuses} == {"mictronics", "faa", "airports"}
+        assert {status.source for status in statuses} == {
+            "mictronics",
+            "faa",
+            "airports",
+            "routes",
+        }
         by_source = {status.source: status for status in statuses}
         assert by_source["mictronics"].status == SourceStatus.OK
         assert by_source["airports"].status == SourceStatus.FAILED
+        assert by_source["routes"].status == SourceStatus.FAILED
 
 
 @pytest.mark.parametrize("iterations", [2])

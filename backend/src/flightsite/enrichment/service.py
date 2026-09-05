@@ -39,7 +39,7 @@ the queue being too small.
 The gates
 ---------
 
-Each eligible observation walks five gates, cheapest first, and the first one
+Each eligible observation walks six gates, cheapest first, and the first one
 that answers ends the walk:
 
 1. **Configuration.** Disabled, or no key, and the service does not start at
@@ -54,12 +54,33 @@ that answers ends the walk:
    exist.
 4. **The cache table** (:mod:`flightsite.enrichment.cache`), which survives a
    restart and is shared across every aircraft flying the same number.
-5. **The daily budget**, if the owner set one. A day's lookups are counted from
+5. **The offline route directory** (:mod:`flightsite.enrichment.directory`) —
+   619,770 callsigns of Virtual Radar Server standing data, one indexed
+   primary-key read, and free. SPEC §28's 2026-09-05 amendment makes this the
+   *primary* source; ADR-0016 has the reasoning. A hit is written into the
+   cache tagged ``vrs`` and applied to the sighting, and the provider is never
+   asked.
+6. **The daily budget**, if the owner set one. A day's lookups are counted from
    ``route_cache`` rather than from a process counter, so a restart does not
    hand the install a fresh allowance.
 
-Only what survives all five reaches the circuit breaker, the rate limiter and
-the provider.
+Only what survives all six reaches the circuit breaker, the rate limiter and
+the provider — which is now the *fallback*, spending credits only on the
+callsigns the directory has never heard of.
+
+When nobody can answer
+----------------------
+
+A cached route that has expired, a directory that does not know the callsign,
+and a provider that cannot be asked — a spent budget, an open circuit, a 429, a
+timeout — used to mean the sighting lost its route until the outage ended.
+Slice 071 serves the expired row instead: it is what was true last week, and a
+week-old origin and destination are worth more than an ``Unknown`` bought by
+strictness. The row's expiry is pushed a day out so one outage costs one stale
+serve rather than one per observation, ``route_cache_stale_served`` is logged
+once per callsign per UTC day, and diagnostics counts it in
+``enrichment.cache.stale_served``. Nothing is fabricated: the route served is
+one a source reported, with the provenance that source earned.
 
 Which lookup goes first
 -----------------------
@@ -93,6 +114,15 @@ observation buys a fresh answer
 process: a route that disagrees twice is a disagreement about idents, not a
 schedule change, and re-buying it on every observation would be the retry storm
 this slice exists to stop.
+
+A directory row is a claim of exactly the same kind, and is disproved the same
+way — but the remedy differs in one respect, because the directory cannot be
+*refreshed*. Community standing data goes stale between imports, so a
+contradicted directory row is not merely invalidated: the callsign is put on a
+skip list for the cache TTL and the re-ask goes to the **provider**, which is
+the only source that can have a newer answer. Without that, a wrong directory
+row would be re-read, re-cached, re-contradicted and re-read again — a loop
+paced by the sky and answered every time by the same stale file.
 
 Configured while it runs
 ------------------------
@@ -153,10 +183,12 @@ from flightsite.enrichment.cache import (
     MS_PER_SECOND,
     NEGATIVE_TTL_S,
     SECONDS_PER_DAY,
+    STALE_EXTENSION_S,
     RouteCacheRepository,
     RouteWrite,
     utc_day_start_ms,
 )
+from flightsite.enrichment.directory import RouteDirectoryRepository
 from flightsite.enrichment.limits import (
     DEFAULT_COOLDOWN_S,
     DEFAULT_FAILURE_THRESHOLD,
@@ -165,7 +197,12 @@ from flightsite.enrichment.limits import (
     MonotonicClock,
     TokenBucket,
 )
-from flightsite.enrichment.model import RouteInfo, RouteRestricted, RouteUnavailable
+from flightsite.enrichment.model import (
+    ROUTE_SOURCE_VRS,
+    RouteInfo,
+    RouteRestricted,
+    RouteUnavailable,
+)
 from flightsite.enrichment.policy import cache_key, contradicts_route, eligible_callsign
 from flightsite.enrichment.provider import RouteEnrichmentProvider
 from flightsite.live.aircraft import LiveAircraft
@@ -190,6 +227,18 @@ ENRICHMENT_FAILURES_COUNTER: Final = "enrichment_failures"
 #: because the refusal repeats for every eligible callsign until midnight and a
 #: line per refusal would be a log flood describing one decision.
 BUDGET_EXHAUSTED_EVENT: Final = "enrichment_budget_exhausted"
+
+#: Logged when an expired route is served because nothing could refresh it.
+#: Once per callsign per UTC day, for the reason above: an outage lasting an
+#: afternoon touches every callsign in the sky, and one line per serve would
+#: describe the outage several thousand times.
+STALE_SERVED_EVENT: Final = "route_cache_stale_served"
+
+#: Logged when the airport context disproves a directory row. Distinct from
+#: ``enrichment_route_invalidated`` because the remedy is different: this one
+#: also skips the directory for that callsign, so the re-ask reaches a source
+#: that can have a newer answer.
+DIRECTORY_CONTRADICTED_EVENT: Final = "route_directory_contradicted"
 
 #: A source of UTC epoch milliseconds, injected for tests.
 EpochClock = Callable[[], int]
@@ -392,6 +441,11 @@ class CacheStats:
     misses: int
     #: Rows currently frozen as learned schedules.
     learned: int
+    #: Expired rows served because nothing could refresh them (slice 071).
+    #: An additive key on the ``enrichment.cache`` diagnostics block; a run of
+    #: these is the signal that the provider has been unreachable, the budget
+    #: is spent, or the breaker has been open for a while.
+    stale_served: int = 0
 
 
 class EnrichmentService:
@@ -405,6 +459,10 @@ class EnrichmentService:
         provider: the route provider, or ``None`` for a disabled install — in
             which case :meth:`start` subscribes to nothing, creates no task,
             and no request is ever made.
+        directory: the offline route directory, consulted after the cache and
+            before the provider (slice 071). ``None`` — the default, and what
+            every test that predates the directory constructs — means the
+            worker behaves exactly as it did before it existed.
         rate_per_minute: sustained provider request rate.
         failure_threshold: consecutive failures that open the circuit.
         cooldown_s: how long the circuit stays open.
@@ -435,6 +493,8 @@ class EnrichmentService:
         "_cache",
         "_clock",
         "_counters",
+        "_directory",
+        "_directory_skip",
         "_dropped",
         "_economy",
         "_hits",
@@ -455,6 +515,8 @@ class EnrichmentService:
         "_queue_size",
         "_radius_nm",
         "_reader",
+        "_stale_logged",
+        "_stale_served",
         "_started",
         "_subscription",
         "_worker",
@@ -467,6 +529,7 @@ class EnrichmentService:
         persistence: PersistenceWorker,
         cache: RouteCacheRepository,
         provider: RouteEnrichmentProvider | None,
+        directory: RouteDirectoryRepository | None = None,
         economy: EnrichmentEconomy | None = None,
         alerting: AlertProbe | None = None,
         airport_context: ContextProbe | None = None,
@@ -488,6 +551,7 @@ class EnrichmentService:
         self._live = live
         self._persistence = persistence
         self._cache = cache
+        self._directory = directory
         self._provider = provider
         self._economy = economy if economy is not None else EnrichmentEconomy()
         self._alerting = alerting
@@ -527,6 +591,11 @@ class EnrichmentService:
         #: and for the same reason; membership is what makes the consistency
         #: check fire once rather than on every observation.
         self._invalidated: OrderedDict[str, None] = OrderedDict()
+        #: Callsigns whose directory row an aircraft has disproved, mapped to
+        #: the instant the skip lapses. Bounded like the answers, for the same
+        #: reason; an entry is what routes the re-ask to the provider rather
+        #: than back to the file that was wrong.
+        self._directory_skip: OrderedDict[str, int] = OrderedDict()
         self._inflight: str | None = None
         self._dropped = 0
         self._overflowed = False
@@ -534,6 +603,10 @@ class EnrichmentService:
         self._hits = 0
         self._misses = 0
         self._learned = 0
+        self._stale_served = 0
+        #: Callsigns whose stale serve has already been logged, mapped to the
+        #: UTC day it was logged for. Bounded like the answers.
+        self._stale_logged: OrderedDict[str, int] = OrderedDict()
         #: Start of the UTC day the budget count belongs to, or ``None`` before
         #: the first read of the table. Not "today": the day the *count* was
         #: taken for, which is what makes a midnight rollover detectable.
@@ -599,8 +672,18 @@ class EnrichmentService:
 
     @property
     def cache_stats(self) -> CacheStats:
-        """Hits, misses and learned rows, as diagnostics reports them."""
-        return CacheStats(hits=self._hits, misses=self._misses, learned=self._learned)
+        """Hits, misses, learned rows and stale serves, for diagnostics.
+
+        A directory hit counts as a **hit**: it cost no credit, which is the
+        question the counter answers. What separates the two sources is
+        ``provenance.route`` on the aircraft itself, not an aggregate here.
+        """
+        return CacheStats(
+            hits=self._hits,
+            misses=self._misses,
+            learned=self._learned,
+            stale_served=self._stale_served,
+        )
 
     async def wait_idle(self) -> None:
         """Wait until the worker task finishes the lookup it is in.
@@ -770,14 +853,16 @@ class EnrichmentService:
         observation of the flight queues it again, which is a retry paced by
         the sky rather than by a loop.
 
-        Four things deliberately survive. Remembered answers are facts about
+        Five things deliberately survive. Remembered answers are facts about
         flights, not about the provider that reported them — ``route_cache``
         keeps them across a restart already, and re-asking would spend quota to
         learn what FlightSite knows; the cache counters describe those same
         facts. The day's budget ledger is a count of rows in a table, which a
         new key does not refund. And the rate limiter describes the plan rather
         than the object: refilling its bucket here would make saving the
-        Settings page a way to buy requests per minute.
+        Settings page a way to buy requests per minute. The fifth is the
+        directory skip list, which describes a *file* an aircraft disproved and
+        which a new API key does not make right.
         """
         self._breaker.reset()
         self._pending.clear()
@@ -868,7 +953,7 @@ class EnrichmentService:
 
         if held is not None:
             if self._contradicted(key, (record.icao,), held.route):
-                self._invalidate_later(key, callsign, record.icao)
+                self._invalidate_later(key, callsign, record.icao, held.route)
                 return
             # Already answered this process. Applying is idempotent, so this
             # also covers the second aircraft to fly the number and the
@@ -889,15 +974,21 @@ class EnrichmentService:
         self._pending[key] = _PendingLookup(callsign, {record.icao}, refresh=refresh)
         self._shed_if_full()
 
-    def _invalidate_later(self, key: str, callsign: str, icao: str) -> None:
+    def _invalidate_later(
+        self, key: str, callsign: str, icao: str, route: RouteInfo | None
+    ) -> None:
         """Queue a re-fetch of a route the aircraft has just disproved.
 
         The row is deleted on the worker's task rather than here, for the
         reason the whole read side exists: this runs on the reader, which must
-        never await a database write while live events queue behind it.
+        never await a database write while live events queue behind it. The
+        directory skip *is* set here, because it is an in-memory dictionary
+        write and setting it late would let the drain that follows read the
+        same disproved row straight back out of the directory.
         """
         self._invalidating.add(key)
         self._remember_invalidation(key)
+        self._skip_directory(key, self._clock(), source=None if route is None else route.source)
         self._answers.pop(key, None)
         pending = self._pending.setdefault(key, _PendingLookup(callsign, refresh=True))
         pending.icaos.add(icao)
@@ -1050,32 +1141,155 @@ class EnrichmentService:
             if self._contradicted(key, tuple(lookup.icaos), route):
                 # The restart case: the row outlived the process that fetched
                 # it, so the contradiction is met here rather than at the
-                # memory gate. Same remedy, one step later.
+                # memory gate. Same remedy, one step later — plus the skip, in
+                # case the row that was disproved is one the directory wrote.
                 self._remember_invalidation(key)
                 await self._cache.invalidate(key)
+                self._skip_directory(key, now_ms, source=cached.source)
                 logger.info("enrichment_route_invalidated", callsign=lookup.callsign)
             else:
                 self._hits += 1
                 self._finish(key, route, expires_ms=cached.expires_ms)
                 return True
 
+        # The directory before the budget, because it costs no credit: SPEC
+        # §28 as amended makes it the primary source, and a callsign it knows
+        # never reaches the provider at all.
+        if await self._answer_from_directory(key, lookup, now_ms):
+            return True
+
         if not await self._may_spend(now_ms):
             # The budget is spent. The key keeps its place, as it does under
-            # the rate limiter: what stops is asking, not queueing.
-            return False
+            # the rate limiter: what stops is asking, not queueing — unless
+            # there is a last known route to fall back on, in which case the
+            # sighting gets it and the key is done for the day.
+            return await self._serve_stale(key, lookup, now_ms, reason="budget_spent")
 
         if not self._breaker.allow():
             # Silently absent while the circuit is open, and dropped rather
             # than requeued: the next observation of this flight queues it
             # again, which is a retry paced by the sky instead of by a loop.
+            await self._serve_stale(key, lookup, now_ms, reason="circuit_open")
             self._pending.pop(key, None)
             return True
         if not self._limiter.take():
-            # The key keeps its place. A limiter is a delay, not a refusal.
+            # The key keeps its place. A limiter is a delay, not a refusal —
+            # and deliberately not a reason to serve a stale route: the answer
+            # is seconds away, not unavailable.
             return False
 
         await self._request(key, lookup)
         return True
+
+    async def _answer_from_directory(self, key: str, lookup: _PendingLookup, now_ms: int) -> bool:
+        """Answer from the offline directory if it knows this callsign.
+
+        ``True`` when it did. One indexed primary-key read on this task, never
+        on the reader's and never on the live path; a hit is written into
+        ``route_cache`` tagged ``vrs`` so the *next* observation of the flight
+        is answered by the gate above without touching this table at all.
+
+        The contradiction check runs here for the same reason it runs against a
+        cached row — the aircraft can disprove a claim faster than any import
+        can correct it — but the remedy is different, and it is the whole
+        reason this branch exists: the directory is a file, so re-reading it
+        would return the same wrong answer forever. So the callsign is skipped
+        for the cache TTL and the walk falls through to the provider, which is
+        the only source that can know better.
+        """
+        directory = self._directory
+        if directory is None or self._directory_skipped(key, now_ms):
+            return False
+        found = await directory.lookup(key)
+        if found is None:
+            return False
+
+        route = found.route_info()
+        if self._contradicted(key, tuple(lookup.icaos), route):
+            self._remember_invalidation(key)
+            self._skip_directory(key, now_ms, source=ROUTE_SOURCE_VRS)
+            logger.info(
+                DIRECTORY_CONTRADICTED_EVENT,
+                callsign=lookup.callsign,
+                origin=route.origin_ident,
+                destination=route.destination_ident,
+            )
+            return False
+
+        self._hits += 1
+        write = await self._cache.store_route(
+            key, route, now_ms=now_ms, ttl_s=self._economy.route_ttl_s
+        )
+        self._finish(key, route, expires_ms=now_ms + self._stored_ttl_s(write) * MS_PER_SECOND)
+        return True
+
+    def _skip_directory(self, key: str, now_ms: int, *, source: str | None) -> None:
+        """Stop consulting the directory about ``key`` for the cache TTL.
+
+        A no-op unless the answer being invalidated actually came from the
+        directory: a contradicted *provider* route says nothing about what the
+        directory holds, and skipping it would send the next lookup to the paid
+        source for no reason.
+        """
+        if source != ROUTE_SOURCE_VRS:
+            return
+        self._directory_skip[key] = now_ms + self._economy.route_ttl_s * MS_PER_SECOND
+        self._directory_skip.move_to_end(key)
+        while len(self._directory_skip) > self._answer_limit:
+            self._directory_skip.popitem(last=False)
+
+    def _directory_skipped(self, key: str, now_ms: int) -> bool:
+        """Whether the directory is currently being skipped for ``key``."""
+        until = self._directory_skip.get(key)
+        if until is None:
+            return False
+        if until <= now_ms:
+            del self._directory_skip[key]
+            return False
+        return True
+
+    async def _serve_stale(
+        self, key: str, lookup: _PendingLookup, now_ms: int, *, reason: str
+    ) -> bool:
+        """Serve the last known route when nothing can refresh it.
+
+        ``True`` when there was one. The expired row's expiry is pushed a day
+        out inside the read's own transaction, so an outage costs one serve per
+        callsign per day rather than one per observation, and the answer is
+        applied to every waiting sighting with the provenance of whichever
+        source originally reported it — never re-attributed, never invented.
+
+        ``False`` means there is nothing to fall back on: the callsign has
+        never been answered, or the expired row says "nobody knows", which is
+        not a route to keep.
+        """
+        stale = await self._cache.serve_stale(key, now_ms=now_ms)
+        if stale is None:
+            return False
+        answer = stale.as_lookup()
+        if not isinstance(answer, RouteInfo):  # pragma: no cover - has_route decides this
+            return False
+
+        self._stale_served += 1
+        self._log_stale(key, lookup.callsign, reason=reason, now_ms=now_ms)
+        self._finish(key, answer, expires_ms=now_ms + STALE_EXTENSION_S * MS_PER_SECOND)
+        return True
+
+    def _log_stale(self, key: str, callsign: str, *, reason: str, now_ms: int) -> None:
+        """Announce a stale serve once per callsign per UTC day."""
+        day_ms = utc_day_start_ms(now_ms)
+        if self._stale_logged.get(key) == day_ms:
+            return
+        self._stale_logged[key] = day_ms
+        self._stale_logged.move_to_end(key)
+        while len(self._stale_logged) > self._answer_limit:
+            self._stale_logged.popitem(last=False)
+        logger.warning(
+            STALE_SERVED_EVENT,
+            callsign=callsign,
+            reason=reason,
+            extended_s=STALE_EXTENSION_S,
+        )
 
     async def _request(self, key: str, lookup: _PendingLookup) -> None:
         """Ask the provider, then record and apply whatever it said."""
@@ -1091,9 +1305,13 @@ class EnrichmentService:
             self._breaker.record_failure()
             self._counters.increment(ENRICHMENT_FAILURES_COUNTER)
             # Deliberately neither cached nor remembered: an unavailability is
-            # a fact about the network, not about the flight. The key is
-            # dropped so the sky, not a retry loop, decides when to ask again.
-            self._pending.pop(key, None)
+            # a fact about the network, not about the flight. What *is* on file
+            # about the flight — an expired answer from an earlier day — is
+            # served instead of thrown away, and `_serve_stale` takes the key
+            # off the queue when it finds one. Failing that the key is dropped,
+            # so the sky rather than a retry loop decides when to ask again.
+            if not await self._serve_stale(key, lookup, now_ms, reason=result.reason):
+                self._pending.pop(key, None)
             return
 
         # Everything below is the provider *answering*, so the breaker closes
@@ -1102,8 +1320,16 @@ class EnrichmentService:
         self._breaker.record_success()
         await self._spend(now_ms)
         ttl_s = self._economy.route_ttl_s
+        # A provider does not name itself in its own reply, so the row is
+        # stamped here — the one place that knows which provider was asked.
+        # Without it a cached provider answer would come back un-attributed
+        # after a restart, and the directory-skip rule could not tell a
+        # contradicted `vrs` row from a contradicted `aerodatabox` one.
+        source = provider.name
         if isinstance(result, RouteInfo):
-            write = await self._cache.store_route(key, result, now_ms=now_ms, ttl_s=ttl_s)
+            write = await self._cache.store_route(
+                key, result, now_ms=now_ms, ttl_s=ttl_s, source=source
+            )
             if write.newly_learned:
                 self._learned += 1
                 logger.info(
@@ -1119,10 +1345,10 @@ class EnrichmentService:
         elif isinstance(result, RouteRestricted):
             # Cached like an answer, because it is one, and for the positive
             # TTL: a flight withheld by law is withheld on the next sighting.
-            await self._cache.store_restricted(key, now_ms=now_ms, ttl_s=ttl_s)
+            await self._cache.store_restricted(key, now_ms=now_ms, ttl_s=ttl_s, source=source)
             self._finish(key, None, expires_ms=now_ms + ttl_s * MS_PER_SECOND)
         else:
-            await self._cache.store_not_found(key, now_ms=now_ms)
+            await self._cache.store_not_found(key, now_ms=now_ms, source=source)
             self._finish(key, None, expires_ms=now_ms + NEGATIVE_TTL_S * MS_PER_SECOND)
 
     def _stored_ttl_s(self, write: RouteWrite) -> int:
@@ -1139,18 +1365,28 @@ class EnrichmentService:
     def _apply(self, key: str, answer: RouteInfo | None, icaos: tuple[str, ...]) -> None:
         """Attach a found route to every sighting that was waiting for it.
 
-        ``answer is None`` — the provider has no route — writes nothing: the
-        sighting keeps its ``NULL`` route columns, which is the honest record
-        and what the API renders as Unknown. There is no branch here in which a
-        route FlightSite was not told about could be written.
+        ``answer is None`` — nobody has a route — writes nothing: the sighting
+        keeps its ``NULL`` route columns, which is the honest record and what
+        the API renders as Unknown. There is no branch here in which a route
+        FlightSite was not told about could be written.
+
+        The provenance is the answer's own ``source`` where it has one — the
+        directory names itself, and so does a row read back out of the cache —
+        falling back to the provider that was asked, which is the only thing
+        that knows its own name. It reaches ``sightings.route_source`` and from
+        there the API's ``provenance.route`` (``docs/API.md`` §2.6), so the two
+        sources are told apart everywhere a route is shown.
         """
         provider = self._provider
-        if answer is None or provider is None:
+        if answer is None:
+            return
+        source = answer.source or (provider.name if provider is not None else None)
+        if source is None:  # pragma: no cover - the loop only runs when enabled
             return
         route = SightingRoute(
             origin_ident=answer.origin_ident,
             destination_ident=answer.destination_ident,
-            source=provider.name,
+            source=source,
         )
         at_ms = self._clock()
         for icao in icaos:
@@ -1228,8 +1464,10 @@ __all__ = [
     "DEFAULT_ANSWER_LIMIT",
     "DEFAULT_PENDING_LIMIT",
     "DEFAULT_QUEUE_SIZE",
+    "DIRECTORY_CONTRADICTED_EVENT",
     "ENRICHMENT_FAILURES_COUNTER",
     "IDLE_POLL_S",
+    "STALE_SERVED_EVENT",
     "AlertProbe",
     "BudgetStatus",
     "CacheStats",

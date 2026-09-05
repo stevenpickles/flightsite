@@ -57,9 +57,37 @@ row goes back to the ordinary TTL: the schedule changed, and the evidence for
 the old one is worthless. Provenance never changes — the answer is still
 AeroDataBox's, confirmed against itself, not FlightSite's own inference.
 
+Who answered
+------------
+
+Since slice 071 a row also records its ``source`` — ``vrs`` for the offline
+directory, ``aerodatabox`` for the online provider — so a hit is attributable
+without asking anybody. That is what lets a route cached from the directory
+reach ``sightings.route_source`` as ``vrs`` a week later and after a restart,
+and it is what tells the worker whether a *contradicted* row came from the
+directory (in which case the directory is skipped for that callsign and the
+re-ask goes to the provider) or from the provider itself. Rows written before
+revision 0015 carry ``NULL`` and are re-attributed the next time their callsign
+is answered.
+
+The last known route
+--------------------
+
 An expired row is not deleted on read. It is simply not returned, and the next
 successful lookup overwrites it; :meth:`RouteCacheRepository.prune` clears the
 accumulated dead rows when maintenance asks it to.
+
+:meth:`RouteCacheRepository.serve_stale` is the one read that looks *past* an
+expiry, and it exists for the case where the row cannot be refreshed at all —
+the day's budget is spent, the circuit is open, the provider timed out or
+returned 429, and the directory does not know the callsign either. Discarding a
+route that was right last week because it cannot be re-confirmed this minute
+trades a correct answer for an ``Unknown``, which is the wrong direction: SPEC
+§28 asks for graceful degradation, not for amnesia. So the expired row is
+served, its expiry is pushed :data:`STALE_EXTENSION_S` out in the same
+transaction, and the sighting keeps its route. ``fetched_ms`` is deliberately
+untouched, so neither the confirmation rule nor the daily budget ledger — both
+of which are about when an answer was *bought* — can be moved by an outage.
 :meth:`RouteCacheRepository.invalidate` is the one place a *live* row is
 deleted, and it exists for the consistency check
 (:func:`flightsite.enrichment.policy.contradicts_route`): an aircraft that
@@ -125,6 +153,13 @@ LEARNED_TTL_S: Final = 30 * SECONDS_PER_DAY
 #: understand, and storing it would be growth with no reader.
 MAX_PAYLOAD_BYTES: Final = 512
 
+#: How far an expired row's expiry is pushed out when it is served stale
+#: (slice 071). A day: long enough that one outage costs one stale serve rather
+#: than one per observation, short enough that a route nobody can refresh is
+#: re-tried tomorrow. Matches :data:`NEGATIVE_TTL_S` deliberately — both are
+#: "come back tomorrow and ask again".
+STALE_EXTENSION_S: Final = SECONDS_PER_DAY
+
 MS_PER_SECOND: Final = 1_000
 
 
@@ -139,11 +174,26 @@ class CachedRoute:
     expires_ms: int
     confirmations: int = 0
     first_fetched_ms: int | None = None
+    #: Which source answered — ``vrs`` or ``aerodatabox`` (slice 071).
+    #: ``None`` on a row written before revision 0015.
+    source: str | None = None
 
     @property
     def learned(self) -> bool:
         """True once enough separate days have confirmed this answer."""
         return self.confirmations >= LEARNED_CONFIRMATIONS
+
+    @property
+    def has_route(self) -> bool:
+        """True when this row names at least one airport.
+
+        The question the stale-serving path asks: an expired ``not_found`` row
+        is not a *last known route*, so there is nothing about it worth serving
+        through an outage.
+        """
+        return self.status is RouteCacheStatus.OK and not (
+            self.origin_ident is None and self.destination_ident is None
+        )
 
     def as_lookup(self) -> RouteLookup:
         """The cached answer in the vocabulary a provider would have used.
@@ -154,12 +204,17 @@ class CachedRoute:
         route", not as an unavailability: the row records that the provider
         *answered*, and the honest display of an answer FlightSite cannot use
         is Unknown (``docs/API.md`` §2.7).
+
+        The route carries the row's ``source``, which is what makes a cache hit
+        attributable without asking anybody: a row fetched from the directory
+        applies to the sighting as ``vrs`` a week later, and after a restart,
+        without the worker having to remember who answered.
         """
-        if self.status is RouteCacheStatus.OK and not (
-            self.origin_ident is None and self.destination_ident is None
-        ):
+        if self.has_route:
             return RouteInfo(
-                origin_ident=self.origin_ident, destination_ident=self.destination_ident
+                origin_ident=self.origin_ident,
+                destination_ident=self.destination_ident,
+                source=self.source,
             )
         return RouteNotFound()
 
@@ -200,8 +255,52 @@ class RouteCacheRepository:
                 return None
             return _as_cached(row)
 
+    async def serve_stale(
+        self,
+        cache_key: str,
+        *,
+        now_ms: int,
+        extension_s: int = STALE_EXTENSION_S,
+    ) -> CachedRoute | None:
+        """The **expired** route for ``cache_key``, its expiry pushed out.
+
+        The last-known-route rule of slice 071, and the only read here that
+        looks past an expiry. It answers exactly one question: *the row is
+        stale and nobody can refresh it right now — is there a route on it
+        worth keeping on the sighting?* A row that is still live is the
+        ordinary :meth:`get` case and comes back ``None`` here; so does a row
+        that has expired holding no route, because an expired "nobody knows"
+        is not a last known route.
+
+        The expiry is bumped by ``extension_s`` in the same transaction, which
+        is what stops the outage from costing one stale serve per observation:
+        the next drain finds a live row, the memory gate in front of it holds
+        the answer, and the callsign is refreshed a day later when whatever was
+        unavailable may not be. The row keeps its ``fetched_ms``, so the
+        confirmation rule and the daily budget ledger — both of which are about
+        when the answer was *bought* — are untouched.
+
+        Returns the row as it stood, so a caller can report the source that
+        originally answered rather than re-attributing an old answer.
+        """
+        async with self.database.writer_session() as session:
+            row = await session.get(RouteCache, cache_key)
+            if row is None or row.expires_ms > now_ms:
+                return None
+            stale = _as_cached(row)
+            if not stale.has_route:
+                return None
+            row.expires_ms = now_ms + extension_s * MS_PER_SECOND
+        return stale
+
     async def store_route(
-        self, cache_key: str, route: RouteInfo, *, now_ms: int, ttl_s: int = POSITIVE_TTL_S
+        self,
+        cache_key: str,
+        route: RouteInfo,
+        *,
+        now_ms: int,
+        ttl_s: int = POSITIVE_TTL_S,
+        source: str | None = None,
     ) -> RouteWrite:
         """Record a found route, and count the days that have confirmed it.
 
@@ -212,6 +311,11 @@ class RouteCacheRepository:
         agreeing with itself is not a second day's evidence. A different answer
         resets the count and the first-seen moment — the schedule changed, and
         what was learned about the old one no longer applies.
+
+        ``source`` is who answered. It defaults to the route's own
+        :attr:`~flightsite.enrichment.model.RouteInfo.source` — which the
+        directory sets and a provider does not — so the caller passes it only
+        when the answer came from a provider that has to name itself.
         """
         async with self.database.writer_session() as session:
             row = await session.get(RouteCache, cache_key)
@@ -232,6 +336,7 @@ class RouteCacheRepository:
                 ttl_s=LEARNED_TTL_S if learned else ttl_s,
                 confirmations=confirmations,
                 first_fetched_ms=first_fetched_ms,
+                source=source if source is not None else route.source,
             )
         return RouteWrite(
             confirmations=confirmations,
@@ -239,7 +344,9 @@ class RouteCacheRepository:
             newly_learned=learned and not was_learned,
         )
 
-    async def store_not_found(self, cache_key: str, *, now_ms: int) -> None:
+    async def store_not_found(
+        self, cache_key: str, *, now_ms: int, source: str | None = None
+    ) -> None:
         """Record that the provider has no route for this flight.
 
         The negative cache SPEC §28 asks for: without it, a callsign nobody has
@@ -253,10 +360,16 @@ class RouteCacheRepository:
             payload_json=None,
             now_ms=now_ms,
             ttl_s=NEGATIVE_TTL_S,
+            source=source,
         )
 
     async def store_restricted(
-        self, cache_key: str, *, now_ms: int, ttl_s: int = POSITIVE_TTL_S
+        self,
+        cache_key: str,
+        *,
+        now_ms: int,
+        ttl_s: int = POSITIVE_TTL_S,
+        source: str | None = None,
     ) -> None:
         """Record that this flight is legally withheld (HTTP 451, issue #165).
 
@@ -272,6 +385,7 @@ class RouteCacheRepository:
             payload_json=None,
             now_ms=now_ms,
             ttl_s=ttl_s,
+            source=source,
         )
 
     async def invalidate(self, cache_key: str) -> bool:
@@ -357,6 +471,7 @@ class RouteCacheRepository:
         payload_json: str | None,
         now_ms: int,
         ttl_s: int,
+        source: str | None = None,
     ) -> None:
         """Store an answer that carries no confirmation history of its own."""
         async with self.database.writer_session() as session:
@@ -373,6 +488,7 @@ class RouteCacheRepository:
                 ttl_s=ttl_s,
                 confirmations=0,
                 first_fetched_ms=now_ms,
+                source=source,
             )
 
     @staticmethod
@@ -389,6 +505,7 @@ class RouteCacheRepository:
         ttl_s: int,
         confirmations: int,
         first_fetched_ms: int,
+        source: str | None = None,
     ) -> None:
         """Insert or overwrite one row inside an open writer session."""
         expires_ms = now_ms + ttl_s * MS_PER_SECOND
@@ -404,6 +521,7 @@ class RouteCacheRepository:
                     expires_ms=expires_ms,
                     confirmations=confirmations,
                     first_fetched_ms=first_fetched_ms,
+                    source=source,
                 )
             )
             return
@@ -415,6 +533,7 @@ class RouteCacheRepository:
         row.expires_ms = expires_ms
         row.confirmations = confirmations
         row.first_fetched_ms = first_fetched_ms
+        row.source = source
 
 
 def _as_cached(row: RouteCache) -> CachedRoute:
@@ -426,6 +545,7 @@ def _as_cached(row: RouteCache) -> CachedRoute:
         fetched_ms=row.fetched_ms,
         expires_ms=row.expires_ms,
         confirmations=row.confirmations,
+        source=row.source,
         first_fetched_ms=row.first_fetched_ms,
     )
 
@@ -498,6 +618,7 @@ __all__ = [
     "NEGATIVE_TTL_S",
     "POSITIVE_TTL_S",
     "SECONDS_PER_DAY",
+    "STALE_EXTENSION_S",
     "CachedRoute",
     "RouteCacheRepository",
     "RouteWrite",

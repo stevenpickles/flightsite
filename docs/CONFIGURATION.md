@@ -277,8 +277,27 @@ already-known routes last.
 |---|---|---|---|
 | `opensky_enabled` | bool | `false` | Opt in to the OpenSky aircraft database as a supplementary source |
 
-The two default sources (Mictronics and the FAA registry) are always active and need
-no configuration. OpenSky is separate because its licensing is genuinely unclear:
+**What "Update Aircraft Metadata" fetches.** One click runs every registered source,
+each independently — a failure in one leaves the others' data and status untouched
+(SPEC §27), and each reports its own row count, dataset version and last error on the
+Settings page:
+
+| Source | What it supplies | Configuration |
+|---|---|---|
+| `mictronics` | Type, registration, operator and the military/interesting/PIA/LADD flags | Always active |
+| `faa` | US registration, year, owner, make/model | Always active |
+| `airports` | The airport dataset behind nearest-airport context, the map overlay and route airport names | Always active |
+| `routes` | The **offline route directory** — origin and destination per airline callsign, from the Virtual Radar Server standing data (CC0). Consulted before AeroDataBox, so a callsign it knows costs no API credit at all ([ADR-0016](adr/0016-offline-route-directory.md)) | Always active |
+| `opensky` | Supplementary operator, owner, model and build year | Off by default — see below |
+
+All of them are **fetched on demand**: nothing is downloaded until you run the update,
+and nothing is bundled in the container image
+([licensing register](LICENSES.md)). The route directory is a ~7 MB archive of which
+only the route files are read; it is not refreshed automatically, so re-run the update
+when you want newer schedules.
+
+The four default sources are always active and need no configuration. OpenSky is
+separate because its licensing is genuinely unclear:
 OpenSky's general Terms of Use restrict their data to non-profit research and
 education and require a written licence for commercial use, while the aircraft
 database's own page states it "is unlicensed and does not fall under our terms of

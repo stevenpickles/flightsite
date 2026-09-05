@@ -1207,6 +1207,11 @@ class DiagnosticsEnrichmentCache(_Model):
     misses: int = 0
     #: Rows confirmed on enough separate days to be frozen for 30 days.
     learned: int = 0
+    #: Expired routes served because neither the offline directory nor the
+    #: provider could refresh them — a spent budget, an open circuit, a 429 or
+    #: a timeout (slice 071). The sighting keeps last week's route rather than
+    #: losing it; a climbing number says something upstream is unavailable.
+    stale_served: int = 0
 
 
 class DiagnosticsEnrichment(_Model):

@@ -6,6 +6,17 @@ ADR-0004. Track storage, reception statistics and sighting events are slice
 052's tables and are not created here; the reception-statistic *columns* on
 ``sightings`` are, so that row's shape does not change again when 052 lands.
 
+``route_source``'s vocabulary is spelled out below rather than imported from
+:mod:`flightsite.db.models`, which is what the other three predicates here
+still do. Revision 0014 gave the reason and revision 0015 needed it: **a
+migration records what an install ran.** While this revision imported the live
+constant, widening the vocabulary in ``models.py`` retroactively changed what
+*this* revision created — so a fresh database arrived at revision 0014 already
+carrying a predicate revision 0015 had not yet installed, and the upgrade path
+every existing install actually takes had no way to be exercised. The value
+below is the one this revision has always created; 0015 widens it, and a test
+at head asserts the newest spelling still matches the constant.
+
 Revision ID: 0002
 Revises: 0001
 Created: 2026-08-31
@@ -22,13 +33,17 @@ from flightsite.db.models import (
     ALERT_SEVERITY_CHECK,
     CLOSURE_REASON_CHECK,
     INFERRED_PHASE_CHECK,
-    ROUTE_SOURCE_CHECK,
 )
 
 revision: str = "0002"
 down_revision: str | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+#: The ``route_source`` vocabulary as it stood at this revision: AeroDataBox
+#: was the only route provider v1 shipped. Widened to include ``vrs`` by
+#: revision 0015 — see the module docstring for why this one is a literal.
+ROUTE_SOURCE_CHECK = "route_source IN ('aerodatabox')"
 
 _ZERO = sa.text("0")
 

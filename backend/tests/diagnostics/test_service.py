@@ -363,7 +363,7 @@ class TestEnrichmentSection:
             "budget": SimpleNamespace(
                 limit=500, used_today=137, remaining=363, resets_at_ms=cls.MIDNIGHT_MS
             ),
-            "cache_stats": SimpleNamespace(hits=4_112, misses=308, learned=57),
+            "cache_stats": SimpleNamespace(hits=4_112, misses=308, learned=57, stale_served=9),
         }
         state.update(overrides)
         return SimpleNamespace(**state)
@@ -382,7 +382,23 @@ class TestEnrichmentSection:
             "remaining": 363,
             "resets_at": "2026-08-31T00:00:00.000Z",
         }
-        assert payload["enrichment"]["cache"] == {"hits": 4_112, "misses": 308, "learned": 57}
+        assert payload["enrichment"]["cache"] == {
+            "hits": 4_112,
+            "misses": 308,
+            "learned": 57,
+            "stale_served": 9,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_service_from_before_the_stale_counter_still_reports_zero(self) -> None:
+        """The key is additive; a stats object without it is not a failure."""
+        service = self._service(cache_stats=SimpleNamespace(hits=1, misses=2, learned=3))
+
+        payload = await collect_diagnostics(
+            _app(enrichment=service), counters=CounterRegistry(), ring=ErrorRing(), now=NOW
+        )
+
+        assert payload["enrichment"]["cache"]["stale_served"] == 0
 
     @pytest.mark.asyncio
     async def test_an_uncapped_budget_reports_null_rather_than_zero(self) -> None:
@@ -414,7 +430,12 @@ class TestEnrichmentSection:
             "remaining": None,
             "resets_at": "2026-09-01T00:00:00.000Z",
         }
-        assert payload["enrichment"]["cache"] == {"hits": 0, "misses": 0, "learned": 0}
+        assert payload["enrichment"]["cache"] == {
+            "hits": 0,
+            "misses": 0,
+            "learned": 0,
+            "stale_served": 0,
+        }
 
 
 class TestCountersAndErrors:

@@ -70,11 +70,19 @@ def test_this_revision_sits_directly_on_the_previous_head() -> None:
     assert script.down_revision == PREVIOUS
 
 
-def test_it_is_the_only_head() -> None:
-    """One head, and it is this one — the rule a migration slice must leave true."""
-    assert [script.revision for script in migrate.script_directory().get_revisions("heads")] == [
-        REVISION
-    ]
+def test_this_revision_is_still_on_the_one_linear_history() -> None:
+    """One head, and this revision is reachable from it.
+
+    It *was* the head; slice 071's revision 0015 sits on top of it now. What
+    the linear-history rule actually asks of a landed migration is that the
+    graph stays single-headed and that this revision is still on the path to
+    it — the newest revision's own test asserts that it is the head.
+    """
+    heads = [script.revision for script in migrate.script_directory().get_revisions("heads")]
+    walked = {script.revision for script in migrate.script_directory().walk_revisions()}
+
+    assert len(heads) == 1
+    assert REVISION in walked
 
 
 async def test_the_learned_columns_arrive_with_this_revision(db_path: Path) -> None:

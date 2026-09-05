@@ -142,7 +142,7 @@ source of each non-decoder field group (SPEC §22):
 }
 ```
 
-Provenance values: `decoder` | `derived` | `mictronics` | `faa` | `opensky` |
+Provenance values: `decoder` | `derived` | `mictronics` | `faa` | `opensky` | `vrs` |
 `aerodatabox` | `heuristic`. `opensky` appears only on installs that enabled the
 opt-in OpenSky source (`metadata.opensky_enabled`, default off — ADR-0013), and only
 on `operator`, `owner`, `model` or `manufacture_year`, the four fields it may fill.
@@ -150,8 +150,21 @@ Fields without an entry are decoder-direct. Position source is a
 separate, always-present field (§ 3.3) because it is safety-relevant display state,
 not enrichment.
 
+**`provenance.route` is one of exactly two values** ([ADR-0016](adr/0016-offline-route-directory.md)):
+
+| Value | Meaning |
+|---|---|
+| `vrs` | The offline route directory — Virtual Radar Server standing data (CC0), imported locally by the "Update Aircraft Metadata" action and consulted first. No third party was contacted for this route, and the install can see which snapshot it came from. Community-corrected data, so it can be out of date until an aircraft's own behaviour contradicts it. |
+| `aerodatabox` | A live lookup against AeroDataBox, made because the directory did not know this callsign. Requires the user's own API key. |
+
+Both are **reported** routes and both are distinct from the locally inferred airport
+context beside them (SPEC §28, § 3.3's `nearest_airport`), which is FlightSite's own
+inference and never written into `route`. The entry is absent entirely when there is no
+route to attribute — § 2.6 entries name the source of a *value*, and two nulls have no
+source.
+
 The `route` block carries four members: `origin` and `destination` (the idents the
-enrichment provider reported) and `origin_name` and `destination_name` (those idents
+source reported) and `origin_name` and `destination_name` (those idents
 looked up in the **local** `airports` table imported by slice 027 — never a second
 provider call). All four are always present. A name is `null` when the ident is
 `null`, and also whenever the local dataset does not carry that ident — including on
@@ -180,7 +193,8 @@ and the roadmap. Any document using different spellings is wrong and must be fix
 | Sighting closure | `closure_reason`: `"gap_timeout"` \| `"shutdown_recovery"` \| `"data_reset"` |
 | Closest range | `closest_approach_nm` (per-sighting closest and aircraft lifetime closest) |
 | Farthest range | `max_range_nm` (per-sighting maximum and aircraft lifetime farthest detection) |
-| Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `opensky` (opt-in, default off) \| `aerodatabox` \| `heuristic` |
+| Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `opensky` (opt-in, default off) \| `vrs` \| `aerodatabox` \| `heuristic` |
+| Route source | `route_source` / `provenance.route`: `"vrs"` (offline directory) \| `"aerodatabox"` (online provider) |
 | Alert severity | `info` \| `interesting` \| `high` \| `critical` |
 
 ### 2.9 Path parameter constraints
@@ -556,7 +570,7 @@ Two contract details worth knowing:
       "limit": 500, "used_today": 137, "remaining": 363,
       "resets_at": "2026-09-05T00:00:00.000Z"
     },
-    "cache": { "hits": 4112, "misses": 308, "learned": 57 }
+    "cache": { "hits": 4112, "misses": 308, "learned": 57, "stale_served": 0 }
   }
   ```
 
@@ -565,7 +579,16 @@ Two contract details worth knowing:
   means today's ceiling has been reached. `used_today` counts route-cache rows fetched
   in the current UTC day, so it survives a restart, and `resets_at` is the next UTC
   midnight. `cache.learned` is the number of cached routes confirmed on enough separate
-  days to be frozen for 30 days ([DATA_MODEL.md §7](DATA_MODEL.md)).
+  days to be frozen for 30 days ([DATA_MODEL.md §7](DATA_MODEL.md)). `cache.hits`
+  counts every lookup answered without spending a credit, which since slice 071
+  includes hits on the offline route directory.
+
+  `cache.stale_served` (slice 071) counts expired routes that were kept on their
+  sightings because nothing could refresh them — the day's budget spent, the circuit
+  breaker open, a 429, or a timeout. The routes on screen are still real, but they are
+  the last ones a source reported, so a number that climbs is the signal that something
+  upstream has been unavailable. Each serve pushes that row's expiry a day out, so this
+  counts callsigns rather than observations.
 - `database.maintenance.vacuum_refusal` is `null` unless the guarded `VACUUM` last
   declined to run, and otherwise carries `reason` plus `required_free_bytes` and
   `available_free_bytes`. The free-space guard wants twice the database size, so on a
@@ -703,6 +726,17 @@ config/domain models the backend uses.
 | Alert matches | `POST /alerts/matches/{id}/notified` (records that a browser notification was actually shown for one match; empty body — the assertion *is* the request; `204` whether this call marked the row or found it already marked, `404` for an unknown id) | #104 |
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
+
+`GET /metadata/status` reports one row per **registered** source, each with its own
+`status`, `last_success_ms`, `dataset_version`, `row_count` and `last_error`, and each
+independent of the others (SPEC §27). A stock install registers four —
+`airports`, `faa`, `mictronics`, `routes` — and a fifth, `opensky`, appears only where
+`metadata.opensky_enabled` is set (ADR-0013). Two of them are not aircraft metadata:
+`airports` is slice 027's airport dataset and `routes` is slice 071's offline route
+directory ([ADR-0016](adr/0016-offline-route-directory.md)), whose `row_count` is the
+number of callsigns it knows a route for and whose `dataset_version` is the SHA-256 of
+the archive it was imported from. Clients must tolerate sources they do not recognise:
+the list is what this build ships, not a fixed vocabulary.
 
 Backup and restore have **no HTTP surface at all**, internal or external: they are
 CLI operations (`flightsite-backup`, see `docs/BACKUP.md`), deliberately, so that a

@@ -24,9 +24,19 @@ Module                                     Responsibility
 :mod:`~flightsite.enrichment.provider`     the ``RouteEnrichmentProvider`` protocol
 :mod:`~flightsite.enrichment.aerodatabox`  the one implementation, and the key
 :mod:`~flightsite.enrichment.cache`        ``route_cache`` reads and writes
+:mod:`~flightsite.enrichment.directory`    the offline route directory
 :mod:`~flightsite.enrichment.limits`       token bucket and circuit breaker
 :mod:`~flightsite.enrichment.service`      the consumer that runs all of it
 ========================================== =====================================
+
+Since slice 071 the online provider is the *fallback*, not the source. SPEC
+§28's 2026-09-05 amendment admits an offline, periodically imported route
+directory — the Virtual Radar Server standing data, CC0 — as the primary
+origin/destination source, with AeroDataBox consulted only for callsigns it
+does not know (ADR-0016). That directory is imported by
+:mod:`flightsite.metadata.sources.routes` through the same "Update Aircraft
+Metadata" action every other dataset uses, and it lives here rather than in
+:mod:`flightsite.metadata` because its only reader is the enrichment worker.
 
 The two promises
 ----------------
@@ -46,16 +56,22 @@ an error, withholds a flight for legal reasons, or reports no airports leaves
 the sighting's route columns ``NULL``.
 There is exactly one place a route can be written from
 (:meth:`~flightsite.enrichment.service.EnrichmentService._apply`) and exactly
-one thing it can write: what the provider said. SPEC §28's *Unknown when
-uncertain* is a property of the code shape, not of a convention.
+one thing it can write: what a source said, tagged with which source said it.
+That stayed true when the directory arrived and when last-known-route serving
+arrived — a stale route is one a source reported, carrying the provenance it
+earned, not a guess made on its behalf. SPEC §28's *Unknown when uncertain* is
+a property of the code shape, not of a convention.
 
 What leaves the network
 -----------------------
 
 A callsign, in the path of one HTTPS GET, plus the user's API key in a header.
 Nothing else — no position, no ICAO address, no registration, no receiver
-location. ``docs/SECURITY.md`` §10 states this to the user and
-:mod:`~flightsite.enrichment.aerodatabox` is the single place it is kept.
+location. The route directory adds one more outbound request and it carries
+even less: a plain GET for a public archive, on demand, with nothing of the
+user's in it at all. ``docs/SECURITY.md`` §10 states both to the user;
+:mod:`~flightsite.enrichment.aerodatabox` and
+:mod:`flightsite.metadata.sources.routes` are the single places each is kept.
 """
 
 from __future__ import annotations
@@ -74,9 +90,18 @@ from flightsite.enrichment.cache import (
     LEARNED_TTL_S,
     NEGATIVE_TTL_S,
     POSITIVE_TTL_S,
+    STALE_EXTENSION_S,
     CachedRoute,
     RouteCacheRepository,
     RouteWrite,
+)
+from flightsite.enrichment.directory import (
+    ROUTES_SOURCE,
+    RouteDirectoryImportSink,
+    RouteDirectoryRecord,
+    RouteDirectoryRepository,
+    RouteRecordError,
+    normalize_route,
 )
 from flightsite.enrichment.limits import (
     DEFAULT_COOLDOWN_S,
@@ -87,6 +112,8 @@ from flightsite.enrichment.limits import (
 )
 from flightsite.enrichment.model import (
     ROUTE_SOURCE_AERODATABOX,
+    ROUTE_SOURCE_VRS,
+    ROUTE_SOURCES,
     RouteCacheStatus,
     RouteInfo,
     RouteLookup,
@@ -103,7 +130,9 @@ from flightsite.enrichment.policy import (
 from flightsite.enrichment.provider import RouteEnrichmentProvider
 from flightsite.enrichment.service import (
     BUDGET_EXHAUSTED_EVENT,
+    DIRECTORY_CONTRADICTED_EVENT,
     ENRICHMENT_FAILURES_COUNTER,
+    STALE_SERVED_EVENT,
     BudgetStatus,
     CacheStats,
     EnrichmentEconomy,
@@ -120,6 +149,7 @@ __all__ = [
     "DEFAULT_FAILURE_THRESHOLD",
     "DEFAULT_RATE_PER_MINUTE",
     "DEFAULT_ROUTE_TTL_DAYS",
+    "DIRECTORY_CONTRADICTED_EVENT",
     "ENRICHMENT_FAILURES_COUNTER",
     "FLIGHT_BY_CALLSIGN_PATH",
     "LEARNED_CONFIRMATIONS",
@@ -127,7 +157,12 @@ __all__ = [
     "NEGATIVE_TTL_S",
     "POSITIVE_TTL_S",
     "REQUEST_TIMEOUT_S",
+    "ROUTES_SOURCE",
+    "ROUTE_SOURCES",
     "ROUTE_SOURCE_AERODATABOX",
+    "ROUTE_SOURCE_VRS",
+    "STALE_EXTENSION_S",
+    "STALE_SERVED_EVENT",
     "AeroDataBoxProvider",
     "BudgetStatus",
     "CacheStats",
@@ -137,10 +172,14 @@ __all__ = [
     "EnrichmentService",
     "RouteCacheRepository",
     "RouteCacheStatus",
+    "RouteDirectoryImportSink",
+    "RouteDirectoryRecord",
+    "RouteDirectoryRepository",
     "RouteEnrichmentProvider",
     "RouteInfo",
     "RouteLookup",
     "RouteNotFound",
+    "RouteRecordError",
     "RouteRestricted",
     "RouteUnavailable",
     "RouteWrite",
@@ -151,5 +190,6 @@ __all__ = [
     "contradicts_route",
     "eligible_callsign",
     "normalize_callsign",
+    "normalize_route",
     "parse_route",
 ]

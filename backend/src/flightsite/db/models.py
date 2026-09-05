@@ -56,9 +56,13 @@ CLOSURE_REASON_CHECK: Final[str] = (
     "closure_reason IN ('gap_timeout', 'shutdown_recovery', 'data_reset')"
 )
 
-#: ``route_source`` vocabulary — AeroDataBox is the only route provider v1
-#: ships (ADR-0006); populated by slice 026.
-ROUTE_SOURCE_CHECK: Final[str] = "route_source IN ('aerodatabox')"
+#: ``route_source`` vocabulary. Two values since slice 071 (ADR-0016): ``vrs``
+#: is the offline Virtual Radar Server standing-data directory, consulted
+#: first, and ``aerodatabox`` is the online provider ADR-0006 ships, consulted
+#: only for callsigns the directory does not know. Populated by slice 026 and
+#: widened by revision 0015, which is why that revision rebuilds ``sightings``:
+#: SQLite cannot alter a ``CHECK`` in place.
+ROUTE_SOURCE_CHECK: Final[str] = "route_source IN ('aerodatabox', 'vrs')"
 
 #: Local arrival/departure inference, kept distinct from enriched route data
 #: (SPEC §28, §41); populated by slice 027.
@@ -778,9 +782,95 @@ class RouteCache(Base):
     #: written before revision 0014 have no such record and inventing one
     #: would be a claim about a past this build did not observe.
     first_fetched_ms: Mapped[int | None] = mapped_column(Integer)
+    #: Which source answered — ``vrs`` or ``aerodatabox`` (slice 071). Nullable
+    #: because every row written before revision 0015 predates the second
+    #: source; those are AeroDataBox's by construction, but writing that in
+    #: would be a claim about rows this build did not fetch, so they stay
+    #: ``NULL`` and are re-attributed the next time that callsign is answered.
+    #: Deliberately *not* given a ``CHECK``: widening one costs a table rebuild
+    #: (revision 0014 rebuilt this table for exactly that reason), and this
+    #: column is a cache annotation that a wrong value could at worst leave
+    #: un-attributed until the row expires.
+    source: Mapped[str | None] = mapped_column(Text)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RouteCache(cache_key={self.cache_key!r}, status={self.status!r})"
+
+
+class RouteDirectory(Base):
+    """The offline route directory (``docs/DATA_MODEL.md`` §7.1, slice 071).
+
+    One row per airline callsign the Virtual Radar Server standing-data dataset
+    knows a route for — 619,770 of them in the snapshot slice 071 measured —
+    imported by :mod:`flightsite.metadata.sources.routes` through the same
+    "Update Aircraft Metadata" pipeline every other dataset rides (SPEC §27),
+    and consulted by the enrichment worker *before* the online provider
+    (ADR-0016).
+
+    ``airport_codes`` is the path exactly as upstream files it: ICAO idents
+    separated by ``-``, two of them for the overwhelming majority (585,303 of
+    619,828 rows) and up to twelve for a milk run. The origin is the first and
+    the destination the last; the intermediate stops are kept rather than
+    dropped, because they are the only record of *why* a flight that left Hong
+    Kong landed in Belgium via Kazakhstan, and they cost nothing to carry in a
+    column the reader already loads.
+
+    ``dataset_version`` is the importing artifact's version, stamped onto every
+    row at promotion. It answers "which snapshot said this?" without a join
+    against ``metadata_sources`` — which matters because the table is replaced
+    whole by each import, so a row can never outlive its version.
+
+    ``WITHOUT ROWID`` with the callsign as the primary key: every read is one
+    point lookup by that key, made on the enrichment worker's own task and
+    never on the live path (``docs/ARCHITECTURE.md`` §3.1).
+    """
+
+    __tablename__ = "route_directory"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    #: The normalized callsign, spelled exactly as
+    #: :func:`flightsite.enrichment.policy.cache_key` spells it.
+    callsign: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: Upstream's ICAO airline designator. Nullable, and kept for diagnostics
+    #: only: it is already the first three characters of the callsign.
+    airline_code: Mapped[str | None] = mapped_column(Text)
+    #: Hyphen-separated ICAO idents, origin first and destination last.
+    airport_codes: Mapped[str] = mapped_column(Text, nullable=False)
+    #: The artifact version these rows were imported from.
+    dataset_version: Mapped[str] = mapped_column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RouteDirectory(callsign={self.callsign!r}, airport_codes={self.airport_codes!r})"
+
+
+class RouteDirectoryStaging(Base):
+    """Landing area for one route-directory import before it is promoted.
+
+    The route dataset is of the *aircraft-snapshot* magnitude, not the airport
+    one: 619,828 rows, which slice 071 measured at **138 MB** held as Python
+    objects. So it stages in a table and is promoted with one
+    ``DELETE``/``INSERT … SELECT``, the way :class:`AircraftMetadataStaging`
+    does, rather than being buffered in memory the way
+    :class:`~flightsite.airports.sink.AirportImportSink` buffers 71,190
+    airports. Peak memory during an import is then one batch, not one dataset.
+
+    Rows here are scratch, exactly as they are next door: deleted when their
+    run promotes or fails, and cleared before the next run can use them. There
+    is no ``dataset_version`` column, because the version belongs to the
+    artifact and is stamped onto every row by the promotion; and no ``source``
+    column, unlike the aircraft staging table, because exactly one source
+    writes routes. A second one would need it — here, and nowhere else.
+    """
+
+    __tablename__ = "route_directory_staging"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    callsign: Mapped[str] = mapped_column(Text, primary_key=True)
+    airline_code: Mapped[str | None] = mapped_column(Text)
+    airport_codes: Mapped[str] = mapped_column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"RouteDirectoryStaging(callsign={self.callsign!r})"
 
 
 class Airport(Base):
