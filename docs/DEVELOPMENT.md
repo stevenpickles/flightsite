@@ -368,6 +368,55 @@ have tests (empty DB + realistic upgrade fixtures), and may be applied automatic
 at startup. Adjacent released versions must have a tested upgrade path. Rollback is
 supported where practical. Historical data is never casually discarded.
 
+### SQLite DDL is not transactional — write resumable revisions
+
+Alembic marks SQLite as non-transactional DDL, so a revision is **not** all-or-nothing:
+every statement before a failing one stays committed while `alembic_version` still
+names the *older* revision. A container that restarts after a failed migration re-runs
+the whole revision from the top over a half-migrated database.
+
+So each step of a revision must tolerate its own prior completion — create a table only
+if absent, add a column only if missing, drop an index only if present, clear a stray
+staging table before recreating it. `flightsite.db.migrations.rebuild` provides the
+`has_table` / `has_index` / `has_column` predicates for exactly this.
+
+### Rebuilding a table: disable foreign keys, then check them
+
+SQLite cannot alter a `CHECK` (or most constraints) in place, so widening one means
+rebuilding the table: create the new shape, copy every row, drop the old table, rename.
+Every FlightSite connection — the app writer, the readers, and the engine
+`migrations/env.py` builds — runs with `PRAGMA foreign_keys=ON`, and under enforcement
+`DROP TABLE` is an implicit `DELETE` of every row, each checked against every child
+table that references it. On a table with unindexed children that is a full scan per
+parent row, and it fails anyway with `FOREIGN KEY constraint failed`. This took down a
+v0.6.0 upgrade (issue #178).
+
+A rebuild therefore goes through `flightsite.db.migrations.rebuild.rebuilding()`, which:
+
+1. issues `PRAGMA foreign_keys=OFF` **and reads it back** — the pragma is silently a
+   no-op inside a transaction, and pysqlite has one open whenever a preceding DML
+   statement (Alembic's own `UPDATE alembic_version`, for instance) started one, so the
+   helper commits to reach a statement boundary and retries rather than assuming;
+2. runs the rebuild;
+3. runs `PRAGMA foreign_key_check` over the rebuilt table and every table the schema
+   says references it, and raises on any row — enforcement is *suspended* for the
+   rebuild, not abandoned;
+4. restores `PRAGMA foreign_keys=ON` in a `finally`, rolling back first if the rebuild
+   raised.
+
+The same applies to `downgrade()`, which rebuilds the same table.
+
+### Measure migrations against populated data
+
+A migration's cost is measured against a database with **rows in the child tables**,
+never an empty seed: the v0.6.0 defect was invisible in a "200,000 sightings in 1.02 s"
+measurement precisely because the five tables referencing `sightings` were empty. Seed
+with the slice-050 synthetic generator (`flightsite.perf.storage_qualification`) or a
+fixture that fills every child, and state the measured figure in the revision docstring.
+`backend/tests/db/test_migration_0015_children.py` is the worked example: it seeds every
+child of `sightings`, asserts each row survives with its reference intact, and bounds
+the wall time.
+
 ### Parallel migrations & persistence worker
 
 Concurrent worktrees can each add an Alembic revision, producing divergent heads.

@@ -31,7 +31,10 @@ and carries four indexes, all of which are rebuilt with it.
 file) upgrade in **1.02 s** and downgrade in **1.51 s** on a developer SSD, so
 the three-year Scenario A database is on the order of ten seconds there and
 correspondingly longer on a Pi's SD card. A one-time cost, paid once, at the
-upgrade that introduces the second route source.
+upgrade that introduces the second route source. (That figure was taken with
+the child tables *empty*, which is the mistake the next section is about; the
+populated measurement is the one in
+``tests/db/test_migration_0015_children.py``.)
 
 The alternatives were to write a source the vocabulary forbids, to drop the
 constraint entirely — the same rebuild for less safety — or to edit the schema
@@ -47,11 +50,45 @@ is why a *fresh* database already carries the widened one by the time this
 revision runs. The rebuild is then a rebuild of an empty table, and the end
 state is identical either way.)
 
-Foreign keys are not a hazard here. Five tables reference ``sightings(id)``,
-but SQLite resolves a foreign-key clause at DML time rather than at schema
-time, and there are no views or triggers over the table whose reparse could
-fail while it is briefly absent. ``PRAGMA foreign_keys`` is off during
-migrations, so the drop-and-rename does not cascade.
+Foreign keys, and what this revision got wrong (issue #178)
+-----------------------------------------------------------
+
+This file originally claimed that "``PRAGMA foreign_keys`` is off during
+migrations, so the drop-and-rename does not cascade". That was false, and it
+took down a v0.6.0 upgrade. ``migrations/env.py`` builds its engine with
+:func:`flightsite.db.engine.create_sqlite_engine`, whose connect listener sets
+``PRAGMA foreign_keys=ON``; the app path migrates on the writer connection,
+which has the same pragma. Under enforcement, ``DROP TABLE sightings`` is an
+implicit ``DELETE`` of every row, each checked against the five ``NO ACTION``
+children — two of which (``activity_events``,
+``sighting_track_checkpoints``) have no index on ``sighting_id``. On a
+16,214-sighting install that was five minutes of full scans ending in
+``FOREIGN KEY constraint failed``, with the site down until a rollback. The
+"200,000 sightings in 1.02 s" measured above was taken on a seed whose child
+tables were empty, which is why neither the cost nor the failure showed.
+
+So the rebuild now runs inside the ``rebuilding`` context manager of
+:mod:`flightsite.db.migrations.rebuild`: enforcement is suspended (verified by
+reading the pragma back, because the
+pragma is silently a no-op inside a transaction), the references are checked
+with ``PRAGMA foreign_key_check`` after the rename, and enforcement is restored
+in a ``finally``.
+
+**Measured again, this time with children**: at the failing install's scale —
+16,214 sightings and 163,761 rows across the five children, an 11 MB file — the
+upgrade takes **0.10 s** and the downgrade **0.11 s** on a developer SSD, next
+to the five minutes and a failure the shipped version produced.
+``tests/db/test_migration_0015_children.py`` holds that measurement as a bound.
+
+Resumability
+------------
+
+Alembic treats SQLite as non-transactional DDL, so the statements before a
+failure stay committed while ``alembic_version`` still says 0014 — the exact
+half-migrated state the failed release left behind, and the state a restarting
+container re-enters this function with. Every step below is therefore
+conditional on its own prior completion: the directory tables, the
+``route_cache.source`` column, the four indexes and the staging table.
 
 Revision ID: 0015
 Revises: 0014
@@ -65,6 +102,8 @@ from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
+
+from flightsite.db.migrations import rebuild
 
 revision: str = "0015"
 down_revision: str | None = "0014"
@@ -177,47 +216,77 @@ def _create_sightings(name: str, *, route_source_check: str) -> None:
 
 
 def _rebuild_sightings(*, route_source_check: str) -> None:
-    """Rebuild ``sightings`` into the requested shape, keeping every row."""
-    for name, _columns, _where in _SIGHTINGS_INDEXES:
-        op.drop_index(name, table_name=_SIGHTINGS)
-    _create_sightings(_SIGHTINGS_REBUILD, route_source_check=route_source_check)
-    carried = ", ".join(_SIGHTINGS_COLUMNS)
-    op.execute(f"INSERT INTO {_SIGHTINGS_REBUILD} ({carried}) SELECT {carried} FROM {_SIGHTINGS}")
-    op.drop_table(_SIGHTINGS)
-    op.rename_table(_SIGHTINGS_REBUILD, _SIGHTINGS)
-    for name, columns, where in _SIGHTINGS_INDEXES:
-        kwargs: dict[str, Any] = {} if where is None else {"sqlite_where": sa.text(where)}
-        op.create_index(name, _SIGHTINGS, list(columns), **kwargs)
+    """Rebuild ``sightings`` into the requested shape, keeping every row.
+
+    Foreign keys are suspended for the duration and checked afterwards — see
+    the module docstring and issue #178 — and every step is conditional, so a
+    re-run over a half-finished attempt continues rather than failing.
+    """
+    bind = op.get_bind()
+    with rebuild.rebuilding(bind, _SIGHTINGS):
+        for name, _columns, _where in _SIGHTINGS_INDEXES:
+            if rebuild.has_index(bind, name):
+                op.drop_index(name, table_name=_SIGHTINGS)
+        _create_sightings(_SIGHTINGS_REBUILD, route_source_check=route_source_check)
+        carried = ", ".join(_SIGHTINGS_COLUMNS)
+        op.execute(
+            f"INSERT INTO {_SIGHTINGS_REBUILD} ({carried}) SELECT {carried} FROM {_SIGHTINGS}"
+        )
+        rebuild.assert_copied(bind, _SIGHTINGS, _SIGHTINGS_REBUILD)
+        op.drop_table(_SIGHTINGS)
+        op.rename_table(_SIGHTINGS_REBUILD, _SIGHTINGS)
+        for name, columns, where in _SIGHTINGS_INDEXES:
+            kwargs: dict[str, Any] = {} if where is None else {"sqlite_where": sa.text(where)}
+            op.create_index(name, _SIGHTINGS, list(columns), **kwargs)
 
 
 def _create_directory_tables() -> None:
     """``route_directory`` and its staging table (``docs/DATA_MODEL.md`` §7.1)."""
-    op.create_table(
-        "route_directory",
-        sa.Column("callsign", sa.Text(), nullable=False),
-        sa.Column("airline_code", sa.Text(), nullable=True),
-        sa.Column("airport_codes", sa.Text(), nullable=False),
-        sa.Column("dataset_version", sa.Text(), nullable=False),
-        sa.PrimaryKeyConstraint("callsign"),
-        sqlite_with_rowid=False,
-    )
-    op.create_table(
-        "route_directory_staging",
-        sa.Column("callsign", sa.Text(), nullable=False),
-        sa.Column("airline_code", sa.Text(), nullable=True),
-        sa.Column("airport_codes", sa.Text(), nullable=False),
-        sa.PrimaryKeyConstraint("callsign"),
-        sqlite_with_rowid=False,
-    )
+    bind = op.get_bind()
+    if not rebuild.has_table(bind, "route_directory"):
+        op.create_table(
+            "route_directory",
+            sa.Column("callsign", sa.Text(), nullable=False),
+            sa.Column("airline_code", sa.Text(), nullable=True),
+            sa.Column("airport_codes", sa.Text(), nullable=False),
+            sa.Column("dataset_version", sa.Text(), nullable=False),
+            sa.PrimaryKeyConstraint("callsign"),
+            sqlite_with_rowid=False,
+        )
+    if not rebuild.has_table(bind, "route_directory_staging"):
+        op.create_table(
+            "route_directory_staging",
+            sa.Column("callsign", sa.Text(), nullable=False),
+            sa.Column("airline_code", sa.Text(), nullable=True),
+            sa.Column("airport_codes", sa.Text(), nullable=False),
+            sa.PrimaryKeyConstraint("callsign"),
+            sqlite_with_rowid=False,
+        )
+
+
+def _reconcile_interrupted_attempt() -> None:
+    """Put the database back on one of this revision's two footings.
+
+    A previous attempt can have been interrupted anywhere. The only step that
+    leaves an object behind is the staging table, and what it means depends on
+    whether ``sightings`` is still there — see
+    :func:`flightsite.db.migrations.rebuild.reconcile_staging_table`. Doing
+    this first means everything after it sees a database with a ``sightings``
+    table in one shape or the other, and nothing else out of place.
+    """
+    rebuild.reconcile_staging_table(op.get_bind(), _SIGHTINGS, _SIGHTINGS_REBUILD)
 
 
 def upgrade() -> None:
+    _reconcile_interrupted_attempt()
     _create_directory_tables()
-    op.add_column("route_cache", sa.Column("source", sa.Text(), nullable=True))
+    if not rebuild.has_column(op.get_bind(), "route_cache", "source"):
+        op.add_column("route_cache", sa.Column("source", sa.Text(), nullable=True))
     _rebuild_sightings(route_source_check=_ROUTE_SOURCE_CHECK)
 
 
 def downgrade() -> None:
+    _reconcile_interrupted_attempt()
     # A `vrs` route cannot exist under the older CHECK. The sighting itself is
     # history and is never deleted, but the route on it came from a source the
     # build being downgraded to cannot name — and SPEC §22 wants a provenance
@@ -232,7 +301,10 @@ def downgrade() -> None:
     # Same reasoning one table over, and the same remedy revision 0014 applied
     # to a `restricted` row: a cache entry the older build would misattribute
     # to AeroDataBox costs one lookup to replace, so it goes.
-    op.execute("DELETE FROM route_cache WHERE source = 'vrs'")
-    op.drop_column("route_cache", "source")
-    op.drop_table("route_directory_staging")
-    op.drop_table("route_directory")
+    bind = op.get_bind()
+    if rebuild.has_column(bind, "route_cache", "source"):
+        op.execute("DELETE FROM route_cache WHERE source = 'vrs'")
+        op.drop_column("route_cache", "source")
+    for table in ("route_directory_staging", "route_directory"):
+        if rebuild.has_table(bind, table):
+            op.drop_table(table)
