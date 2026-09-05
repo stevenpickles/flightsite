@@ -38,6 +38,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.4.0 | 8 | Settings that apply on save and alerts that reach every tab: enrichment hot-apply, stats-poller hot-start, app-shell-owned live socket, Notified marker write path, fix-dated track points, ADR-0014/0015, severity-triaged tracker (slices 067–069; recorded 2026-09-04) |
 | v0.5.0 | 8 | Route enrichment credit economy: week-long callsign cache, learned schedules, daily lookup budget with priority, restricted flights cached, airport names beside route idents (slice 070; migration 0014; recorded 2026-09-04) |
 | v0.6.0 | 8 | Offline route directory: VRS standing-data routes as the primary origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only for misses, inferred route end, last-known route, CI perf-gate headroom (slice 071; migration 0015; recorded 2026-09-05) |
+| v0.6.1 | 8 | Same-day hotfix superseding v0.6.0: migration 0015's sightings rebuild runs with foreign keys off and checked, resumable from a failed v0.6.0 attempt (slice 072; recorded 2026-09-05) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices

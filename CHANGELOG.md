@@ -5,6 +5,37 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.6.1] — 2026-09-05
+
+A same-day hotfix that supersedes v0.6.0, which must not be installed on any
+database that already holds sightings.
+
+### Fixed
+- **Migration 0015 no longer hangs and fails on a populated database** (#178).
+  The `sightings` rebuild ran its `DROP TABLE` with foreign-key enforcement
+  on, so every existing sighting triggered full scans of child tables that
+  carry no index on their sighting column, and the statement would end in a
+  constraint error after minutes of work; the upgrade of the owner's
+  receiver hung for five minutes and was rolled back from its pre-upgrade
+  backup. The rebuild now disables foreign keys while no transaction is
+  open, verifies them with `PRAGMA foreign_key_check` after the rename, and
+  restores enforcement afterwards. It is also resumable: an install that
+  tried v0.6.0 and was left with the directory tables, the new column, its
+  sighting indexes dropped and an empty rebuild table completes the same
+  migration to the same end state
+- Migration tests now seed every child of `sightings` before upgrading, and
+  the release checklist requires the adjacent-version upgrade test against
+  a populated data directory before a release PR opens; the discipline for
+  SQLite table rebuilds is written down in `docs/DEVELOPMENT.md`
+
+### Upgrade notes
+- Everything in the v0.6.0 notes applies, including **take a backup first**
+  and the one-time *Update Aircraft Metadata* run to import the routes
+  dataset.
+- If you already attempted v0.6.0 and it hung: stop the stack, pin the
+  v0.6.1 images, and start — the corrected migration resumes from where the
+  failed one stopped. If you restored your backup instead, upgrade normally.
+
 ## [0.6.0] — 2026-09-05
 
 Origin and destination without an API key. The Virtual Radar Server
