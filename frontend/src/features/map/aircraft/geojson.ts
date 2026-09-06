@@ -139,6 +139,47 @@ function feature(
 }
 
 /**
+ * How many aircraft this frame will actually put a label on — the density
+ * signal `labels/densityLatch.ts` latches (issue #147).
+ *
+ * Cheap by construction: the *drawn* picture's size (post-filter, when
+ * filtering is in play), not a viewport query — see `labels/priority.ts`'s
+ * `deriveLabelTier` doc comment. A filtered-down picture should tier toward
+ * fuller labels the same way a genuinely quiet sky does.
+ *
+ * The position test is the correction issue #147 asked for. The filters'
+ * `visibleIcaos` is the *live* set, which includes Mode S contacts with no
+ * position (SPEC §20 keeps them tracked and the aircraft list shows them);
+ * the loop below skips exactly those, so they occupy no label and crowd
+ * nothing. Counting them pushed the latch toward "dense" on a picture that
+ * was not, and on a receiver hearing a lot of position-less traffic that is
+ * the difference between full labels and callsign-only.
+ *
+ * Testing `position` rather than calling `displayPosition` is not an
+ * approximation: `displayPosition` returns `null` for a null position and a
+ * projected point for every other case, so the two agree exactly — and this
+ * way the count costs a property read per aircraft rather than a second run
+ * of the interpolation maths on the hot path.
+ */
+export function countLabelledAircraft(
+  aircraft: Record<string, LiveAircraftRecord>,
+  visibleIcaos?: ReadonlySet<string>,
+): number {
+  let count = 0;
+  for (const icao in aircraft) {
+    const record = aircraft[icao];
+    if (!record || record.aircraft.position === null) {
+      continue;
+    }
+    if (visibleIcaos && !visibleIcaos.has(icao)) {
+      continue;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+/**
  * The aircraft symbol source for one frame.
  *
  * An aircraft with no reported `track_deg` is drawn unrotated (0°) rather than
@@ -159,16 +200,12 @@ export function buildAircraftFeatureCollection(
     dimmedIcaos,
   } = input;
   const features: AircraftFeature[] = [];
-  // Cheap density signal: the *drawn* picture's size (post-filter, when
-  // filtering is in play), not a viewport query — see `labels/priority.ts`'s
-  // `deriveLabelTier` doc comment. A filtered-down picture should tier
-  // toward fuller labels the same way a genuinely quiet sky does.
-  const liveCount = visibleIcaos
-    ? visibleIcaos.size
-    : Object.keys(aircraft).length;
   // One decision for the whole frame, resolved once rather than per feature.
+  // The count is only derived when nobody carried a latch in — the frame loop
+  // always does, so the hot path never pays for this pass twice.
   const densityLatched =
-    input.densityLatched ?? nextDensityLatched(false, liveCount);
+    input.densityLatched ??
+    nextDensityLatched(false, countLabelledAircraft(aircraft, visibleIcaos));
 
   for (const icao in aircraft) {
     const record = aircraft[icao];

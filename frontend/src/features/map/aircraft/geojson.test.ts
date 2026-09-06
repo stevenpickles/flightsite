@@ -4,6 +4,7 @@ import type { AircraftFrameInput } from "@/features/map/aircraft/geojson";
 import {
   buildAircraftFeatureCollection,
   buildTrackFeatureCollection,
+  countLabelledAircraft,
   GROUND_DIM_OPACITY,
   STALE_OPACITY,
 } from "@/features/map/aircraft/geojson";
@@ -343,6 +344,57 @@ describe("buildAircraftFeatureCollection", () => {
       }
     });
 
+    it("does not count position-less aircraft toward the density signal", () => {
+      // Issue #147: the latch is fed the *labelled* count. A Mode S contact
+      // with no position is part of the live picture (SPEC §20 keeps it
+      // tracked) but never becomes a feature and never occupies a label, so
+      // it cannot crowd the labels of the aircraft that are drawn.
+      const crowd = records(
+        // One over the enter edge, but only one of them is positioned.
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER + 1 }, (_, index) => ({
+          icao: index.toString(16).padStart(6, "0"),
+          callsign: `AA${index}`,
+          altitude_ft: 35000,
+          ...(index === 0 ? {} : { position: null }),
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: crowd, zoom: ZOOM_LABELS_FULL }),
+      );
+
+      expect(collection.features).toHaveLength(1);
+      expect(collection.features[0]?.properties.label).toBe("AA0\nFL350");
+    });
+
+    it("counts only the filtered, positioned aircraft toward the density signal", () => {
+      // The same rule with the live filters in play: the count is the
+      // intersection, not either set on its own.
+      const crowd = records(
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER + 1 }, (_, index) => ({
+          icao: index.toString(16).padStart(6, "0"),
+          callsign: `AA${index}`,
+          altitude_ft: 35000,
+          // Half the picture is position-less, so the *live* count is over
+          // the edge while the labelled count is comfortably under it.
+          ...(index % 2 === 1 ? { position: null } : {}),
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: crowd,
+          zoom: ZOOM_LABELS_FULL,
+          visibleIcaos: new Set(Object.keys(crowd)),
+        }),
+      );
+
+      expect(collection.features.length).toBeLessThan(DENSITY_CALLSIGN_ENTER);
+      for (const feature of collection.features) {
+        expect(feature.properties.label).toBe(
+          `${feature.properties.callsign}\nFL350`,
+        );
+      }
+    });
+
     it("honours a caller-supplied density latch over this frame's own count", () => {
       // The hysteresis band (issue #143) lives with the frame loop, so a
       // sparse frame drawn while the latch is still held must stay on the
@@ -592,5 +644,44 @@ describe("buildTrackFeatureCollection", () => {
       [4, 3],
     ]);
     expect(collection.features[0]?.properties.icao).toBe("aaaaaa");
+  });
+});
+
+describe("countLabelledAircraft", () => {
+  // Issue #147. This is the density signal the latch is fed, so what it
+  // counts is the whole of its behaviour.
+  it("counts only aircraft that will carry a label", () => {
+    const aircraft = records(
+      { icao: "aaaaaa" },
+      { icao: "bbbbbb" },
+      { icao: "cccccc", position: null },
+    );
+    expect(countLabelledAircraft(aircraft)).toBe(2);
+  });
+
+  it("counts the intersection of the filter set and the positioned set", () => {
+    const aircraft = records(
+      { icao: "aaaaaa" },
+      { icao: "bbbbbb" },
+      { icao: "cccccc", position: null },
+    );
+    // "cccccc" is in the filter set but position-less; "bbbbbb" is
+    // positioned but filtered out. Neither is drawn, so neither counts.
+    expect(countLabelledAircraft(aircraft, new Set(["aaaaaa", "cccccc"]))).toBe(
+      1,
+    );
+  });
+
+  it("agrees with the number of live features the builder emits", () => {
+    // The two must not drift: the count exists to predict what the builder
+    // is about to draw without re-running the interpolation maths.
+    const aircraft = records(
+      { icao: "aaaaaa" },
+      { icao: "bbbbbb", position: null },
+      { icao: "cccccc", state: "stale" },
+      { icao: "dddddd", on_ground: true },
+    );
+    const collection = buildAircraftFeatureCollection(input({ aircraft }));
+    expect(countLabelledAircraft(aircraft)).toBe(collection.features.length);
   });
 });

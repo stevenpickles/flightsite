@@ -131,6 +131,7 @@ from flightsite.db.engine import Database
 from flightsite.db.startup import DB_ERRORS_COUNTER
 from flightsite.live import (
     AircraftRemoved,
+    AircraftStale,
     EventSubscription,
     LiveEvent,
     LiveStore,
@@ -584,12 +585,26 @@ class AlertEngine:
         Removals are applied here rather than deferred: dropping the state is
         what bounds this engine's memory to the live set, and an aircraft that
         left before its appear was evaluated must not be evaluated at all.
+
+        ``AircraftStale`` is skipped (issue #138). It announces *silence* — no
+        new position, altitude, squawk, callsign or metadata — so every
+        condition would be evaluated against exactly the inputs that produced
+        the last answer, and would reach exactly that answer again. Before
+        slice 062 the event fired minutes late and rarely enough for the wasted
+        pass not to show; now it fires on schedule for every aircraft that goes
+        quiet for fifteen seconds, which on a marginal-coverage receiver is a
+        large fraction of the live set. An aircraft that genuinely still owes
+        an evaluation — one whose metadata had not resolved, or whose match is
+        pending — is picked up by the repair pass below regardless, so nothing
+        is lost by not asking here.
         """
         wanted: dict[str, None] = {}
         for event in events:
             if isinstance(event, AircraftRemoved):
                 self._states.pop(event.icao, None)
                 wanted.pop(event.icao, None)
+            elif isinstance(event, AircraftStale):
+                continue
             else:
                 wanted[event.icao] = None
         # The repair pass: aircraft whose metadata was still unresolved when

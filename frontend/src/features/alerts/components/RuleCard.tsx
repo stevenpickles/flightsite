@@ -40,6 +40,12 @@ export interface RuleCardProps {
   /** The shipped template this rule came from, by name; `null` for a
    * user-written rule, or for a `template_key` this build no longer ships. */
   templateName: string | null;
+  /**
+   * Show what this rule has actually caught (issue #98). Omitted where there
+   * is no history to drill into — the card then simply does not offer the
+   * control rather than offering one that goes nowhere.
+   */
+  onShowMatches?: (rule: AlertRule) => void;
 }
 
 /**
@@ -52,7 +58,7 @@ export interface RuleCardProps {
  * notification and the alert history all say the same thing about a rule
  * instead of three renderings that drift.
  */
-export function RuleCard({ rule, templateName }: RuleCardProps) {
+export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
   const [editing, setEditing] = useState(false);
   const headingId = useId();
 
@@ -122,6 +128,22 @@ export function RuleCard({ rule, templateName }: RuleCardProps) {
         </div>
 
         <div className="flex gap-2">
+          {onShowMatches && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              // Named per rule: several cards offer this control at once, and
+              // "Show matches" alone would leave a screen-reader user with a
+              // list of identically-labelled buttons.
+              aria-label={`Show matches for ${rule.name}`}
+              onClick={() => {
+                onShowMatches(rule);
+              }}
+            >
+              Show matches
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"

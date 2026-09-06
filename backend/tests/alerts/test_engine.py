@@ -985,6 +985,96 @@ async def test_a_failed_write_keeps_its_matches_pending_for_the_next_cycle(
     assert len(await stored_matches(database)) == 1
 
 
+# ------------------------------------------------- staleness (issue #138)
+
+
+async def test_going_stale_evaluates_nothing(
+    engine: AlertEngine,
+    live: LiveStore,
+    metadata: MetadataService,
+    persistence: PersistenceWorker,
+    database: Database,
+    clock: Clock,
+) -> None:
+    """``AircraftStale`` announces silence, so there is nothing to re-decide.
+
+    Every input a condition reads — position, altitude, squawk, callsign,
+    metadata, watchlists — is exactly what it was on the previous cycle, so a
+    pass over the rules can only reach the answer it already reached. Before
+    slice 062 the event fired minutes late and rarely; now it fires for every
+    aircraft that goes quiet for fifteen seconds, which on a receiver with
+    marginal coverage is most of them.
+    """
+    await seed_resolved_metadata(database, "ae1463", type_code="A320")
+    await use(engine, database, rule(RuleConditions(type_code="C17")))
+    observe(live)
+    await settle(metadata)
+    await commit_sighting(persistence)
+    assert (await engine.process_pending()).evaluated == 1
+
+    clock.value = 150.0  # past the store's stale_s, short of its remove_s
+    live.sweep()
+    result = await engine.process_pending()
+
+    assert result.events == 1
+    assert result.evaluated == 0
+    assert result.recorded == 0
+
+
+async def test_a_stale_aircraft_still_holds_its_state(
+    engine: AlertEngine,
+    live: LiveStore,
+    metadata: MetadataService,
+    persistence: PersistenceWorker,
+    database: Database,
+    clock: Clock,
+) -> None:
+    """Skipping the evaluation is not forgetting the aircraft: only a removal
+    drops state, and an aircraft heard again after going quiet must still be
+    deduped against what it already fired."""
+    await seed_resolved_metadata(database, "ae1463", type_code="C17")
+    await use(engine, database, rule(RuleConditions(type_code="C17")))
+    observe(live)
+    await settle(metadata)
+    await commit_sighting(persistence)
+    assert (await engine.process_pending()).recorded == 1
+
+    clock.value = 150.0
+    live.sweep()
+    await engine.process_pending()
+    assert engine.tracked == 1
+
+    observe(live, second=2)
+    resumed = await engine.process_pending()
+
+    assert resumed.evaluated == 1
+    assert resumed.recorded == 0
+    assert len(await stored_matches(database)) == 1
+
+
+async def test_an_aircraft_owed_a_second_look_is_still_repaired_while_stale(
+    engine: AlertEngine,
+    live: LiveStore,
+    metadata: MetadataService,
+    persistence: PersistenceWorker,
+    database: Database,
+    clock: Clock,
+) -> None:
+    """The skip must not swallow the re-evaluation set: an aircraft whose
+    metadata had not resolved is picked up by the repair pass regardless of
+    what the drained events said."""
+    await use(engine, database, rule(RuleConditions(type_code="C17")))
+    observe(live)
+    first = await engine.process_pending()
+    assert first.recorded == 0
+
+    clock.value = 150.0
+    live.sweep()
+    result = await engine.process_pending()
+
+    assert result.evaluated == 1
+
+
 async def test_a_cycle_with_no_events_and_nothing_owed_does_nothing(engine: AlertEngine) -> None:
     result = await engine.process_pending()
 

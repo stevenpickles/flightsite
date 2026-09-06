@@ -319,7 +319,10 @@ def test_metadata_section_defaults_opensky_to_off(client: TestClient) -> None:
     """
     body = client.get("/api/internal/config").json()
 
-    assert body["config"]["metadata"] == {"opensky_enabled": False}
+    assert body["config"]["metadata"] == {
+        "opensky_enabled": False,
+        "source_url_overrides": {},
+    }
 
 
 def test_the_opensky_toggle_round_trips_through_the_config_api(

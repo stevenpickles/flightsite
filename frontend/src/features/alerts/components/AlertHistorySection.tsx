@@ -62,6 +62,47 @@ function MatchRow({ match, timezone }: MatchRowProps) {
 }
 
 /**
+ * Why an empty page is empty, in the narrowest terms that are true: an
+ * unfiltered history that has never fired reads differently from a rule that
+ * has caught nothing, and both read differently from paging past the end.
+ */
+function emptyMessage({
+  offset,
+  severity,
+  ruleFilter,
+}: {
+  offset: number;
+  severity: AlertSeverity | "";
+  ruleFilter: { id: number; name: string } | null;
+}): string {
+  if (offset > 0) {
+    return "No more alerts in this direction.";
+  }
+  if (ruleFilter !== null) {
+    return severity === ""
+      ? `“${ruleFilter.name}” has not fired yet.`
+      : `“${ruleFilter.name}” has not fired at this severity.`;
+  }
+  return severity === ""
+    ? "No alerts have fired yet."
+    : "No alerts have fired at this severity.";
+}
+
+export interface AlertHistorySectionProps {
+  /**
+   * The rule the history is narrowed to, or `null` for every rule (issue
+   * #98). The *name* travels with the id because the heading has to say
+   * which rule is on screen, and this section never reads the rule list —
+   * asking for it purely to resolve one name it was already handed would be
+   * a second request for a string the caller has.
+   */
+  ruleFilter?: { id: number; name: string } | null;
+  /** Drops back to every rule. Absent when the caller offers no per-rule
+   * drill-down at all, in which case the clear control is not rendered. */
+  onClearRuleFilter?: () => void;
+}
+
+/**
  * The alert match history (docs/API.md §3.9, roadmap slice 041): every alert
  * that has actually fired, newest first.
  *
@@ -75,11 +116,29 @@ function MatchRow({ match, timezone }: MatchRowProps) {
  * reports no total, the history growing without bound over a multi-year
  * install, so a page count would be a number nobody can compute. A page
  * that comes back short of `PAGE_SIZE` is the end.
+ *
+ * The rule filter (issue #98) is a *prop*, not state of this section: the
+ * "Show matches" affordance that sets it lives on a rule card in a sibling
+ * area, so the page above both owns the choice. Filtering is server-side —
+ * `rule_id` reaches the endpoint and takes part in the query key — rather
+ * than a client-side filter of the current page, which would show a
+ * near-empty page whenever the rule in question was not the noisy one.
+ *
+ * The heading that names the filtered rule appears only *while* a filter is
+ * on. Unfiltered, the History tab already says what this is and a permanent
+ * "all rules" heading would only restate it; a heading that appears when the
+ * view is narrowed and disappears when it is not is the state change worth
+ * announcing. It also leaves the unfiltered section — the one the visual
+ * baselines photograph — pixel-identical.
  */
-export function AlertHistorySection() {
+export function AlertHistorySection({
+  ruleFilter = null,
+  onClearRuleFilter,
+}: AlertHistorySectionProps = {}) {
   const [severity, setSeverity] = useState<AlertSeverity | "">("");
   const [offset, setOffset] = useState(0);
   const severityId = useId();
+  const headingId = useId();
 
   const configQuery = useConfigQuery();
   const timezone = configQuery.data?.config.timezone ?? "UTC";
@@ -88,13 +147,41 @@ export function AlertHistorySection() {
     limit: PAGE_SIZE,
     offset,
     ...(severity === "" ? {} : { severity }),
+    ...(ruleFilter === null ? {} : { rule_id: ruleFilter.id }),
   });
 
   const items = matchesQuery.data?.items ?? [];
   const hasOlder = items.length === PAGE_SIZE;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex flex-col gap-4"
+      aria-labelledby={ruleFilter === null ? undefined : headingId}
+    >
+      {ruleFilter !== null && (
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id={headingId} className="text-sm font-semibold text-foreground">
+            Alert history: {ruleFilter.name}
+          </h2>
+          {onClearRuleFilter && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Where you stood in one rule's history says nothing about
+                // where to stand in every rule's, so the reset is part of
+                // clearing rather than something the caller must remember.
+                setOffset(0);
+                onClearRuleFilter();
+              }}
+            >
+              Show all rules
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-1.5 sm:max-w-56">
         <Label htmlFor={severityId}>Severity</Label>
         <select
@@ -130,11 +217,7 @@ export function AlertHistorySection() {
 
       {matchesQuery.data && items.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          {offset > 0
-            ? "No more alerts in this direction."
-            : severity === ""
-              ? "No alerts have fired yet."
-              : "No alerts have fired at this severity."}
+          {emptyMessage({ offset, severity, ruleFilter })}
         </p>
       )}
 

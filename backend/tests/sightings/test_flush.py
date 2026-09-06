@@ -86,13 +86,19 @@ async def failing_database(db_path: Path) -> AsyncIterator[FailingOnceDatabase]:
         await instance.dispose()
 
 
-def build_worker(database: Database, live: LiveStore, clock: SimulatedTime) -> PersistenceWorker:
+def build_worker(
+    database: Database,
+    live: LiveStore,
+    clock: SimulatedTime,
+    *,
+    flush_interval_s: float = FLUSH_INTERVAL_S,
+) -> PersistenceWorker:
     """A worker on the standard timings with its background task suppressed."""
     return PersistenceWorker(
         database=database,
         live=live,
         close_s=CLOSE_S,
-        flush_interval_s=FLUSH_INTERVAL_S,
+        flush_interval_s=flush_interval_s,
         tick_interval_s=3_600.0,
         clock=clock.epoch_ms,
     )
@@ -180,6 +186,113 @@ async def test_a_squawk_change_is_written_without_waiting(
     sighting = await only_sighting(database)
     assert sighting.squawk_last == "7700"
     assert sighting.had_emergency == 1
+
+
+# ------------------------------------------- removals and the flush policy
+#
+# Issue #138 asked whether a removal needs to force a write. It does not, and
+# measuring it turned up why more precisely than the issue put it: an aircraft
+# is only removed after `remove_s` of silence, and at the settings FlightSite
+# ships that (60 s) is *longer* than the flush interval (30 s) — so a removal
+# always arrives at an accumulator the interval already owes a write. The
+# forced flush was buying nothing there, and was adding a write on any
+# configuration where the interval is the longer of the two. Both cases are
+# covered below.
+
+#: A flush interval longer than the removal threshold. The only configuration
+#: in which a removal can reach an accumulator that is *not* already due, and
+#: therefore the only one in which the old forced flush changed anything.
+SLOW_FLUSH_INTERVAL_S = 300.0
+
+
+@asynccontextmanager
+async def slow_flush_worker(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> AsyncIterator[PersistenceWorker]:
+    """A started worker whose flush interval outlasts the removal threshold."""
+    worker = build_worker(database, live, clock, flush_interval_s=SLOW_FLUSH_INTERVAL_S)
+    await worker.start()
+    try:
+        yield worker
+    finally:
+        await worker.stop()
+
+
+async def test_a_removal_alone_does_not_force_a_write(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """The forced flush on removal is gone (issue #138).
+
+    Measured where it is observable: with the interval longer than the removal
+    threshold, a removal used to write the row and now leaves it dirty, to be
+    written by the interval it was already waiting for.
+    """
+    async with slow_flush_worker(database, live, clock) as worker:
+        observe(live, clock)
+        assert (await worker.process_pending()).opened == 1
+
+        clock.advance(1.0)
+        observe(live, clock, position=north_of(SEATTLE, 6.0), altitude_ft=5_000.0)
+        await worker.process_pending()
+        clock.advance(REMOVE_S + 1.0)
+        live.sweep()
+
+        assert (await worker.process_pending()).flushed == 0
+
+
+async def test_a_removed_sighting_still_flushes_on_the_ordinary_interval(
+    database: Database, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """What replaces the forced flush, and why dropping it is safe: a pending
+    accumulator is flushed by the same cadence an active one is
+    (``_accumulators`` yields both sets), so the state an unclean stop would
+    find is at worst one interval old — exactly the exposure every live
+    sighting already carries."""
+    async with slow_flush_worker(database, live, clock) as worker:
+        observe(live, clock)
+        await worker.process_pending()
+        clock.advance(1.0)
+        observe(live, clock, position=north_of(SEATTLE, 6.0), altitude_ft=5_000.0)
+        await worker.process_pending()
+        clock.advance(REMOVE_S + 1.0)
+        live.sweep()
+        await worker.process_pending()
+
+        clock.advance(SLOW_FLUSH_INTERVAL_S)
+
+        assert (await worker.process_pending()).flushed == 1
+        assert (await only_sighting(database)).highest_alt_ft == 5_000
+
+
+async def test_at_the_shipped_settings_a_removal_owes_no_extra_write(
+    counting_database: CountingDatabase, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """The measurement behind the change: at the shipped timings the removal
+    cycle's write is the *interval's*, and there is never a second one.
+
+    Five flap cycles — removed, heard again, removed — cost five transactions,
+    one per cycle that the 30 s interval had already fallen due in. Under the
+    old code the same five cycles paid the same five plus a forced write each.
+    """
+    assert REMOVE_S >= FLUSH_INTERVAL_S, "the reasoning above assumes this ordering"
+    worker = build_worker(counting_database, live, clock)
+    await worker.start()
+    try:
+        observe(live, clock)
+        await worker.process_pending()
+        counting_database.writer_transactions = 0
+
+        for _ in range(5):
+            clock.advance(REMOVE_S + 1.0)
+            live.sweep()
+            await worker.process_pending()
+            clock.advance(1.0)
+            observe(live, clock)
+            await worker.process_pending()
+
+        assert counting_database.writer_transactions == 5
+    finally:
+        await worker.stop()
 
 
 async def test_one_transaction_covers_the_whole_cycle(

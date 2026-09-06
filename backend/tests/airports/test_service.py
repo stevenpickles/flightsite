@@ -16,7 +16,7 @@ import pytest
 
 from flightsite.airports import AirportContextService, AirportRepository
 from flightsite.airports.model import InferredPhase
-from flightsite.airports.service import MAX_TRACKED_AIRCRAFT
+from flightsite.airports.service import MAX_TRACKED_AIRCRAFT, PHASE_GRACE_S
 from flightsite.db import Database
 from flightsite.ingest import Position
 from flightsite.live import LiveStore
@@ -174,6 +174,140 @@ async def test_leaving_the_live_set_drops_everything_held(
 
     assert service.context_for(ICAO) is None
     assert service.tracked == 0
+
+
+# ----------------------------------------------- the removal grace window (#138)
+#
+# A dropout on final is a gap in coverage, not the end of an approach. These
+# say what the window does and, just as importantly, what it does not.
+
+
+async def test_an_approach_survives_a_dropout_shorter_than_the_grace_window(
+    service: AirportContextService, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """Issue #138: 60 s of silence on short final must not erase the phase.
+
+    The re-appearing observation is one point with no trail behind it, so the
+    trend gate can infer nothing from it on its own — which is exactly why the
+    latch has to survive, and what makes this assertion meaningful.
+    """
+    await fly(service, live, clock, approach_track())
+    before = service.context_for(ICAO)
+    assert before is not None and before.phase is InferredPhase.ARRIVING
+    record = live.get(ICAO)
+    assert record is not None
+
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+    assert service.context_for(ICAO) is None
+
+    clock.advance(PHASE_GRACE_S / 2)
+    observe(live, clock, position=north_of(BOEING_FIELD, 0.8), altitude_ft=400)
+    appear(service, live)
+
+    after = service.context_for(ICAO)
+    assert after is not None
+    assert after.phase is InferredPhase.ARRIVING
+    assert after.ident == before.ident
+
+
+async def test_a_dropout_longer_than_the_grace_window_starts_over(
+    service: AirportContextService, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """Past the window the aircraft really is a new arrival to reason about."""
+    await fly(service, live, clock, approach_track())
+    record = live.get(ICAO)
+    assert record is not None
+
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+    clock.advance(PHASE_GRACE_S + 60.0)
+    observe(live, clock, position=north_of(BOEING_FIELD, 0.8), altitude_ft=400)
+    appear(service, live)
+
+    after = service.context_for(ICAO)
+    assert after is not None
+    assert after.phase is None
+
+
+async def test_a_lapsed_answer_is_not_reported_while_the_aircraft_is_gone(
+    service: AirportContextService, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """The window holds a phase for a *return*, never a live answer about an
+    aircraft that is not in the sky."""
+    await fly(service, live, clock, approach_track())
+    record = live.get(ICAO)
+    assert record is not None
+
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+
+    assert service.context_for(ICAO) is None
+    assert service.tracked == 0
+
+
+async def test_flying_out_of_range_is_not_held_through_the_window(
+    service: AirportContextService, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """The one case the window must not cover: an answer that is *wrong*.
+
+    An aircraft that left every field behind and is then removed must not have
+    that stale field handed back to it when it returns.
+    """
+    await fly(service, live, clock, approach_track())
+    clock.advance(30.0)
+    observe(live, clock, position=Position(latitude=45.0, longitude=-127.0), altitude_ft=2_000)
+    feed(service, live)
+    assert service.context_for(ICAO) is None
+    record = live.get(ICAO)
+    assert record is not None
+
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+    clock.advance(10.0)
+    observe(live, clock, position=north_of(BOEING_FIELD, 0.8), altitude_ft=400)
+    appear(service, live)
+
+    after = service.context_for(ICAO)
+    assert after is not None
+    assert after.phase is None
+
+
+async def test_a_zero_grace_window_forgets_on_removal(
+    live: LiveStore, worker: PersistenceWorker, repository: AirportRepository, clock: SimulatedTime
+) -> None:
+    """The window is configurable, and zero means the old behaviour exactly."""
+    service = AirportContextService(
+        live=live, persistence=worker, repository=repository, phase_grace_s=0.0
+    )
+    await seed_index(repository, service, FIXTURE_AIRPORTS)
+    await fly(service, live, clock, approach_track())
+    record = live.get(ICAO)
+    assert record is not None
+
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+    clock.advance(1.0)
+    observe(live, clock, position=north_of(BOEING_FIELD, 0.8), altitude_ft=400)
+    appear(service, live)
+
+    after = service.context_for(ICAO)
+    assert after is not None
+    assert after.phase is None
+
+
+async def test_lapsed_answers_are_bounded(
+    service: AirportContextService, live: LiveStore, clock: SimulatedTime
+) -> None:
+    """Removals must not accumulate: the store is swept as it is read, and
+    capped besides, so a long run of departures costs memory that stops
+    growing."""
+    await fly(service, live, clock, approach_track())
+    record = live.get(ICAO)
+    assert record is not None
+    service.consider(AircraftRemoved(aircraft=record, at=record.last_seen))
+    assert service._lapsed
+
+    clock.advance(PHASE_GRACE_S + 60.0)
+    observe(live, clock, icao=OTHER_ICAO, position=north_of(BOEING_FIELD, 3.0), altitude_ft=1_500)
+    appear(service, live, icao=OTHER_ICAO)
+
+    assert not service._lapsed
 
 
 async def test_flying_out_of_range_drops_a_stale_answer(

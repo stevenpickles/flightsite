@@ -366,12 +366,16 @@ export function installAlertsApiMock(
         if (icao !== null && !/^[0-9a-f]{6}$/.test(icao)) {
           return v1Error(422, "icao must be six lower-case hex digits");
         }
+        // An id no rule owns is not an error: it simply matches nothing, the
+        // same answer a rule that never fired gets (issue #98).
+        const ruleFilter = params.get("rule_id");
         const limit = Number(params.get("limit") ?? "50");
         const offset = Number(params.get("offset") ?? "0");
         const filtered = matches.filter(
           (match) =>
             (severity === null || match.severity === severity) &&
-            (icao === null || match.icao === icao),
+            (icao === null || match.icao === icao) &&
+            (ruleFilter === null || match.rule?.id === Number(ruleFilter)),
         );
         return jsonResponse({
           items: filtered.slice(offset, offset + limit),

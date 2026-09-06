@@ -1,10 +1,14 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AlertHistorySection } from "@/features/alerts/components/AlertHistorySection";
+import {
+  AlertHistorySection,
+  type AlertHistorySectionProps,
+} from "@/features/alerts/components/AlertHistorySection";
 import type { AlertMatch } from "@/lib/api/alertMatches";
 import { alertMatch, installAlertsApiMock } from "@/test/alertsApiMock";
 
@@ -15,16 +19,40 @@ afterEach(() => {
 
 /** The history links an airframe, so it needs a router as well as a query
  * client — the pairing `ActivityRow`'s own test uses. */
-function renderHistory() {
+function renderHistory(props: AlertHistorySectionProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <AlertHistorySection />
+        <AlertHistorySection {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
+  );
+}
+
+/**
+ * The section with the rule filter wired to real state, the way the Alerts
+ * page owns it — so "clear" can be exercised end to end rather than only
+ * asserting that a callback fired.
+ */
+function StatefulHistory({
+  initial,
+}: {
+  initial: { id: number; name: string };
+}) {
+  const [ruleFilter, setRuleFilter] = useState<{
+    id: number;
+    name: string;
+  } | null>(initial);
+  return (
+    <AlertHistorySection
+      ruleFilter={ruleFilter}
+      onClearRuleFilter={() => {
+        setRuleFilter(null);
+      }}
+    />
   );
 }
 
@@ -132,6 +160,126 @@ describe("AlertHistorySection", () => {
     await user.click(screen.getByRole("button", { name: "Newer" }));
 
     expect(await screen.findByText("Rule: Number 0")).toBeInTheDocument();
+  });
+
+  it("heads the history with the rule it is narrowed to", async () => {
+    installAlertsApiMock({ matches: [alertMatch()] });
+
+    renderHistory({ ruleFilter: { id: 1, name: "Military aircraft" } });
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Alert history: Military aircraft",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("carries no heading while it is showing every rule", async () => {
+    // Unfiltered, the History tab already says what this is — the heading is
+    // the announcement that the view has been narrowed, so it appears with
+    // the filter rather than sitting there restating the tab.
+    installAlertsApiMock({ matches: [alertMatch()] });
+
+    renderHistory();
+
+    await screen.findByRole("list", { name: "Alert history" });
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+  });
+
+  it("asks the endpoint for one rule's matches", async () => {
+    // Server-side, not a filter of the page already on screen: the rule the
+    // user asked about may not have fired inside the newest 25 matches.
+    const { fetchMock } = installAlertsApiMock({
+      matches: [
+        alertMatch({
+          id: 1,
+          reason: "Rule: Military",
+          rule: { id: 1, name: "Military" },
+        }),
+        alertMatch({
+          id: 2,
+          reason: "Rule: Rare type",
+          rule: { id: 2, name: "Rare type" },
+        }),
+      ],
+    });
+
+    renderHistory({ ruleFilter: { id: 2, name: "Rare type" } });
+
+    expect(await screen.findByText("Rule: Rare type")).toBeInTheDocument();
+    expect(screen.queryByText("Rule: Military")).toBeNull();
+
+    const requested = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.startsWith("/api/v1/alerts/matches"));
+    expect(requested).not.toHaveLength(0);
+    for (const url of requested) {
+      expect(new URLSearchParams(url.split("?")[1]).get("rule_id")).toBe("2");
+    }
+  });
+
+  it("shows an empty history for a rule that has caught nothing", async () => {
+    // Includes the id of a rule that no longer exists: the endpoint answers
+    // an unknown id with an empty page rather than an error, and deleting a
+    // rule really does delete its matches.
+    installAlertsApiMock({
+      matches: [alertMatch({ rule: { id: 1, name: "Military" } })],
+    });
+
+    renderHistory({ ruleFilter: { id: 99, name: "Deleted rule" } });
+
+    expect(
+      await screen.findByText("“Deleted rule” has not fired yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("clears back to every rule", async () => {
+    const user = userEvent.setup();
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          id: 1,
+          reason: "Rule: Military",
+          rule: { id: 1, name: "Military" },
+        }),
+        alertMatch({
+          id: 2,
+          reason: "Rule: Rare type",
+          rule: { id: 2, name: "Rare type" },
+        }),
+      ],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <StatefulHistory initial={{ id: 2, name: "Rare type" }} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Rule: Rare type");
+    expect(screen.queryByText("Rule: Military")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Show all rules" }));
+
+    expect(await screen.findByText("Rule: Military")).toBeInTheDocument();
+    // The heading and the control both go with the filter they described.
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show all rules" })).toBeNull();
+  });
+
+  it("offers no clear control when the caller has no filter to clear", async () => {
+    installAlertsApiMock({ matches: [alertMatch()] });
+
+    renderHistory();
+
+    await screen.findByRole("list", { name: "Alert history" });
+    expect(screen.queryByRole("button", { name: "Show all rules" })).toBeNull();
   });
 
   it("reports a failure to load the history", async () => {
