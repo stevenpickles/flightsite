@@ -432,6 +432,17 @@ class MetadataCache:
         wanted: list[str] = []
         for event in events:
             if isinstance(event, AircraftRemoved):
+                # Evict-and-repopulate is left as it is (issue #138). Since
+                # slice 062 made removals fire on schedule, a marginal-coverage
+                # aircraft that flaps costs an eviction and a re-resolution per
+                # cycle instead of per five minutes — but the eviction is two
+                # dictionary operations, and the re-resolution is one extra
+                # `icao24` in the batched pair of queries this drain was
+                # already going to issue. Both are therefore bounded by the
+                # live set once per drain, not by the flap rate, and the
+                # alternative — a grace window like the airport service's —
+                # would trade that for a second lifetime rule over an entry
+                # whose only cost is the row it re-reads.
                 removed = self._entries.pop(event.icao, None)
                 if removed is not None:
                     self._notify(event.icao, None)

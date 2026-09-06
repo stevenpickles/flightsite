@@ -692,6 +692,25 @@ class PersistenceWorker:
         carries the full record, so the sighting is opened from it and armed in
         one step. That is the shape an overflow episode leaves behind, and
         dropping it would lose a real observation period.
+
+        A removal no longer forces a flush (issue #138). It used to, on the
+        argument that the state should reach disk before the ten-minute gap
+        started. Two things are wrong with that. The ordinary flush interval
+        already writes a *pending* accumulator — :meth:`_accumulators` yields
+        both sets — so the forced flush bought a removed sighting a stronger
+        durability guarantee than any *live* sighting has, for a row nothing
+        was about to read. And at the timings FlightSite ships it bought
+        nothing at all: an aircraft is removed only after ``remove_s`` (60 s)
+        of silence, which is longer than the flush interval (30 s), so by the
+        time a removal arrives the accumulator is past its interval and the
+        cycle writes it for that reason alone.
+
+        Where the forced flush *did* cost something is any configuration in
+        which the interval outlasts the removal threshold — and, since slice
+        062 made removals fire on schedule rather than minutes late, it would
+        have cost it at the rate coverage flaps rather than at the rate traffic
+        arrives. An aircraft that leaves is now simply dirty like any other,
+        and is written by the next cycle that owes it a write.
         """
         active = self._active.pop(record.icao, None) or self._pending.get(record.icao)
         if active is None:
@@ -699,9 +718,6 @@ class PersistenceWorker:
         else:
             active.observe(record)
         active.close_deadline_ms = active.last_seen_ms + self._close_ms
-        # Persist what the sighting knows before the gap starts: if the process
-        # dies during those ten minutes, this is the state startup finds.
-        active.flush_immediately = True
         self._pending[record.icao] = active
 
     def _resync(self, subscription: EventSubscription) -> None:
@@ -712,6 +728,13 @@ class PersistenceWorker:
         sighting) and an ``AircraftRemoved`` that was shed (a sighting is
         active for an aircraft that has left the live set, so its closure gap
         never started).
+
+        Unlike the ordinary removal path (:meth:`_arm_closure`, issue #138)
+        this one *does* force a flush, and for a different reason: an overflow
+        means events were lost, so how long this accumulator has been wrong is
+        exactly what is not known. Writing it now ends that uncertainty. An
+        overflow is also rare and self-limiting, so the cost is not paid at the
+        rate a removal's would be.
         """
         live_icaos = set()
         for record in self._live.snapshot():
