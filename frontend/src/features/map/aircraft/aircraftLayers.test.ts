@@ -250,6 +250,26 @@ describe("ensureAircraftLayers", () => {
     expect(layout["text-justify"]).toBe("auto");
   });
 
+  it("keeps every candidate placement the anchor-thrash decision was measured against", () => {
+    // Issue #147 accepted the residual anchor movement undamped, and the
+    // measurement behind that rests on this exact list: four candidates so a
+    // contested label has somewhere to go (issue #143's fix), in an order
+    // where the first is the placement an uncontested label already had.
+    // Trimming the list is one of the dampers that decision rejected, so it
+    // is pinned here rather than left to a later "tidy-up".
+    ensureAircraftLayers(map);
+    const layout = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
+      string,
+      unknown
+    >;
+    expect(layout["text-variable-anchor"]).toEqual([
+      "top",
+      "bottom",
+      "right",
+      "left",
+    ]);
+  });
+
   it("keeps the selected label on a fixed anchor, never a variable one", () => {
     // The selected label must not wander around its aircraft either — the
     // fixed pair is what pins it under the icon, and it can never collide

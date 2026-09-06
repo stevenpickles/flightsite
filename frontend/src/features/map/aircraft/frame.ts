@@ -16,6 +16,7 @@ import {
 import {
   buildAircraftFeatureCollection,
   buildTrackFeatureCollection,
+  countLabelledAircraft,
 } from "@/features/map/aircraft/geojson";
 import type {
   DepartingRecord,
@@ -80,8 +81,12 @@ export function drawAircraftFrame(
       // The frame loop is the one caller that draws a *sequence*, so it is
       // the one that owns the label-density latch (issue #143). Advancing it
       // here — once per frame, on the same post-filter count `geojson.ts`
-      // would have derived — keeps the builder itself pure.
-      densityLatched: updateDensityLatch(filterResult.visibleIcaos.size),
+      // would have derived — keeps the builder itself pure. The count is of
+      // the aircraft that will actually be labelled, not the whole live set
+      // (issue #147): a position-less Mode S contact crowds nothing.
+      densityLatched: updateDensityLatch(
+        countLabelledAircraft(state.aircraft, filterResult.visibleIcaos),
+      ),
     }),
   );
   if (options.includeTrack) {
