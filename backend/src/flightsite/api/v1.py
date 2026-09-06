@@ -708,6 +708,13 @@ async def alert_matches(
         str | None,
         Query(pattern=ICAO_PATTERN, description="Restrict to one airframe (§2.9)."),
     ] = None,
+    rule_id: Annotated[
+        int | None,
+        Query(
+            ge=1,
+            description="Restrict to one user rule; an unknown id matches nothing.",
+        ),
+    ] = None,
     from_: Annotated[
         datetime | None,
         Query(alias="from", description="Inclusive lower bound on `at` (§2.2)."),
@@ -716,7 +723,7 @@ async def alert_matches(
         datetime | None, Query(description="Inclusive upper bound on `at` (§2.2).")
     ] = None,
 ) -> dict[str, Any]:
-    """Every alert that has fired — ``docs/API.md`` §3.9, SPEC §43 to §48.
+    """Every alert that has fired — ``docs/API.md`` §3.10, SPEC §43 to §48.
 
     Newest first, with the match id as the tie-break so paging through several
     matches recorded in one instant can neither repeat nor skip a row — the
@@ -727,12 +734,20 @@ async def alert_matches(
     different row. A built-in emergency match has ``rule: null`` and a
     ``builtin_key`` instead, because SPEC §47 makes it fire without a rule at
     all. ``total`` is always ``null``, for the reason ``/activity`` gives.
+
+    ``rule_id`` (issue #98) answers "show me what this rule has caught" from
+    the Alerts page. It is a filter and never a lookup: an id no rule has —
+    including one whose rule was deleted while the page was open — returns an
+    empty page rather than a 404, because "this rule caught nothing" and "this
+    rule is gone" are the same rendering. Only a positive integer is accepted;
+    anything else is the §2.5 422.
     """
     items = await _context(request).alert_matches(
         limit=limit,
         offset=offset,
         severity=severity,
         icao=icao,
+        rule_id=rule_id,
         from_ms=_bound_ms(from_),
         to_ms=_bound_ms(to),
     )

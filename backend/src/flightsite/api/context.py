@@ -595,15 +595,17 @@ class LiveApiContext:
         offset: int,
         severity: str | None = None,
         icao: str | None = None,
+        rule_id: int | None = None,
         from_ms: int | None = None,
         to_ms: int | None = None,
     ) -> list[dict[str, Any]]:
-        """One page of the alert-match history — ``docs/API.md`` §3.9."""
+        """One page of the alert-match history — ``docs/API.md`` §3.10."""
         matches = await self.alert_history.list_matches(
             limit=limit,
             offset=offset,
             severity=severity,
             icao=icao,
+            rule_id=rule_id,
             from_ms=from_ms,
             to_ms=to_ms,
         )

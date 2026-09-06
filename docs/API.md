@@ -498,7 +498,7 @@ combination is a `400`, not an empty series:
 | Path | Returns |
 |---|---|
 | `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`). |
-| `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `from`, `to`. |
+| `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
 `severity`, `reason`, `icao`, `sighting_id`, `rule` (null for a built-in match),
@@ -518,6 +518,14 @@ An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
   "notified": false
 }
 ```
+
+`rule_id` narrows the history to one user rule — the per-rule drill-down the Alerts
+page offers next to each rule. It is a **filter, not a lookup**: an id that names no
+rule (including a rule deleted while a page held its id) returns an empty page with
+`200`, never a `404`, because "this rule has caught nothing" and "this rule is gone"
+render the same. It combines with every other filter and with pagination, and because
+a built-in match carries no rule at all (`rule: null`), any `rule_id` excludes the
+built-ins. A non-integer or non-positive value is the §2.5 `422`.
 
 `notified` is delivery state, and it means one specific thing: **at least one
 FlightSite client actually showed a browser `Notification` for this match**. It is

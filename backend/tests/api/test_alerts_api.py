@@ -688,6 +688,111 @@ async def test_the_match_history_rejects_a_malformed_icao(rest: AsyncClient) -> 
     assert response.status_code == 422
 
 
+# ------------------------------------------------- the rule_id filter (#98)
+
+
+async def _two_rules_over_two_aircraft(live_app: LiveApp) -> tuple[int, int]:
+    """Fire both of two rules on both of two airframes, plus one built-in.
+
+    Five history rows: two per rule, and the emergency squawk that belongs to
+    no rule at all. Returns the two rule ids.
+    """
+    service: AlertService = live_app.app.state.alerts
+    nearby = await service.create_rule(
+        name="Everything nearby",
+        description=None,
+        severity=AlertSeverity.INFO,
+        conditions=RuleConditions(max_distance_nm=5_000.0),
+    )
+    high = await service.create_rule(
+        name="Anything high",
+        description=None,
+        severity=AlertSeverity.INTERESTING,
+        conditions=RuleConditions(min_alt_ft=20_000.0),
+    )
+    live_app.feed(_update("ae1463", squawk="7700"), _update("000002"))
+    await live_app.evaluate_alerts()
+    return nearby.id, high.id
+
+
+async def test_the_match_history_filters_to_one_rule(live_app: LiveApp, rest: AsyncClient) -> None:
+    """Issue #98: "show me what this rule has caught"."""
+    nearby_id, high_id = await _two_rules_over_two_aircraft(live_app)
+    everything = (await rest.get(MATCHES_PATH)).json()["items"]
+    assert len(everything) == 5
+
+    body = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}")).json()
+
+    assert [match["rule"] for match in body["items"]] == [
+        {"id": nearby_id, "name": "Everything nearby"},
+        {"id": nearby_id, "name": "Everything nearby"},
+    ]
+    assert {match["icao"] for match in body["items"]} == {"ae1463", "000002"}
+    other = (await rest.get(f"{MATCHES_PATH}?rule_id={high_id}")).json()
+    assert [match["rule"]["id"] for match in other["items"]] == [high_id, high_id]
+
+
+async def test_the_rule_filter_excludes_built_in_matches(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """A built-in emergency carries no ``rule_id``, so no rule owns it."""
+    nearby_id, _ = await _two_rules_over_two_aircraft(live_app)
+
+    body = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}")).json()
+
+    assert all(match["builtin_key"] is None for match in body["items"])
+
+
+async def test_an_unknown_rule_id_is_an_empty_page_not_a_404(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """The filter/lookup distinction: a rule deleted while a page held its id
+    must render as "caught nothing", not as an error the client special-cases."""
+    await _two_rules_over_two_aircraft(live_app)
+
+    response = await rest.get(f"{MATCHES_PATH}?rule_id=987654")
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": None, "limit": 50, "offset": 0}
+
+
+@pytest.mark.parametrize("value", ["abc", "1.5", "", "-1", "0"])
+async def test_a_non_integer_rule_id_is_a_422(rest: AsyncClient, value: str) -> None:
+    response = await rest.get(f"{MATCHES_PATH}?rule_id={value}")
+
+    assert response.status_code == 422
+
+
+async def test_the_rule_filter_combines_with_the_other_filters(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    nearby_id, _ = await _two_rules_over_two_aircraft(live_app)
+
+    body = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}&icao=ae1463")).json()
+
+    assert [(m["icao"], m["rule"]["id"]) for m in body["items"]] == [("ae1463", nearby_id)]
+    empty = await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}&severity=critical")
+    assert empty.json()["items"] == []
+
+
+async def test_the_rule_filter_keeps_pagination_and_ordering(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Filtering must page over the *filtered* set, newest first, without
+    repeating or skipping a row."""
+    nearby_id, _ = await _two_rules_over_two_aircraft(live_app)
+    both = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}")).json()["items"]
+
+    first = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}&limit=1")).json()
+    second = (await rest.get(f"{MATCHES_PATH}?rule_id={nearby_id}&limit=1&offset=1")).json()
+
+    assert first["limit"] == 1
+    assert second["offset"] == 1
+    assert [row["id"] for row in first["items"]] == [both[0]["id"]]
+    assert [row["id"] for row in second["items"]] == [both[1]["id"]]
+    assert both[0]["id"] > both[1]["id"]
+
+
 # ------------------------------------------------------------ notified marker
 
 
