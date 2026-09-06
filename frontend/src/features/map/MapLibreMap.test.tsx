@@ -37,6 +37,17 @@ describe("MapLibreMap", () => {
     ]);
   });
 
+  it("leaves the symbol fade duration at MapLibre's default", () => {
+    // `fadeDuration` is also the minimum interval between label placement
+    // passes (`Placement.stillRecent`), so it is the one knob that would
+    // damp the anchor movement issue #147 measured — and the one that
+    // decision declined, because raising it slows every symbol's fade and
+    // delays a collided label's return in exchange. Pinned so a future
+    // change to it is a deliberate revisit of that reasoning.
+    render(<MapLibreMap config={config} basemap={basemap} />);
+    expect(getLastMockMap().options.fadeDuration).toBeUndefined();
+  });
+
   it("adds an always-visible attribution control", () => {
     render(<MapLibreMap config={config} basemap={basemap} />);
     const map = getLastMockMap();

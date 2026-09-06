@@ -103,6 +103,17 @@ export interface AlertMatchListParams {
   severity?: AlertSeverity;
   /** Restrict to one airframe, as lower-case ICAO hex (§2.9). */
   icao?: string;
+  /**
+   * Restrict to the matches one rule produced — "show me what this rule has
+   * caught" (issue #98).
+   *
+   * An id no rule owns is not an error: the endpoint answers with an empty
+   * page, the same as a rule that has simply never fired. That matters here
+   * because a rule can be deleted while its history is on screen, and the
+   * honest answer to "what did that rule catch" then really is "nothing" —
+   * deleting a rule deletes its matches.
+   */
+  rule_id?: number;
 }
 
 function query(params: AlertMatchListParams): string {
@@ -115,6 +126,9 @@ function query(params: AlertMatchListParams): string {
   }
   if (params.icao !== undefined) {
     search.set("icao", params.icao);
+  }
+  if (params.rule_id !== undefined) {
+    search.set("rule_id", String(params.rule_id));
   }
   return search.toString();
 }

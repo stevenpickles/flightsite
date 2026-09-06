@@ -113,6 +113,56 @@ const LABEL_HALO_WIDTH = 1.2;
  * justification from whichever anchor won, so a right-placed label is
  * left-justified against the icon and a left-placed one right-justified — the
  * text keeps a straight edge pointing at its aircraft however it moved.
+ *
+ * ## Anchor thrash: measured, and accepted undamped (issue #147)
+ *
+ * The slice 063 review left open whether two aircraft in sustained proximity
+ * can step a label between anchors repeatedly, and recorded that MapLibre
+ * "re-walks the variable-anchor list from index 0 each placement pass;
+ * `prevAnchor` only animates the transition". Reading maplibre-gl@6.6.0's
+ * `src/symbol/placement.ts` for this issue, that is half right, and the half
+ * it misses is the half that matters:
+ *
+ * - `attemptAnchorPlacement` (l.387-402) does store a `prevAnchor` for the
+ *   transition — and nothing reads it. `draw_symbol.ts`'s
+ *   `updateVariableAnchorsForBucket` shifts glyphs from the *current* anchor
+ *   only, so an anchor change is a jump, not a tween. The review's reading of
+ *   that field is right.
+ * - But `placeBoxForVariableAnchors` (l.582-624) *does* prefer the previous
+ *   anchor. When the symbol was placed last time, it adds a placement pass
+ *   whose loop `continue`s past every anchor except `prevAnchor`. So the
+ *   first thing tried is standing still, and the list is only re-walked from
+ *   index 0 once the anchor a label currently occupies is genuinely blocked.
+ *   A label that has stepped to `bottom` therefore *stays* at `bottom` while
+ *   `bottom` is free — it does not snap back the moment `top` clears, which
+ *   is the oscillation the review was worried about.
+ *
+ * Two numbers bound what is left. Placement is not re-run per frame:
+ * `Placement.stillRecent` (l.1283) blocks a new pass until
+ * `commitTime + fadeDuration` has passed, and `fadeDuration` is MapLibre's
+ * 300 ms default — `MapLibreMap.tsx` does not set it. So the *worst* case is
+ * one jump per 300 ms, and only while the current anchor is actually blocked
+ * at each of those instants; the ~10 Hz `setData` cadence cannot make it
+ * faster. And the sticky pass depends on the symbol keeping its
+ * `crossTileID`, which `CrossTileSymbolIndex` re-derives from the label text
+ * plus the anchor position rounded onto a ~2 px grid and matched within one
+ * grid unit. At 47°N a 450 kt aircraft moves ~1.3 px per placement interval
+ * at z10, ~5 px at z12 and ~21 px at z14 — so identity, and with it the
+ * stickiness, holds across the band where labels crowd each other at all
+ * (`labels/priority.ts` turns labels on at z7 and the full stack on at z10),
+ * and only lapses well above it, where there is screen to spare.
+ *
+ * Neither available damper is worth that. There is no `text-fade-duration`
+ * in the style spec — the only fade knob is the map-wide `fadeDuration`
+ * option, and raising it *is* raising the placement interval, so labels would
+ * also take proportionally longer to come back after a collision clears and
+ * every symbol on the map would fade more slowly, to damp something already
+ * bounded at 3.3 Hz. Cutting the anchor list to two would directly undo the
+ * fix above: fewer escape placements means more labels hidden outright, which
+ * is what issue #143 was about. `text-variable-anchor-offset` only sets a
+ * per-anchor offset — it has no bearing on how often the anchor changes.
+ * So the behaviour stands as it is, and the numbers above are the record of
+ * why rather than a note to revisit.
  */
 const LABEL_VARIABLE_ANCHORS: ("top" | "bottom" | "right" | "left")[] = [
   "top",

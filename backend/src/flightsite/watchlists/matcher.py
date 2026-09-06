@@ -230,6 +230,14 @@ class WatchlistMatcher:
         matches are both dropped, which is what keeps :attr:`live_count`
         (and therefore the memory this matcher holds) bounded by the live
         set rather than growing over a process's lifetime.
+
+        Left as it is by issue #138's churn review. This callback fires exactly
+        as often as the metadata cache evicts and repopulates, so its rate is
+        already bounded by that; what it does per call is two dictionary pops
+        on the way out and one :meth:`_compute` on the way back in, entirely in
+        memory and against an index sized by the user's watchlists. There is no
+        I/O here to make cheaper, and holding a match set for an aircraft that
+        is not live would be caching an answer nothing can ask for.
         """
         if view is None:
             self._views.pop(icao, None)

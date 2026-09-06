@@ -15,39 +15,79 @@ interface AlertsTab {
   render: () => React.ReactNode;
 }
 
-/** The first tab, kept as its own reference (rather than `TABS[0]`) so
+/** The first tab, kept as its own reference (rather than `tabs[0]`) so
  * `noUncheckedIndexedAccess` does not force every read of the default tab
- * to guard against an array TypeScript cannot know is non-empty. */
+ * to guard against an array TypeScript cannot know is non-empty. It needs
+ * none of the page's state, so it stays out of the component. */
 const WATCHLISTS_TAB: AlertsTab = {
   id: "watchlists",
   label: "Watchlists",
   render: () => <WatchlistsSection />,
 };
 
-/**
- * The Alerts page's areas, in tab order. Roadmap slice 037 landed
- * watchlists; slice 041 adds the other three as siblings, which is exactly
- * the change this page was built to absorb — the list grew, the composition
- * did not.
- *
- * The order is the order the work is done in: what you are watching, then
- * the rules over it, then the ready-made rules you can start from, then
- * what has actually fired.
- */
-const TABS: AlertsTab[] = [
-  WATCHLISTS_TAB,
-  { id: "rules", label: "Rules", render: () => <AlertRulesSection /> },
-  { id: "templates", label: "Templates", render: () => <TemplateGallery /> },
-  { id: "history", label: "History", render: () => <AlertHistorySection /> },
-];
+const HISTORY_TAB_ID = "history";
 
 /**
  * The Alerts page (SPEC §42 to §48): watchlists, the rule builder, the
  * shipped-template gallery, and the history of every alert that has fired.
+ *
+ * The per-rule drill-down (issue #98) is why this page holds the history's
+ * rule filter rather than the history holding it: "Show matches" is offered
+ * on a rule card in the Rules area and answered in the History area, so the
+ * only component that can carry the choice across is the one that owns both.
+ * The filter is not in the URL because none of this page's state is — the
+ * selected tab is `useState` too, and putting one of the pair in the address
+ * bar and not the other would make a shared link land somewhere its filter
+ * is invisible.
  */
 export function AlertsPage() {
   const [activeTabId, setActiveTabId] = useState(WATCHLISTS_TAB.id);
-  const active = TABS.find((tab) => tab.id === activeTabId) ?? WATCHLISTS_TAB;
+  /** The rule the History area is narrowed to, or `null` for every rule. The
+   * name is kept alongside the id so the history's heading can say which
+   * rule it is showing without a second lookup. */
+  const [historyRule, setHistoryRule] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+
+  /**
+   * The page's areas, in tab order. Roadmap slice 037 landed watchlists;
+   * slice 041 added the other three as siblings, which is exactly the change
+   * this page was built to absorb — the list grew, the composition did not.
+   *
+   * The order is the order the work is done in: what you are watching, then
+   * the rules over it, then the ready-made rules you can start from, then
+   * what has actually fired.
+   */
+  const tabs: AlertsTab[] = [
+    WATCHLISTS_TAB,
+    {
+      id: "rules",
+      label: "Rules",
+      render: () => (
+        <AlertRulesSection
+          onShowMatches={(rule) => {
+            setHistoryRule({ id: rule.id, name: rule.name });
+            setActiveTabId(HISTORY_TAB_ID);
+          }}
+        />
+      ),
+    },
+    { id: "templates", label: "Templates", render: () => <TemplateGallery /> },
+    {
+      id: HISTORY_TAB_ID,
+      label: "History",
+      render: () => (
+        <AlertHistorySection
+          ruleFilter={historyRule}
+          onClearRuleFilter={() => {
+            setHistoryRule(null);
+          }}
+        />
+      ),
+    },
+  ];
+  const active = tabs.find((tab) => tab.id === activeTabId) ?? WATCHLISTS_TAB;
   const tablistId = useId();
   // The tabs use a roving `tabIndex` (one tab stop for the whole tablist), so
   // the arrow keys are the *only* way to reach an unselected tab — without
@@ -62,7 +102,7 @@ export function AlertsPage() {
         <p className="text-sm text-muted-foreground">{item.description}</p>
       </div>
 
-      {TABS.length > 1 && (
+      {tabs.length > 1 && (
         <div
           role="tablist"
           aria-label="Alerts sections"
@@ -71,7 +111,7 @@ export function AlertsPage() {
           onKeyDown={onTablistKeyDown}
           className="flex gap-1 border-b border-border"
         >
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const selected = tab.id === active.id;
             return (
               <button

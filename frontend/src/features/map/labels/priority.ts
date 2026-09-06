@@ -13,7 +13,7 @@
  *    feature. Selected and interesting aircraft always get the full stack;
  *    everyone else steps from full → callsign-only → nothing as the view
  *    zooms out or the picture gets crowded. The density step is latched
- *    through a hysteresis band (issue #143) so a live count sitting on the
+ *    through a hysteresis band (issue #143) so a labelled count sitting on the
  *    edge cannot toggle the label content frame after frame; the latch
  *    itself lives with the caller, not here.
  *
@@ -42,9 +42,15 @@ export const ZOOM_LABELS_FULL = 10;
  * The density override's hysteresis band (issue #143).
  *
  * Every non-priority label drops to callsign-only, regardless of zoom, once
- * the live count rises *above* {@link DENSITY_CALLSIGN_ENTER}, and the full
- * stack only comes back once it falls *below* {@link DENSITY_CALLSIGN_EXIT}.
- * Between the two edges the previous decision stands.
+ * the labelled count rises *above* {@link DENSITY_CALLSIGN_ENTER}, and the
+ * full stack only comes back once it falls *below*
+ * {@link DENSITY_CALLSIGN_EXIT}. Between the two edges the previous decision
+ * stands.
+ *
+ * The count is of aircraft that will actually carry a label — what
+ * `aircraft/geojson.ts`'s `countLabelledAircraft` returns — not the size of
+ * the live set (issue #147). Labels are what crowd a label, so a
+ * position-less Mode S contact is not part of the crowd.
  *
  * The upper edge is where the override has always sat: well under the
  * 500-aircraft rendering target (roadmap slice 014), because a dense scene
@@ -72,7 +78,7 @@ export const DENSITY_CALLSIGN_EXIT = 50;
 
 /**
  * The density override's next latch state, given the previous one and this
- * frame's live count.
+ * frame's labelled count.
  *
  * Pure, and the *only* place the band is interpreted: `deriveLabelTier` takes
  * the answer, so the latch's owner is whoever is drawing frames in sequence
@@ -82,12 +88,12 @@ export const DENSITY_CALLSIGN_EXIT = 50;
  */
 export function nextDensityLatched(
   previous: boolean,
-  liveCount: number,
+  labelledCount: number,
 ): boolean {
-  if (liveCount > DENSITY_CALLSIGN_ENTER) {
+  if (labelledCount > DENSITY_CALLSIGN_ENTER) {
     return true;
   }
-  if (liveCount < DENSITY_CALLSIGN_EXIT) {
+  if (labelledCount < DENSITY_CALLSIGN_EXIT) {
     return false;
   }
   return previous;
@@ -98,7 +104,7 @@ export interface LabelTierInput {
   zoom: number;
   /**
    * Whether the density override is currently latched on — the resolved
-   * output of {@link nextDensityLatched} for this frame's live count.
+   * output of {@link nextDensityLatched} for this frame's labelled count.
    *
    * A boolean rather than the count itself so this function stays pure while
    * the decision it depends on is stateful: the count is cheap (the size of

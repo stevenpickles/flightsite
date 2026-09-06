@@ -12,6 +12,39 @@ afterEach(() => {
 });
 
 describe("AlertRulesSection", () => {
+  it("reports which rule's matches were asked for", async () => {
+    const user = userEvent.setup();
+    const onShowMatches = vi.fn();
+    installAlertsApiMock({
+      rules: [alertRule({ id: 7, name: "Rare types" })],
+    });
+
+    renderWithProviders(<AlertRulesSection onShowMatches={onShowMatches} />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Show matches for Rare types",
+      }),
+    );
+
+    expect(onShowMatches).toHaveBeenCalledTimes(1);
+    expect(onShowMatches.mock.calls[0]?.[0]).toMatchObject({
+      id: 7,
+      name: "Rare types",
+    });
+  });
+
+  it("offers no drill-down when the caller has nowhere to send it", async () => {
+    installAlertsApiMock({ rules: [alertRule({ name: "Rare types" })] });
+
+    renderWithProviders(<AlertRulesSection />);
+
+    await screen.findByRole("article", { name: "Rare types" });
+    expect(
+      screen.queryByRole("button", { name: "Show matches for Rare types" }),
+    ).toBeNull();
+  });
+
   it("invites a first rule when there are none", async () => {
     installAlertsApiMock();
 

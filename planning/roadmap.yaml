@@ -112,6 +112,12 @@ releases:
     theme: "Same-day hotfix superseding v0.6.0: migration 0015's sightings
       rebuild runs with foreign keys off and checked, and resumes from a
       failed v0.6.0 attempt (slice 072). Recorded 2026-09-05."
+  - version: "v0.7.0"
+    after_phase: 8
+    theme: "Empty tracker: per-rule alert history, metadata URL overrides,
+      demo classification airframes, true-cadence consumer follow-ups,
+      labelled-count density tier, kill-drill and style-spec test hardening
+      (slice 073). Recorded 2026-09-06."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2103,6 +2109,50 @@ slices:
     preferred_agent: opus
     risk_level: high
     notes: "Hotfix slice. v0.6.0 was released 2026-09-05 with migration 0015 rebuilding `sightings` under foreign_keys=ON: the DROP TABLE's implicit DELETE scanned unindexed children per parent row and would end in a constraint error; fermi.local hung for five minutes and was rolled back from its pre-upgrade backup with no data loss. The slice-071 measurement and its 18 migration tests all used a database with empty child tables. v0.6.0 is marked pre-release and superseded; v0.6.1 carries this fix. Added by Fable outside the phase plan."
+
+  - id: "073"
+    title: "Low-severity bundle"
+    phase: 8
+    branch: "073-low-severity-bundle"
+    status: merged
+    depends_on: ["039", "041", "046", "053", "062", "063"]
+    objective: "Clear the six severity:low tracker items left after slice 067's triage, one single-concern commit each (issues #96, #98, #100, #112, #138, #147; tracking issue #182)."
+    scope:
+      - "#98: `GET /api/v1/alerts/matches` gains a `rule_id` query filter (validated, 404-free: an unknown id simply matches nothing), documented in API.md §3.10; the Alerts page's rule list offers a per-rule 'show matches' drill-down that filters the history section through it"
+      - "#96: `@maplibre/maplibre-gl-style-spec` becomes a devDependency and `aircraftLayers.test.ts` validates every paint/layout expression of every aircraft layer with `createPropertyExpression`, so an invalid expression fails the unit suite instead of failing silently in the browser"
+      - "#100: the WAL replay kill-drill's timing assumption is found and removed (or the window widened with a stated reason), so the test passes under load; the drill still proves the never-checkpointed WAL is replayed and recovered"
+      - "#112: `metadata.source_url_overrides` (per-source URL, config/env, documented as a test and mirror affordance) so integration tests can exercise the real fetch path against a local server; demo-mode aircraft carry classification metadata (a handful of military/government/police airframes in the scenario) so those alert templates can fire in demo and e2e; the pagination noun item is already done (slice 058)"
+      - "#138: the sighting worker no longer forces an immediate flush on every removal (batched into the 1 Hz cycle unless a documented reason to flush survives review); the alert engine skips rule evaluation on `AircraftStale`; the airport-context service keeps a latched phase through a short grace window after removal so a 60 s dropout on final does not lose an inferred approach; metadata cache and watchlist eviction on removal are checked for churn and left alone if bounded"
+      - "#147: the label-density latch counts labelled features (aircraft with a position) rather than every live ICAO, and the parameter is renamed accordingly; anchor thrash under sustained near-collision is measured against MapLibre's placement and either damped (longer fade, fewer anchors) or recorded as accepted with the measurement"
+    out_of_scope:
+      - "new features beyond the tracker items; anything touching migrations"
+      - "the deferred #153 decision"
+    acceptance_criteria:
+      - "`?rule_id=` narrows match history to that rule and the Alerts page drill-down uses it"
+      - "an intentionally broken paint expression in a test fixture fails `aircraftLayers.test.ts`"
+      - "the kill-drill passes ten consecutive runs under a CPU-loaded machine"
+      - "a demo stack fires the military template at least once and an integration test fetches a metadata source from a local override URL"
+      - "`AircraftStale` causes no rule evaluation; a removal alone causes no forced flush; an inferred approach survives a removal shorter than the grace window"
+      - "the density latch input equals the number of labelled features; the thrash decision is written down with numbers"
+      - "`Closes #96`, `#98`, `#100`, `#112`, `#138`, `#147` in the PR body"
+    required_tests:
+      - API filter tests; Alerts page drill-down tests; expression-validation tests; kill-drill run-under-load evidence; override-URL integration test; demo classification test; worker/engine/airport-context behaviour tests; density-count tests
+    expected_artifacts:
+      - backend/src/flightsite/api/v1.py
+      - backend/src/flightsite/alerts/
+      - backend/src/flightsite/sightings/worker.py
+      - backend/src/flightsite/airports/service.py
+      - backend/src/flightsite/metadata/
+      - backend/src/flightsite/demo/
+      - backend/tests/sightings/test_kill_drill.py
+      - frontend/src/features/alerts/
+      - frontend/src/features/map/
+      - frontend/package.json
+      - docs/API.md
+      - docs/CONFIGURATION.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Bundle slice for the six severity:low issues from slice 067's triage, opened 2026-09-05 after v0.6.1. One commit per issue. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

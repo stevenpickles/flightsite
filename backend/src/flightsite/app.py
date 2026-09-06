@@ -27,6 +27,7 @@ from flightsite.airports import (
     AirportRepository,
     OurAirportsProvider,
 )
+from flightsite.airports.ourairports import DEFAULT_ARTIFACT_URL as OURAIRPORTS_ARTIFACT_URL
 from flightsite.alerts import AlertListener, AlertService
 from flightsite.analytics import AnalyticsService
 from flightsite.api.context import LiveApiContext
@@ -39,6 +40,7 @@ from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
+from flightsite.demo.airframes import seed_demo_metadata
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import (
     ROUTES_SOURCE,
@@ -61,6 +63,10 @@ from flightsite.metadata.sources import (
     OpenSkyProvider,
     VrsRoutesProvider,
 )
+from flightsite.metadata.sources.faa import DEFAULT_URL as FAA_REGISTRY_URL
+from flightsite.metadata.sources.mictronics import DEFAULT_ARTIFACT_URL as MICTRONICS_ARTIFACT_URL
+from flightsite.metadata.sources.opensky import DEFAULT_ARTIFACT_URL as OPENSKY_ARTIFACT_URL
+from flightsite.metadata.sources.routes import DEFAULT_ARTIFACT_URL as VRS_ROUTES_ARTIFACT_URL
 from flightsite.readiness import ReadinessRegistry
 from flightsite.receiver_metrics import ReceiverMetricsService, StatsJsonPoller
 from flightsite.reset import apply_pending_reset
@@ -126,14 +132,57 @@ def _build_metadata_registry(
 
     Constructing a provider here opens nothing — it downloads only when an
     import actually runs (:mod:`flightsite.metadata.importer`).
+
+    ``metadata.source_url_overrides`` is applied here and only here (issue
+    #112). Each provider already took its URL as a constructor argument for
+    tests; this is the same argument, filled from configuration, so a mirror or
+    a fixture server is reached by the *real* fetch path rather than by a stub
+    underneath it. The overrides cover the dataset downloads and nothing else:
+    no authenticated request is constructed in this function, so no override
+    can point a secret-bearing call at a host of the operator's choosing.
     """
+    overrides = settings.metadata.source_url_overrides
+    used: set[str] = set()
+
+    def url_for(source: str, default: str) -> str:
+        override = overrides.get(source)
+        if override is None:
+            return default
+        used.add(source)
+        logger.info("metadata_source_url_overridden", source=source, url=str(override))
+        return str(override)
+
     registry = SourceRegistry()
-    registry.register("mictronics", MictronicsProvider())
-    registry.register("faa", FaaRegistryProvider())
+    registry.register(
+        "mictronics",
+        MictronicsProvider(artifact_url=url_for("mictronics", MICTRONICS_ARTIFACT_URL)),
+    )
+    registry.register("faa", FaaRegistryProvider(url=url_for("faa", FAA_REGISTRY_URL)))
     if settings.metadata.opensky_enabled:
-        registry.register("opensky", OpenSkyProvider())
-    registry.register(AIRPORTS_SOURCE, OurAirportsProvider(), sink=AirportImportSink(airports))
-    registry.register(ROUTES_SOURCE, VrsRoutesProvider(), sink=RouteDirectoryImportSink(routes))
+        registry.register(
+            "opensky",
+            OpenSkyProvider(artifact_url=url_for("opensky", OPENSKY_ARTIFACT_URL)),
+        )
+    registry.register(
+        AIRPORTS_SOURCE,
+        OurAirportsProvider(artifact_url=url_for(AIRPORTS_SOURCE, OURAIRPORTS_ARTIFACT_URL)),
+        sink=AirportImportSink(airports),
+    )
+    registry.register(
+        ROUTES_SOURCE,
+        VrsRoutesProvider(artifact_url=url_for(ROUTES_SOURCE, VRS_ROUTES_ARTIFACT_URL)),
+        sink=RouteDirectoryImportSink(routes),
+    )
+    # A key naming nothing this build registers is a typo, or an override for a
+    # source that is switched off. Neither is fatal — the config layer does not
+    # know the catalogue on purpose — but silence would leave an operator
+    # believing a mirror was in use when it was not.
+    for unknown in sorted(set(overrides) - used):
+        logger.warning(
+            "metadata_source_url_override_unused",
+            source=unknown,
+            known=registry.names,
+        )
     return registry
 
 
@@ -380,8 +429,16 @@ async def _start_ingestion(app: FastAPI) -> None:
     if demo_enabled():
         if live.receiver_location is None:
             live.set_receiver_location(DEFAULT_CENTER)
+        # Built already if the schema was healthy, because its roster had to be
+        # seeded with metadata before the metadata cache started (issue #112).
+        # Built here otherwise: a database that failed to migrate degrades the
+        # classification, never the traffic.
+        adapter: DemoAdapter | None = app.state.demo_adapter
+        if adapter is None:
+            adapter = DemoAdapter(center=live.receiver_location)
+            app.state.demo_adapter = adapter
         service = IngestionService(
-            DemoAdapter(center=live.receiver_location),
+            adapter,
             readiness=app.state.readiness,
             consumers=(live.apply,),
         )
@@ -438,6 +495,26 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # `watchlists: []` on every aircraft, which is the same honest empty
         # answer an install with no watchlists configured shows.
         await watchlists.start()
+        # Demo mode's decoder emits kinematics and nothing else, so its
+        # aircraft classify as unknown and the military/government/police
+        # alert templates can never fire (issue #112). The scenario's
+        # special-interest airframes are given real metadata here, through the
+        # importer's own path, before anything reads a classification.
+        #
+        # The adapter is constructed here rather than in `_start_ingestion` so
+        # that the roster being seeded and the roster that will fly are the
+        # same tuple — two constructions with the same arguments would agree,
+        # but "would agree" is a weaker property than "is the same object".
+        # `_start_ingestion` picks it up from `app.state`.
+        if demo_enabled():
+            if live.receiver_location is None:
+                live.set_receiver_location(DEFAULT_CENTER)
+            app.state.demo_adapter = DemoAdapter(center=live.receiver_location)
+            await seed_demo_metadata(
+                database,
+                app.state.demo_adapter.roster,
+                precedence=metadata.registry.precedence(),
+            )
         # Same condition, same reason: the metadata cache reads the schema the
         # migration just failed to create. Skipping it leaves every live
         # aircraft's metadata `null` — the documented unknown state — while
@@ -910,6 +987,9 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # process-level run mode (FLIGHTSITE_DEMO), not something that changes
     # while the app is up.
     app.state.demo_enabled = demo_enabled()
+    # The demo scenario, once the lifespan builds it. Held on `app.state` so
+    # the metadata seed (issue #112) and ingestion drive the same roster.
+    app.state.demo_adapter = None
     # One assembler for the live payloads, shared by REST and the WebSocket so
     # the two cannot describe the same instant differently. It reads app.state
     # lazily, so it is safe to build before the lifespan hook has started

@@ -409,14 +409,21 @@ class AlertRepository:
         offset: int,
         severity: str | None = None,
         icao: str | None = None,
+        rule_id: int | None = None,
         from_ms: int | None = None,
         to_ms: int | None = None,
     ) -> tuple[StoredAlertMatch, ...]:
-        """The alert-match history — ``docs/API.md`` §3.9, newest first.
+        """The alert-match history — ``docs/API.md`` §3.10, newest first.
 
         The id is the tie-break under ``matched_ms`` for the reason the
         activity feed uses it: several matches written in one instant must page
         without repeating or skipping a row.
+
+        ``rule_id`` (issue #98) narrows the history to one user rule. It is a
+        *filter*, not a lookup: an id no rule ever had simply matches nothing,
+        so a client that deleted a rule and still holds its id gets an empty
+        page rather than a 404 it would have to special-case. Built-in matches
+        carry no ``rule_id`` at all, so any value excludes them.
         """
         statement = (
             select(
@@ -443,6 +450,8 @@ class AlertRepository:
             statement = statement.where(AlertMatch.severity == severity)
         if icao is not None:
             statement = statement.where(Aircraft.icao24 == icao)
+        if rule_id is not None:
+            statement = statement.where(AlertMatch.rule_id == rule_id)
         if from_ms is not None:
             statement = statement.where(AlertMatch.matched_ms >= from_ms)
         if to_ms is not None:

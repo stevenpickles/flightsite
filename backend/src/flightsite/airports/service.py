@@ -55,6 +55,19 @@ departure's climb pauses at a level-off; without a latch the API would flicker
 between "likely arriving" and nothing on a one-second cadence. The latch is
 dropped the moment a different field becomes nearest, because then the phase
 would be a statement about somewhere the aircraft no longer is.
+
+The latch also survives a **removal**, for :data:`PHASE_GRACE_S` (issue #138).
+Low and slow over a field is exactly where a receiver's coverage is worst, so
+the aircraft whose phase is most interesting is the one most likely to drop out
+for a minute on final — and until slice 062 the removal event fired minutes
+late, which was accidentally protecting the latch from precisely that. Dropping
+the latch on removal means an aircraft that reappears at 300 ft on the
+threshold is re-inferred from an empty trail and reads as nothing at all, when
+what actually happened is one dropout inside one approach. So a removed
+aircraft's answer and trail are set aside rather than discarded, and a
+reappearance inside the window picks them back up; past it they are gone. The
+sighting's persisted inference was never at risk either way — it is on the
+row — but the live answer is what the map draws.
 """
 
 from __future__ import annotations
@@ -110,6 +123,26 @@ MAX_TRAIL_SAMPLES: Final = 256
 #: that does not.
 MAX_TRACKED_AIRCRAFT: Final = 4096
 
+#: How long a removed aircraft's answer and trail are kept, in seconds, so a
+#: reappearance resumes the approach it was already in rather than starting
+#: over (issue #138 — see the module docstring).
+#:
+#: Measured on the **observation** clock, from the last moment the aircraft was
+#: actually heard, and compared against the timestamp of the observation that
+#: brings it back — not from the removal event, and never from the wall clock.
+#: The whole of the rest of this module reasons in decoder timestamps, and what
+#: is being asked here is "are the observations behind this phase still recent
+#: enough to mean anything?", which is a question about the observations.
+#:
+#: Two minutes, chosen against the two things either side of it. Below: the
+#: live store removes an aircraft 60 s after it was last heard, so anything
+#: much shorter would expire at, or before, the moment a dropout could even be
+#: observed. Above: the trend gate's own look-back is two minutes, so a trail
+#: older than that contributes nothing to an inference anyway, and a phase held
+#: longer would outlive every input that produced it. A gap longer than this is
+#: a new arrival to reason about, not the same approach continuing.
+PHASE_GRACE_S: Final = 120.0
+
 
 class AirportContextService:
     """Consumes the live stream and maintains nearest-airport context.
@@ -127,7 +160,9 @@ class AirportContextService:
 
     __slots__ = (
         "_answers",
+        "_grace_ms",
         "_index",
+        "_lapsed",
         "_live",
         "_persistence",
         "_queue_size",
@@ -146,14 +181,18 @@ class AirportContextService:
         repository: AirportRepository,
         queue_size: int = DEFAULT_QUEUE_SIZE,
         search_nm: float = NEAREST_SEARCH_NM,
+        phase_grace_s: float = PHASE_GRACE_S,
     ) -> None:
         if queue_size < 1:
             raise ValueError("queue_size must be at least one")
+        if phase_grace_s < 0.0:
+            raise ValueError("phase_grace_s must not be negative")
         self._live = live
         self._persistence = persistence
         self._repository = repository
         self._queue_size = queue_size
         self._search_nm = search_nm
+        self._grace_ms = int(phase_grace_s * 1_000)
         self._index = AirportIndex()
         self._subscription: EventSubscription | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -161,6 +200,13 @@ class AirportContextService:
         self._answers: OrderedDict[str, AirportContext] = OrderedDict()
         #: Recent ranges per ICAO, oldest first.
         self._trails: dict[str, deque[TrendSample]] = {}
+        #: Removed aircraft still inside their grace window: the answer and
+        #: trail set aside, with the instant they stop being worth keeping.
+        #: Insertion order is expiry order, because every entry is stamped from
+        #: the observation clock and the events arrive in that order.
+        self._lapsed: OrderedDict[str, tuple[AirportContext, deque[TrendSample], int]] = (
+            OrderedDict()
+        )
 
     # ------------------------------------------------------------ inspection
 
@@ -287,20 +333,65 @@ class AirportContextService:
         Public because it is the whole of the read side's decision, and tests
         drive it directly rather than through a task.
 
-        Removal drops everything held for the aircraft. The persisted
-        inference stays on the sighting row, which is the point of persisting
-        it; what goes is the live answer and the trail, neither of which means
-        anything for an aircraft that is no longer in the sky.
+        Removal sets the aircraft's answer and trail aside for
+        :data:`PHASE_GRACE_S` rather than dropping them (issue #138): a dropout
+        on final is a gap in coverage, not the end of an approach, and the
+        latch is what stops the gap from erasing it. Past the window they go.
+        The persisted inference stays on the sighting row throughout, which is
+        the point of persisting it.
         """
         if isinstance(event, AircraftRemoved):
-            self._forget(event.icao)
+            self._lapse(event.aircraft)
             return
         if isinstance(event, AircraftAppeared | AircraftUpdated):
             self._observe(event.aircraft)
 
     def _forget(self, icao: str) -> None:
+        """Drop everything held for an aircraft, with no grace.
+
+        Used where the answer is *wrong* rather than merely absent — the
+        aircraft has flown out of range of every field — which is the one case
+        a grace window must not cover.
+        """
         self._answers.pop(icao, None)
         self._trails.pop(icao, None)
+        self._lapsed.pop(icao, None)
+
+    def _lapse(self, record: LiveAircraft) -> None:
+        """Set a removed aircraft's answer aside for the grace window."""
+        answer = self._answers.pop(record.icao, None)
+        trail = self._trails.pop(record.icao, None)
+        if answer is None or self._grace_ms == 0:
+            self._lapsed.pop(record.icao, None)
+            return
+        expiry_ms = to_epoch_ms(record.last_seen) + self._grace_ms
+        self._lapsed[record.icao] = (answer, trail if trail is not None else deque(), expiry_ms)
+        self._lapsed.move_to_end(record.icao)
+        while len(self._lapsed) > MAX_TRACKED_AIRCRAFT:
+            self._lapsed.popitem(last=False)
+
+    def _resume(self, icao: str, now_ms: int) -> None:
+        """Take back a lapsed answer if it is still inside its window.
+
+        Expired entries at the front are dropped on the way past, which is what
+        keeps this store bounded by *recent* removals rather than by every
+        removal the process has ever seen. Insertion order is expiry order, so
+        the sweep stops at the first entry that is still live.
+        """
+        while self._lapsed:
+            oldest, (_, _, expiry_ms) = next(iter(self._lapsed.items()))
+            if expiry_ms > now_ms:
+                break
+            del self._lapsed[oldest]
+        held = self._lapsed.pop(icao, None)
+        if held is None:
+            return
+        answer, trail, expiry_ms = held
+        if expiry_ms <= now_ms:
+            return
+        self._answers[icao] = answer
+        self._answers.move_to_end(icao)
+        self._trails[icao] = trail
 
     def _observe(self, record: LiveAircraft) -> None:
         """Walk the gates for one observation and record whatever they allow."""
@@ -308,6 +399,7 @@ class AirportContextService:
         if position is None or not self._index.size:
             return
 
+        self._resume(record.icao, to_epoch_ms(record.last_seen))
         nearest = self._index.nearest(position, within_nm=self._search_nm)
         if nearest is None:
             # Out of range of every field. The previous answer is dropped

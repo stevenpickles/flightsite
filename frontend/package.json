@@ -1,7 +1,7 @@
 {
   "name": "flightsite-frontend",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.7.0",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@maplibre/maplibre-gl-style-spec": "^26.4.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

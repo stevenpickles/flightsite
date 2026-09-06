@@ -166,6 +166,31 @@ describe("drawAircraftFrame label-density hysteresis", () => {
     expect(firstLabel()).toBe(FULL);
   });
 
+  it("latches on the labelled count, not the size of the live set", () => {
+    // Issue #147: `visibleIcaos` is the live set, which includes Mode S
+    // contacts with no position. They never become a feature and never
+    // occupy a label, so they must not push the labels of the aircraft that
+    // *are* drawn down a tier. Well over the upper edge by live count, well
+    // under the lower edge by labelled count.
+    const { map, firstLabel, dataByFeatureCount } = fakeMap();
+    const positioned = crowd(DENSITY_CALLSIGN_EXIT - 1);
+    const modeSOnly = Array.from(
+      { length: DENSITY_CALLSIGN_ENTER },
+      (_entry, index) =>
+        makeAircraft({
+          icao: `f${index.toString(16).padStart(5, "0")}`,
+          callsign: `MS${index}`,
+          position: null,
+          distance_nm: null,
+        }),
+    );
+
+    drawAircraftFrame(map, state([...positioned, ...modeSOnly]), 0);
+
+    expect(dataByFeatureCount()).toBe(positioned.length);
+    expect(firstLabel()).toBe(FULL);
+  });
+
   it("unlatches once the picture empties, so a reconnect starts fresh", () => {
     const { map, firstLabel } = fakeMap();
     drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER + 1)), 0);

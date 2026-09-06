@@ -7,6 +7,7 @@ import {
   useAlertRulesQuery,
   useAlertTemplatesQuery,
   useCreateAlertRuleMutation,
+  type AlertRule,
   type AlertRuleWriteInput,
 } from "@/lib/api/alertRules";
 
@@ -15,6 +16,14 @@ function errorMessage(error: unknown): string | null {
     return null;
   }
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+export interface AlertRulesSectionProps {
+  /** Called when a card's "Show matches" control is used (issue #98). The
+   * history it opens lives in a sibling area, so this section only reports
+   * the choice; the page above decides what to do with it. Omit it and the
+   * cards offer no such control. */
+  onShowMatches?: (rule: AlertRule) => void;
 }
 
 /**
@@ -30,7 +39,7 @@ function errorMessage(error: unknown): string | null {
  * data compiled into the backend, so this costs one cached read for the
  * whole list rather than a lookup per rule.
  */
-export function AlertRulesSection() {
+export function AlertRulesSection({ onShowMatches }: AlertRulesSectionProps) {
   const [creating, setCreating] = useState(false);
 
   const rulesQuery = useAlertRulesQuery();
@@ -105,6 +114,7 @@ export function AlertRulesSection() {
             <li key={rule.id}>
               <RuleCard
                 rule={rule}
+                onShowMatches={onShowMatches}
                 templateName={
                   rule.template_key === null
                     ? null
