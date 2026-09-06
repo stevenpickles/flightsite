@@ -24,7 +24,15 @@ import zoneinfo
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from flightsite.config.paths import DEFAULT_DATA_DIR
@@ -216,9 +224,45 @@ class MetadataSettings(_ConfigModel):
     re-read and applied on every configuration save (issue #161), because
     enrichment holds nothing a swap would cost, while the metadata registry is
     wired into a service at construction.
+
+    ``source_url_overrides`` redirects one named source's dataset download to
+    another URL — a local mirror, an internal cache, or a fixture served by a
+    test's own HTTP server (issue #112). Every source already accepted such an
+    override at construction; what was missing was a way for an *operator* to
+    set one, which is also what let an integration test exercise the real fetch
+    path instead of stubbing the layer underneath it.
+
+    Three properties are deliberate:
+
+    * It is keyed by source name and applies **only** to the dataset sources
+      (``mictronics``, ``faa``, ``opensky``, ``airports``, ``routes``). No
+      authenticated endpoint is reachable through it, so it can never redirect
+      a request that carries a secret to a host of the operator's choosing.
+    * ``HttpUrl`` rejects anything that is not an ``http``/``https`` URL, so a
+      typo cannot turn into a file read or a scheme the client cannot fetch.
+    * The keys are validated for *shape* only — this layer does not know the
+      source catalogue, exactly as ``alerts.enabled_templates`` does not know
+      the template catalogue. A key naming no registered source is reported by
+      :func:`flightsite.app._build_metadata_registry` as a warning at startup
+      rather than rejected here, so adding a source is not a config-schema
+      change.
     """
 
     opensky_enabled: bool = False
+    source_url_overrides: dict[str, HttpUrl] = Field(default_factory=dict)
+
+    @field_validator("source_url_overrides")
+    @classmethod
+    def _clean_source_names(cls, value: dict[str, HttpUrl]) -> dict[str, HttpUrl]:
+        cleaned: dict[str, HttpUrl] = {}
+        for source, url in value.items():
+            name = source.strip().lower()
+            if not name:
+                raise ValueError("metadata.source_url_overrides keys must name a source")
+            if name in cleaned:
+                raise ValueError(f"metadata.source_url_overrides names {name!r} twice")
+            cleaned[name] = url
+        return cleaned
 
 
 class NotificationSettings(_ConfigModel):

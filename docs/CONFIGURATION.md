@@ -109,6 +109,7 @@ answered stay in the route cache, and sightings that were enriched keep their ro
 | `timezone` | Analytics and receiver-metric day bucketing bind the zone at construction |
 | `log_level`, `log_file_enabled` | Logging is configured before the app is built |
 | `metadata.opensky_enabled` | The metadata source registry is built once at startup |
+| `metadata.source_url_overrides` | The metadata source registry is built once at startup |
 
 Every row above that the Settings UI can edit is badged **"Applies on next restart"**
 there, so you never have to consult this table to find out. The badge sits on the
@@ -288,6 +289,7 @@ already-known routes last.
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `opensky_enabled` | bool | `false` | Opt in to the OpenSky aircraft database as a supplementary source |
+| `source_url_overrides` | map of source name → URL | `{}` | Fetch one source's dataset from somewhere other than its default — a mirror, or a fixture server. See below |
 
 **What "Update Aircraft Metadata" fetches.** One click runs every registered source,
 each independently — a failure in one leaves the others' data and status untouched
@@ -324,6 +326,48 @@ manufacturer/model or build year for an airframe where Mictronics and the FAA
 registry supplied none, and it can never overwrite a value either of them provided.
 Note also that the published dataset has not been refreshed since November 2024, so
 treat it as a static backfill rather than a live feed.
+
+#### Overriding a source's download URL
+
+`metadata.source_url_overrides` points one named source at a different URL. It exists
+for two situations, and is not something a normal install needs:
+
+- **A local mirror or cache.** A receiver on a metered or firewalled link can be
+  pointed at a copy of the dataset held inside your own network, so "Update Aircraft
+  Metadata" fetches from there instead of the public host.
+- **Testing.** It is what lets an integration test exercise the *real* fetch, parse
+  and import path against a fixture served from `127.0.0.1`, rather than stubbing the
+  layer underneath and hoping the two agree.
+
+```yaml
+metadata:
+  source_url_overrides:
+    mictronics: http://mirror.lan/tar1090-db/aircraft.csv.gz
+    airports: http://mirror.lan/ourairports/airports.csv
+```
+
+Or per source as an environment variable:
+
+```bash
+FLIGHTSITE_METADATA__SOURCE_URL_OVERRIDES__MICTRONICS=http://mirror.lan/aircraft.csv.gz
+```
+
+The keys are the source names from the table above — `mictronics`, `faa`, `opensky`,
+`airports`, `routes` — and each value must be an `http`/`https` URL. Anything else is
+rejected when configuration loads. A key naming no registered source (a typo, or a
+source that is switched off) is not an error: it is logged as
+`metadata_source_url_override_unused` at startup and ignored, so you can tell the
+difference between "my mirror is in use" and "my mirror was never consulted".
+
+Two limits are deliberate. The override is applied **only** where the metadata source
+registry is built, so it reaches the five dataset downloads and nothing else — no
+authenticated endpoint is reachable through it, and no request carrying an API key can
+be redirected by it. And the registry is built once at startup, so a change needs a
+restart, exactly like `opensky_enabled`.
+
+An overridden source must serve the same artifact format the real one does: FlightSite
+parses what it downloads, it does not sniff it. A mirror is a copy, not a substitute
+format.
 
 ### `notifications` — browser notifications
 
