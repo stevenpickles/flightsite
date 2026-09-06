@@ -5,6 +5,51 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.7.0] — 2026-09-06
+
+The tracker is empty. This release clears the six low-severity items that
+remained after every open issue was triaged in v0.4.0, and it is the first
+release with no known product bug of any severity.
+
+### Added
+- **Per-rule alert history**: each rule on the Alerts page has a *Show
+  matches* control that filters the history to that rule, backed by a new
+  `rule_id` filter on `GET /api/v1/alerts/matches` (#98)
+- `metadata.source_url_overrides`: point any metadata dataset download at a
+  mirror or a local fixture server, per source, from `config.yaml` or the
+  environment; never applied to a request that carries a key (#112)
+- Demo mode now carries a handful of military, government and police
+  airframes, so those alert templates fire in demo and in the end-to-end
+  suite (#112)
+
+### Changed
+- The alert engine no longer evaluates rules on a stale-aircraft event,
+  which carries no new input; a removal no longer forces an immediate
+  persistence flush; and the nearest-airport context keeps an inferred
+  approach or departure through a two-minute dropout, so an aircraft that
+  goes quiet on final does not lose its phase (#138)
+- The map's label-density tier is driven by the number of labelled aircraft
+  rather than by every live entry, so Mode S-only contacts no longer push
+  labels into the sparse tier; anchor behaviour under sustained collision
+  was measured against MapLibre's placement code and accepted as already
+  bounded (#147)
+
+### Fixed
+- The WAL kill-drill test no longer fails on a slow or busy machine: it
+  waits on the subprocess's own progress instead of a fixed window (#100)
+- Every aircraft-layer style expression is validated against the MapLibre
+  style specification in the unit suite, so an invalid expression fails a
+  test instead of failing silently in the browser (#96)
+
+### Upgrade notes
+- No database migration: `docker compose pull && docker compose up -d`.
+- No configuration change is required; the URL overrides are optional.
+
+### Known issues
+- The Raspberry Pi 4 SSD performance qualification (#153) remains deferred
+  by the owner; the Pi 5 NVMe baseline is the current reference run. No
+  other issue is open.
+
 ## [0.6.1] — 2026-09-05
 
 A same-day hotfix that supersedes v0.6.0, which must not be installed on any
