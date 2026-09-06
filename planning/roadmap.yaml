@@ -112,6 +112,12 @@ releases:
     theme: "Same-day hotfix superseding v0.6.0: migration 0015's sightings
       rebuild runs with foreign keys off and checked, and resumes from a
       failed v0.6.0 attempt (slice 072). Recorded 2026-09-05."
+  - version: "v0.7.0"
+    after_phase: 8
+    theme: "Empty tracker: per-rule alert history, metadata URL overrides,
+      demo classification airframes, true-cadence consumer follow-ups,
+      labelled-count density tier, kill-drill and style-spec test hardening
+      (slice 073). Recorded 2026-09-06."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
