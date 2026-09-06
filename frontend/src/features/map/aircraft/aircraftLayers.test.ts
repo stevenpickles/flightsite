@@ -1,3 +1,13 @@
+import {
+  createPropertyExpression,
+  isExpression,
+  latest,
+  validateStyleMin,
+} from "@maplibre/maplibre-gl-style-spec";
+import type {
+  StylePropertySpecification,
+  StyleSpecification,
+} from "@maplibre/maplibre-gl-style-spec";
 import type { Map as MapLibreGlMap } from "maplibre-gl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +28,7 @@ import {
 } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { MLAT_RING_IMAGE_ID } from "@/features/map/aircraft/icons/silhouettes";
+import { OPENFREEMAP_GLYPHS_URL } from "@/features/map/basemaps/paletteStyleFactory";
 import {
   SORT_KEY_DEFAULT,
   SORT_KEY_INTERESTING,
@@ -460,5 +471,182 @@ describe("aircraftIcaoAtPoint", () => {
     ensureAircraftLayers(map);
     mock.renderedFeatures = [{ properties: { icao: 7 } }];
     expect(aircraftIcaoAtPoint(map, [10, 20])).toBeNull();
+  });
+});
+
+describe("style-spec validation", () => {
+  // Issue #96. `aircraftLayers.ts` warns in two places that an invalid style
+  // expression fails *silently*: MapLibre fires an `error` event rather than
+  // throwing, so a bad `interpolate` means the layer is never added and no
+  // aircraft render — and every other test in this file mocks MapLibre away,
+  // so none of them would notice. These tests run the real style spec
+  // (`@maplibre/maplibre-gl-style-spec`, the same package and version
+  // `maplibre-gl` itself depends on) over the layers `ensureAircraftLayers`
+  // actually adds, including the label and attention layers.
+
+  /** The spec entry for one paint/layout property of one layer type, e.g.
+   * `latest.paint_circle["circle-radius"]`. */
+  function propertySpec(
+    layerType: string,
+    group: "paint" | "layout",
+    key: string,
+  ): StylePropertySpecification | undefined {
+    const table = (
+      latest as unknown as Record<
+        string,
+        Record<string, StylePropertySpecification> | undefined
+      >
+    )[`${group}_${layerType}`];
+    return table?.[key];
+  }
+
+  /**
+   * A property value in the shape `createPropertyExpression` parses.
+   *
+   * Array-valued *constants* — `text-offset: [0, 1]`,
+   * `text-variable-anchor: ["top", ...]` — are perfectly legal style values,
+   * but an array is an expression as far as the parser is concerned, so it
+   * reads `["top", ...]` as a call to an operator named "top". MapLibre's own
+   * `normalizePropertyExpression` makes the same distinction with the same
+   * `isExpression` test before handing a value to the parser; wrapping the
+   * constant in `["literal", …]` is how that reaches `createPropertyExpression`
+   * as what it is.
+   */
+  function asExpression(value: unknown): unknown {
+    return Array.isArray(value) && !isExpression(value)
+      ? ["literal", value]
+      : value;
+  }
+
+  /** Every paint and layout property on every layer currently on the style. */
+  function styleProperties(): {
+    layerId: string;
+    layerType: string;
+    group: "paint" | "layout";
+    key: string;
+    value: unknown;
+  }[] {
+    const out: {
+      layerId: string;
+      layerType: string;
+      group: "paint" | "layout";
+      key: string;
+      value: unknown;
+    }[] = [];
+    for (const [layerId, layer] of mock.layers) {
+      for (const group of ["paint", "layout"] as const) {
+        const properties = (layer[group] ?? {}) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(properties)) {
+          out.push({
+            layerId,
+            layerType: layer.type as string,
+            group,
+            key,
+            value,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The layers, wrapped in the smallest style the validator will accept: the
+   * GeoJSON sources they read and the glyph endpoint the real basemaps ship,
+   * without which a `text-field` is itself a validation error. */
+  function styleForValidation(): StyleSpecification {
+    return {
+      version: 8,
+      glyphs: OPENFREEMAP_GLYPHS_URL,
+      sources: Object.fromEntries(
+        [...mock.sources.keys()].map((id) => [
+          id,
+          { type: "geojson", data: EMPTY_COLLECTION },
+        ]),
+      ),
+      layers: [...mock.layers.values()],
+    } as unknown as StyleSpecification;
+  }
+
+  it("parses every paint and layout property against its spec definition", () => {
+    ensureAircraftLayers(map);
+    const properties = styleProperties();
+
+    const failures: string[] = [];
+    const checkedByLayer = new Map<string, number>();
+    for (const { layerId, layerType, group, key, value } of properties) {
+      const spec = propertySpec(layerType, group, key);
+      if (!spec) {
+        failures.push(
+          `${layerId}: ${group}.${key} is not a ${layerType} layer property`,
+        );
+        continue;
+      }
+      const parsed = createPropertyExpression(asExpression(value), key, spec);
+      if (parsed.result === "error") {
+        failures.push(
+          `${layerId}: ${group}.${key}: ${parsed.value
+            .map((error) => error.message)
+            .join("; ")}`,
+        );
+      }
+      checkedByLayer.set(layerId, (checkedByLayer.get(layerId) ?? 0) + 1);
+    }
+
+    expect(failures).toEqual([]);
+    // Every layer must actually have been exercised: a layer whose paint and
+    // layout were both somehow missed would make the assertion above pass
+    // vacuously.
+    expect([...checkedByLayer.keys()].sort()).toEqual(
+      [...mock.layers.keys()].sort(),
+    );
+    expect(properties).not.toHaveLength(0);
+  });
+
+  it("validates the whole aircraft style, filters included, with zero errors", () => {
+    // Broader than the per-property parse: this also checks the layer
+    // `filter`s, the source references, and that no property is misspelled
+    // into a place the spec does not define it.
+    ensureAircraftLayers(map);
+    const errors = validateStyleMin(styleForValidation());
+    expect(
+      errors.map((error) => `${error.identifier}: ${error.message}`),
+    ).toEqual([]);
+  });
+
+  it("rejects a zoom expression nested inside another expression", () => {
+    // The exact mistake `ICON_SIZE` and `ATTENTION_RADIUS` are shaped to
+    // avoid, and the reason both fold their per-feature factor into each zoom
+    // stop's *output*: `["zoom"]` must be the direct input of a top-level
+    // interpolate/step. Multiplying a zoom interpolation by a selection factor
+    // looks reasonable and is invalid — this pins that the checks above would
+    // catch it rather than waving everything through.
+    const spec = propertySpec("symbol", "layout", "icon-size");
+    expect(spec).toBeDefined();
+    const parsed = createPropertyExpression(
+      [
+        "*",
+        ["interpolate", ["linear"], ["zoom"], 3, 0.6, 11, 1],
+        ["case", ["get", "selected"], 1.25, 1],
+      ],
+      "icon-size",
+      spec as StylePropertySpecification,
+    );
+    expect(parsed.result).toBe("error");
+  });
+
+  it("rejects a broken expression in a full-style validation", () => {
+    // The negative twin of the whole-style test: proof that
+    // `validateStyleMin` is reading these layers rather than shrugging at
+    // whatever it is handed.
+    ensureAircraftLayers(map);
+    const style = styleForValidation();
+    const symbols = style.layers.find(
+      (layer) => layer.id === AIRCRAFT_SYMBOL_LAYER_ID,
+    ) as { layout: Record<string, unknown> } | undefined;
+    expect(symbols).toBeDefined();
+    // `["get"]` with no argument: a broken expression of exactly the kind
+    // that would otherwise be discovered by an empty map at runtime.
+    symbols!.layout = { ...symbols!.layout, "icon-rotate": ["get"] };
+    expect(validateStyleMin(style).length).toBeGreaterThan(0);
   });
 });
