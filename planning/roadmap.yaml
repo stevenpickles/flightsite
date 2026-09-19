@@ -118,6 +118,12 @@ releases:
       demo classification airframes, true-cadence consumer follow-ups,
       labelled-count density tier, kill-drill and style-spec test hardening
       (slice 073). Recorded 2026-09-06."
+  - version: "v0.8.0"
+    after_phase: 8
+    theme: "Self-explanatory Analytics rankings: tail number and type on every
+      Top aircraft bar, the long-form description beside every Top types
+      designator, richer tooltips on both; visual capture waits for a populated
+      demo picture (slice 074). Recorded 2026-09-19."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
