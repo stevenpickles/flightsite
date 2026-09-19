@@ -159,6 +159,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 071 | Offline route directory (VRS standing data) & enrichment resilience | 021, 027, 049, 070 | opus | medium | VRS standing-data routes as the primary origin/destination source (SPEC §28 amended, ADR-0016), AeroDataBox only for misses, inferred route end shown where no source knows the callsign, last known route served when a refresh cannot happen, CI headroom for the flaky perf gates (issue #173; #166, #170) |
 | 072 | Migration 0015 rebuild fix | 071 | opus | high | Hotfix: run the `sightings` rebuild with foreign keys off and checked afterwards, resumable from the v0.6.0 partial state, with migration tests that seed every child table (issue #178; v0.6.1) |
 | 073 | Low-severity bundle | 039, 041, 046, 053, 062, 063 | opus | low | Six single-concern commits: rule_id match filter + Alerts drill-down (#98), MapLibre expression validation in tests (#96), kill-drill load flake (#100), metadata URL overrides + demo classification metadata (#112), post-#134 consumer follow-ups (#138), label-density count + anchor-thrash decision (#147); tracking issue #182 |
+| 074 | Analytics ranking detail | 031, 032 | opus | low | Tail number plus type on every Top aircraft bar, the long-form description beside every Top types designator (derived from the imported metadata as the majority model per type, exposed as `description` on top-types rows), richer tooltips on both cards (issue #198) |
 
 ## Parallelization Guide
 
