@@ -49,7 +49,7 @@ than leaving the client to assume.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final
 from zoneinfo import ZoneInfo
 
@@ -185,6 +185,11 @@ class GroupRank:
     days_seen: int
     first_seen_ms: int | None = None
     last_seen_ms: int | None = None
+    #: The long form behind a type designator's shorthand — ``Boeing 737-800``
+    #: for ``B738`` — derived from the imported metadata (see
+    #: :meth:`AnalyticsQueries.top_types`). Always ``None`` for an operator
+    #: group, whose ``label`` is already the readable form.
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,18 +575,69 @@ class AnalyticsQueries:
         grouping. The distinct-airframe figure cannot be summed out of daily
         rows (an airframe heard on three days appears in three of them), so it
         is counted exactly, once, for the ranked designators only.
+
+        Each ranked designator also carries a ``description`` — the long form
+        a reader would not know by heart — looked up for the ranked keys only
+        (see :meth:`_type_descriptions`).
         """
         if window.whole_history:
-            return await self._whole_history_types(limit)
-        return await self._windowed_groups(
-            window,
-            limit=limit,
-            day_column=DailyTypeStats.day,
-            key_column=DailyTypeStats.type_code,
-            model=DailyTypeStats,
-            fact_key=AircraftMetadataResolved.type_code,
-            labels={},
+            ranks = await self._whole_history_types(limit)
+        else:
+            ranks = await self._windowed_groups(
+                window,
+                limit=limit,
+                day_column=DailyTypeStats.day,
+                key_column=DailyTypeStats.type_code,
+                model=DailyTypeStats,
+                fact_key=AircraftMetadataResolved.type_code,
+                labels={},
+            )
+        if not ranks:
+            return ()
+        described = await self._type_descriptions([rank.key for rank in ranks])
+        return tuple(replace(rank, description=described.get(rank.key)) for rank in ranks)
+
+    async def _type_descriptions(self, type_codes: Sequence[str]) -> dict[str, str]:
+        """The long-form description behind each ranked type designator.
+
+        No metadata source ships an ICAO Doc 8643 designator table, and
+        bundling one would be a new dataset with its own licence and refresh
+        cycle for a single label. What the imported metadata *does* carry is a
+        free-text model per airframe (``Boeing 737-800``), so a designator's
+        description is the model string most of its known airframes agree on
+        — the honest, data-derived answer, and one that improves by itself as
+        the sources do. Ties break alphabetically so the answer is stable
+        across runs. A designator whose airframes carry no model at all gets
+        no description rather than a guess (SPEC §26).
+
+        Bounded by the ranked keys: ``ix_amr_type`` narrows the scan to the
+        airframes of those designators, and the ``GROUP BY`` collapses them to
+        one row per distinct spelling, so the result set is tens of rows for
+        a ten-row ranking rather than a walk over the whole metadata table.
+        """
+        if not type_codes:
+            return {}
+        airframes = func.count().label("airframes")
+        statement = (
+            select(AircraftMetadataResolved.type_code, AircraftMetadataResolved.model, airframes)
+            .where(
+                AircraftMetadataResolved.type_code.in_(list(type_codes)),
+                AircraftMetadataResolved.model.is_not(None),
+            )
+            .group_by(AircraftMetadataResolved.type_code, AircraftMetadataResolved.model)
+            .order_by(
+                AircraftMetadataResolved.type_code,
+                airframes.desc(),
+                AircraftMetadataResolved.model,
+            )
         )
+        described: dict[str, str] = {}
+        async with self._database.read_session() as session:
+            for type_code, model, _ in (await session.execute(statement)).all():
+                # Ordered most-common first per designator, so the first
+                # spelling seen for a key is the winner.
+                described.setdefault(str(type_code), str(model))
+        return described
 
     async def top_operators(
         self, window: Window, *, limit: int = DEFAULT_TOP_LIMIT
