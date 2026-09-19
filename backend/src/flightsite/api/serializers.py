@@ -1081,6 +1081,7 @@ def analytics_group_payload(rank: GroupRank) -> dict[str, Any]:
     return {
         "key": rank.key,
         "label": rank.label,
+        "description": rank.description,
         "sightings": rank.sightings,
         "unique_aircraft": rank.unique_aircraft,
         "days_seen": rank.days_seen,

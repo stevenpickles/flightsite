@@ -23,7 +23,9 @@ from flightsite.analytics.repository import AnalyticsRepository
 from flightsite.analytics.rollup import fold_day
 from flightsite.db import Database
 
-from .conftest import BASE_EPOCH_MS, NEW_YORK, seed_random_world
+from ..api.aircraft_history_fixtures import SeedAircraft
+from ..api.sighting_fixtures import SeedSighting, seed_sightings
+from .conftest import BASE_EPOCH_MS, MS_PER_HOUR, NEW_YORK, seed_random_world
 
 
 @pytest.fixture
@@ -199,6 +201,56 @@ async def test_the_windowed_group_rankings_report_days_seen_and_true_distincts(
         assert 1 <= row.days_seen <= len(world.days())
         assert 0 < row.unique_aircraft <= row.sightings
     assert all(row.label is not None for row in operators)
+    # The random world gives every airframe of a type the same model string,
+    # so each ranked designator's description is exactly that string; an
+    # operator group has a readable label instead and never a description.
+    assert [row.description for row in types] == [f"Model {row.key}" for row in types]
+    assert all(row.description is None for row in operators)
+
+
+async def test_a_type_is_described_by_the_model_most_of_its_airframes_carry(
+    database: Database, repository: AnalyticsRepository, queries: AnalyticsQueries, zone: ZoneInfo
+) -> None:
+    """Slice 074: the long form behind a designator comes from its own airframes.
+
+    Three B738s spell their model two ways, and the majority spelling wins;
+    two C172s disagree one-to-one, and the tie breaks alphabetically so the
+    answer never flips between runs; the EC35 has no model anywhere, so it is
+    honestly undescribed rather than guessed at.
+    """
+    day = local_day(BASE_EPOCH_MS, zone)
+    start_ms, end_ms = day_bounds_ms(day, zone)
+    at = start_ms + MS_PER_HOUR
+    models = {
+        "a00001": ("B738", "Boeing 737-8AS"),
+        "a00002": ("B738", "Boeing 737-800"),
+        "a00003": ("B738", "Boeing 737-800"),
+        "a00004": ("C172", "Cessna 172N"),
+        "a00005": ("C172", "Cessna 172M"),
+        "a00006": ("EC35", None),
+    }
+    aircraft = [
+        SeedAircraft(
+            icao24=icao, first_seen_ms=at, last_seen_ms=at, type_code=type_code, model=model
+        )
+        for icao, (type_code, model) in models.items()
+    ]
+    sightings = [
+        SeedSighting(icao24=icao, started_ms=at + offset, max_range_nm=10.0)
+        for offset, icao in enumerate(models)
+    ]
+    await seed_sightings(database, aircraft, sightings)
+    await repository.replace_day(
+        fold_day(day, await repository.facts_between(start_ms, end_ms), zone=zone, closed=True)
+    )
+
+    ranked = await queries.top_types(window(zone, day, day))
+
+    assert {row.key: row.description for row in ranked} == {
+        "B738": "Boeing 737-800",
+        "C172": "Cessna 172M",
+        "EC35": None,
+    }
 
 
 # ----------------------------------------------------- new_milestones (036)

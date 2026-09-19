@@ -596,7 +596,10 @@ async def test_top_types_counts_sightings_and_distinct_airframes(
     assert by_key["B738"]["sightings"] == 3
     assert by_key["B738"]["unique_aircraft"] == 1
     assert by_key["B738"]["days_seen"] == 2
+    # The long form behind the shorthand, from the airframes' own metadata.
+    assert by_key["B738"]["description"] == "Boeing 737-800"
     assert "C130" in by_key
+    assert by_key["C130"]["description"] == "Lockheed C-130"
     # a00003 has no resolved type, so it appears in no type bucket at all.
     assert sum(row["sightings"] for row in items) == 4
 
@@ -611,6 +614,8 @@ async def test_the_since_t0_type_ranking_comes_from_type_stats(
     assert [row["key"] for row in items] == ["B738", "C130"]
     assert items[0]["unique_aircraft"] == 1
     assert items[0]["first_seen_at"] is not None
+    # The since-T0 path describes its designators the same way the windowed one does.
+    assert [row["description"] for row in items] == ["Boeing 737-800", "Lockheed C-130"]
 
 
 async def test_top_operators_is_keyed_by_the_curated_group(
@@ -623,6 +628,8 @@ async def test_top_operators_is_keyed_by_the_curated_group(
     assert [row["label"] for row in items] == ["Alpha Airlines", "Beta Cargo"]
     assert items[0]["sightings"] == 3
     assert items[0]["unique_aircraft"] == 1
+    # An operator group's label is already the readable form; no description.
+    assert all(row["description"] is None for row in items)
 
 
 # ------------------------------------------------------------------ rarity

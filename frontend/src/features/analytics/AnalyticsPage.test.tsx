@@ -77,7 +77,9 @@ describe("AnalyticsPage", () => {
     expect(
       await screen.findByRole("img", { name: /top aircraft by sightings/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/05-8153 \(12\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/05-8153, C17 Boeing C-17A Globemaster III \(12\)/),
+    ).toBeInTheDocument();
   });
 
   it("defaults to the today preset and persists a change to the URL", async () => {
