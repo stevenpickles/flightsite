@@ -74,3 +74,48 @@ export function humanizeSlug(slug: string): string {
   const spaced = slug.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
+
+/** Cuts a long secondary axis label (a type's "Boeing 737-800 Next Gen…")
+ * to `max` characters with an ellipsis, so a horizontal bar chart keeps
+ * its bars; the tooltip carries the full text. */
+export function truncateLabel(text: string, max: number): string {
+  if (text.length <= max) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/** Metadata strings (registrations, operator names, model descriptions)
+ * are data from upstream sources, never markup — so anything that lands in
+ * an ECharts HTML tooltip goes through here first. */
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
+}
+
+/** Builds an ECharts HTML tooltip body from plain-text lines: the first
+ * kept line in bold, one line per entry, every line escaped, and `null`/
+ * empty entries dropped — so a card lists what it *might* know about a row
+ * and only the parts it actually knows are shown. */
+export function tooltipLines(lines: ReadonlyArray<string | null>): string {
+  const kept = lines.filter(
+    (line): line is string => line !== null && line.length > 0,
+  );
+  if (kept.length === 0) {
+    return "";
+  }
+  const [head, ...rest] = kept.map(escapeHtml);
+  return [`<strong>${head}</strong>`, ...rest].join("<br/>");
+}
+
+/** `"1 sighting"` / `"12 sightings"` — the count line of a ranking tooltip. */
+export function formatSightings(count: number): string {
+  return `${formatCompactNumber(count)} ${count === 1 ? "sighting" : "sightings"}`;
+}

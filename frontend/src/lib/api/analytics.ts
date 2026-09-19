@@ -91,10 +91,14 @@ export interface AnalyticsAircraftResponse {
 }
 
 /** One type designator or operator group in a §3.7 ranking. `key` is the
- * stable identifier, `label` what to display. */
+ * stable identifier, `label` what to display, and `description` the long
+ * form behind a type designator's shorthand ("Boeing 737-800" for B738) —
+ * `null` when the metadata has none, and always `null` for an operator
+ * group (slice 074). */
 export interface AnalyticsGroupRow {
   key: string;
   label: string | null;
+  description: string | null;
   sightings: number;
   unique_aircraft: number;
   days_seen: number;
