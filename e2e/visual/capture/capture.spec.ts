@@ -58,6 +58,14 @@ const fixtureDir = path.resolve(here, "..", FIXTURE_DIR_NAME);
  * `frontend/src/lib/ws/protocol.ts`. */
 const LIVE_WS_PATH = "/api/v1/ws/live";
 
+/** The live population the recording must reach before anything is
+ * captured — the lower edge of the demo roster's steady state, so the
+ * baselines show a working receiver rather than the first minute after
+ * boot. Reached a few minutes into the scenario; the timeout is generous
+ * because a capture is rare and a thin fixture is expensive to notice. */
+const MIN_LIVE_AIRCRAFT = 40;
+const POPULATION_TIMEOUT_MS = 600_000;
+
 interface CapturedSnapshot {
   seq: number;
   ts: string;
@@ -179,7 +187,32 @@ test("capture visual fixtures from a seeded demo stack", async ({
 
   // ---------------------------------------------------------------------
   // 3. Live Map — wait for a genuinely populated live picture.
+  //
+  // The demo roster ramps up from empty over its first minutes towards a
+  // steady ~40–80 concurrent aircraft (`flightsite.demo.roster`), and the
+  // live snapshot this capture keeps is the FIRST frame of the socket the
+  // page opens below. Recording seconds after `stack up` therefore locked a
+  // near-empty world into every baseline once, so wait — before the page
+  // ever connects — until the stack reports a populated picture.
   // ---------------------------------------------------------------------
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get("/api/v1/aircraft/current");
+        if (!response.ok()) {
+          return 0;
+        }
+        const body = (await response.json()) as { items: unknown[] };
+        return body.items.length;
+      },
+      {
+        message: `fewer than ${MIN_LIVE_AIRCRAFT} live aircraft after ${POPULATION_TIMEOUT_MS / 1000}s`,
+        timeout: POPULATION_TIMEOUT_MS,
+        intervals: [5_000],
+      },
+    )
+    .toBeGreaterThanOrEqual(MIN_LIVE_AIRCRAFT);
+
   await page.goto("/");
   await expect(page.locator('[role="status"][data-status]')).toHaveAttribute(
     "data-status",

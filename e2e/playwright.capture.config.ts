@@ -51,7 +51,9 @@ export default defineConfig({
   // Capture waits on the demo scenario populating a live picture and on
   // every panel's query resolving across five views; a cold stack makes
   // that legitimately slow.
-  timeout: 180_000,
+  // Generous: the capture first waits for the demo roster to populate (see
+  // visual/capture/capture.spec.ts), which takes minutes on a fresh stack.
+  timeout: 900_000,
   expect: { timeout: 30_000 },
 
   projects: [

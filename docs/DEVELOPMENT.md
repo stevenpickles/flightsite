@@ -163,13 +163,19 @@ The fixtures are regenerated separately, and much less often — only when the A
 changes shape or a view starts needing an endpoint the recording does not contain:
 
 ```bash
+(cd .. && docker compose build)        # first: the stack runs the LOCAL :latest images
 npm run visual:capture                 # re-record e2e/visual/fixtures/ from a demo stack
 npm run visual:update                  # then re-take the baselines
 ```
 
 `visual:capture` brings up its own seeded demo stack, drives all five views, writes
 `e2e/visual/fixtures/` (`api.har`, `live-snapshot.json`, `manifest.json`), and tears
-the stack down. Do not hand-edit the fixtures — re-capture instead.
+the stack down. Do not hand-edit the fixtures — re-capture instead. The stack
+(`scripts/stack.mjs`, shared with the flow suite) starts whatever
+`ghcr.io/stevenpickles/flightsite-{backend,frontend}:latest` images the local Docker
+daemon already holds and never rebuilds them — CI builds them in the same job — so
+build first, or the recording is of an old build and the capture fails on a panel
+that build does not have.
 
 ### Demo mode and capture/replay are the standard dev environment
 
