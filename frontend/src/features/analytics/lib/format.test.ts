@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   convertDistance,
   distanceUnitLabel,
+  escapeHtml,
   formatCompactNumber,
+  formatSightings,
   formatWindowLabel,
   humanizeSlug,
+  tooltipLines,
+  truncateLabel,
 } from "@/features/analytics/lib/format";
 
 describe("distanceUnitLabel", () => {
@@ -84,5 +88,44 @@ describe("humanizeSlug", () => {
 
   it("passes a single word through with capitalization", () => {
     expect(humanizeSlug("civilian")).toBe("Civilian");
+  });
+});
+
+describe("truncateLabel", () => {
+  it("leaves text within the limit untouched", () => {
+    expect(truncateLabel("Boeing 737-800", 24)).toBe("Boeing 737-800");
+  });
+
+  it("cuts longer text to the limit with an ellipsis, without a dangling space", () => {
+    const cut = truncateLabel("Lockheed C-130J Super Hercules", 16);
+    expect(cut).toBe("Lockheed C-130J…");
+    expect(cut.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe("escapeHtml", () => {
+  it("escapes the characters that would otherwise become markup", () => {
+    expect(escapeHtml(`<b>"Ma&Pa's"</b>`)).toBe(
+      "&lt;b&gt;&quot;Ma&amp;Pa&#39;s&quot;&lt;/b&gt;",
+    );
+  });
+});
+
+describe("tooltipLines", () => {
+  it("bolds the first line, drops empty ones, and escapes every line", () => {
+    expect(
+      tooltipLines(["N302DN", null, "", "Boeing <737>", "8 sightings"]),
+    ).toBe("<strong>N302DN</strong><br/>Boeing &lt;737&gt;<br/>8 sightings");
+  });
+
+  it("returns an empty string when nothing is known", () => {
+    expect(tooltipLines([null, ""])).toBe("");
+  });
+});
+
+describe("formatSightings", () => {
+  it("pluralizes", () => {
+    expect(formatSightings(1)).toBe("1 sighting");
+    expect(formatSightings(12)).toBe("12 sightings");
   });
 });

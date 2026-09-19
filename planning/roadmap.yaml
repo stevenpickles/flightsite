@@ -118,6 +118,12 @@ releases:
       demo classification airframes, true-cadence consumer follow-ups,
       labelled-count density tier, kill-drill and style-spec test hardening
       (slice 073). Recorded 2026-09-06."
+  - version: "v0.8.0"
+    after_phase: 8
+    theme: "Self-explanatory Analytics rankings: tail number and type on every
+      Top aircraft bar, the long-form description beside every Top types
+      designator, richer tooltips on both; visual capture waits for a populated
+      demo picture (slice 074). Recorded 2026-09-19."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2153,6 +2159,44 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Bundle slice for the six severity:low issues from slice 067's triage, opened 2026-09-05 after v0.6.1. One commit per issue. Added by Fable outside the phase plan."
+
+  - id: "074"
+    title: "Analytics ranking detail"
+    phase: 8
+    branch: "074-analytics-ranking-detail"
+    status: merged
+    depends_on: ["031", "032"]
+    objective: "Make the Analytics page's Top aircraft and Top types rankings self-explanatory: tail number plus type on every aircraft bar, and the long-form description beside every type designator (issue #198)."
+    scope:
+      - "Top aircraft card: each bar is labelled with the registration (ICAO hex fallback) and the ICAO type designator; the tooltip carries hex, type, model, operator and the sighting count; the accessible summary names identity and type"
+      - "Top types card: each bar keeps the designator shorthand and gains its long-form description as a muted second label segment (truncated on the axis, whole in the tooltip); the tooltip also carries sightings, distinct aircraft and days seen"
+      - "`GET /api/v1/analytics/top-types` rows gain `description`: the model string most of that designator's airframes carry in `aircraft_metadata_resolved`, ties broken alphabetically, `null` when no airframe of the type has a model; `top-operators` rows carry `description: null`"
+      - "documented in docs/API.md §3.8; no new dataset and no migration — the description is derived from metadata already imported"
+    out_of_scope:
+      - "an ICAO Doc 8643 designator table (a new dataset with its own licence and refresh cycle)"
+      - "detail routes for a type designator or an operator group"
+      - "re-recording the visual-regression fixtures; baseline screenshots are refreshed in the pinned container"
+    acceptance_criteria:
+      - "a top-aircraft bar reads `N302DN  B738` and its tooltip shows the model and operator; an airframe with no metadata reads as its hex alone"
+      - "a top-types bar reads `B738  Boeing 737-800`; a description longer than the axis allowance is cut with an ellipsis on the axis and whole in the tooltip"
+      - "`description` is the majority model per designator, alphabetical on a tie, and `null` for an undescribed type and for every operator group, on both the windowed and since-T0 paths"
+      - "every analytics endpoint stays inside the slice-031 query budget on the perf fixture"
+      - "`Closes #198` in the PR body"
+    required_tests:
+      - query-level description tests (majority, tie, absent) and API assertions on both type-ranking paths; card tests for axis label formatter, tooltip formatter, HTML escaping and the accessible summary; format helper tests
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/src/flightsite/api/schemas.py
+      - backend/src/flightsite/api/serializers.py
+      - backend/tests/analytics/
+      - frontend/src/features/analytics/components/cards/TopAircraftCard.tsx
+      - frontend/src/features/analytics/components/cards/TopGroupCard.tsx
+      - frontend/src/features/analytics/lib/format.ts
+      - frontend/src/lib/api/analytics.ts
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner request 2026-09-18: the Top aircraft ranking showed only a registration and Top types only a designator. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

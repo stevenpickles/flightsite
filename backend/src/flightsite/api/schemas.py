@@ -798,13 +798,19 @@ class AnalyticsGroupRow(_Model):
 
     ``key`` is the stable identifier a client filters by (the ICAO type
     designator, or the operator group id as a string); ``label`` is what to
-    display. ``days_seen`` is how many days of the window the group appeared
-    on, and is ``0`` for a since-T0 type ranking, which is read from the
+    display. ``description`` is the long form behind a type designator's
+    shorthand (``Boeing 737-800`` for ``B738``), derived from the imported
+    metadata as the model string most of that type's known airframes carry;
+    it is ``null`` when no airframe of the type has a model, and always
+    ``null`` for an operator group, whose ``label`` is already readable.
+    ``days_seen`` is how many days of the window the group appeared on, and
+    is ``0`` for a since-T0 type ranking, which is read from the
     ``type_stats`` totals rather than from daily rows.
     """
 
     key: str
     label: str | None = None
+    description: str | None = None
     sightings: int
     unique_aircraft: int
     days_seen: int

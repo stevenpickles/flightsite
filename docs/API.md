@@ -473,6 +473,15 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 
+`top-types` and `top-operators` share one row shape: `key` (the ICAO type
+designator, or the operator group id as a string), `label` (what to display),
+`sightings`, `unique_aircraft`, `days_seen`, `first_seen_at`/`last_seen_at`, and
+`description` (slice 074). `description` is the long form behind a type
+designator's shorthand — `"Boeing 737-800"` for `B738` — derived from the imported
+metadata as the model string most of that type's known airframes carry, so it
+needs no separate designator dataset; it is `null` when no airframe of the type
+carries a model, and always `null` for an operator group.
+
 ### 3.9 Receiver statistics — slices 033/034
 
 | Path | Returns |

@@ -5,6 +5,37 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.8.0] — 2026-09-19
+
+The Analytics page's two headline rankings now explain themselves: an
+aircraft is named by its tail number and type, and a type by its designator
+and its long-form description.
+
+### Added
+- **Top aircraft** bars carry the registration (ICAO hex when none is known)
+  and the ICAO type designator; the tooltip shows hex, type and model, operator
+  and sighting count, and the screen-reader summary names identity and type
+  (#198)
+- **Top types** bars carry the designator's long-form description beside the
+  shorthand — `B738  Boeing 737-800` — cut on the axis and whole in the
+  tooltip, which also shows sightings, distinct aircraft and days seen (#198)
+- `GET /api/v1/analytics/top-types` rows gain `description`: derived from the
+  metadata already imported as the model string most of that designator's
+  airframes carry, ties broken alphabetically, `null` when no airframe of the
+  type has a model. No new dataset and no migration; `top-operators` rows
+  carry `description: null` (`docs/API.md` §3.8)
+
+### Changed
+- Metadata strings (registrations, operator names, model descriptions) are
+  HTML-escaped before they reach an ECharts tooltip
+- The visual-regression fixtures and Analytics baselines were re-recorded to
+  carry the new field and labels
+
+### Known issues
+- #153 (clean Raspberry Pi 4 qualification on non-SD storage) remains
+  deferred by the owner; #185 (a full metadata import starves live consumers
+  for the duration of the run) is open at low severity
+
 ## [0.7.0] — 2026-09-06
 
 The tracker is empty. This release clears the six low-severity items that
