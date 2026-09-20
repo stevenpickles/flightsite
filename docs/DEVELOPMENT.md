@@ -435,8 +435,9 @@ Rules:
    Alembic merge revision) before merging.
 2. **Serialization of migration/worker slices.** Slices that add migrations or extend
    the slice-009 persistence worker — **021, 024, 026, 027, 031, 033, 035, 037, 038,
-   052** — are serialized against each other even when the dependency graph would
-   allow parallelism. Only non-migration slices run in parallel with them.
+   052**, and the later migration-bearing ones (**070, 071, 072, 075**) — are
+   serialized against each other even when the dependency graph would allow
+   parallelism. Only non-migration slices run in parallel with them.
 3. **CI enforcement.** CI runs `alembic check` / multiple-heads detection; a divergent
    head fails the build.
 

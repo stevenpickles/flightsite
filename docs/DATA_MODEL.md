@@ -312,8 +312,8 @@ Field-level precedence is resolved **at import time** into one row per icao24, w
 source tag beside every resolved field. Rationale: the Aircraft page sorts and filters
 on resolved type/operator in SQL, so resolution must be materialized; a generic
 per-field EAV provenance table was rejected as slow and unqueryable at this scale.
-Rebuilt inside the import transaction; also refreshed for a single aircraft when a
-better source arrives.
+Built before the import transaction and installed by it (below); also refreshed for a
+single aircraft when a better source arrives.
 
 ```sql
 CREATE TABLE aircraft_metadata_resolved (
@@ -331,6 +331,26 @@ CREATE INDEX ix_amr_registration ON aircraft_metadata_resolved(registration);
 CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
 ```
+
+Rebuilt whole on every metadata import — but **not** inside the promotion transaction.
+Resolving an airframe is Python work, and doing it for a million of them under the single
+writer stalled everything else that writes (issue #185). Since slice 075 the new resolution
+is built first, page by page, into
+
+```sql
+CREATE TABLE aircraft_metadata_resolved_staging (  -- identical columns to the above
+  icao24            TEXT PRIMARY KEY,
+  ...                                              -- no FK, no indexes
+  updated_ms        INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+and the promotion then installs it with one `INSERT … SELECT`. The scratch table carries
+**no** `operator_groups` foreign key — its group ids belong to the curated directory the
+same transaction is about to install, so the reference would be checked against the
+outgoing one — and **no** secondary indexes, since nothing queries it. Rows in it are
+scratch in the same sense as `aircraft_metadata_staging`'s: cleared when a build starts,
+consumed by the promotion, and emptied by `Clear Metadata Cache`.
 
 `*_src` values: `mictronics | faa`, plus `opensky` on installs that enabled the
 opt-in OpenSky source (ADR-0013) — and there only in `model_src`, `year_src`,
@@ -372,6 +392,20 @@ CREATE INDEX ix_class_gov ON aircraft_classification(government) WHERE governmen
 CREATE INDEX ix_class_law ON aircraft_classification(law_enforcement) WHERE law_enforcement = 1;
 CREATE INDEX ix_class_mission ON aircraft_classification(mission_category);
 ```
+
+Built beside the resolved rows and by the same pass, into the same kind of scratch table:
+
+```sql
+CREATE TABLE aircraft_classification_staging (  -- identical columns to the above
+  icao24            TEXT PRIMARY KEY,
+  ...                                           -- no CHECK, no indexes
+  updated_ms        INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+No `CHECK` on `mission_category` and no partial indexes: the vocabulary is enforced where
+the rows come to rest, one `INSERT … SELECT` later, and nothing reads this table in
+between (slice 075).
 
 `*_src` values: `mictronics | faa | heuristic`.
 
@@ -1008,3 +1042,4 @@ field names; ingest normalizes before anything is persisted.
 | 038 | `alert_rules`, `alert_matches` |
 | 070 | `route_cache` gains `confirmations` / `first_fetched_ms` and the `restricted` status (rev 0014, a table rebuild) |
 | 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |
+| 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |

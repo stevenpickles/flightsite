@@ -195,6 +195,19 @@ and the checkpoint rows are deleted. Sufficient for future playback without
 implementing it, and it keeps multi-year track storage inside the Pi 4 budget
 (slice 052).
 
+Metadata import (slice 021, reshaped in 075): a source's snapshot is staged in short
+writer transactions, then **resolution and classification are computed before the
+promotion transaction, not inside it**. The post-swap claim view — every other source's
+live rows plus this source's staged ones — is paged through read sessions, resolved and
+classified in a worker thread, and written to two scratch tables in one short writer
+transaction per page. The promotion itself is then a handful of set-based statements:
+swap the source's rows, replace the resolved, classification and curated operator tables
+from their scratch tables, record the status. It is still one transaction, so a failure
+anywhere leaves the previous dataset intact (SPEC §27); it is simply no longer a
+transaction that holds the single writer while a million airframes are resolved in
+Python — which is what starved the persistence worker and the alert engine of the writer
+lock until their bounded queues overflowed (issue #185).
+
 Unclean shutdown: WAL recovery + startup `quick_check` + repair/closure of sightings
 left open, with diagnostics (slices 005/053/044).
 
