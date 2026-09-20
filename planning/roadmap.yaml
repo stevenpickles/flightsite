@@ -2202,7 +2202,7 @@ slices:
     title: "Metadata import off the live path & honest drop attribution"
     phase: 8
     branch: "075-import-live-path-isolation"
-    status: in_progress
+    status: merged
     depends_on: ["021", "024", "042", "071"]
     objective: "Keep the 1 Hz live consumers fed while a full metadata import promotes, and report shed live events per subscriber instead of under the WebSocket (issue #185; tracking issue #203)."
     scope:
