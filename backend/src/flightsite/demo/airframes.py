@@ -16,9 +16,9 @@ identity — a genuine operator name from the curated directory, a real type
 designator, a plausible registration — and those rows are written to
 ``aircraft_metadata`` through the same repository the importer writes through.
 Everything downstream is then the ordinary path: precedence resolves the rows,
-``rebuild_resolved`` classifies them, the metadata cache loads the resolved
-view when the aircraft appears, and a rule matches on the classification it
-finds. Nothing in :mod:`flightsite.classification` or
+the promotion's resolution build classifies them, the metadata cache loads the
+resolved view when the aircraft appears, and a rule matches on the
+classification it finds. Nothing in :mod:`flightsite.classification` or
 :mod:`flightsite.alerts` learns that demo mode exists.
 
 Two deliberate choices:
@@ -180,7 +180,9 @@ async def seed_demo_metadata(
     optimized away: demo mode on a populated install is a deliberate act, the
     figure is the one slice 071 already measures for an import, and the
     alternative (a partial rebuild for one source) would be a second resolution
-    path to keep honest for the sake of a mode nobody runs a receiver in.
+    path to keep honest for the sake of a mode nobody runs a receiver in. Since
+    slice 075 that rebuild happens off the writer lock, so it no longer stalls
+    the rest of a starting process either.
     """
     records = demo_metadata_records(roster)
     if not records:  # pragma: no cover - only if every category table emptied

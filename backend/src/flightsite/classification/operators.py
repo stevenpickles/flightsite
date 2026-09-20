@@ -211,7 +211,8 @@ class OperatorDirectory:
         name the file lists appears whether or not the receiver has ever heard
         that operator. Names discovered by *pattern* during an import are added
         beside these — see
-        :meth:`~flightsite.metadata.repository.MetadataRepository.rebuild_resolved`.
+        :meth:`~flightsite.metadata.repository.MetadataRepository.build_resolution`,
+        which collects them, and the promotion that writes them.
         """
         return [
             {"name": name, "group_id": self._ids[group.slug]}

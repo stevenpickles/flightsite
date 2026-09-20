@@ -9,31 +9,65 @@ Two rules shape this module:
 **Short writer transactions.** The process has one writer session and it is
 shared with sighting persistence, so an import must never hold it for the
 length of a download-sized write. Staging is loaded in batches, each its own
-short transaction; the writer lock is released between them. Only the promotion
-— a handful of set-based statements plus the resolved rebuild — runs as one
+short transaction; the writer lock is released between them. So is the
+resolution a promotion installs: it is *built* first, a page at a time, and
+only the swap itself — a handful of set-based statements — runs as one
 transaction, because only it has to be atomic.
 
-**Atomicity where it is load-bearing.** :meth:`MetadataRepository.promote` does
-the whole visible swap inside one transaction: the source's old rows go, the
-staged rows land, staging is cleared, ``aircraft_metadata_resolved``, the
-curated operator tables and ``aircraft_classification`` are rebuilt, and the
-status row is updated. Any exception rolls all of it back, which is what makes
-SPEC §27's *"preserves the previous working dataset if an import fails"* a
-property of the storage layer rather than a hope about error handling — and
-what keeps an airframe's metadata and its classification describing the same
-dataset at every instant a reader could look.
+**Atomicity where it is load-bearing.** :meth:`MetadataRepository.promote`
+does the whole visible swap inside one transaction: the source's old rows go,
+the staged rows land, staging is cleared, ``aircraft_metadata_resolved``, the
+curated operator tables and ``aircraft_classification`` are replaced from the
+resolution built beforehand, and the status row is updated. Any exception
+rolls all of it back, which is what makes SPEC §27's *"preserves the previous
+working dataset if an import fails"* a property of the storage layer rather
+than a hope about error handling — and what keeps an airframe's metadata and
+its classification describing the same dataset at every instant a reader could
+look.
 
-The resolved rebuild streams rather than loading the table: a snapshot runs to
-hundreds of thousands of airframes, and keyset pagination over ``icao24`` keeps
-peak memory at one chunk (``docs/ARCHITECTURE.md`` §6, "streamed imports").
-Rows for one airframe are contiguous under the ``(icao24, source)`` primary key,
-so a chunk boundary is the only thing that could split an airframe's claims —
-and :meth:`MetadataRepository._claim_groups` never emits a group it has not seen
-the end of.
+Promotion in two phases (slice 075, issue #185)
+-----------------------------------------------
+
+Resolution and classification are Python work over *every* airframe in the
+database, not just the imported source's: precedence merges each airframe's
+per-source claims, and the classifier reads the merged result. Until slice 075
+that pass ran inside the promotion transaction, on the event loop, holding the
+single writer for as long as it took — minutes, at the owner's ~900k
+airframes. The persistence worker and the alert engine take the same lock to
+drain their bounded queues, so they stopped draining, overflowed, and resynced.
+
+So the pass moved out of the transaction, ahead of it:
+
+1. :meth:`MetadataRepository.build_resolution` pages the **post-swap claim
+   view** — every other source's live rows plus this source's *staged* rows,
+   which is exactly what ``aircraft_metadata`` will hold once the swap
+   happens — through a fresh read session per page, resolves and classifies
+   each page in a worker thread (``docs/ARCHITECTURE.md`` §3.3), and writes
+   the results to ``aircraft_metadata_resolved_staging`` and
+   ``aircraft_classification_staging`` in one short writer transaction per
+   page. Nothing it touches is visible to a reader: all three tables it writes
+   are scratch, so a failure here leaves the installed dataset untouched and
+   the next run clears what it left behind.
+2. :meth:`MetadataRepository.promote` then swaps: metadata rows, resolved
+   rows, classification rows and the curated operator tables, all with
+   set-based statements over tables that are already in their final shape.
+
+The two phases are sequential within one promotion and a promotion is the only
+writer of these scratch tables; imports run one source at a time, so no second
+build can be in flight while a swap runs.
+
+The claim view is paged rather than loaded: a snapshot runs to hundreds of
+thousands of airframes, and keyset pagination over ``icao24`` keeps peak
+memory at one page (``docs/ARCHITECTURE.md`` §6, "streamed imports"). Rows for
+one airframe are contiguous under the ``(icao24, source)`` primary key, so a
+page boundary is the only thing that could split an airframe's claims — and
+:meth:`MetadataRepository._claim_pages` never emits a page it has not seen the
+end of.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Final
@@ -47,7 +81,6 @@ from flightsite.classification.engine import classify
 from flightsite.classification.model import Evidence
 from flightsite.classification.operators import OperatorDirectory, default_directory
 from flightsite.classification.store import (
-    add_classifications,
     add_operators,
     clear_classifications,
     sync_operator_directory,
@@ -56,8 +89,10 @@ from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
     AircraftClassification,
+    AircraftClassificationStaging,
     AircraftMetadata,
     AircraftMetadataResolved,
+    AircraftMetadataResolvedStaging,
     AircraftMetadataStaging,
     MetadataSource,
     Operator,
@@ -87,13 +122,24 @@ METADATA_COLUMNS: Final[tuple[str, ...]] = (
     "updated_ms",
 )
 
+#: Columns of ``aircraft_metadata_resolved`` and of
+#: ``aircraft_classification``, each shared with its staging table. Read off
+#: the models rather than listed: the two shapes come from one declarative
+#: mixin apiece (``_ResolvedColumns``, ``_ClassificationColumns``), so there is
+#: one definition and the swap's ``INSERT ... SELECT`` cannot drift from it.
+RESOLVED_COLUMNS: Final[tuple[str, ...]] = tuple(AircraftMetadataResolved.__table__.columns.keys())
+CLASSIFICATION_COLUMNS: Final[tuple[str, ...]] = tuple(
+    AircraftClassification.__table__.columns.keys()
+)
+
 #: Rows per ``INSERT`` statement while loading staging. Large enough that
 #: per-statement overhead disappears, small enough that one statement's bound
 #: parameters stay well inside SQLite's limits.
 STAGE_BATCH_ROWS: Final = 1_000
 
-#: Rows read per page while rebuilding the resolved table. At two sources per
-#: airframe this is a few thousand airframes per round trip.
+#: Claim rows read per page while building a resolution. At two sources per
+#: airframe this is a few thousand airframes per round trip — and per worker
+#: thread hop, and per short writer transaction.
 REBUILD_PAGE_ROWS: Final = 4_000
 
 #: Addresses bound into one lookup. SQLite's default host-parameter limit is
@@ -155,6 +201,32 @@ class MetadataClearCounts:
     operator_rows: int
     operator_group_rows: int
     sources_reset: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionBuild:
+    """What :meth:`MetadataRepository.build_resolution` left in the scratch tables.
+
+    The rows themselves stayed in the database — that is the whole point of
+    building them there — so this carries only what the swap cannot read back
+    out of them: how many resolved rows there are, and the operator names the
+    dataset turned out to use that a curated *phrase* claimed. The latter has
+    no table to live in until the swap replaces the curated ones, so it is
+    accumulated in memory across pages, one entry per distinct name rather
+    than one per airframe.
+    """
+
+    written: int
+    discovered: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedPage:
+    """One page of claims, resolved and classified — the worker thread's output."""
+
+    resolved: list[dict[str, str | int | None]]
+    classifications: list[dict[str, str | int | float | None]]
+    discovered: dict[str, int]
 
 
 class MetadataRepository:
@@ -314,14 +386,24 @@ class MetadataRepository:
         dataset_version: str,
         row_count: int,
     ) -> None:
-        """Swap ``source``'s staged rows in and rebuild resolution. Atomic.
+        """Swap ``source``'s staged rows in, with a resolution built first.
 
-        One transaction covers the entire visible change: the source's previous
-        rows are replaced, staging is emptied, every resolved row is rebuilt
-        from the new picture, and the status row records the success. A failure
-        anywhere inside rolls the lot back, leaving the previous dataset — and
-        the previous resolved table — exactly as they were.
+        Two phases, and only the second is a transaction.
+
+        :meth:`build_resolution` runs first and writes nothing a reader can
+        see: it resolves and classifies the picture the swap is *about* to
+        install, into the two scratch tables, off the writer lock. Then one
+        transaction covers the entire visible change — the source's previous
+        rows are replaced, staging is emptied, the resolved and classification
+        tables are replaced from their scratch tables, and the status row
+        records the success. A failure anywhere inside rolls the lot back,
+        leaving the previous dataset exactly as it was; a failure in the first
+        phase never reached it at all.
         """
+        resolver = default_directory()
+        build = await self.build_resolution(
+            source, precedence=precedence, at_ms=at_ms, directory=resolver
+        )
         async with self._database.writer_session() as session:
             await session.execute(delete(AircraftMetadata).where(AircraftMetadata.source == source))
             columns = [getattr(AircraftMetadataStaging, name) for name in METADATA_COLUMNS]
@@ -334,7 +416,7 @@ class MetadataRepository:
             await session.execute(
                 delete(AircraftMetadataStaging).where(AircraftMetadataStaging.source == source)
             )
-            await self.rebuild_resolved(session, precedence=precedence, at_ms=at_ms)
+            await self._install_resolution(session, build=build, resolver=resolver)
             await self._update_source_in(
                 session,
                 source,
@@ -346,82 +428,131 @@ class MetadataRepository:
                 last_error=None,
             )
 
+    async def build_resolution(
+        self,
+        source: str | None = None,
+        *,
+        precedence: PrecedenceModel,
+        at_ms: int,
+        directory: OperatorDirectory | None = None,
+    ) -> ResolutionBuild:
+        """Resolve and classify every airframe into the two scratch tables.
+
+        Phase one of a promotion, and the reason a promotion no longer holds
+        the writer for minutes (slice 075, issue #185). **Touches only scratch
+        tables** — ``aircraft_metadata_resolved_staging`` and
+        ``aircraft_classification_staging`` — so it is safe to fail: the
+        installed dataset is not involved, and the next build clears whatever
+        this one left behind.
+
+        ``source`` names the source whose *staged* rows stand in for its live
+        ones, which is what makes this the post-swap picture rather than the
+        current one. ``None`` resolves the live table as it is, which is what
+        :meth:`rebuild_resolved` wants.
+
+        One pass, three outputs, because they all read the same thing: an
+        airframe's per-source claims. Splitting classification into a second
+        pass would re-read every claim for evidence this one already has in
+        hand, and would have to read the military bit from a resolved table
+        that (by design, ``docs/DATA_MODEL.md`` §3.3) does not carry it.
+
+        Per page: one read session, one worker thread, one short writer
+        transaction — in that order, one page at a time. The thread is where
+        ``PrecedenceModel.resolve`` and :func:`classify` run, which is what
+        keeps hundreds of thousands of airframes' worth of Python off the
+        event loop (``docs/ARCHITECTURE.md`` §3.3); one page is in flight at a
+        time because the work is CPU-bound and the point is to yield the
+        writer lock between pages, not to race for it.
+
+        Airframes for which no source supplies a single resolvable field are
+        omitted from the resolved rows rather than written as an all-``NULL``
+        row: absence is the honest representation of "nothing is known". They
+        can still earn a classification row — an airframe known only by a
+        military bit has nothing to resolve and something to say — and an
+        airframe whose classification asserts nothing is likewise left out
+        rather than stored as a row of negatives.
+        """
+        resolver = directory if directory is not None else default_directory()
+        async with self._database.writer_session() as session:
+            await self._delete_resolution_staging(session)
+
+        written = 0
+        # Operator strings the *dataset* uses that a curated phrase claims.
+        # Curated exact names are written by the directory sync; these are the
+        # ones only an import can discover, and they are collected rather than
+        # inserted per row so one name seen on a thousand airframes is written
+        # once — by the swap, which is the transaction that owns that table.
+        discovered: dict[str, int] = {}
+
+        async for claims in self._claim_pages(source):
+            page = await asyncio.to_thread(
+                _resolve_claims, claims, precedence=precedence, resolver=resolver, at_ms=at_ms
+            )
+            discovered.update(page.discovered)
+            written += len(page.resolved)
+            async with self._database.writer_session() as session:
+                await _insert_rows(session, AircraftMetadataResolvedStaging, page.resolved)
+                await _insert_rows(session, AircraftClassificationStaging, page.classifications)
+
+        return ResolutionBuild(written=written, discovered=discovered)
+
     async def rebuild_resolved(
         self,
-        session: AsyncSession,
         *,
         precedence: PrecedenceModel,
         at_ms: int,
         directory: OperatorDirectory | None = None,
     ) -> int:
-        """Rebuild resolution, operator grouping and classification together.
+        """Rebuild resolution, operator grouping and classification from the live rows.
 
-        Runs inside the caller's transaction — normally the promotion's — so
-        none of the three tables is ever observable in a half-rebuilt state.
-        Returns the number of resolved rows written.
+        :meth:`promote` without the metadata swap: the same two phases over
+        ``aircraft_metadata`` as it already stands. Returns the number of
+        resolved rows written. Used when the inputs to resolution changed but
+        the data did not — a different curated directory, a source that is no
+        longer registered.
+        """
+        resolver = directory if directory is not None else default_directory()
+        build = await self.build_resolution(precedence=precedence, at_ms=at_ms, directory=resolver)
+        async with self._database.writer_session() as session:
+            await self._install_resolution(session, build=build, resolver=resolver)
+        return build.written
 
-        One pass, three outputs, because they all read the same thing: an
-        airframe's per-source claims. Splitting classification into a second
-        pass would re-read ``aircraft_metadata`` end to end for evidence this
-        loop already has in hand, and would have to read the military bit from
-        a resolved table that (by design, ``docs/DATA_MODEL.md`` §3.3) does not
-        carry it.
+    async def _install_resolution(
+        self,
+        session: AsyncSession,
+        *,
+        build: ResolutionBuild,
+        resolver: OperatorDirectory,
+    ) -> None:
+        """Move a built resolution into the live tables, in the caller's transaction.
+
+        Every statement here is a ``DELETE`` or an ``INSERT ... SELECT`` over a
+        whole table: no row is examined in Python, which is the property that
+        bounds how long the writer lock is held.
 
         The order is fixed by ``foreign_keys=ON`` (ADR-0001): resolved rows
         reference ``operator_groups``, so they are cleared *before* the curated
-        group rows are replaced, and written again afterwards.
-
-        Airframes for which no source supplies a single resolvable field are
-        omitted from the resolved table rather than written as an all-``NULL``
-        row: absence is the honest representation of "nothing is known". They
-        can still earn a classification row — an airframe known only by a
-        military bit has nothing to resolve and something to say — and an
-        airframe whose classification asserts nothing is likewise left out of
-        ``aircraft_classification`` rather than stored as a row of negatives.
+        group rows are replaced and inserted *after* — which is also why the
+        scratch table carries no such reference, since the group ids in it
+        belong to a directory that is not installed yet.
         """
-        resolver = directory if directory is not None else default_directory()
         await session.execute(delete(AircraftMetadataResolved))
         await clear_classifications(session)
         await sync_operator_directory(session, resolver)
+        await _install_from_staging(
+            session, AircraftMetadataResolved, AircraftMetadataResolvedStaging, RESOLVED_COLUMNS
+        )
+        await _install_from_staging(
+            session, AircraftClassification, AircraftClassificationStaging, CLASSIFICATION_COLUMNS
+        )
+        await self._delete_resolution_staging(session)
+        await self._add_discovered_operators(session, dict(build.discovered))
 
-        written = 0
-        pending: list[dict[str, str | int | None]] = []
-        classifications: list[dict[str, str | int | float | None]] = []
-        # Operator strings the *dataset* uses that a curated phrase claims.
-        # Curated exact names are already in the table; these are the ones only
-        # an import can discover, and they are collected rather than inserted
-        # per row so one name seen on a thousand airframes is written once.
-        discovered: dict[str, int] = {}
-
-        async for icao24, claims in self._claim_groups(session):
-            resolved = precedence.resolve(icao24, claims, updated_ms=at_ms)
-            operator_name = resolved.operator_name
-            match = resolver.match(operator_name)
-            if match is not None and operator_name is not None:
-                resolved = replace(resolved, operator_group_id=match.group_id)
-                discovered[operator_name] = match.group_id
-            if not resolved.is_empty:
-                pending.append(resolved.as_row())
-
-            classification = classify(_evidence(icao24, resolved, claims), directory=resolver)
-            if not classification.is_unknown:
-                classifications.append(classification.as_row(icao24, updated_ms=at_ms))
-
-            if len(pending) >= STAGE_BATCH_ROWS:
-                await session.execute(insert(AircraftMetadataResolved), pending)
-                written += len(pending)
-                pending = []
-            if len(classifications) >= STAGE_BATCH_ROWS:
-                await add_classifications(session, classifications)
-                classifications = []
-
-        if pending:
-            await session.execute(insert(AircraftMetadataResolved), pending)
-            written += len(pending)
-        if classifications:
-            await add_classifications(session, classifications)
-        await self._add_discovered_operators(session, discovered)
-        return written
+    @staticmethod
+    async def _delete_resolution_staging(session: AsyncSession) -> None:
+        """Empty both resolution scratch tables on the caller's session."""
+        await session.execute(delete(AircraftMetadataResolvedStaging))
+        await session.execute(delete(AircraftClassificationStaging))
 
     @staticmethod
     async def _add_discovered_operators(session: AsyncSession, discovered: dict[str, int]) -> None:
@@ -446,57 +577,46 @@ class MetadataRepository:
         ]
         await add_operators(session, rows)
 
-    async def _claim_groups(
-        self, session: AsyncSession
-    ) -> AsyncIterator[tuple[str, list[SourceClaim]]]:
-        """Yield ``(icao24, claims)`` for every airframe, in ``icao24`` order.
+    async def _claim_pages(self, source: str | None) -> AsyncIterator[Sequence[RowMapping]]:
+        """Yield the claim view a page at a time, in ``(icao24, source)`` order.
 
-        Keyset pagination rather than a held cursor: the same transaction is
-        writing to ``aircraft_metadata_resolved`` between pages, and paging by
-        the primary key keeps reads and writes from sharing a cursor. A page is
-        cut back to its last complete airframe, so an airframe's claims are
-        never split across two groups.
+        Keyset pagination on a **fresh read session per page**, rather than one
+        cursor held open: a build runs for minutes over a million airframes,
+        and a read transaction held for its duration would pin a WAL snapshot
+        that the writes landing behind it then pile up on. Paging by the
+        primary key costs one index seek per page and holds nothing between
+        them.
+
+        A page is cut back to its last complete airframe, so an airframe's
+        claims are never split across two pages and each page can be resolved
+        on its own.
         """
+        sql = _LIVE_CLAIM_PAGE_SQL if source is None else _STAGED_CLAIM_PAGE_SQL
         after = ""
         while True:
-            rows = (
-                (
-                    await session.execute(
-                        select(AircraftMetadata)
-                        .where(AircraftMetadata.icao24 > after)
-                        .order_by(AircraftMetadata.icao24, AircraftMetadata.source)
-                        .limit(REBUILD_PAGE_ROWS)
-                    )
-                )
-                .scalars()
-                .all()
-            )
+            params: dict[str, Any] = {"after": after, "limit": REBUILD_PAGE_ROWS}
+            if source is not None:
+                params["source"] = source
+            async with self._database.read_session() as session:
+                rows = (await session.execute(text(sql), params)).mappings().all()
             if not rows:
                 return
 
-            complete = list(rows)
+            complete: Sequence[RowMapping] = rows
             if len(rows) == REBUILD_PAGE_ROWS:
                 # The final airframe on a full page may continue onto the next
                 # one; leave it for the next round rather than resolving half
                 # of its claims.
-                last = rows[-1].icao24
-                complete = [row for row in rows if row.icao24 != last]
+                last = rows[-1]["icao24"]
+                complete = [row for row in rows if row["icao24"] != last]
                 if not complete:  # pragma: no cover - see below
                     # One airframe filling an entire page would need
                     # REBUILD_PAGE_ROWS sources, so this cannot happen — but
                     # if it ever did, resolving it from a full page beats
                     # looping forever on a cursor that never advances.
-                    complete = list(rows)
-            after = complete[-1].icao24
-
-            current: list[SourceClaim] = []
-            current_icao = complete[0].icao24
-            for row in complete:
-                if row.icao24 != current_icao:
-                    yield current_icao, current
-                    current_icao, current = row.icao24, []
-                current.append(_to_claim(row))
-            yield current_icao, current
+                    complete = rows
+            after = str(complete[-1]["icao24"])
+            yield complete
 
     # ------------------------------------------------------------- lookups
 
@@ -619,6 +739,7 @@ class MetadataRepository:
             await clear_classifications(session)
             await session.execute(delete(Operator))
             await session.execute(delete(OperatorGroup))
+            await self._delete_resolution_staging(session)
             await session.execute(delete(AircraftMetadataStaging))
             await session.execute(delete(AircraftMetadata))
             reset = await session.execute(
@@ -676,6 +797,53 @@ LEFT JOIN operator_groups AS g ON g.id = r.operator_group_id
 """
 
 
+#: Columns of the claim view: everything a :class:`SourceClaim` is made of.
+#: ``flags_json`` and ``updated_ms`` are deliberately not read — precedence
+#: stamps its own ``updated_ms`` and nothing in resolution reads the opaque
+#: flags — so a page carries only what it uses.
+_CLAIM_COLUMNS: Final = (
+    "icao24, source, registration, type_code, model, manufacture_year, "
+    "operator_name, owner, military_flag"
+)
+
+#: One page of the **post-swap** claim view: every other source's live rows
+#: plus ``:source``'s staged ones, which is what ``aircraft_metadata`` will
+#: hold once the swap runs.
+#:
+#: Each branch is limited and ordered in a subquery of its own, because SQLite
+#: applies a trailing ``ORDER BY``/``LIMIT`` to the compound as a whole — and a
+#: compound that had to sort both tables end to end to produce one page would
+#: turn the keyset pagination into a full sort per page. Limiting each branch
+#: first is exact, not an approximation: the globally first ``:limit`` rows are
+#: always contained in the union of each branch's first ``:limit``.
+_STAGED_CLAIM_PAGE_SQL: Final = f"""
+SELECT {_CLAIM_COLUMNS} FROM (
+    SELECT {_CLAIM_COLUMNS} FROM aircraft_metadata
+     WHERE icao24 > :after AND source <> :source
+     ORDER BY icao24, source
+     LIMIT :limit
+)
+UNION ALL
+SELECT {_CLAIM_COLUMNS} FROM (
+    SELECT {_CLAIM_COLUMNS} FROM aircraft_metadata_staging
+     WHERE icao24 > :after AND source = :source
+     ORDER BY icao24, source
+     LIMIT :limit
+)
+ORDER BY icao24, source
+LIMIT :limit
+"""
+
+#: One page of the claim view as the live table already stands — the rebuild
+#: that resolves what is installed rather than what is about to be.
+_LIVE_CLAIM_PAGE_SQL: Final = f"""
+SELECT {_CLAIM_COLUMNS} FROM aircraft_metadata
+ WHERE icao24 > :after
+ ORDER BY icao24, source
+ LIMIT :limit
+"""
+
+
 def _resolved_from_mapping(icao24: str, mapping: RowMapping) -> ResolvedMetadata | None:
     """Build a resolved record from a joined row, or ``None`` if there was none."""
     if mapping["updated_ms"] is None:
@@ -724,19 +892,100 @@ def _staging_row(
     }
 
 
-def _to_claim(row: AircraftMetadata) -> SourceClaim:
+def _to_claim(mapping: RowMapping) -> SourceClaim:
+    """One claim row of the claim view, as the precedence model wants it."""
+    military = mapping["military_flag"]
     return SourceClaim(
-        source=row.source,
+        source=str(mapping["source"]),
         record=NormalizedAircraftRecord(
-            icao24=row.icao24,
-            registration=row.registration,
-            type_code=row.type_code,
-            model=row.model,
-            manufacture_year=row.manufacture_year,
-            operator_name=row.operator_name,
-            owner=row.owner,
-            military_flag=None if row.military_flag is None else bool(row.military_flag),
+            icao24=str(mapping["icao24"]),
+            registration=mapping["registration"],
+            type_code=mapping["type_code"],
+            model=mapping["model"],
+            manufacture_year=mapping["manufacture_year"],
+            operator_name=mapping["operator_name"],
+            owner=mapping["owner"],
+            military_flag=None if military is None else bool(military),
         ),
+    )
+
+
+def _resolve_claims(
+    rows: Sequence[RowMapping],
+    *,
+    precedence: PrecedenceModel,
+    resolver: OperatorDirectory,
+    at_ms: int,
+) -> _ResolvedPage:
+    """Resolve and classify one page of claims. Pure, and therefore threadable.
+
+    Runs on a worker thread (:meth:`MetadataRepository.build_resolution`), so
+    it touches no session and no repository state: it takes rows already read
+    and returns rows not yet written. ``rows`` arrive in ``(icao24, source)``
+    order and end on a complete airframe, so grouping is a single pass.
+    """
+    page = _ResolvedPage(resolved=[], classifications=[], discovered={})
+    claims: list[SourceClaim] = []
+    current = ""
+    for row in rows:
+        icao24 = str(row["icao24"])
+        if icao24 != current:
+            if claims:
+                _resolve_airframe(page, current, claims, precedence, resolver, at_ms)
+            current, claims = icao24, []
+        claims.append(_to_claim(row))
+    if claims:
+        _resolve_airframe(page, current, claims, precedence, resolver, at_ms)
+    return page
+
+
+def _resolve_airframe(
+    page: _ResolvedPage,
+    icao24: str,
+    claims: Sequence[SourceClaim],
+    precedence: PrecedenceModel,
+    resolver: OperatorDirectory,
+    at_ms: int,
+) -> None:
+    """Add one airframe's resolved row, classification row and operator name."""
+    resolved = precedence.resolve(icao24, claims, updated_ms=at_ms)
+    operator_name = resolved.operator_name
+    match = resolver.match(operator_name)
+    if match is not None and operator_name is not None:
+        resolved = replace(resolved, operator_group_id=match.group_id)
+        page.discovered[operator_name] = match.group_id
+    if not resolved.is_empty:
+        page.resolved.append(resolved.as_row())
+
+    classification = classify(_evidence(icao24, resolved, claims), directory=resolver)
+    if not classification.is_unknown:
+        page.classifications.append(classification.as_row(icao24, updated_ms=at_ms))
+
+
+async def _insert_rows(
+    session: AsyncSession, model: type[Any], rows: Sequence[Mapping[str, Any]]
+) -> None:
+    """Insert ``rows`` into ``model``'s table in statement-sized batches."""
+    for start in range(0, len(rows), STAGE_BATCH_ROWS):
+        chunk = rows[start : start + STAGE_BATCH_ROWS]
+        await session.execute(insert(model), list(chunk))
+
+
+async def _install_from_staging(
+    session: AsyncSession,
+    model: type[Any],
+    staging: type[Any],
+    columns: Sequence[str],
+) -> None:
+    """Move every row of ``staging`` into ``model``'s (already empty) table.
+
+    One ``INSERT ... SELECT``: the rows never enter the process, which is what
+    makes the swap's cost a function of the database rather than of Python.
+    """
+    await session.execute(
+        insert(model).from_select(
+            list(columns), select(*[getattr(staging, name) for name in columns])
+        )
     )
 
 
@@ -778,12 +1027,15 @@ def _to_status(row: MetadataSource) -> SourceStatusRecord:
 
 
 __all__ = [
+    "CLASSIFICATION_COLUMNS",
     "IN_CLAUSE_CHUNK",
     "MAX_ERROR_CHARS",
     "METADATA_COLUMNS",
     "REBUILD_PAGE_ROWS",
+    "RESOLVED_COLUMNS",
     "STAGE_BATCH_ROWS",
     "AircraftLookup",
     "MetadataClearCounts",
     "MetadataRepository",
+    "ResolutionBuild",
 ]

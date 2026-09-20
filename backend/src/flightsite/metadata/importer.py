@@ -5,22 +5,28 @@ One run per source, four stages, and one guarantee that shapes all of them:
 not "unless it fails late" — at every stage, including the last.
 
 ```text
-download ──► validate ──► stage ──► promote
-   │            │           │          │
-   │            │           │          └─ one transaction: replace this
-   │            │           │             source's rows, empty staging,
-   │            │           │             rebuild resolution, record success
+download ──► validate ──► stage ──► promote ─┬─ build resolution
+   │            │           │                │    resolve + classify the
+   │            │           │                │    post-swap picture into
+   │            │           │                │    scratch tables, a page at
+   │            │           │                │    a time, off the writer lock
+   │            │           │                └─ swap: one transaction, all
+   │            │           │                   set-based — replace this
+   │            │           │                   source's rows, empty staging,
+   │            │           │                   install the built resolution,
+   │            │           │                   record success
    │            │           └─ writes only to aircraft_metadata_staging
    │            └─ reads the artifact; touches no table
    └─ writes only inside the run's working directory
 ```
 
-Nothing before ``promote`` writes a byte the rest of FlightSite can see. The
-first three stages touch the working directory and the staging table, both of
-which are scratch, and ``promote`` is a single transaction. So a failure at any
-stage leaves ``aircraft_metadata`` and ``aircraft_metadata_resolved`` byte for
-byte as they were, which is the property the fault-injection tests assert stage
-by stage.
+Nothing before the swap writes a byte the rest of FlightSite can see. The first
+three stages touch the working directory and the staging table, the resolution
+build touches two more staging tables — all scratch — and the swap is a single
+transaction. So a failure at any stage leaves ``aircraft_metadata``,
+``aircraft_metadata_resolved`` and ``aircraft_classification`` byte for byte as
+they were, which is the property the fault-injection tests assert stage by
+stage.
 
 **Independence.** Sources are imported one at a time and each records its own
 outcome (SPEC §27: *"reports status separately for each source"*). One source
@@ -30,9 +36,13 @@ the pipeline catches per source, records the failure, and moves on.
 **Where the work happens.** ``transform`` is synchronous and can be
 CPU-expensive over a large snapshot, so it runs in a worker thread and hands
 batches back to the event loop (``docs/ARCHITECTURE.md`` §3.3: "blocking or
-CPU-heavy work runs via ``asyncio.to_thread``"). Staging is loaded in short
-writer transactions between which the writer lock is free, so sighting
-persistence keeps flushing throughout an import.
+CPU-heavy work runs via ``asyncio.to_thread``"). So does resolution, for the
+same reason and since the same slice that measured what it cost not to (075,
+issue #185). Staging *and* the resolution build are loaded in short writer
+transactions between which the writer lock is free, so sighting persistence
+and the alert engine keep draining their queues throughout an import — which
+they could not do while the promotion resolved a million airframes inside its
+transaction.
 
 **Where the rows land** is the source's
 :class:`~flightsite.metadata.sink.ImportSink`, bound at registration. The four
