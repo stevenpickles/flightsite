@@ -700,8 +700,9 @@ class MetadataRepository:
 
         Behind Settings' "Clear Metadata Cache" action. Everything deleted
         here is either a per-source import product (``aircraft_metadata``, its
-        staging table) or something :meth:`rebuild_resolved` recreates
-        wholesale on the next successful import (``aircraft_metadata_resolved``,
+        staging table), scratch a promotion builds and consumes (the two
+        resolution staging tables), or something the next successful import
+        recreates wholesale (``aircraft_metadata_resolved``,
         ``aircraft_classification``, ``operators``, ``operator_groups``) — so
         clearing it loses nothing an "Update Aircraft Metadata" run would not
         already replace.
@@ -732,9 +733,10 @@ class MetadataRepository:
             operator_rows = await _table_count(session, Operator)
             operator_group_rows = await _table_count(session, OperatorGroup)
 
-            # Same order rebuild_resolved uses on the way out (foreign_keys=ON,
-            # ADR-0001): resolved rows reference operator_groups, so they are
-            # cleared before the curated group rows go.
+            # Same order _install_resolution uses on the way out
+            # (foreign_keys=ON, ADR-0001): resolved rows reference
+            # operator_groups, so they are cleared before the curated group
+            # rows go.
             await session.execute(delete(AircraftMetadataResolved))
             await clear_classifications(session)
             await session.execute(delete(Operator))
