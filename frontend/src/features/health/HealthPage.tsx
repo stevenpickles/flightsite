@@ -86,6 +86,13 @@ export function HealthPage() {
     data.database.maintenance.cycles,
   );
   const recovery = recoveryPresentation(data.database.recovery.anomalies);
+  // Undefined on a backend older than slice 075, which published no
+  // per-consumer breakdown at all — the card is dropped rather than filled
+  // with zeroes that would read as "nothing has ever been shed".
+  const liveEvents = data.live_events;
+  const resyncing =
+    liveEvents?.subscribers.some((subscriber) => subscriber.overflowed) ??
+    false;
   const vacuumRefusal =
     data.database.maintenance.vacuum_refusal === null
       ? null
@@ -189,7 +196,10 @@ export function HealthPage() {
         <StatTile
           label="WebSocket clients"
           value={data.websocket.clients}
-          secondary={`${data.websocket.disconnects} dropped since start-up`}
+          // Disconnects, not shed events: until slice 075 the live-event drop
+          // total sat here under the word "dropped", which read as the browser
+          // feed having lost them when the persistence queue had (issue #185).
+          secondary={`${formatCount(data.websocket.disconnects)} clients shed since start-up`}
         />
       </div>
 
@@ -370,6 +380,54 @@ export function HealthPage() {
             Update metadata in Settings
           </Link>
         </HealthCard>
+
+        {liveEvents !== undefined && (
+          <HealthCard
+            titleId="health-live-events"
+            title="Live events"
+            description="Shed live events by consumer; a consumer that fell behind resyncs from a snapshot."
+            status={
+              <StatusPill
+                tone={resyncing ? "warn" : "ok"}
+                label={resyncing ? "Resyncing" : "Keeping up"}
+              />
+            }
+          >
+            <DetailRow
+              label="Events published"
+              value={formatCount(liveEvents.published)}
+            />
+            <DetailRow
+              label="Shed in total"
+              value={formatCount(liveEvents.dropped)}
+            />
+            {/* One row per consumer, because the total alone never said whose
+                queue overflowed — the question the card exists to answer. */}
+            {liveEvents.subscribers.map((subscriber) => (
+              <DetailRow
+                key={subscriber.name}
+                label={subscriber.name}
+                value={
+                  <span className="flex flex-col items-end gap-1">
+                    <span>{`${formatCount(subscriber.dropped)} shed`}</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {`${formatCount(subscriber.pending)} / ${formatCount(
+                        subscriber.capacity,
+                      )} queued`}
+                    </span>
+                    {subscriber.overflowed && (
+                      <StatusPill
+                        tone="warn"
+                        label="Resyncing"
+                        className="font-normal"
+                      />
+                    )}
+                  </span>
+                }
+              />
+            ))}
+          </HealthCard>
+        )}
 
         <NotificationHealthCard notifications={data.notifications} />
 
