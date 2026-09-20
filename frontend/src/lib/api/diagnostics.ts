@@ -65,6 +65,28 @@ export interface DiagnosticsLive {
   stale: number;
 }
 
+/** One live-event consumer's shedding and backlog (slice 075). `dropped` is
+ * cumulative for the *name* and survives the service restarting, so a
+ * consumer that stopped and resubscribed does not read as having a clean
+ * record. `overflowed` is true only while it has an unacknowledged gap and is
+ * resyncing from a snapshot. */
+export interface DiagnosticsLiveEventSubscriber {
+  name: string;
+  dropped: number;
+  pending: number;
+  capacity: number;
+  overflowed: boolean;
+}
+
+/** The live event stream, attributed per consumer. Absent from a backend
+ * older than slice 075, which published only a process-wide total — and
+ * published it under `websocket` (issue #185). */
+export interface DiagnosticsLiveEvents {
+  published: number;
+  dropped: number;
+  subscribers: DiagnosticsLiveEventSubscriber[];
+}
+
 export interface DiagnosticsQuickCheck {
   healthy: boolean | null;
   checked_at: string | null;
@@ -215,7 +237,14 @@ export interface DiagnosticsEnrichment {
 export interface DiagnosticsWebSocket {
   clients: number;
   running: boolean;
+  /** Clients the server had to shed; a clean disconnect is not counted. */
   disconnects: number;
+  /** Live events shed from the **WebSocket broadcaster's own** queue since
+   * slice 075. Before that this carried the process-wide
+   * `live_events_dropped` counter, so it reported the persistence and alert
+   * queues' drops under the WebSocket's name too (issue #185). For the
+   * process total read `counters.live_events_dropped`, and for the
+   * per-consumer breakdown `live_events.subscribers`. */
   events_dropped: number;
 }
 
@@ -237,6 +266,9 @@ export interface Diagnostics {
   uptime: DiagnosticsUptime;
   decoder: DiagnosticsDecoder;
   live: DiagnosticsLive;
+  /** Absent from a backend older than slice 075 — the Health page renders
+   * the card it has rather than a row of invented zeroes. */
+  live_events?: DiagnosticsLiveEvents;
   database: DiagnosticsDatabase;
   metadata: DiagnosticsMetadata;
   notifications: DiagnosticsNotifications;

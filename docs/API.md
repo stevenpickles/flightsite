@@ -560,9 +560,10 @@ ages, recent error ring buffers (ingestion/db/enrichment/websocket), WebSocket c
 count. **Never contains secrets** (tested requirement).
 
 Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health banner
-renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`, `database`
-(`quick_check`, `storage`, `row_counts`, `maintenance`, `recovery`), `metadata`,
-`notifications`, `enrichment`, `websocket`, `counters`, `recent_errors`.
+renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`,
+`live_events` (slice 075), `database` (`quick_check`, `storage`, `row_counts`,
+`maintenance`, `recovery`), `metadata`, `notifications`, `enrichment`, `websocket`,
+`counters`, `recent_errors`.
 
 Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
 pragma takes the writer lock, so the endpoint reports the result the maintenance
@@ -627,6 +628,41 @@ Two contract details worth knowing:
   the last ones a source reported, so a number that climbs is the signal that something
   upstream has been unavailable. Each serve pushes that row's expiry a day out, so this
   counts callsigns rather than observations.
+- `live_events` attributes shed live events to the consumer that shed them (slice 075):
+
+  ```json
+  "live_events": {
+    "published": 1284310,
+    "dropped": 18061,
+    "subscribers": [
+      {"name": "alerts", "dropped": 7200, "pending": 0, "capacity": 4096, "overflowed": false},
+      {"name": "persistence", "dropped": 10861, "pending": 3, "capacity": 4096, "overflowed": false},
+      {"name": "websocket", "dropped": 0, "pending": 0, "capacity": 4096, "overflowed": false}
+    ]
+  }
+  ```
+
+  Each consumer of the live event stream — `persistence`, `alerts`, `websocket`,
+  `enrichment`, `airports`, `metadata-cache` — reads it through a bounded queue and is
+  shed rather than waited on when it falls behind
+  ([ARCHITECTURE.md §3.1](ARCHITECTURE.md)). `dropped` is that consumer's cumulative
+  total, kept **by name** so it survives the service stopping and resubscribing;
+  `pending` against `capacity` is the backlog right now; `overflowed` is `true` only
+  while the consumer has an unacknowledged gap and is resyncing from a snapshot.
+  `subscribers` lists the consumers attached at the moment of the request, sorted by
+  name, so a service that has been stopped is absent while its drops remain in
+  `dropped`. Shedding is self-healing by design, so nothing in this section moves the
+  top-level `status`.
+
+  Since slice 075, `websocket.events_dropped` is the **`websocket` subscriber's own**
+  figure, and `0` on an install whose browser feed has never fallen behind. It
+  previously carried the process-wide `live_events_dropped` counter, which reported
+  every consumer's drops under the one name that had a card on the Health page — on the
+  reference Pi that displayed 18 061 events shed by the persistence and alert queues
+  during a metadata import as if the browser feed had lost them (issue #185). The
+  process total is unchanged and still published twice: as `counters.live_events_dropped`
+  (also on `GET /api/v1/health`) and as `live_events.dropped`, which is the sum of the
+  per-subscriber tallies.
 - `database.maintenance.vacuum_refusal` is `null` unless the guarded `VACUUM` last
   declined to run, and otherwise carries `reason` plus `required_free_bytes` and
   `available_free_bytes`. The free-space guard wants twice the database size, so on a

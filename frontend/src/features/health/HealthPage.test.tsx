@@ -8,6 +8,8 @@ import {
   diagnostics,
   errorEntry,
   installDiagnosticsApiMock,
+  liveEvents,
+  liveEventSubscriber,
   metadata,
   metadataSource,
 } from "@/test/diagnosticsApiMock";
@@ -45,7 +47,7 @@ describe("HealthPage", () => {
     // Metadata age, and WebSocket state.
     expect(within(summary).getByText("2d 2h")).toBeInTheDocument();
     expect(
-      within(summary).getByText("0 dropped since start-up"),
+      within(summary).getByText("0 clients shed since start-up"),
     ).toBeInTheDocument();
 
     // Useful row counts.
@@ -80,6 +82,50 @@ describe("HealthPage", () => {
     expect(within(card).getByText("12 / 100 used")).toBeInTheDocument();
     expect(within(card).getByText("88 left today")).toBeInTheDocument();
     expect(within(card).getByText("Routes learned")).toBeInTheDocument();
+  });
+
+  it("names the consumer that shed live events, not the WebSocket", async () => {
+    // Issue #185: the owner's Pi showed 18,061 drops beside "WebSocket
+    // clients" while the persistence queue had shed every one of them.
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        live_events: liveEvents({
+          dropped: 18_061,
+          subscribers: [
+            liveEventSubscriber({
+              name: "persistence",
+              dropped: 18_061,
+              pending: 4096,
+              overflowed: true,
+            }),
+            liveEventSubscriber({ name: "websocket" }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", { name: "Live events" });
+    const persistence = within(card).getByText("persistence").closest("div");
+    const websocket = within(card).getByText("websocket").closest("div");
+
+    expect(persistence).not.toBeNull();
+    expect(websocket).not.toBeNull();
+    expect(within(persistence!).getByText("18,061 shed")).toBeInTheDocument();
+    expect(
+      within(persistence!).getByText("4,096 / 4,096 queued"),
+    ).toBeInTheDocument();
+    // SPEC §80: the marker is a word and an icon, never colour alone.
+    expect(within(persistence!).getByText("Resyncing")).toBeInTheDocument();
+    expect(within(websocket!).getByText("0 shed")).toBeInTheDocument();
+    expect(within(websocket!).queryByText("Resyncing")).toBeNull();
+
+    // And the WebSocket tile no longer wears the process-wide total.
+    const summary = screen.getByRole("group", { name: "Health summary" });
+    expect(within(summary).queryByText(/18,061/)).toBeNull();
+    expect(
+      within(summary).getByText("0 clients shed since start-up"),
+    ).toBeInTheDocument();
   });
 
   it("shows the overall status as healthy when nothing is wrong", async () => {

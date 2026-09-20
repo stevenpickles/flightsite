@@ -151,11 +151,9 @@ async def test_resolution_ignores_rows_from_an_unregistered_source(
                 ),
                 {"source": source, "type_code": type_code, "ms": IMPORT_MS},
             )
-        registered = SourceRegistry()
-        registered.register("mictronics", InMemoryMetadataProvider())
-        await repository.rebuild_resolved(
-            session, precedence=registered.precedence(), at_ms=IMPORT_MS
-        )
+    registered = SourceRegistry()
+    registered.register("mictronics", InMemoryMetadataProvider())
+    await repository.rebuild_resolved(precedence=registered.precedence(), at_ms=IMPORT_MS)
 
     resolved = await resolved_rows(repository, ["a00001"])
     assert resolved["a00001"].type_code_src == "mictronics"

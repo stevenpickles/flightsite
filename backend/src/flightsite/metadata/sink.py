@@ -80,8 +80,15 @@ class AircraftMetadataSink:
     The behaviour the import pipeline had before the seam existed, moved behind
     it unchanged: rows are staged in ``aircraft_metadata_staging`` in short
     writer transactions (so sighting persistence keeps flushing throughout an
-    import) and promoted in one transaction that also rebuilds
-    ``aircraft_metadata_resolved``.
+    import) and promoted in one transaction.
+
+    :meth:`promote` is one call and two phases (slice 075): the repository
+    resolves and classifies the picture the swap is about to install into
+    scratch tables first, off the writer lock, and only then opens the
+    transaction that installs it. Callers see no difference — the guarantee
+    below is unchanged, and the first phase writes nothing they could observe
+    — but the writer lock is now free between pages instead of held for the
+    length of the resolution.
 
     Args:
         repository: the metadata repository owning both tables.

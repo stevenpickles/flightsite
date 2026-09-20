@@ -25,10 +25,21 @@ rebuild from it, then call :meth:`EventSubscription.acknowledge_overflow` and
 carry on from the tail. Silently delivering a gap as if it were continuous
 would be worse than saying so.
 
-Shedding is never silent: it increments the ``live_events_dropped`` counter
-(surfaced by ``/api/v1/health`` and, from slice 042, diagnostics) and logs once
-per overflow episode rather than once per dropped event, so an overloaded
-consumer produces one warning instead of a log flood.
+Shedding is never silent, and since slice 075 it is also *attributed*. Each
+shed event increments the process-wide ``live_events_dropped`` counter
+(surfaced by ``/api/v1/health`` and, from slice 042, diagnostics), adds to the
+dispatcher's cumulative tally **for that subscriber's name**, and logs once per
+overflow episode rather than once per dropped event, so an overloaded consumer
+produces one warning instead of a log flood.
+
+The per-name tally is what :meth:`EventDispatcher.stats` reports and what
+diagnostics renders as ``live_events.subscribers``. It is kept by the
+dispatcher rather than the subscription because a service that stops and
+starts — every consumer closes its subscription in ``stop()`` and takes a new
+one in ``start()`` — would otherwise reset its own history at exactly the
+moment an operator went looking for it. Before that tally existed the process
+total was reported under ``websocket``, which blamed the browser for events
+the persistence worker had shed (issue #185).
 
 Event content
 -------------
@@ -136,6 +147,22 @@ class AircraftRemoved(LiveEvent):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class SubscriberStats:
+    """One attached subscriber's shedding and backlog, for diagnostics.
+
+    ``dropped`` is the dispatcher's **cumulative** tally for this subscriber
+    *name*, which outlives any single subscription; ``pending``, ``capacity``
+    and ``overflowed`` describe the subscription attached right now.
+    """
+
+    name: str
+    dropped: int
+    pending: int
+    capacity: int
+    overflowed: bool
+
+
 class EventSubscription:
     """One consumer's bounded view of the event stream.
 
@@ -168,8 +195,18 @@ class EventSubscription:
 
     @property
     def dropped(self) -> int:
-        """Events shed from this subscription because the consumer fell behind."""
+        """Events shed from *this subscription* because the consumer fell behind.
+
+        Scoped to the subscription, so it restarts at zero when a service
+        resubscribes. The figure that survives that is the dispatcher's
+        :meth:`EventDispatcher.dropped_for`.
+        """
         return self._dropped
+
+    @property
+    def capacity(self) -> int:
+        """How many events this subscription buffers before shedding."""
+        return self._queue.maxsize
 
     @property
     def overflowed(self) -> bool:
@@ -216,6 +253,10 @@ class EventSubscription:
             return
         self._dropped += 1
         counters.increment(LIVE_EVENTS_DROPPED)
+        if self._dispatcher is not None:
+            # Attribution outlives this subscription; a detached one can still
+            # be drained by its owner, and then only its own count moves.
+            self._dispatcher.record_shed(self._name)
         if not self._overflowed:
             self._overflowed = True
             # Once per episode, not once per event: a consumer stalled for a
@@ -260,13 +301,18 @@ class EventDispatcher:
     Publishing is synchronous and non-blocking by construction, which is what
     lets the live store publish from inside a batch application on the
     ingestion task without any risk of yielding to a consumer mid-batch.
+
+    It also keeps the books on shedding, per subscriber *name* and for the
+    life of the process rather than the life of a subscription, so diagnostics
+    can name the consumer that fell behind (slice 075).
     """
 
-    __slots__ = ("_published", "_subscriptions")
+    __slots__ = ("_dropped_by_name", "_published", "_subscriptions")
 
     def __init__(self) -> None:
         self._subscriptions: list[EventSubscription] = []
         self._published = 0
+        self._dropped_by_name: dict[str, int] = {}
 
     @property
     def subscriber_count(self) -> int:
@@ -277,6 +323,55 @@ class EventDispatcher:
     def published(self) -> int:
         """Events published since this dispatcher was created."""
         return self._published
+
+    @property
+    def dropped(self) -> int:
+        """Events shed from every subscriber since this dispatcher was created.
+
+        The sum of the per-name tallies, and therefore the dispatcher's own
+        view of what the process-wide ``live_events_dropped`` counter counts.
+        """
+        return sum(self._dropped_by_name.values())
+
+    def dropped_for(self, name: str) -> int:
+        """Events shed from ``name`` since this dispatcher was created.
+
+        Cumulative across detach and resubscribe, and answerable for a name
+        that has no subscription attached right now — a service that has
+        stopped does not get its record wiped. Zero for a name never seen.
+        """
+        return self._dropped_by_name.get(name, 0)
+
+    def record_shed(self, name: str) -> None:
+        """Add one shed event to ``name``'s cumulative tally.
+
+        Called by :meth:`EventSubscription._shed` while it is attached;
+        consumers have no reason to call it.
+        """
+        self._dropped_by_name[name] = self._dropped_by_name.get(name, 0) + 1
+
+    def stats(self) -> tuple[SubscriberStats, ...]:
+        """Per-subscriber shedding and backlog, sorted by name.
+
+        Covers the subscriptions attached right now — a stopped service is not
+        a row, though :meth:`dropped_for` still remembers it — so the caller
+        sees the consumers currently being fed alongside what each has cost.
+        """
+        return tuple(
+            sorted(
+                (
+                    SubscriberStats(
+                        name=subscription.name,
+                        dropped=self.dropped_for(subscription.name),
+                        pending=subscription.pending,
+                        capacity=subscription.capacity,
+                        overflowed=subscription.overflowed,
+                    )
+                    for subscription in self._subscriptions
+                ),
+                key=lambda stats: stats.name,
+            )
+        )
 
     def subscribe(
         self, name: str = "anonymous", *, maxsize: int = DEFAULT_QUEUE_SIZE
@@ -317,4 +412,5 @@ __all__ = [
     "EventDispatcher",
     "EventSubscription",
     "LiveEvent",
+    "SubscriberStats",
 ]

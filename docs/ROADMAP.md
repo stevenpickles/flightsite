@@ -161,6 +161,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 072 | Migration 0015 rebuild fix | 071 | opus | high | Hotfix: run the `sightings` rebuild with foreign keys off and checked afterwards, resumable from the v0.6.0 partial state, with migration tests that seed every child table (issue #178; v0.6.1) |
 | 073 | Low-severity bundle | 039, 041, 046, 053, 062, 063 | opus | low | Six single-concern commits: rule_id match filter + Alerts drill-down (#98), MapLibre expression validation in tests (#96), kill-drill load flake (#100), metadata URL overrides + demo classification metadata (#112), post-#134 consumer follow-ups (#138), label-density count + anchor-thrash decision (#147); tracking issue #182 |
 | 074 | Analytics ranking detail | 031, 032 | opus | low | Tail number plus type on every Top aircraft bar, the long-form description beside every Top types designator (derived from the imported metadata as the majority model per type, exposed as `description` on top-types rows), richer tooltips on both cards (issue #198) |
+| 075 | Metadata import off the live path & honest drop attribution | 021, 024, 042, 071 | opus | medium | Resolve and classify airframes before the promotion transaction (staging tables, migration 0016) so a full import no longer holds the writer for minutes and overflows the persistence/alert queues; report shed live events per subscriber in diagnostics and on the Health page instead of under the WebSocket (issue #185) |
 
 ## Parallelization Guide
 

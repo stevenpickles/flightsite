@@ -201,5 +201,23 @@ def dump(path: Path, tables: Sequence[str]) -> dict[str, list[tuple[object, ...]
         connection.close()
 
 
-#: The tables a failed import must leave untouched.
-DATASET_TABLES: tuple[str, ...] = ("aircraft_metadata", "aircraft_metadata_resolved")
+#: The tables a failed import must leave untouched — every table a promotion
+#: writes. The derived three joined the list in slice 075, when promotion
+#: became two phases and "the dataset survived" stopped being a statement
+#: about one transaction.
+DATASET_TABLES: tuple[str, ...] = (
+    "aircraft_metadata",
+    "aircraft_metadata_resolved",
+    "aircraft_classification",
+    "operators",
+    "operator_groups",
+)
+
+#: The scratch tables a promotion builds its resolution in (slice 075). Not
+#: part of :data:`DATASET_TABLES`: nothing reads them outside the promotion
+#: that filled them, so what a *failed* run left in them is not a property
+#: worth pinning — that the next run clears them is.
+RESOLUTION_STAGING_TABLES: tuple[str, ...] = (
+    "aircraft_metadata_resolved_staging",
+    "aircraft_classification_staging",
+)

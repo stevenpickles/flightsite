@@ -6,6 +6,8 @@ import type {
   DiagnosticsDecoder,
   DiagnosticsEnrichment,
   DiagnosticsErrorEntry,
+  DiagnosticsLiveEvents,
+  DiagnosticsLiveEventSubscriber,
   DiagnosticsMetadata,
   DiagnosticsMetadataSource,
 } from "@/lib/api/diagnostics";
@@ -175,6 +177,37 @@ export function enrichment(
   };
 }
 
+export function liveEventSubscriber(
+  overrides: Partial<DiagnosticsLiveEventSubscriber> = {},
+): DiagnosticsLiveEventSubscriber {
+  return {
+    name: "persistence",
+    dropped: 0,
+    pending: 0,
+    capacity: 4096,
+    overflowed: false,
+    ...overrides,
+  };
+}
+
+/** The live event stream as a slice-075 backend reports it: every consumer
+ * keeping up. A test about attribution overrides `subscribers` with the one
+ * consumer that fell behind. */
+export function liveEvents(
+  overrides: Partial<DiagnosticsLiveEvents> = {},
+): DiagnosticsLiveEvents {
+  return {
+    published: 1_284_310,
+    dropped: 0,
+    subscribers: [
+      liveEventSubscriber({ name: "alerts" }),
+      liveEventSubscriber({ name: "persistence", pending: 3 }),
+      liveEventSubscriber({ name: "websocket" }),
+    ],
+    ...overrides,
+  };
+}
+
 /** A healthy install. Every test starts here and overrides the one thing it
  * is about, which is what keeps a degraded-state test readable. */
 export function diagnostics(overrides: Partial<Diagnostics> = {}): Diagnostics {
@@ -203,6 +236,7 @@ export function diagnostics(overrides: Partial<Diagnostics> = {}): Diagnostics {
       non_positioned: 3,
       stale: 0,
     },
+    live_events: liveEvents(),
     database: database(),
     metadata: metadata(),
     notifications: {

@@ -20,7 +20,9 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 (:class:`DailyStats`, :class:`DailyTypeStats`, :class:`DailyOperatorStats`,
 :class:`TypeStats`) in slice 031, and the activity group
 (:class:`ActivityEvent`, :class:`Milestone`) in slice 035, and the alert group
-(:class:`AlertRule`, :class:`AlertMatch`) in slice 038.
+(:class:`AlertRule`, :class:`AlertMatch`) in slice 038, and the two resolution
+scratch tables (:class:`AircraftMetadataResolvedStaging`,
+:class:`AircraftClassificationStaging`) in slice 075.
 """
 
 from __future__ import annotations
@@ -579,26 +581,18 @@ class AircraftMetadataStaging(_AircraftMetadataColumns, Base):
         return f"AircraftMetadataStaging(icao24={self.icao24!r}, source={self.source!r})"
 
 
-class AircraftMetadataResolved(Base):
-    """Field-level precedence, materialized (``docs/DATA_MODEL.md`` §3.3).
+class _ResolvedColumns:
+    """The resolved-metadata column set, shared by the live and staging tables.
 
-    One row per airframe, each field carrying the name of the source that won
-    it. Resolution happens at import time rather than at read time because the
-    Aircraft page sorts and filters on resolved type and operator in SQL; a
-    per-field EAV provenance table was rejected as slow and unqueryable at this
-    scale (§3.3, §8).
+    Same reasoning as :class:`_AircraftMetadataColumns`: the staging table
+    exists only to receive a freshly computed resolution before it is swapped
+    in, and the swap is an ``INSERT ... SELECT`` that pairs the two column for
+    column, so a divergence between the shapes would be a bug.
 
-    The ``_src`` value is non-``NULL`` exactly when its field is non-``NULL``:
-    provenance describes a value, so a field nobody supplied has no source.
+    ``operator_group_id``'s foreign key is declared on the live table rather
+    than here — see :class:`AircraftMetadataResolvedStaging` for why the
+    staging table must not carry it.
     """
-
-    __tablename__ = "aircraft_metadata_resolved"
-    __table_args__ = (
-        Index("ix_amr_registration", "registration"),
-        Index("ix_amr_type", "type_code"),
-        Index("ix_amr_opgroup", "operator_group_id"),
-        {"sqlite_with_rowid": False},
-    )
 
     icao24: Mapped[str] = mapped_column(Text, primary_key=True)
 
@@ -614,13 +608,66 @@ class AircraftMetadataResolved(Base):
     operator_src: Mapped[str | None] = mapped_column(Text)
     #: Curated grouping, filled once slice 024 populates ``operators``. The
     #: exact operator string above is always preserved beside it (SPEC §38).
-    operator_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("operator_groups.id"))
+    operator_group_id: Mapped[int | None] = mapped_column(Integer)
     owner: Mapped[str | None] = mapped_column(Text)
     owner_src: Mapped[str | None] = mapped_column(Text)
     updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
 
+
+class AircraftMetadataResolved(_ResolvedColumns, Base):
+    """Field-level precedence, materialized (``docs/DATA_MODEL.md`` §3.3).
+
+    One row per airframe, each field carrying the name of the source that won
+    it. Resolution happens at import time rather than at read time because the
+    Aircraft page sorts and filters on resolved type and operator in SQL; a
+    per-field EAV provenance table was rejected as slow and unqueryable at this
+    scale (§3.3, §8).
+
+    The ``_src`` value is non-``NULL`` exactly when its field is non-``NULL``:
+    provenance describes a value, so a field nobody supplied has no source.
+    """
+
+    __tablename__ = "aircraft_metadata_resolved"
+    __table_args__ = (
+        # Declared here rather than on the shared mixin: the staging table
+        # takes the same columns and none of these.
+        ForeignKeyConstraint(["operator_group_id"], ["operator_groups.id"]),
+        Index("ix_amr_registration", "registration"),
+        Index("ix_amr_type", "type_code"),
+        Index("ix_amr_opgroup", "operator_group_id"),
+        {"sqlite_with_rowid": False},
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"AircraftMetadataResolved(icao24={self.icao24!r}, type_code={self.type_code!r})"
+
+
+class AircraftMetadataResolvedStaging(_ResolvedColumns, Base):
+    """Where a resolution is built before it is swapped in (§3.3, slice 075).
+
+    Resolving an import's post-swap picture is Python work over every airframe
+    in the database — on the owner's install, most of a million of them — and
+    until slice 075 it ran inside the promotion transaction, holding the
+    process's one writer (ADR-0008) for minutes and starving the persistence
+    worker and the alert engine of it (issue #185). It now runs *before* that
+    transaction: pages of claims are read on read sessions, resolved in a
+    worker thread, and written here in a short writer transaction each, leaving
+    the promotion itself a handful of set-based statements.
+
+    Scratch, like ``aircraft_metadata_staging`` beside it: emptied when a build
+    starts, when it promotes, and by "Clear Metadata Cache". Deliberately
+    **no** foreign key to ``operator_groups`` — the group rows these ids belong
+    to are not installed until the promotion transaction replaces them, so
+    enforcing the reference here would fail against the *previous* directory —
+    and deliberately **no** secondary indexes, which would be three index
+    writes per row for reads nothing makes of this table.
+    """
+
+    __tablename__ = "aircraft_metadata_resolved_staging"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AircraftMetadataResolvedStaging(icao24={self.icao24!r})"
 
 
 class OperatorGroup(Base):
@@ -661,35 +708,15 @@ class Operator(Base):
         return f"Operator(name={self.name!r}, group_id={self.group_id!r})"
 
 
-class AircraftClassification(Base):
-    """Computed classification with per-claim provenance (§3.4, SPEC §39).
+class _ClassificationColumns:
+    """The classification column set, shared by the live and staging tables.
 
-    One row per airframe, rebuilt inside the metadata import transaction beside
-    :class:`AircraftMetadataResolved`. Keyed by ``icao24`` rather than by a
-    sighting or an ``aircraft`` row, so an airframe is classified whether or
-    not the receiver has ever heard it — which is what lets the Aircraft page
-    filter by classification over the whole metadata database.
-
-    Every claim gets three columns, not one: the answer, the source that
-    supports it, and a confidence. A ``NULL`` ``*_src``/``*_conf`` pair beside a
-    ``0`` flag is the shape of "nothing asserts this", and the pair is non-``NULL``
-    exactly when the flag is set — the same rule the resolved table follows for
-    its ``*_src`` columns.
-
-    ``icon_category`` has no ``CHECK``, unlike ``mission_category``: it is the
-    icon hierarchy's own vocabulary and grows with the icon set, while the
-    mission list is SPEC §39's and does not.
+    The staging table receives a classification built ahead of the promotion
+    transaction and hands it over with one ``INSERT ... SELECT``, so the two
+    shapes have to match column for column. The ``CHECK`` and the four indexes
+    belong to the live table alone (see
+    :class:`AircraftClassificationStaging`) and are declared there.
     """
-
-    __tablename__ = "aircraft_classification"
-    __table_args__ = (
-        CheckConstraint(MISSION_CATEGORY_CHECK, name="ck_aircraft_classification_mission"),
-        Index("ix_class_mil", "military", sqlite_where=text("military = 1")),
-        Index("ix_class_gov", "government", sqlite_where=text("government = 1")),
-        Index("ix_class_law", "law_enforcement", sqlite_where=text("law_enforcement = 1")),
-        Index("ix_class_mission", "mission_category"),
-        {"sqlite_with_rowid": False},
-    )
 
     icao24: Mapped[str] = mapped_column(Text, primary_key=True)
 
@@ -719,11 +746,64 @@ class AircraftClassification(Base):
     )
     updated_ms: Mapped[int] = mapped_column(Integer, nullable=False)
 
+
+class AircraftClassification(_ClassificationColumns, Base):
+    """Computed classification with per-claim provenance (§3.4, SPEC §39).
+
+    One row per airframe, swapped in by the metadata import transaction beside
+    :class:`AircraftMetadataResolved`. Keyed by ``icao24`` rather than by a
+    sighting or an ``aircraft`` row, so an airframe is classified whether or
+    not the receiver has ever heard it — which is what lets the Aircraft page
+    filter by classification over the whole metadata database.
+
+    Every claim gets three columns, not one: the answer, the source that
+    supports it, and a confidence. A ``NULL`` ``*_src``/``*_conf`` pair beside a
+    ``0`` flag is the shape of "nothing asserts this", and the pair is non-``NULL``
+    exactly when the flag is set — the same rule the resolved table follows for
+    its ``*_src`` columns.
+
+    ``icon_category`` has no ``CHECK``, unlike ``mission_category``: it is the
+    icon hierarchy's own vocabulary and grows with the icon set, while the
+    mission list is SPEC §39's and does not.
+    """
+
+    __tablename__ = "aircraft_classification"
+    __table_args__ = (
+        CheckConstraint(MISSION_CATEGORY_CHECK, name="ck_aircraft_classification_mission"),
+        Index("ix_class_mil", "military", sqlite_where=text("military = 1")),
+        Index("ix_class_gov", "government", sqlite_where=text("government = 1")),
+        Index("ix_class_law", "law_enforcement", sqlite_where=text("law_enforcement = 1")),
+        Index("ix_class_mission", "mission_category"),
+        {"sqlite_with_rowid": False},
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
             f"AircraftClassification(icao24={self.icao24!r}, "
             f"mission_category={self.mission_category!r})"
         )
+
+
+class AircraftClassificationStaging(_ClassificationColumns, Base):
+    """Where a classification is built before it is swapped in (§3.4, slice 075).
+
+    :class:`AircraftMetadataResolvedStaging`'s companion, filled by the same
+    pass for the same reason: classification is computed from the very claims
+    resolution reads, so the two are built together, page by page, off the
+    writer lock, and installed together by the promotion transaction.
+
+    Scratch, and therefore bare. **No** ``CHECK`` on ``mission_category``: the
+    vocabulary is enforced where the rows come to rest, and a value the live
+    table would refuse still fails one statement later, on the
+    ``INSERT ... SELECT`` that installs it. **No** partial indexes either;
+    nothing queries this table.
+    """
+
+    __tablename__ = "aircraft_classification_staging"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"AircraftClassificationStaging(icao24={self.icao24!r})"
 
 
 class RouteCache(Base):

@@ -208,6 +208,100 @@ def test_a_healthy_consumer_is_never_flagged() -> None:
     assert subscription.overflowed is False
 
 
+# ------------------------------------------------------- per-subscriber tally
+
+
+def test_shed_events_are_tallied_against_the_subscriber_that_shed_them() -> None:
+    """Issue #185: a total says events were lost, not whose queue lost them."""
+    dispatcher = EventDispatcher()
+    dispatcher.subscribe("persistence", maxsize=1)
+    dispatcher.subscribe("websocket", maxsize=64)
+
+    for _ in range(5):
+        dispatcher.publish(an_event())
+
+    assert dispatcher.dropped_for("persistence") == 4
+    assert dispatcher.dropped_for("websocket") == 0
+    assert dispatcher.dropped_for("alerts") == 0
+
+
+def test_the_tally_survives_a_consumer_stopping_and_resubscribing() -> None:
+    # Every consumer closes its subscription in `stop()` and takes a new one
+    # in `start()`, so a per-subscription count would reset a service's whole
+    # history the moment it restarted.
+    dispatcher = EventDispatcher()
+    first = dispatcher.subscribe("persistence", maxsize=1)
+    dispatcher.publish(an_event())
+    dispatcher.publish(an_event())
+    first.close()
+
+    second = dispatcher.subscribe("persistence", maxsize=1)
+    dispatcher.publish(an_event())
+    dispatcher.publish(an_event())
+
+    assert second.dropped == 1
+    assert dispatcher.dropped_for("persistence") == 2
+
+
+def test_a_detached_subscription_no_longer_attributes_its_drops() -> None:
+    """Its owner can still drain it; the dispatcher stops speaking for it."""
+    dispatcher = EventDispatcher()
+    subscription = dispatcher.subscribe("orphan", maxsize=1)
+    subscription.close()
+
+    subscription.deliver(an_event())
+    subscription.deliver(an_event())
+
+    assert subscription.dropped == 1
+    assert dispatcher.dropped_for("orphan") == 0
+
+
+def test_stats_describe_every_attached_subscriber_in_name_order() -> None:
+    dispatcher = EventDispatcher()
+    dispatcher.subscribe("websocket", maxsize=8)
+    dispatcher.subscribe("alerts", maxsize=2)
+    dispatcher.subscribe("persistence", maxsize=1)
+
+    for _ in range(3):
+        dispatcher.publish(an_event())
+
+    stats = dispatcher.stats()
+
+    assert [entry.name for entry in stats] == ["alerts", "persistence", "websocket"]
+    alerts, persistence, websocket = stats
+    assert (alerts.dropped, alerts.pending, alerts.capacity, alerts.overflowed) == (1, 2, 2, True)
+    assert (persistence.dropped, persistence.capacity) == (2, 1)
+    assert (websocket.dropped, websocket.pending, websocket.overflowed) == (0, 3, False)
+
+
+def test_a_stopped_consumer_leaves_the_stats_but_keeps_its_record() -> None:
+    dispatcher = EventDispatcher()
+    subscription = dispatcher.subscribe("metadata-cache", maxsize=1)
+    dispatcher.publish(an_event())
+    dispatcher.publish(an_event())
+
+    subscription.close()
+
+    assert dispatcher.stats() == ()
+    assert dispatcher.dropped_for("metadata-cache") == 1
+    assert dispatcher.dropped == 1
+
+
+def test_the_dispatcher_total_matches_the_process_counter() -> None:
+    before = counters.snapshot()[LIVE_EVENTS_DROPPED]
+    dispatcher = EventDispatcher()
+    dispatcher.subscribe("alerts", maxsize=1)
+    dispatcher.subscribe("persistence", maxsize=2)
+
+    for _ in range(10):
+        dispatcher.publish(an_event())
+
+    assert dispatcher.dropped == dispatcher.dropped_for("alerts") + dispatcher.dropped_for(
+        "persistence"
+    )
+    assert counters.snapshot()[LIVE_EVENTS_DROPPED] - before == dispatcher.dropped
+
+
 def test_a_zero_sized_queue_is_rejected() -> None:
     with pytest.raises(ValueError, match="at least 1"):
         EventDispatcher().subscribe("bad", maxsize=0)

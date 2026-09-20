@@ -1,11 +1,11 @@
 """Shared fixture-building helpers for the Aircraft page's tests.
 
 Rows are built through SQLAlchemy Core ``insert()`` against the ORM models —
-the same statement shape :meth:`~flightsite.metadata.repository.MetadataRepository.rebuild_resolved`
-issues when it rebuilds ``aircraft_metadata_resolved`` and
-``aircraft_classification`` — rather than hand-written SQL text or the full
-live→sighting→persistence-worker pipeline. Driving a few thousand aircraft
-through that pipeline would cost seconds per aircraft; a bulk insert of the
+the same statement shape a metadata promotion issues when it fills
+``aircraft_metadata_resolved`` and ``aircraft_classification`` — rather than
+hand-written SQL text or the full live→sighting→persistence-worker pipeline.
+Driving a few thousand aircraft through that pipeline would cost seconds per
+aircraft; a bulk insert of the
 rows the pipeline eventually produces costs milliseconds and exercises
 exactly the tables :mod:`flightsite.api.history` reads.
 """
