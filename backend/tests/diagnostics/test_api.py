@@ -10,20 +10,32 @@ honest as the payload grows.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from flightsite import __version__
 from flightsite.app import create_app
 from flightsite.counters import KNOWN_COUNTERS
+from flightsite.ingest.types import AircraftStateUpdate
+from flightsite.live.aircraft import appear
+from flightsite.live.events import AircraftAppeared, LiveEvent
+
+NOW = datetime(2026, 8, 31, 14, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-def client(isolated_data_dir: Path) -> TestClient:
-    return TestClient(create_app(isolated_data_dir))
+def app(isolated_data_dir: Path) -> FastAPI:
+    return create_app(isolated_data_dir)
+
+
+@pytest.fixture
+def client(app: FastAPI) -> TestClient:
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -122,6 +134,49 @@ class TestPayloadShape:
 
         assert "/opt/flightsite" not in text
         assert ".sqlite3" not in text
+
+
+class TestLiveEventAttribution:
+    """Slice 075 / issue #185: drops are reported against the queue that shed
+    them, and the WebSocket stops being blamed for every consumer's."""
+
+    @staticmethod
+    def _event() -> LiveEvent:
+        aircraft = appear(AircraftStateUpdate(icao="4ca7b3", timestamp=NOW), now=0.0)
+        return AircraftAppeared(aircraft=aircraft, at=aircraft.last_seen)
+
+    def test_every_running_consumer_is_listed_with_its_queue(self, payload: dict[str, Any]) -> None:
+        subscribers = {row["name"]: row for row in payload["live_events"]["subscribers"]}
+
+        assert {"persistence", "alerts", "websocket"} <= set(subscribers)
+        assert all(row["capacity"] > 0 for row in subscribers.values())
+        assert all(row["dropped"] == 0 for row in subscribers.values())
+        assert payload["live_events"]["dropped"] == 0
+
+    def test_a_consumer_that_fell_behind_is_named_not_the_websocket(
+        self, app: FastAPI, client: TestClient
+    ) -> None:
+        with client as opened:
+            # The process-wide counter is shared with every other test in the
+            # run, so the assertion below is on the delta this test caused.
+            before = opened.get("/api/v1/diagnostics").json()["counters"]["live_events_dropped"]
+            # A consumer that never reads, driven through the real dispatcher
+            # the running application publishes to.
+            app.state.live.subscribe("persistence-spike", maxsize=1)
+            for _ in range(4):
+                app.state.live.events.publish(self._event())
+            body = opened.get("/api/v1/diagnostics").json()
+
+        subscribers = {row["name"]: row for row in body["live_events"]["subscribers"]}
+        assert subscribers["persistence-spike"]["dropped"] == 3
+        assert subscribers["persistence-spike"]["overflowed"] is True
+        assert subscribers["websocket"]["dropped"] == 0
+
+        # The figure beside the client count is the WebSocket's own, while the
+        # process total stays available under both of its documented names.
+        assert body["websocket"]["events_dropped"] == 0
+        assert body["live_events"]["dropped"] == 3
+        assert body["counters"]["live_events_dropped"] - before == 3
 
 
 class TestFirstRunInstall:

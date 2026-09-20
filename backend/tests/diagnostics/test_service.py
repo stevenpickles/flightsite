@@ -22,6 +22,9 @@ from flightsite.diagnostics import STATUS_DEGRADED, STATUS_DOWN, STATUS_OK
 from flightsite.diagnostics.errors import DATABASE, INGESTION, ErrorRing
 from flightsite.diagnostics.service import collect_diagnostics
 from flightsite.ingest.health import AdapterHealth, HealthState
+from flightsite.ingest.types import AircraftStateUpdate
+from flightsite.live.aircraft import appear
+from flightsite.live.events import AircraftAppeared, EventDispatcher, LiveEvent
 from flightsite.maintenance.model import (
     JobOutcome,
     JobReport,
@@ -163,6 +166,91 @@ class TestLivePicture:
 
         assert payload["live"]["last_aircraft_update"] is None
         assert payload["live"]["last_aircraft_update_age_s"] is None
+
+
+class TestLiveEventAttribution:
+    """Issue #185: a shed event is reported against the queue that shed it."""
+
+    @staticmethod
+    def _event() -> LiveEvent:
+        aircraft = appear(AircraftStateUpdate(icao="4ca7b3", timestamp=NOW), now=0.0)
+        return AircraftAppeared(aircraft=aircraft, at=aircraft.last_seen)
+
+    @classmethod
+    def _live(cls, dispatcher: EventDispatcher) -> Any:
+        return SimpleNamespace(
+            counts=lambda: SimpleNamespace(total=0, positioned=0, non_positioned=0, stale=0),
+            snapshot=lambda: (),
+            events=dispatcher,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_subscriber_is_reported_under_its_own_name(self) -> None:
+        dispatcher = EventDispatcher()
+        dispatcher.subscribe("persistence", maxsize=1)
+        dispatcher.subscribe("websocket", maxsize=16)
+        for _ in range(4):
+            dispatcher.publish(self._event())
+
+        payload = await _collect(live=self._live(dispatcher))
+
+        subscribers = {row["name"]: row for row in payload["live_events"]["subscribers"]}
+        assert subscribers["persistence"]["dropped"] == 3
+        assert subscribers["persistence"]["capacity"] == 1
+        assert subscribers["persistence"]["overflowed"] is True
+        assert subscribers["websocket"]["dropped"] == 0
+        assert subscribers["websocket"]["pending"] == 4
+        assert payload["live_events"]["published"] == 4
+
+    @pytest.mark.asyncio
+    async def test_the_total_is_the_sum_of_the_subscribers(self) -> None:
+        dispatcher = EventDispatcher()
+        dispatcher.subscribe("persistence", maxsize=1)
+        dispatcher.subscribe("alerts", maxsize=2)
+        for _ in range(5):
+            dispatcher.publish(self._event())
+
+        payload = await _collect(live=self._live(dispatcher))
+
+        assert payload["live_events"]["dropped"] == sum(
+            row["dropped"] for row in payload["live_events"]["subscribers"]
+        )
+        assert payload["live_events"]["dropped"] == 7
+
+    @pytest.mark.asyncio
+    async def test_the_websocket_section_reports_only_its_own_drops(self) -> None:
+        """The whole point of the slice: the browser feed is not blamed for
+        events the persistence worker shed during a metadata import."""
+        dispatcher = EventDispatcher()
+        dispatcher.subscribe("persistence", maxsize=1)
+        dispatcher.subscribe("websocket", maxsize=2)
+        for _ in range(5):
+            dispatcher.publish(self._event())
+
+        payload = await _collect(live=self._live(dispatcher))
+
+        assert payload["websocket"]["events_dropped"] == 3
+        assert payload["live_events"]["dropped"] == 7
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_websocket_keeps_its_record(self) -> None:
+        dispatcher = EventDispatcher()
+        subscription = dispatcher.subscribe("websocket", maxsize=1)
+        dispatcher.publish(self._event())
+        dispatcher.publish(self._event())
+        subscription.close()
+
+        payload = await _collect(live=self._live(dispatcher))
+
+        assert payload["live_events"]["subscribers"] == []
+        assert payload["websocket"]["events_dropped"] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_live_store_reports_zeros_rather_than_failing(self) -> None:
+        payload = await _collect()
+
+        assert payload["live_events"] == {"published": 0, "dropped": 0, "subscribers": []}
+        assert payload["websocket"]["events_dropped"] == 0
 
 
 class TestDatabaseHealth:
@@ -476,7 +564,10 @@ class TestCountersAndErrors:
 
         assert payload["enrichment"]["failures"] == 4
         assert payload["websocket"]["disconnects"] == 2
-        assert payload["websocket"]["events_dropped"] == 9
+        # `live_events_dropped` stays the process total and is published as a
+        # counter; since slice 075 it is no longer the WebSocket's figure.
+        assert payload["counters"]["live_events_dropped"] == 9
+        assert payload["websocket"]["events_dropped"] == 0
         assert payload["counters"]["enrichment_failures"] == 4
 
     @pytest.mark.asyncio

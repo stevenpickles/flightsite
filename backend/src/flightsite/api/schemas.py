@@ -1050,6 +1050,37 @@ class DiagnosticsLive(_Model):
     stale: int = 0
 
 
+class DiagnosticsLiveEventSubscriber(_Model):
+    """One live-event consumer's shedding and backlog (slice 075).
+
+    ``dropped`` is cumulative for the *name* and survives the consumer
+    stopping and resubscribing, so a service that restarted does not appear
+    to have a clean record. ``pending``/``capacity`` are the backlog right
+    now, and ``overflowed`` is true only while the consumer has an
+    unacknowledged gap and is resyncing from a snapshot.
+    """
+
+    name: str
+    dropped: int = 0
+    pending: int = 0
+    capacity: int = 0
+    overflowed: bool = False
+
+
+class DiagnosticsLiveEvents(_Model):
+    """The live event stream, attributed per consumer (slice 075, issue #185).
+
+    ``dropped`` is the sum of the per-subscriber tallies — the same figure
+    ``counters.live_events_dropped`` reports for the process — and
+    ``subscribers`` is what says *whose* queue overflowed. Empty on an
+    install whose live store has not been built yet.
+    """
+
+    published: int = 0
+    dropped: int = 0
+    subscribers: list[DiagnosticsLiveEventSubscriber] = Field(default_factory=list)
+
+
 class DiagnosticsQuickCheck(_Model):
     """SPEC §67: database health, as the last retained integrity check."""
 
@@ -1255,6 +1286,12 @@ class DiagnosticsWebSocket(_Model):
     running: bool = False
     #: Only clients the server had to shed; a clean disconnect is not counted.
     disconnects: int = 0
+    #: Live events shed from the **WebSocket broadcaster's own** queue since
+    #: slice 075. Before that this carried the process-wide
+    #: ``live_events_dropped`` counter, which reported the persistence and
+    #: alert queues' drops under this name (issue #185). For the process
+    #: total read ``counters.live_events_dropped`` or ``live_events.dropped``;
+    #: for the per-consumer breakdown read ``live_events.subscribers``.
     events_dropped: int = 0
 
 
@@ -1290,6 +1327,7 @@ class DiagnosticsResponse(_Model):
     uptime: DiagnosticsUptime = Field(default_factory=DiagnosticsUptime)
     decoder: DiagnosticsDecoder
     live: DiagnosticsLive = Field(default_factory=DiagnosticsLive)
+    live_events: DiagnosticsLiveEvents = Field(default_factory=DiagnosticsLiveEvents)
     database: DiagnosticsDatabase
     metadata: DiagnosticsMetadata = Field(default_factory=DiagnosticsMetadata)
     notifications: DiagnosticsNotifications = Field(default_factory=DiagnosticsNotifications)
@@ -1343,6 +1381,8 @@ __all__ = [
     "DiagnosticsEnrichmentCache",
     "DiagnosticsError",
     "DiagnosticsLive",
+    "DiagnosticsLiveEventSubscriber",
+    "DiagnosticsLiveEvents",
     "DiagnosticsMaintenance",
     "DiagnosticsMaintenanceJob",
     "DiagnosticsMetadata",
