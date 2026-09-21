@@ -1,8 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ALERT_TEMPLATES } from "@/features/setup/constants";
 import { FieldError } from "@/features/setup/components/FieldError";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
@@ -25,8 +25,21 @@ export interface AlertsSectionProps {
   config: FlightSiteConfig;
 }
 
-/** Alert radius (SPEC §66) and which built-in alert templates are enabled
- * (SPEC §45). Applies immediately. */
+/**
+ * Alert radius (SPEC §66). Applies immediately.
+ *
+ * R4-03: this section used to also carry a checkbox per shipped template,
+ * backed by `config.alerts.enabled_templates` — a second, contradictory
+ * control for the same thing the Alerts page's Templates gallery manages.
+ * The two never reconciled: adding a rule from the gallery left the
+ * checkbox unticked, and the config key has no delete path, so unticking a
+ * box here never removed the rule it once seeded. The gallery is the
+ * honest source (it resolves "added" from real rule provenance) and is now
+ * the only surface — this section only links to it.
+ * `config.alerts.enabled_templates` still exists and is still read, once,
+ * by the setup wizard as the first-run seed for which templates to
+ * instantiate; it is simply no longer editable from here.
+ */
 export function AlertsSection({ config }: AlertsSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickAlerts(draftFromConfig(config)),
@@ -44,13 +57,6 @@ export function AlertsSection({ config }: AlertsSectionProps) {
   );
   const alertRadiusError = alertRadius.message;
 
-  function toggleTemplate(id: string, checked: boolean) {
-    const next = checked
-      ? [...draft.enabledTemplateIds, id]
-      : draft.enabledTemplateIds.filter((existing) => existing !== id);
-    setDraft({ ...draft, enabledTemplateIds: next });
-  }
-
   function handleSave() {
     mutation.mutate(buildAlertsPatch(draft), {
       onSuccess: (response) => {
@@ -65,7 +71,7 @@ export function AlertsSection({ config }: AlertsSectionProps) {
     <SettingsSection
       id="settings-alerts"
       title="Alerts"
-      description="How far alerts consider aircraft, and which built-in templates are enabled."
+      description="How far alerts consider aircraft."
     >
       <div className="flex max-w-lg flex-col gap-4">
         <div className="flex flex-col gap-1.5">
@@ -91,35 +97,20 @@ export function AlertsSection({ config }: AlertsSectionProps) {
           />
         </div>
 
-        <div
-          role="group"
-          aria-label="Alert templates"
-          className="flex flex-col gap-2"
-        >
-          {ALERT_TEMPLATES.map((template) => {
-            const checked = draft.enabledTemplateIds.includes(template.id);
-            return (
-              <label
-                key={template.id}
-                className="flex items-start gap-3 rounded-lg border border-border p-3"
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={checked}
-                  onChange={(event) => {
-                    toggleTemplate(template.id, event.target.checked);
-                  }}
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">{template.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {template.description}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3">
+          <p className="text-sm font-medium">Alert templates</p>
+          <p className="text-xs text-muted-foreground">
+            Ready-made rules for military, government, emergency-squawk and
+            other traffic are managed on the Alerts page now, where adding or
+            removing one changes a real rule instead of a checkbox that could
+            disagree with it.
+          </p>
+          <Link
+            to="/alerts?tab=templates"
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            Manage templates on the Alerts page
+          </Link>
         </div>
       </div>
 
