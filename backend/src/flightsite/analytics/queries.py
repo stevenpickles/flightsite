@@ -48,7 +48,7 @@ than leaving the client to assume.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Final
 from zoneinfo import ZoneInfo
@@ -107,16 +107,37 @@ MILESTONE_EVENT_TYPES: Final[frozenset[str]] = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class DailyRow:
-    """One day of the ``GET /analytics/daily`` series."""
+    """One day of the ``GET /analytics/daily`` series.
+
+    **A rollup-derived figure is ``None`` until the rollup exists.** The
+    rollup pipeline has real latency — the flush pass runs every 30 s and only
+    for days something touched — and a day it has not folded yet is not a day
+    with no traffic. Zero-filling the gap was defended as "the zero is the
+    measurement", and for a quiet Tuesday it is; for the first minute of an
+    install it is a fabrication, and the review found a young install
+    reporting "0 aircraft, 0 sightings" as fact over traffic it was watching
+    arrive (issue #205, finding R3-02). :attr:`complete` says which of the two
+    a reader is looking at, and every figure it governs is ``None`` when it is
+    ``False``, so a client that ignores the flag still cannot print a zero
+    that was never measured.
+    """
 
     day: str
-    unique_aircraft: int = 0
+    #: True when ``daily_stats`` holds a row for this day — the counts below
+    #: are a measurement. False means "not computed yet", and they are all
+    #: ``None``.
+    complete: bool = False
+    unique_aircraft: int | None = None
+    #: Airframes first ever heard on this day. Derived live from
+    #: ``aircraft.first_seen_ms`` rather than from the rollup (see
+    #: :meth:`AnalyticsQueries._new_aircraft_by_day`), so it is the one count
+    #: here that is always a measurement, whatever :attr:`complete` says.
     new_aircraft: int = 0
-    sightings: int = 0
-    interesting: int = 0
-    military: int = 0
-    government: int = 0
-    law_enforcement: int = 0
+    sightings: int | None = None
+    interesting: int | None = None
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
     max_range_nm: float | None = None
     busiest_hour: int | None = None
     #: Slice 033's receiver activity for the same local day (§6.2), or ``None``
@@ -130,8 +151,18 @@ class DailyRow:
 
 @dataclass(frozen=True, slots=True)
 class Summary:
-    """SPEC §59's at-a-glance block, resolved over a window."""
+    """SPEC §59's at-a-glance block, resolved over a window.
 
+    Unlike :class:`DailyRow`, the figures here stay numbers when a day of the
+    window has no rollup yet: a total over seven days of which six are folded
+    is a real total, and blanking the card would hide six days of history to
+    describe one. :attr:`complete` is what says so — ``False`` means at least
+    one day in the window is still pending and the sums below are over the
+    rest (issue #205, finding R3-02).
+    """
+
+    #: True when every day in the window has a ``daily_stats`` row.
+    complete: bool = False
     unique_aircraft: int = 0
     new_aircraft: int = 0
     sightings: int = 0
@@ -218,6 +249,9 @@ class Rarity:
 class ClassificationActivity:
     """``GET /analytics/classification-activity`` — SPEC §58's mil/gov/police view."""
 
+    #: True when every day in the window has a rollup row; see
+    #: :class:`Summary` for why the totals are still totals when it is False.
+    complete: bool = False
     military: int = 0
     government: int = 0
     law_enforcement: int = 0
@@ -257,6 +291,21 @@ def _airframe_join(statement: Select[Any]) -> Select[Any]:
         .outerjoin(OperatorGroup, OperatorGroup.id == AircraftMetadataResolved.operator_group_id)
         .outerjoin(AircraftClassification, AircraftClassification.icao24 == Aircraft.icao24)
     )
+
+
+def _total(values: Iterable[int | None]) -> int:
+    """Sum the days that have been rolled up, ignoring the ones that have not.
+
+    A window total is not blanked because one of its days is still pending —
+    see :class:`Summary`. The ``complete`` flag beside it is what says the sum
+    is over part of the window.
+    """
+    return sum(value for value in values if value is not None)
+
+
+def _complete(rows: Sequence[DailyRow]) -> bool:
+    """True when every day in a non-empty series has been rolled up."""
+    return bool(rows) and all(row.complete for row in rows)
 
 
 def _rank(row: Any, sightings: int) -> AircraftRank:
@@ -300,7 +349,9 @@ class AnalyticsQueries:
 
         Every day in the window gets a row, including days with no traffic:
         a chart of "aircraft per day" with holes in it would read as missing
-        data rather than as a quiet Tuesday, and the zero *is* the measurement.
+        data rather than as a quiet Tuesday, and a rebuilt day's zero *is* the
+        measurement. A day that has not been rebuilt at all is the other case
+        entirely, and its row says so — see :class:`DailyRow`.
         """
         days = window.days
         if not days:
@@ -378,6 +429,7 @@ class AnalyticsQueries:
             if rollup is None
             else DailyRow(
                 day=day,
+                complete=True,
                 unique_aircraft=int(rollup.unique_aircraft),
                 new_aircraft=new_aircraft,
                 sightings=int(rollup.sightings),
@@ -391,22 +443,8 @@ class AnalyticsQueries:
         )
         if receiver is None:
             return base
-        return DailyRow(
-            **{
-                name: getattr(base, name)
-                for name in (
-                    "day",
-                    "unique_aircraft",
-                    "new_aircraft",
-                    "sightings",
-                    "interesting",
-                    "military",
-                    "government",
-                    "law_enforcement",
-                    "max_range_nm",
-                    "busiest_hour",
-                )
-            },
+        return replace(
+            base,
             messages_total=receiver.messages_total,
             positions_total=receiver.positions_total,
             aircraft_max=receiver.aircraft_max,
@@ -417,10 +455,11 @@ class AnalyticsQueries:
         """Military / government / police activity over time (SPEC §58)."""
         series = await self.daily(window)
         return ClassificationActivity(
-            military=sum(row.military for row in series),
-            government=sum(row.government for row in series),
-            law_enforcement=sum(row.law_enforcement for row in series),
-            interesting=sum(row.interesting for row in series),
+            complete=_complete(series),
+            military=_total(row.military for row in series),
+            government=_total(row.government for row in series),
+            law_enforcement=_total(row.law_enforcement for row in series),
+            interesting=_total(row.interesting for row in series),
             series=series,
         )
 
@@ -441,13 +480,14 @@ class AnalyticsQueries:
         span = await self._sighting_span(window)
         milestones = await self.new_milestones(window)
         return Summary(
+            complete=_complete(rows),
             unique_aircraft=unique,
             new_aircraft=sum(row.new_aircraft for row in rows),
-            sightings=sum(row.sightings for row in rows),
-            interesting=sum(row.interesting for row in rows),
-            military=sum(row.military for row in rows),
-            government=sum(row.government for row in rows),
-            law_enforcement=sum(row.law_enforcement for row in rows),
+            sightings=_total(row.sightings for row in rows),
+            interesting=_total(row.interesting for row in rows),
+            military=_total(row.military for row in rows),
+            government=_total(row.government for row in rows),
+            law_enforcement=_total(row.law_enforcement for row in rows),
             max_range_nm=max(
                 (row.max_range_nm for row in rows if row.max_range_nm is not None), default=None
             ),

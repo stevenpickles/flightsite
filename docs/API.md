@@ -515,6 +515,58 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 
+**"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
+real latency — the flush pass runs every 30 s and only for days something touched
+— so there is a window in which a day has traffic and no `daily_stats` row.
+Rendering that as `0 aircraft, 0 sightings` states a measurement that was never
+taken, which is what a young install showed. Every rollup-derived figure is
+therefore `null` until its day has been folded, and a `complete` flag says which
+state a reader is in:
+
+```jsonc
+// GET /api/v1/analytics/daily?preset=7d
+{
+  "window": { "preset": "7d", "from": "…", "to": "…",
+              "first_day": "2026-09-14", "last_day": "2026-09-20",
+              "timezone": "America/New_York" },
+  "items": [
+    {                                  // a day that has been rolled up
+      "day": "2026-09-19", "complete": true,
+      "unique_aircraft": 112, "new_aircraft": 9, "sightings": 486,
+      "interesting": 57, "military": 1, "government": 6, "law_enforcement": 4,
+      "max_range_nm": 225.6, "busiest_hour": 21,
+      "receiver_messages": 68764, "receiver_positions": 9012,
+      "receiver_aircraft_max": 61, "receiver_max_range_nm": 224.9
+    },
+    {                                  // not computed yet — not a quiet day
+      "day": "2026-09-20", "complete": false,
+      "unique_aircraft": null, "new_aircraft": 3, "sightings": null,
+      "interesting": null, "military": null, "government": null,
+      "law_enforcement": null, "max_range_nm": null, "busiest_hour": null,
+      "receiver_messages": null, "receiver_positions": null,
+      "receiver_aircraft_max": null, "receiver_max_range_nm": null
+    }
+  ]
+}
+```
+
+- `complete: false` means **the rollup for that day has not been written yet**.
+  A day that *was* rolled up and had no traffic is `complete: true` with zeros —
+  the zero is then the measurement, and a chart should draw it as one.
+- `new_aircraft` is the one count that is never `null`: it is derived live (see
+  below), so it is a real figure on a pending day too.
+- The `receiver_*` fields keep their existing meaning — `null` where slice 033
+  recorded no activity for that day — and are `null` on a pending day as well.
+- `GET /analytics/classification-activity` carries the same rows under `series`
+  and adds `complete` beside its totals.
+- `GET /analytics/summary` adds `complete`, but its **totals stay numbers**: a
+  total over six folded days of seven is a real total, and blanking the card
+  would hide six days of history to describe one. `complete: false` means "as far
+  as has been computed". `unique_aircraft`, `new_aircraft`, `new_milestones` and
+  the first/last sighting instants are live queries and are unaffected.
+- `GET /receiver/metrics?metric=unique_aircraft` reads the same rows, so a
+  pending day is a point with `"value": null` rather than a zero.
+
 **"Never seen before" has one definition across every surface** (issue #205): an
 airframe whose `aircraft.first_seen_ms` — its first-ever observation by this
 receiver — falls inside the window, attributed to the receiver-local day that
@@ -546,8 +598,26 @@ carries a model, and always `null` for an operator group.
 | `GET /api/v1/receiver/signal-distribution` | RSSI distribution histogram, derived from per-sighting `rssi_*_db` reception stats over the selected window. |
 | `GET /api/v1/receiver/lifetime` | SPEC §63 lifetime statistics since T0. |
 
+**The scorecard's "today" figures are null-honest and never rollup-backed**
+(issue #205). `max_range_today_nm` reduces `range_by_bearing_daily` for the
+receiver-local day and is `null` until a positioned aircraft has been seen
+today — "nothing measured yet", never `0` nm. `unique_aircraft_today` and
+`unique_aircraft_since_t0` are live counts over `sightings`, so they are exact
+whether or not today's analytics rollup has been computed. Every other tile is
+either a live reading (`current_visible`, `current_positioned`,
+`messages_per_sec`, `positions_per_sec`) or a lifetime record, and all of them
+answer `null` when the receiver has nothing to report rather than a zero that
+would read as a measurement.
+
+The day these figures are "today" on is the **receiver's**, resolved from live
+settings on every request *and* on every write — see `docs/DATA_MODEL.md` §10.
+
 `metric` is one of `messages_per_sec`, `positions_per_sec`, `aircraft_count`,
 `max_range_nm`, `messages_total`, `positions_total`, `unique_aircraft`.
+
+A point's `value` is `null` where the tier has no figure for that bucket, which
+includes a day whose analytics rollup has not been computed yet
+(`metric=unique_aircraft`) — a gap in the series, not a zero.
 
 Not every metric exists at every resolution, and asking for an unavailable
 combination is a `400`, not an empty series:

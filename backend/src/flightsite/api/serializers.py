@@ -1088,9 +1088,18 @@ def analytics_window_payload(
 
 
 def analytics_daily_row_payload(row: DailyRow) -> dict[str, Any]:
-    """One day of the §3.7 ``daily`` series, receiver activity included."""
+    """One day of the §3.7 ``daily`` series, receiver activity included.
+
+    ``complete`` is ``false`` for a day the rollup pipeline has not folded
+    yet, and every figure it governs is then ``null`` rather than ``0`` —
+    "not computed yet" and "nothing flew" are different statements and a card
+    that prints the first as the second is lying about a measurement (issue
+    #205, finding R3-02). ``new_aircraft`` is exempt: it is derived live, so
+    it is a measurement on a pending day too.
+    """
     return {
         "day": row.day,
+        "complete": row.complete,
         "unique_aircraft": row.unique_aircraft,
         "new_aircraft": row.new_aircraft,
         "sightings": row.sightings,
@@ -1108,8 +1117,15 @@ def analytics_daily_row_payload(row: DailyRow) -> dict[str, Any]:
 
 
 def analytics_summary_payload(summary: Summary) -> dict[str, Any]:
-    """SPEC §59's at-a-glance block."""
+    """SPEC §59's at-a-glance block.
+
+    ``complete`` is ``false`` when a day of the window has not been rolled up
+    yet. The totals stay numbers — see
+    :class:`~flightsite.analytics.queries.Summary` — so the flag is what a
+    card needs to say "as far as we have computed" rather than assert.
+    """
     return {
+        "complete": summary.complete,
         "unique_aircraft": summary.unique_aircraft,
         "new_aircraft": summary.new_aircraft,
         "sightings": summary.sightings,

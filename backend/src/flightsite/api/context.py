@@ -705,14 +705,21 @@ class LiveApiContext:
         points: list[tuple[int, float | None]]
         if metric == "unique_aircraft":
             # Roadmap slice 031's daily rollups already answer this exactly —
-            # `daily()` returns one row per local day in the window, zero
-            # included (the same "the zero is the measurement" rule as every
-            # other analytics chart), so there is nothing left for this
-            # endpoint to compute from `sightings` itself.
+            # `daily()` returns one row per local day in the window — so there
+            # is nothing left for this endpoint to compute from `sightings`
+            # itself. A day the rollup has not folded yet carries `None`
+            # rather than a zero, and the point carries it through: the series
+            # payload already distinguishes an absent value from a measured
+            # one, so a young install draws a gap instead of a floor (issue
+            # #205, finding R3-02).
             window = explicit_window(start_ms, end_ms, zone=zone, t0_ms=await self._t0_ms())
             rows = await self.analytics.daily(window)
             points = [
-                (local_day_start_ms(row.day, zone), float(row.unique_aircraft)) for row in rows
+                (
+                    local_day_start_ms(row.day, zone),
+                    None if row.unique_aircraft is None else float(row.unique_aircraft),
+                )
+                for row in rows
             ]
         elif resolution == "high":
             samples = await metrics.samples_between(start_ms, end_ms + 1)

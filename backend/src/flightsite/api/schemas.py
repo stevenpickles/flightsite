@@ -745,16 +745,24 @@ class AnalyticsDailyRow(_Model):
     The ``receiver_*`` fields are slice 033's activity for the same day (SPEC
     §58's "receiver activity over time"), ``null`` where that slice recorded
     none.
+
+    ``complete`` is ``false`` for a day whose rollup has not been computed
+    yet — a young install, or a day the flush pass has not reached — and every
+    count it governs is then ``null`` rather than ``0``, so "not computed yet"
+    is never rendered as a measured zero (issue #205, finding R3-02).
+    ``new_aircraft`` is the exception: it is derived live from
+    ``aircraft.first_seen_ms``, so it is a real figure on a pending day too.
     """
 
     day: str
-    unique_aircraft: int
+    complete: bool = False
+    unique_aircraft: int | None = None
     new_aircraft: int
-    sightings: int
-    interesting: int
-    military: int
-    government: int
-    law_enforcement: int
+    sightings: int | None = None
+    interesting: int | None = None
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
     max_range_nm: float | None = None
     busiest_hour: int | None = None
     receiver_messages: int | None = None
@@ -771,8 +779,15 @@ class AnalyticsDailyResponse(_Model):
 
 
 class AnalyticsSummary(_Model):
-    """SPEC §59's at-a-glance block over the selected window."""
+    """SPEC §59's at-a-glance block over the selected window.
 
+    ``complete`` is ``false`` when at least one day of the window has not been
+    rolled up yet. Unlike a daily row the totals stay numbers — a total over
+    six folded days of seven is a real total — so the flag is what lets a card
+    say "as far as we have computed" instead of asserting (issue #205).
+    """
+
+    complete: bool = False
     unique_aircraft: int
     new_aircraft: int
     sightings: int
@@ -865,6 +880,9 @@ class AnalyticsClassificationResponse(_Model):
     """``GET /api/v1/analytics/classification-activity``."""
 
     window: AnalyticsWindow
+    #: False when a day of the window has not been rolled up yet; the totals
+    #: are then over the days that have (issue #205).
+    complete: bool = False
     military: int
     government: int
     law_enforcement: int
