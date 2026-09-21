@@ -17,7 +17,10 @@ import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
 import { IdentityMetadataSection } from "@/features/aircraft-detail/components/IdentityMetadataSection";
 import { LifetimeSection } from "@/features/aircraft-detail/components/LifetimeSection";
 import { LiveMapJumpLink } from "@/features/aircraft-detail/components/LiveMapJumpLink";
-import { RecentSightingsSection } from "@/features/aircraft-detail/components/RecentSightingsSection";
+import {
+  RECENT_SIGHTINGS_LIMIT,
+  RecentSightingsSection,
+} from "@/features/aircraft-detail/components/RecentSightingsSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import { formatAircraftAge } from "@/features/aircraft-detail/lib/format";
 import {
@@ -29,6 +32,7 @@ import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiV1Error, useAircraftDetailQuery } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { useAircraftSightingsQuery } from "@/lib/api/sightings";
 
 const ICAO_PATTERN = /^[0-9a-f]{6}$/;
 
@@ -45,6 +49,19 @@ export function AircraftDetailPage() {
     refetchInterval: DETAIL_REFRESH_MS,
   });
   const receiverQuery = useReceiverQuery();
+  // The same query `RecentSightingsSection` runs, with the same key, so this
+  // shares its cache entry rather than making a second request. It is read
+  // here for one reason: the best identifier this page can give the tracker
+  // links when there is no registration (review R2-11).
+  const recentSightingsQuery = useAircraftSightingsQuery(
+    validIcao && icao !== undefined
+      ? { icao, limit: RECENT_SIGHTINGS_LIMIT, offset: 0 }
+      : undefined,
+  );
+  const latestCallsign =
+    recentSightingsQuery.data?.items.find(
+      (sighting) => sighting.callsign !== null,
+    )?.callsign ?? null;
 
   if (!validIcao) {
     return (
@@ -169,10 +186,14 @@ export function AircraftDetailPage() {
         <RecentSightingsSection icao={detail.icao} timezone={timezone} />
 
         <DetailSection title="External trackers">
+          {/* SPEC §24 asks for "the best available identifier". A hard-coded
+           * `callsign: null` meant a callsign-only airframe — the majority
+           * case on a receiver with no metadata imported — got one of the
+           * three services instead of three (review R2-11). */}
           <ExternalTrackerLinks
             aircraft={{
               icao: detail.icao,
-              callsign: null,
+              callsign: latestCallsign,
               registration: detail.registration,
             }}
           />

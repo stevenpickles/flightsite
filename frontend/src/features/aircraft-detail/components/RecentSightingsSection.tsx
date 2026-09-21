@@ -14,7 +14,12 @@ import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/form
 import { formatSightingDuration } from "@/features/sightings/lib/format";
 import { useAircraftSightingsQuery } from "@/lib/api/sightings";
 
-const RECENT_LIMIT = 5;
+/** Exported so `AircraftDetailPage` can run the *same* query for the
+ * airframe's most recent callsign (review R2-11) and share this one's cache
+ * entry rather than issuing a second identical request. */
+export const RECENT_SIGHTINGS_LIMIT = 5;
+
+const RECENT_LIMIT = RECENT_SIGHTINGS_LIMIT;
 
 export interface RecentSightingsSectionProps {
   icao: string;

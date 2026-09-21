@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { aircraftDetail, installAircraftApiMock } from "@/test/aircraftApiMock";
+import { sightingRow } from "@/test/sightingsApiMock";
 import { renderApp } from "@/test/test-utils";
 
 beforeEach(() => {
@@ -87,6 +88,43 @@ describe("AircraftDetailPage", () => {
     expect(
       screen.queryByRole("button", { name: /live now/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("builds tracker links from the airframe's last callsign when it has no registration (R2-11)", async () => {
+    installAircraftApiMock({
+      detail: {
+        b034be: aircraftDetail({ icao: "b034be", registration: null }),
+      },
+      aircraftSightings: {
+        b034be: {
+          items: [
+            sightingRow({ id: 2, icao: "b034be", callsign: "AFR1641" }),
+            sightingRow({ id: 1, icao: "b034be", callsign: "AFR990" }),
+          ],
+          total: null,
+          limit: 5,
+          offset: 0,
+        },
+      },
+    });
+
+    renderApp("/aircraft/b034be");
+
+    // All three of SPEC §24's services, not the one ADS-B Exchange link a
+    // hard-coded `callsign: null` left behind.
+    const fr24 = await screen.findByRole("link", { name: /flightradar24/i });
+    expect(fr24).toHaveAttribute(
+      "href",
+      "https://www.flightradar24.com/AFR1641",
+    );
+    expect(
+      screen.getByRole("link", { name: /flightaware/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /ads-b exchange/i }),
+    ).toBeInTheDocument();
+    // And it says what a callsign link actually opens.
+    expect(fr24.getAttribute("title")).toMatch(/not this airframe/i);
   });
 
   it("shows a not-found message for a valid-format icao this receiver never sighted", async () => {
