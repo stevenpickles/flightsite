@@ -25,6 +25,21 @@ export interface AlertsSectionProps {
   config: FlightSiteConfig;
 }
 
+const NM_TO_KM = 1.852;
+
+/** A live "≈ metric" readout for the nautical-mile alert radius, shown only
+ * when the Units & time section's preference is metric (R4-13). Storage and
+ * the API stay nm regardless (`CLAUDE.md`). `null` for anything that is not
+ * a plain number yet. */
+function metricRadiusHint(rawNm: string): string | null {
+  const value = Number(rawNm);
+  if (rawNm.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  const km = value * NM_TO_KM;
+  return `≈ ${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
+}
+
 /**
  * Alert radius (SPEC §66). Applies immediately.
  *
@@ -56,6 +71,7 @@ export function AlertsSection({ config }: AlertsSectionProps) {
     fieldErrors.alert_radius_nm,
   );
   const alertRadiusError = alertRadius.message;
+  const showMetricHint = config.units === "metric";
 
   function handleSave() {
     mutation.mutate(buildAlertsPatch(draft), {
@@ -95,6 +111,11 @@ export function AlertsSection({ config }: AlertsSectionProps) {
             id="settings-alert-radius-error"
             message={alertRadiusError}
           />
+          {showMetricHint && metricRadiusHint(draft.alertRadiusNm) && (
+            <p className="text-xs text-muted-foreground">
+              {metricRadiusHint(draft.alertRadiusNm)}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3">

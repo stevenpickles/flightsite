@@ -28,6 +28,44 @@ export interface DisplaySectionProps {
   config: FlightSiteConfig;
 }
 
+const NM_TO_KM = 1.852;
+
+/** A live "≈ metric" readout for a nautical-mile field, shown only when the
+ * Units & time section's preference is metric (R4-13). Storage and the API
+ * stay nm regardless (`CLAUDE.md`) — this is a hint, not a second input —
+ * but a metric-preference user should not have to do the arithmetic
+ * themselves every time they read a distance measured in a unit they did
+ * not choose. `null` for anything that is not a plain number yet (blank,
+ * mid-edit, or already flagged invalid by the field's own validator). */
+function metricRadiusHint(rawNm: string): string | null {
+  const value = Number(rawNm);
+  if (rawNm.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  const km = value * NM_TO_KM;
+  return `≈ ${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
+}
+
+/** The same hint for a comma-separated list of nm values (range rings) —
+ * one converted list rather than one hint per ring. */
+function metricRadiiListHint(rawList: string): string | null {
+  const parts = rawList
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    return null;
+  }
+  const values = parts.map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  const km = values.map((value) =>
+    (value * NM_TO_KM).toLocaleString(undefined, { maximumFractionDigits: 1 }),
+  );
+  return `≈ ${km.join(", ")} km`;
+}
+
 /** How far the Live Map shows traffic, the default basemap, and range-ring
  * display (SPEC §32/§33). Applies immediately — no restart required. */
 export function DisplaySection({ config }: DisplaySectionProps) {
@@ -55,6 +93,7 @@ export function DisplaySection({ config }: DisplaySectionProps) {
   const displayRadiusError = displayRadius.message;
   const radiiError = radii.message;
   const hasBlockingError = displayRadius.blocking || radii.blocking;
+  const showMetricHints = config.units === "metric";
 
   function handleSave() {
     mutation.mutate(buildDisplayPatch(draft), {
@@ -91,6 +130,11 @@ export function DisplaySection({ config }: DisplaySectionProps) {
             id="settings-display-radius-error"
             message={displayRadiusError}
           />
+          {showMetricHints && metricRadiusHint(draft.displayRadiusNm) && (
+            <p className="text-xs text-muted-foreground">
+              {metricRadiusHint(draft.displayRadiusNm)}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -145,6 +189,11 @@ export function DisplaySection({ config }: DisplaySectionProps) {
             }}
           />
           <FieldError id="settings-range-rings-error" message={radiiError} />
+          {showMetricHints && metricRadiiListHint(draft.rangeRingRadiiNm) && (
+            <p className="text-xs text-muted-foreground">
+              {metricRadiiListHint(draft.rangeRingRadiiNm)}
+            </p>
+          )}
         </div>
       </div>
 

@@ -29,6 +29,21 @@ export interface ReceiverSectionProps {
   config: FlightSiteConfig;
 }
 
+const FT_TO_M = 1 / 3.28084;
+
+/** A live "≈ metric" readout for the antenna height, shown only when the
+ * Units & time section's preference is metric (R4-13). Storage and the API
+ * stay ft regardless (`CLAUDE.md`). `null` for anything that is not a plain
+ * number yet. */
+function metricHeightHint(rawFt: string): string | null {
+  const value = Number(rawFt);
+  if (rawFt.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  const meters = value * FT_TO_M;
+  return `≈ ${meters.toLocaleString(undefined, { maximumFractionDigits: 1 })} m`;
+}
+
 /** Site name, location, and antenna height (SPEC §13) — the same fields the
  * setup wizard's Location step collects, editable afterward here. Restart
  * required: bearing, distance and range rings are measured from the reference
@@ -74,6 +89,7 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
     latitude.blocking ||
     longitude.blocking ||
     antenna.blocking;
+  const showMetricHint = config.units === "metric";
 
   function handleSave() {
     mutation.mutate(buildReceiverPatch(draft), {
@@ -163,6 +179,11 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
             id="settings-antenna-height-error"
             message={antennaError}
           />
+          {showMetricHint && metricHeightHint(draft.antennaHeightFt) && (
+            <p className="text-xs text-muted-foreground">
+              {metricHeightHint(draft.antennaHeightFt)}
+            </p>
+          )}
         </div>
       </div>
 

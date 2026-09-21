@@ -217,6 +217,9 @@ export interface InstallAlertsApiMockOptions {
    * to offer a "on a watchlist" condition its choices. */
   watchlists?: Watchlist[];
   timezone?: string;
+  /** R4-13: the display-units preference `ConditionEditor` reads to decide
+   * whether to show a metric conversion hint. */
+  units?: "aviation" | "metric";
 }
 
 /**
@@ -242,6 +245,7 @@ export function installAlertsApiMock(
   const matches = [...(options.matches ?? [])];
   const watchlists = [...(options.watchlists ?? [])];
   const timezone = options.timezone ?? "UTC";
+  const units = options.units ?? "aviation";
   let nextRuleId = Math.max(0, ...rules.map((rule) => rule.id)) + 1;
 
   function ruleFromBody(
@@ -275,7 +279,7 @@ export function installAlertsApiMock(
       if (path === "/api/internal/config" && method === "GET") {
         return jsonResponse({
           first_run: false,
-          config: defaultFlightSiteConfig({ timezone }),
+          config: defaultFlightSiteConfig({ timezone, units }),
           secrets_set: {},
         });
       }

@@ -4,16 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
+import type { FlightSiteConfig } from "@/lib/api/config";
 import {
   defaultFlightSiteConfig,
   installConfigApiMock,
 } from "@/test/configApiMock";
 
-function renderSection() {
+function renderSection(config: FlightSiteConfig = defaultFlightSiteConfig()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const config = defaultFlightSiteConfig();
   return render(
     <QueryClientProvider client={queryClient}>
       <DisplaySection config={config} />
@@ -135,5 +135,26 @@ describe("DisplaySection", () => {
 
     await user.type(screen.getByLabelText(/display radius/i), "1");
     expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
+
+  it("shows a metric conversion hint under nm fields when metric is preferred (R4-13)", async () => {
+    installConfigApiMock();
+    const user = userEvent.setup();
+    renderSection(defaultFlightSiteConfig({ units: "metric" }));
+
+    // Prefilled value (250 nm) already converts.
+    expect(await screen.findByText(/≈ 463 km/)).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText(/range ring radii/i));
+    await user.type(screen.getByLabelText(/range ring radii/i), "50, 100");
+
+    expect(await screen.findByText(/≈ 92.6, 185.2 km/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", () => {
+    installConfigApiMock();
+    renderSection(defaultFlightSiteConfig({ units: "aviation" }));
+
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 });

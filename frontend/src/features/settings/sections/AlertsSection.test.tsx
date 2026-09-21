@@ -10,13 +10,16 @@ import {
   installConfigApiMock,
 } from "@/test/configApiMock";
 
-function renderSection() {
+function renderSection(
+  overrides: Parameters<typeof defaultFlightSiteConfig>[0] = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const config = defaultFlightSiteConfig({
     alert_radius_nm: 100,
     alerts: { enabled_templates: ["military"] },
+    ...overrides,
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -116,5 +119,19 @@ describe("AlertsSection", () => {
     await user.clear(screen.getByLabelText(/alert radius/i));
     await user.type(screen.getByLabelText(/alert radius/i), "6");
     expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
+
+  it("shows a metric conversion hint when metric is preferred (R4-13)", async () => {
+    installConfigApiMock();
+    renderSection({ units: "metric" });
+
+    expect(await screen.findByText(/≈ 185.2 km/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", () => {
+    installConfigApiMock();
+    renderSection({ units: "aviation" });
+
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 });

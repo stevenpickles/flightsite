@@ -9,7 +9,9 @@ import {
   installConfigApiMock,
 } from "@/test/configApiMock";
 
-function renderSection() {
+function renderSection(
+  overrides: Parameters<typeof defaultFlightSiteConfig>[0] = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -20,6 +22,7 @@ function renderSection() {
       site_name: "Home Roof",
       antenna_height_ft: 30,
     },
+    ...overrides,
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -165,5 +168,19 @@ describe("ReceiverSection", () => {
 
     await user.type(screen.getByLabelText(/site name/i), " Again");
     expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
+
+  it("shows a metric conversion hint under antenna height when metric is preferred (R4-13)", async () => {
+    installConfigApiMock();
+    renderSection({ units: "metric" });
+
+    expect(await screen.findByText(/≈ 9.1 m/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", () => {
+    installConfigApiMock();
+    renderSection({ units: "aviation" });
+
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 });
