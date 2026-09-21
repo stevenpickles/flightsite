@@ -18,7 +18,7 @@ import { Link } from "react-router-dom";
 
 import { describeActivityEvent } from "@/features/activity/lib/describeActivityEvent";
 import { ACTIVITY_ICONS, toneForSeverity } from "@/features/activity/lib/icons";
-import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
+import { formatReceiverLocalTitle } from "@/features/aircraft-detail/lib/format";
 import { formatReceiverLocalTime } from "@/features/receiver/lib/format";
 import type { ActivityEvent } from "@/lib/api/activity";
 import { cn } from "@/lib/utils";
@@ -96,7 +96,7 @@ export function ActivityRow({ event, timezone, compact }: ActivityRowProps) {
        * (review R2-06, R2-14). */}
       <time
         dateTime={event.at}
-        title={`${formatReceiverLocalDateTime(event.at, timezone)} · ${event.at}`}
+        title={formatReceiverLocalTitle(event.at, timezone)}
         className={cn(
           "ml-auto shrink-0 whitespace-nowrap text-muted-foreground",
           compact ? "text-[11px]" : "text-xs",

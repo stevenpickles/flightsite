@@ -16,6 +16,7 @@ import {
 } from "@/features/history/components/QueryError";
 import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useAircraftListQuery, type AircraftSortKey } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
@@ -57,6 +58,7 @@ export function AircraftPage() {
       <header className="mb-4">
         <h1 className="text-2xl font-semibold tracking-tight">{item.label}</h1>
         <p className="text-sm text-muted-foreground">{item.description}</p>
+        <TimezoneNote className="mt-1" timezone={timezone} />
         <RefreshStatus
           className="mt-1"
           updatedAt={listQuery.dataUpdatedAt}

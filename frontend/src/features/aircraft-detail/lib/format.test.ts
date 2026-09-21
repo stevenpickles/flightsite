@@ -12,12 +12,14 @@ import {
   formatOnGround,
   formatReceiverLocalDateTime,
   formatReceiverLocalTime,
+  formatReceiverLocalTitle,
   formatRelativeAge,
   formatRssi,
   formatSpeed,
   formatVerticalRate,
   isEmergencySquawk,
   msSinceLastSeen,
+  receiverZoneLabel,
   verticalTrend,
 } from "@/features/aircraft-detail/lib/format";
 
@@ -238,6 +240,38 @@ describe("formatReceiverLocalDateTime", () => {
 
   it("falls back to the ISO string for an unparseable instant", () => {
     expect(formatReceiverLocalDateTime("not-a-date", "UTC")).toBe("not-a-date");
+  });
+});
+
+describe("receiverZoneLabel", () => {
+  it("names the zone in full and in short", () => {
+    expect(
+      receiverZoneLabel("America/New_York", new Date("2026-08-31T14:00:00Z")),
+    ).toBe("America/New_York (EDT)");
+  });
+
+  it("answers for the instant, not in general, so DST is decidable", () => {
+    // The same zone, six months apart. A page that said only
+    // "America/New_York" left a repeated hour around the change ambiguous.
+    expect(
+      receiverZoneLabel("America/New_York", new Date("2026-01-15T14:00:00Z")),
+    ).toBe("America/New_York (EST)");
+  });
+
+  it("falls back to the IANA name alone when there is no short form to add", () => {
+    expect(receiverZoneLabel("Not/AZone")).toBe("Not/AZone");
+  });
+});
+
+describe("formatReceiverLocalTitle", () => {
+  it("carries the local time, its zone, and the stored instant", () => {
+    expect(
+      formatReceiverLocalTitle("2026-08-31T14:03:22.418Z", "America/New_York"),
+    ).toBe("2026-08-31 10:03 EDT · 2026-08-31T14:03:22.418Z");
+  });
+
+  it("returns an unparseable instant unchanged rather than throwing", () => {
+    expect(formatReceiverLocalTitle("not-a-date", "UTC")).toBe("not-a-date");
   });
 });
 

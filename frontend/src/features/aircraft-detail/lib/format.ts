@@ -288,6 +288,66 @@ export function formatReceiverLocalDateTime(
 }
 
 /**
+ * The short name of a timezone at a given instant — `"EDT"`, `"GMT+9"` —
+ * for naming whose clock a page's timestamps are on (review R2-14).
+ *
+ * At an instant, not in general, because the answer changes twice a year:
+ * `America/New_York` is EST in January and EDT in July, and a page that
+ * says only "America/New_York" leaves a repeated hour around a DST
+ * transition undecidable. Falls back to the IANA name itself, which is
+ * always true if less short.
+ */
+export function receiverZoneAbbreviation(
+  timezone: string,
+  at: Date = new Date(),
+): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "short",
+    }).formatToParts(at);
+    return (
+      parts.find((part) => part.type === "timeZoneName")?.value ?? timezone
+    );
+  } catch {
+    return timezone;
+  }
+}
+
+/** `"America/New_York (EDT)"` — the zone named in full and in short, for the
+ * one line per page that says whose clock these times are (review R2-14). */
+export function receiverZoneLabel(
+  timezone: string,
+  at: Date = new Date(),
+): string {
+  const abbreviation = receiverZoneAbbreviation(timezone, at);
+  return abbreviation === timezone ? timezone : `${timezone} (${abbreviation})`;
+}
+
+/**
+ * What a timestamp's `title` says: the receiver-local datetime with its zone
+ * named, then the UTC instant it was stored as — e.g.
+ * `"2026-08-31 10:03 EDT · 2026-08-31T14:03:22.418Z"`.
+ *
+ * Both halves earn their place. The local half is what the cell shows, now
+ * unambiguous about whose clock it is; the UTC half is the instant itself,
+ * which is what a reader correlating FlightSite with any other log actually
+ * needs. The review found no `title` on any timestamp on any of the five
+ * routes (`main [title]` returned `[]`).
+ */
+export function formatReceiverLocalTitle(
+  iso: string,
+  timezone: string,
+): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  const local = formatReceiverLocalDateTime(iso, timezone);
+  return `${local} ${receiverZoneAbbreviation(timezone, when)} · ${iso}`;
+}
+
+/**
  * Aircraft age from its manufacture year — `"18 years (built 2008)"` (SPEC
  * §23/§50, PRODUCT §4.3; review R2-10 found it implemented nowhere).
  *

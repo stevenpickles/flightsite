@@ -8,11 +8,11 @@
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import {
   formatAltitude,
   formatDistance,
   formatDurationShort,
-  formatReceiverLocalDateTime,
 } from "@/features/aircraft-detail/lib/format";
 import type { LifetimeRecord } from "@/lib/api/aircraft";
 import type { UnitSystem } from "@/lib/api/config";
@@ -32,11 +32,11 @@ export function LifetimeSection({
     <DetailSection title="History">
       <FieldRow
         label="First seen"
-        value={formatReceiverLocalDateTime(lifetime.first_seen, timezone)}
+        value={<ReceiverTime iso={lifetime.first_seen} timezone={timezone} />}
       />
       <FieldRow
         label="Last seen"
-        value={formatReceiverLocalDateTime(lifetime.last_seen, timezone)}
+        value={<ReceiverTime iso={lifetime.last_seen} timezone={timezone} />}
       />
       <FieldRow
         label="Sighting count"

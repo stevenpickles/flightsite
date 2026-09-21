@@ -66,7 +66,7 @@ describe("ActivityRow", () => {
     expect(screen.getByText("10:03")).toBeInTheDocument();
   });
 
-  it("carries the day and the underlying instant, so a bare time is never ambiguous (R2-06)", () => {
+  it("carries the day, the zone and the underlying instant (R2-06, R2-14)", () => {
     renderRow(
       activityEvent({ at: "2026-08-31T14:03:22.418Z" }),
       "America/New_York",
@@ -77,7 +77,7 @@ describe("ActivityRow", () => {
     expect(stamp).toHaveAttribute("datetime", "2026-08-31T14:03:22.418Z");
     expect(stamp).toHaveAttribute(
       "title",
-      "2026-08-31 10:03 · 2026-08-31T14:03:22.418Z",
+      "2026-08-31 10:03 EDT · 2026-08-31T14:03:22.418Z",
     );
   });
 

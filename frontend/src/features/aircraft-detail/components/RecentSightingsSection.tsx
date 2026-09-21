@@ -9,8 +9,8 @@
 import { Link } from "react-router-dom";
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
-import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
 import { useAircraftSightingsQuery } from "@/lib/api/sightings";
 
@@ -59,7 +59,7 @@ export function RecentSightingsSection({
                 to={`/sightings/${sighting.id}`}
                 className="text-accent hover:underline"
               >
-                {formatReceiverLocalDateTime(sighting.started_at, timezone)}
+                <ReceiverTime iso={sighting.started_at} timezone={timezone} />
               </Link>
               <span className="text-xs text-muted-foreground">
                 {sighting.ended_at === null ? (

@@ -10,7 +10,7 @@ import { Link, useParams } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
-import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import {
   SightingReceptionSection,
   SightingRecordsSection,
@@ -24,6 +24,7 @@ import {
   QueryErrorState,
 } from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
@@ -133,6 +134,7 @@ export function SightingDetailPage() {
             {sighting.callsign !== null && <> · Callsign {sighting.callsign}</>}
             {sighting.squawk !== null && <> · Squawk {sighting.squawk}</>}
           </p>
+          <TimezoneNote className="mt-2" timezone={timezone} />
           <RefreshStatus
             className="mt-2"
             updatedAt={detailQuery.dataUpdatedAt}
@@ -147,7 +149,7 @@ export function SightingDetailPage() {
             <div>
               <dt className="text-xs text-muted-foreground">Started</dt>
               <dd>
-                {formatReceiverLocalDateTime(sighting.started_at, timezone)}
+                <ReceiverTime iso={sighting.started_at} timezone={timezone} />
               </dd>
             </div>
             <div>
@@ -156,10 +158,10 @@ export function SightingDetailPage() {
                 {isOpen ? (
                   <span className="font-medium text-accent">Ongoing</span>
                 ) : (
-                  formatReceiverLocalDateTime(
-                    sighting.ended_at as string,
-                    timezone,
-                  )
+                  <ReceiverTime
+                    iso={sighting.ended_at as string}
+                    timezone={timezone}
+                  />
                 )}
               </dd>
             </div>

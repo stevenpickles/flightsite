@@ -8,13 +8,12 @@
 
 import { Link, useNavigate } from "react-router-dom";
 
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import { classificationSummary } from "@/features/aircraft-detail/lib/classificationSummary";
 import {
   formatAltitude,
   formatDistance,
-  formatReceiverLocalDateTime,
-  formatReceiverLocalTime,
 } from "@/features/aircraft-detail/lib/format";
 import { TableScroller } from "@/features/history/components/TableScroller";
 import {
@@ -210,14 +209,18 @@ export function SightingsTable({
                   onClick={(event) => event.stopPropagation()}
                   className="font-medium text-accent hover:underline"
                 >
-                  {formatReceiverLocalDateTime(row.started_at, timezone)}
+                  <ReceiverTime iso={row.started_at} timezone={timezone} />
                 </Link>
               </td>
               <td className={cn("px-3 py-2 whitespace-nowrap", CELL.ended_at)}>
                 {row.ended_at === null ? (
                   <span className="font-medium text-accent">Ongoing</span>
                 ) : (
-                  formatReceiverLocalTime(row.ended_at, timezone)
+                  <ReceiverTime
+                    iso={row.ended_at}
+                    timezone={timezone}
+                    format="time"
+                  />
                 )}
               </td>
               <td

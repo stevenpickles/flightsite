@@ -28,6 +28,7 @@ import {
   QueryErrorState,
 } from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiV1Error, useAircraftDetailQuery } from "@/lib/api/aircraft";
@@ -140,6 +141,7 @@ export function AircraftDetailPage() {
             {detail.registration ?? <UnknownValue />}
           </p>
           {detail.live && <LiveMapJumpLink icao={detail.icao} />}
+          <TimezoneNote className="mt-2" timezone={timezone} />
           <RefreshStatus
             className="mt-2"
             updatedAt={detailQuery.dataUpdatedAt}

@@ -35,6 +35,7 @@ import {
 } from "@/features/history/components/QueryError";
 import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
@@ -67,6 +68,7 @@ export function ActivityPage() {
           Firsts, records and milestones — what happened while you weren&rsquo;t
           watching.
         </p>
+        <TimezoneNote className="mt-1" timezone={timezone} />
         <RefreshStatus
           className="mt-1"
           updatedAt={listQuery.dataUpdatedAt}

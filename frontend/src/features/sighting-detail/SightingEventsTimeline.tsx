@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 
 import {
-  formatReceiverLocalDateTime,
   formatReceiverLocalTime,
+  formatReceiverLocalTitle,
 } from "@/features/aircraft-detail/lib/format";
 import { describeSightingEvent } from "@/features/sighting-detail/lib/eventDescriptions";
 import type { SightingEvent, SightingEventType } from "@/lib/api/sightings";
@@ -87,7 +87,7 @@ export function SightingEventsTimeline({
              * datetime and the UTC instant behind it (review R2-06). */}
             <time
               dateTime={event.at}
-              title={`${formatReceiverLocalDateTime(event.at, timezone)} · ${event.at}`}
+              title={formatReceiverLocalTitle(event.at, timezone)}
               className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground"
             >
               {formatReceiverLocalTime(event.at, timezone)}

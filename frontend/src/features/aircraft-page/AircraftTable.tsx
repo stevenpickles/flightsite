@@ -7,12 +7,10 @@
 
 import { Link, useNavigate } from "react-router-dom";
 
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import { classificationSummary } from "@/features/aircraft-detail/lib/classificationSummary";
-import {
-  formatDistance,
-  formatReceiverLocalDateTime,
-} from "@/features/aircraft-detail/lib/format";
+import { formatDistance } from "@/features/aircraft-detail/lib/format";
 import { TableScroller } from "@/features/history/components/TableScroller";
 import {
   columnClasses,
@@ -184,10 +182,10 @@ export function AircraftTable({
               <td
                 className={cn("px-3 py-2 whitespace-nowrap", CELL.first_seen)}
               >
-                {formatReceiverLocalDateTime(row.first_seen, timezone)}
+                <ReceiverTime iso={row.first_seen} timezone={timezone} />
               </td>
               <td className={cn("px-3 py-2 whitespace-nowrap", CELL.last_seen)}>
-                {formatReceiverLocalDateTime(row.last_seen, timezone)}
+                <ReceiverTime iso={row.last_seen} timezone={timezone} />
               </td>
               <td className={cn("px-3 py-2", CELL.sighting_count)}>
                 {row.sighting_count}

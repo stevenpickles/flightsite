@@ -6,6 +6,7 @@ import { PAGE_SIZE } from "@/features/aircraft-page/lib/urlState";
 import {
   aircraftDetail,
   aircraftListRow,
+  defaultReceiverInfo,
   installAircraftApiMock,
 } from "@/test/aircraftApiMock";
 import { renderApp } from "@/test/test-utils";
@@ -171,6 +172,36 @@ describe("AircraftPage", () => {
     await waitFor(() => {
       expect(router.state.location.search).not.toContain("page=");
     });
+  });
+
+  it("names the receiver's timezone and stamps every cell with its instant (R2-14)", async () => {
+    installAircraftApiMock({
+      list: {
+        items: [aircraftListRow()],
+        total: 1,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+      receiver: defaultReceiverInfo({ timezone: "America/New_York" }),
+    });
+
+    renderApp("/aircraft");
+    await screen.findByText("N302DN");
+
+    // Said once per page, not once per row — the review found the zone
+    // named nowhere on any of the five routes.
+    await waitFor(() =>
+      expect(screen.getByTestId("timezone-note")).toHaveTextContent(
+        "All times America/New_York",
+      ),
+    );
+
+    // And every timestamp carries the instant behind it, which is what a
+    // reader correlating FlightSite with another log actually needs.
+    const lastSeen = screen.getByText("2026-08-30 18:41");
+    expect(lastSeen.tagName).toBe("TIME");
+    expect(lastSeen).toHaveAttribute("datetime", "2026-08-30T22:41:55.000Z");
+    expect(lastSeen.getAttribute("title")).toContain("2026-08-30T22:41:55");
   });
 
   it("says how old the table is and fetches again on demand (R2-03)", async () => {
