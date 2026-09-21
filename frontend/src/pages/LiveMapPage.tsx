@@ -6,6 +6,7 @@ import { FilterDrawer } from "@/features/filters/components/FilterDrawer";
 import { NonPositionedPanel } from "@/features/filters/components/NonPositionedPanel";
 import { QuickFilterChips } from "@/features/filters/components/QuickFilterChips";
 import { useFilterUrlSync } from "@/features/filters/hooks/useFilterUrlSync";
+import { useSelectionUrlSync } from "@/features/filters/hooks/useSelectionUrlSync";
 import { InterestingPanel } from "@/features/interesting/InterestingPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
@@ -45,6 +46,7 @@ export function LiveMapPage() {
   const basemap = getBasemapById(basemapId) ?? getDefaultBasemap();
 
   useFilterUrlSync();
+  useSelectionUrlSync();
 
   return (
     <div className="relative h-full w-full">

@@ -417,6 +417,52 @@ describe("LiveMapPage", () => {
     expect(useLiveAircraftStore.getState().track).toBeNull();
   });
 
+  it("restores a selection from a deep link on load (R1-09)", async () => {
+    // Not yet in the live set at mount — the selection is still made
+    // (`useSelectionUrlSync`'s "keep the intent" case), so the detail panel
+    // opens honestly reporting nothing rather than staying closed.
+    renderPage("/?selected=aaaaaa");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("aaaaaa");
+    expect(
+      screen.getByRole("dialog", { name: "AAAAAA" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no live data for this aircraft/i),
+    ).toBeInTheDocument();
+
+    // Once the live picture actually supplies the aircraft, the same
+    // selection reactively picks it up — no extra wiring needed.
+    const map = getLastMockMap();
+    await act(async () => {
+      map.emit("load");
+    });
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [
+          makeAircraft({ icao: "aaaaaa", callsign: "RCH471" }),
+        ]),
+      );
+    });
+    expect(
+      screen.getByRole("dialog", { name: "RCH471" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no live data for this aircraft/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a selection made before the page's own URL sync mounted (notification click)", async () => {
+    // The scenario `features/notifications/lib/dispatch.ts` produces: a
+    // click selects the aircraft directly through the store before the Live
+    // Map (and its `useSelectionUrlSync`) exists at all.
+    useLiveAircraftStore.getState().selectAircraft("bbbbbb");
+    renderPage("/");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("bbbbbb");
+    expect(
+      screen.getByRole("dialog", { name: "BBBBBB" }),
+    ).toBeInTheDocument();
+  });
+
   it("answers the server's keepalive so the connection survives", async () => {
     await renderLoadedMap();
     const socket = getLastWebSocket();
