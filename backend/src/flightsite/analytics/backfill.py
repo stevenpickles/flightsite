@@ -66,8 +66,13 @@ from flightsite.analytics.bucketing import (
     shift_days,
 )
 from flightsite.analytics.model import DayRollup
-from flightsite.analytics.repository import META_KEY_ROLLUP_THROUGH_DAY, AnalyticsRepository
+from flightsite.analytics.repository import (
+    META_KEY_ROLLUP_THROUGH_DAY,
+    META_KEY_ROLLUP_ZONE,
+    AnalyticsRepository,
+)
 from flightsite.analytics.rollup import fold_day
+from flightsite.db.clock import TimezoneSource, resolve_zone
 from flightsite.db.meta import MetaRepository
 
 logger = structlog.get_logger(__name__)
@@ -89,6 +94,13 @@ class BackfillResult:
     #: True when the pass stopped at :data:`DEFAULT_MAX_BACKFILL_DAYS` and a
     #: later boot has more to do.
     truncated: bool = False
+    #: True when this pass found the stored rows keyed under a different
+    #: timezone and rebuilt them under the current one (issue #205).
+    rekeyed: bool = False
+    #: Day rows deleted because they fell outside the receiver's own history
+    #: after a re-key — see
+    #: :meth:`~flightsite.analytics.repository.AnalyticsRepository.delete_days_outside`.
+    removed_days: int = 0
 
     @property
     def rebuilt(self) -> int:
@@ -102,26 +114,33 @@ class AnalyticsBackfill:
     Args:
         repository: the rollup repository; every read and write goes through it.
         meta: the ``meta`` key/value store holding the watermark.
-        zone: the receiver's IANA zone (``docs/DATA_MODEL.md`` §10).
+        zone: where to get the receiver's IANA zone (``docs/DATA_MODEL.md``
+            §10) — a zone, or a probe resolved on each pass so a timezone
+            change does not wait for a restart.
         max_days: bound on one :meth:`run_startup_repair` pass.
     """
 
-    __slots__ = ("_max_days", "_meta", "_repository", "_zone")
+    __slots__ = ("_max_days", "_meta", "_repository", "_timezone")
 
     def __init__(
         self,
         *,
         repository: AnalyticsRepository,
         meta: MetaRepository,
-        zone: ZoneInfo,
+        zone: TimezoneSource,
         max_days: int = DEFAULT_MAX_BACKFILL_DAYS,
     ) -> None:
         if max_days < 1:
             raise ValueError("max_days must be at least one")
         self._repository = repository
         self._meta = meta
-        self._zone = zone
+        self._timezone = zone
         self._max_days = max_days
+
+    @property
+    def _zone(self) -> ZoneInfo:
+        """The receiver's zone *now*, not the one this object was built with."""
+        return resolve_zone(self._timezone)
 
     # -------------------------------------------------------------- one day
 
@@ -133,9 +152,10 @@ class AnalyticsBackfill:
         gets its ``busiest_hour`` written, per §6.5 — exactly when its local
         end boundary is at or before ``now_ms``.
         """
-        start_ms, end_ms = day_bounds_ms(day, self._zone)
+        zone = self._zone
+        start_ms, end_ms = day_bounds_ms(day, zone)
         facts = await self._repository.facts_between(start_ms, end_ms)
-        rollup = fold_day(day, facts, zone=self._zone, closed=end_ms <= now_ms)
+        rollup = fold_day(day, facts, zone=zone, closed=end_ms <= now_ms)
         await self._repository.replace_day(rollup)
         return rollup
 
@@ -161,13 +181,14 @@ class AnalyticsBackfill:
         Empty when this install has never persisted a sighting: there is no
         history to repair and no day to write a zero row for.
         """
+        zone = self._zone
         span = await self._repository.sighting_span_ms()
         if span is None:
             return []
 
-        today = local_day(now_ms, self._zone)
+        today = local_day(now_ms, zone)
         watermark = await self.watermark()
-        floor = next_day(watermark) if watermark is not None else local_day(span[0], self._zone)
+        floor = next_day(watermark) if watermark is not None else local_day(span[0], zone)
         # A watermark ahead of today is not a state this process can produce;
         # it means the clock moved backwards or the timezone changed. Repairing
         # from today is the conservative reading — never rebuild *less* than the
@@ -197,12 +218,22 @@ class AnalyticsBackfill:
         covered, and re-derives ``type_stats``. The watermark deliberately
         stops short of today: today is still accumulating sightings, so
         claiming it complete would keep the next boot from rebuilding it.
+
+        A pass that finds the rows keyed under a different timezone
+        (:meth:`_adopt_zone`) rebuilds the whole history instead of the
+        watermark's tail, and deletes the day rows that fall outside it. That
+        is the repair path for issue #205 — see
+        :mod:`flightsite.analytics.service` for why it is a repair and not a
+        migration.
         """
+        rekeyed = await self._adopt_zone()
         planned = await self.plan_startup_repair(now_ms=now_ms)
         if not planned:
             await self.refresh_type_stats()
-            return BackfillResult()
+            return BackfillResult(rekeyed=rekeyed)
 
+        today = local_day(now_ms, self._zone)
+        removed = await self._repository.delete_days_outside(planned[0], today) if rekeyed else 0
         result = await self.rebuild_days(planned, now_ms=now_ms)
         await self.refresh_type_stats()
 
@@ -210,7 +241,6 @@ class AnalyticsBackfill:
         # :meth:`plan_startup_repair`), so there is always a closed day to
         # advance the watermark to — and today is always excluded from it,
         # because a day still accumulating sightings is not complete.
-        today = local_day(now_ms, self._zone)
         through = [day for day in result.days if day < today][-1]
         await self.set_watermark(through)
         logger.info(
@@ -218,12 +248,16 @@ class AnalyticsBackfill:
             days=result.rebuilt,
             sightings=result.sightings,
             through_day=through,
+            rekeyed=rekeyed,
+            removed_days=removed,
         )
         return BackfillResult(
             days=result.days,
             sightings=result.sightings,
             through_day=through,
             truncated=len(planned) == self._max_days,
+            rekeyed=rekeyed,
+            removed_days=removed,
         )
 
     # --------------------------------------------------------- the watermark
@@ -249,6 +283,34 @@ class AnalyticsBackfill:
     async def set_watermark(self, day: str) -> None:
         """Record ``day`` as the last day the rollups are complete through."""
         await self._meta.set(META_KEY_ROLLUP_THROUGH_DAY, day)
+
+    # ---------------------------------------------------------------- the zone
+
+    async def _adopt_zone(self) -> bool:
+        """Claim the current zone for the stored rows; True if it changed.
+
+        A day key is receiver-local, so the stored rows mean nothing without
+        the zone they were keyed in. When the recorded zone is not the live
+        one — a timezone the setup wizard wrote after the backend booted, a
+        Settings change, or an install upgrading into this key with rows built
+        before it existed — the watermark is dropped, which makes the next
+        plan cover the receiver's whole history and rebuild every row under
+        the zone it is now read in.
+
+        The new zone is recorded **before** the rebuild it triggers, and that
+        ordering is the idempotence: the watermark is what carries the
+        resumption state, so a crash half way through leaves a correct prefix
+        behind a correct watermark and the next boot continues from it. A
+        marker written only after a completed rebuild would instead restart
+        the whole history on every boot until one pass ran to the end.
+        """
+        zone = str(self._zone)
+        if await self._meta.get(META_KEY_ROLLUP_ZONE) == zone:
+            return False
+        await self._meta.set(META_KEY_ROLLUP_ZONE, zone)
+        rebuild_all = await self._meta.delete(META_KEY_ROLLUP_THROUGH_DAY)
+        logger.info("analytics_rollup_zone_adopted", timezone=zone, rebuild_all=rebuild_all)
+        return True
 
 
 __all__ = ["DEFAULT_MAX_BACKFILL_DAYS", "AnalyticsBackfill", "BackfillResult"]

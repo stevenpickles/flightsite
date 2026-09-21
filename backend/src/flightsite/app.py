@@ -281,6 +281,31 @@ def _record_alert_matches(app: FastAPI) -> AlertListener:
     return record
 
 
+def _receiver_timezone(app: FastAPI) -> Callable[[], str]:
+    """Read the receiver's IANA zone at the moment a rollup pass needs it.
+
+    The same shape and the same reason as :func:`_alert_radius`, for the bug
+    that made it necessary (issue #205, findings R1-02 / R3-01): the rollup
+    writers captured ``settings.timezone`` here at construction, and on a
+    fresh install that is the ``UTC`` default — the setup wizard writes the
+    real zone a minute *after* the backend boots. Every day key was therefore
+    written in one zone and read in another, so "today" read a day nothing had
+    been written under; a later timezone change in Settings re-broke it
+    without a restart.
+
+    Because the zone is now read late, it needs no entry in
+    ``flightsite.api.internal._apply_live_settings``: swapping
+    ``app.state.settings`` *is* applying it, which is that function's own
+    first rule.
+    """
+
+    def probe() -> str:
+        settings: Settings = app.state.settings
+        return settings.timezone
+
+    return probe
+
+
 def _alert_radius(app: FastAPI) -> Callable[[], float | None]:
     """Read the configured alert radius at the moment a cycle needs it (SPEC §66).
 
@@ -392,7 +417,7 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
         database=app.state.database,
         live=app.state.live,
         poller=poller,
-        timezone=settings.timezone,
+        timezone=_receiver_timezone(app),
         high_res_days=settings.retention.high_res_metric_days,
     )
 
@@ -939,7 +964,7 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     app.state.analytics = AnalyticsService(
         database=app.state.database,
         persistence=app.state.persistence,
-        timezone=settings.timezone,
+        timezone=_receiver_timezone(app),
     )
     # Activity and milestones (SPEC §54/§55, docs/DATA_MODEL.md §5). A sixth
     # low-frequency background task, and the second consumer of the sighting
