@@ -287,7 +287,14 @@ export function describeActivityEvent(
     case "alert_triggered": {
       const reason = str(payload, "reason") ?? str(payload, "rule_name");
       return {
-        label: reason === null ? "Alert triggered" : `Alert: ${reason}`,
+        // One prefix, not two: the engine's own `reason` already reads
+        // "Rule: Military aircraft", and "Alert: Rule: Military aircraft"
+        // was the result (review R2-05). The engine's wording is left alone
+        // otherwise — it names a rule the *user* wrote.
+        label:
+          reason === null
+            ? "Alert triggered"
+            : `Alert: ${reason.replace(/^Rule:\s*/, "")}`,
         detail: airframe(payload, icao),
       };
     }

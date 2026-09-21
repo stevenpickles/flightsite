@@ -223,7 +223,8 @@ describe("describeActivityEvent", () => {
         { icao: "ae1463" },
       ),
     );
-    expect(label).toBe("Alert: Rule: Military aircraft");
+    // One prefix, not the two the review found ("Alert: Rule: …", R2-05).
+    expect(label).toBe("Alert: Military aircraft");
     expect(detail).toContain("05-8153");
   });
 

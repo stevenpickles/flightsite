@@ -53,6 +53,26 @@ describe("ActivityPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers Alerts and Emergencies, the feed's most common rows (R2-05)", async () => {
+    const { fetchMock } = installActivityApiMock({ list: page(2) });
+    const user = userEvent.setup();
+    renderApp("/activity");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(2),
+    );
+
+    const filter = screen.getByRole("group", { name: /filter by event type/i });
+    expect(
+      within(filter).getByRole("button", { name: "Emergencies" }),
+    ).toBeInTheDocument();
+    await user.click(within(filter).getByRole("button", { name: "Alerts" }));
+
+    await waitFor(() => {
+      const last = activityRequests(fetchMock).at(-1);
+      expect(last?.searchParams.getAll("type")).toEqual(["alert_triggered"]);
+    });
+  });
+
   it("sends one repeated type parameter per selected chip", async () => {
     const { fetchMock } = installActivityApiMock({ list: page(2) });
     const user = userEvent.setup();
