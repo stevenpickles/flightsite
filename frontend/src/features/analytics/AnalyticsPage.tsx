@@ -217,6 +217,7 @@ export function AnalyticsPage() {
         <ClassificationActivityCard
           window={classificationQuery.data?.window}
           series={classificationQuery.data?.series ?? []}
+          complete={classificationQuery.data?.complete}
           isLoading={classificationQuery.isPending}
           {...independentCardProps(
             classificationQuery,
@@ -236,7 +237,13 @@ export function AnalyticsPage() {
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
           units={units}
-          isLoading={dailyQuery.isPending}
+          // R3-12: `units` defaults to "aviation" until `receiverQuery`
+          // resolves, so a metric-configured site would otherwise briefly
+          // draw this chart labelled "nm" before flipping to "km" — treat
+          // the card as still loading rather than show the wrong unit.
+          // `isPending` (not `!isSuccess`) so a *failed* receiver fetch still
+          // settles into the fallback rather than loading forever.
+          isLoading={dailyQuery.isPending || receiverQuery.isPending}
           {...dailyCardError}
         />
 

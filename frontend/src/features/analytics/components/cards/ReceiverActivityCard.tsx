@@ -34,8 +34,14 @@ export function ReceiverActivityCard({
   errorDetail,
   onRetry,
 }: ReceiverActivityCardProps) {
+  // R3-02/A1: a day not computed yet also carries the receiver_* fields as
+  // `null`, so a young install still has something worth drawing (gaps
+  // plus an honest caption) rather than the flat "No data" state.
   const hasData = items.some(
-    (row) => row.receiver_messages !== null || row.receiver_positions !== null,
+    (row) =>
+      row.receiver_messages !== null ||
+      row.receiver_positions !== null ||
+      !row.complete,
   );
 
   const buildOption = useCallback(
@@ -64,6 +70,8 @@ export function ReceiverActivityCard({
         },
         yAxis: {
           type: "value" as const,
+          name: "count",
+          nameTextStyle: { color: theme.mutedInk },
           axisLabel: {
             ...axisStyle.axisLabel,
             formatter: (value: number) => formatCompactNumber(value),
@@ -99,11 +107,14 @@ export function ReceiverActivityCard({
     : `Daily receiver messages and positions: ${items
         .filter(
           (row) =>
-            row.receiver_messages !== null || row.receiver_positions !== null,
+            !row.complete ||
+            row.receiver_messages !== null ||
+            row.receiver_positions !== null,
         )
-        .map(
-          (row) =>
-            `${formatCalendarDay(row.day)} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
+        .map((row) =>
+          !row.complete
+            ? `${formatCalendarDay(row.day)} — not computed yet`
+            : `${formatCalendarDay(row.day)} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
         )
         .join("; ")}.`;
 

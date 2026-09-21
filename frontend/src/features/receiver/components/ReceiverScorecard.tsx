@@ -124,7 +124,18 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
       />
       <StatTile
         label="Max range today"
-        value={formatDistance(data.max_range_today_nm, units) ?? "—"}
+        value={
+          // R3-02: `null` here means the day's rollup has not been computed
+          // yet, not "genuinely zero" — worded and muted differently from
+          // "Max range ever"'s `—`, which means a real, permanent absence.
+          data.max_range_today_nm === null ? (
+            <span className="text-sm font-normal text-muted-foreground">
+              Not computed yet
+            </span>
+          ) : (
+            formatDistance(data.max_range_today_nm, units)
+          )
+        }
       />
       <StatTile
         label="Max range ever"

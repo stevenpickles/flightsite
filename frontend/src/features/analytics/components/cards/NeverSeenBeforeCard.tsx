@@ -49,15 +49,24 @@ export function NeverSeenBeforeCard({
         tooltip: {
           trigger: "axis" as const,
           axisPointer: { type: "shadow" as const },
+          // "aircraft" is its own plural — no pluralize() needed here.
+          valueFormatter: (value: unknown) =>
+            typeof value === "number" ? `${value} aircraft` : "no data",
         },
         xAxis: {
           type: "category" as const,
           data: items.map((row) => row.day),
           ...axisStyle,
         },
-        yAxis: { type: "value" as const, ...axisStyle },
+        yAxis: {
+          type: "value" as const,
+          name: "aircraft",
+          nameTextStyle: { color: theme.mutedInk },
+          ...axisStyle,
+        },
         series: [
           {
+            name: "New aircraft",
             type: "bar" as const,
             data: items.map((row) => row.new_aircraft),
             barMaxWidth: 24,

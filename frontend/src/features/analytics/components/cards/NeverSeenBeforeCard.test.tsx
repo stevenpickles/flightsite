@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import { NeverSeenBeforeCard } from "@/features/analytics/components/cards/NeverSeenBeforeCard";
 import type { AnalyticsDailyRow } from "@/lib/api/analytics";
+import { getLastMockChart } from "@/test/echartsMock";
 
 function dailyRow(
   overrides: Partial<AnalyticsDailyRow> = {},
 ): AnalyticsDailyRow {
   return {
     day: "2026-08-31",
+    complete: true,
     unique_aircraft: 10,
     new_aircraft: 2,
     sightings: 15,
@@ -43,5 +45,17 @@ describe("NeverSeenBeforeCard", () => {
       screen.getByRole("img", { name: /new aircraft never seen before/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(/3 total/)).toBeInTheDocument();
+  });
+
+  it("names the value axis and the bar series (R3-12)", () => {
+    const items = [dailyRow({ day: "2026-08-31", new_aircraft: 2 })];
+    render(<NeverSeenBeforeCard items={items} isLoading={false} />);
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      yAxis: { name: string };
+      series: Array<{ name: string }>;
+    };
+    expect(option.yAxis.name).toBe("aircraft");
+    expect(option.series[0]?.name).toBe("New aircraft");
   });
 });

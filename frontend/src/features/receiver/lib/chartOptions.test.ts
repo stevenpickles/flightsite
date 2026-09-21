@@ -147,6 +147,18 @@ describe("buildSignalHistogramChart", () => {
     const [chartSeries] = series(buildOption(theme));
     expect(chartSeries?.data).toEqual([3, 41, 12]);
   });
+
+  it("formats the tooltip value with a unit (R3-12)", () => {
+    const { buildOption } = buildSignalHistogramChart({
+      buckets: [{ min_db: -30, max_db: -27, count: 3 }],
+    });
+
+    const option = buildOption(theme) as {
+      tooltip: { valueFormatter: (value: unknown) => string };
+    };
+    expect(option.tooltip.valueFormatter(1)).toBe("1 sighting");
+    expect(option.tooltip.valueFormatter(41)).toBe("41 sightings");
+  });
 });
 
 describe("buildRangeByBearingChart", () => {

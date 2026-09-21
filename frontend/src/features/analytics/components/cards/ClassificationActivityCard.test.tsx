@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import { ClassificationActivityCard } from "@/features/analytics/components/cards/ClassificationActivityCard";
 import type { AnalyticsDailyRow } from "@/lib/api/analytics";
+import { getLastMockChart } from "@/test/echartsMock";
 
 function dailyRow(
   overrides: Partial<AnalyticsDailyRow> = {},
 ): AnalyticsDailyRow {
   return {
     day: "2026-08-31",
+    complete: true,
     unique_aircraft: 10,
     new_aircraft: 1,
     sightings: 15,
@@ -62,5 +64,45 @@ describe("ClassificationActivityCard", () => {
   it("shows a loading state", () => {
     render(<ClassificationActivityCard series={[]} isLoading />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
+  });
+
+  it("names the value axis and formats the tooltip value with a unit (R3-12)", () => {
+    render(
+      <ClassificationActivityCard series={[dailyRow()]} isLoading={false} />,
+    );
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      yAxis: { name: string };
+      tooltip: { valueFormatter: (value: unknown) => string };
+    };
+    expect(option.yAxis.name).toBe("sightings");
+    expect(option.tooltip.valueFormatter(1)).toBe("1 sighting");
+    expect(option.tooltip.valueFormatter(3)).toBe("3 sightings");
+  });
+
+  it("sums null (not-computed-yet) days as 0 rather than throwing off the total, and notes the window may undercount (R3-02)", () => {
+    const series = [
+      dailyRow({ day: "2026-09-19", military: 2, government: 1 }),
+      dailyRow({
+        day: "2026-09-20",
+        complete: false,
+        military: null,
+        government: null,
+        law_enforcement: null,
+      }),
+    ];
+    render(
+      <ClassificationActivityCard
+        series={series}
+        complete={false}
+        isLoading={false}
+      />,
+    );
+
+    expect(screen.getByText(/2 military/)).toBeInTheDocument();
+    expect(screen.getByText(/1 government/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/today not computed yet, so this may undercount/),
+    ).toBeInTheDocument();
   });
 });

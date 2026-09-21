@@ -228,12 +228,21 @@ export function getReceiverMetricSeries(
   );
 }
 
+export interface ReceiverMetricSeriesQueryOptions {
+  /** `false` skips fetching — for `ReceiverSeriesChart`'s "high" fallback
+   * (R3-02/A1), only fetched once the primary "hourly" query has resolved
+   * to an empty series. Defaults to `true`. */
+  enabled?: boolean;
+}
+
 export function useReceiverMetricSeriesQuery(
   params: ReceiverMetricSeriesParams,
+  options: ReceiverMetricSeriesQueryOptions = {},
 ): UseQueryResult<ReceiverMetricSeries> {
   return useQuery({
     queryKey: ["receiver", "metrics", params],
     queryFn: () => getReceiverMetricSeries(params),
+    enabled: options.enabled ?? true,
     ...RESILIENT_QUERY_OPTIONS,
   });
 }

@@ -107,6 +107,7 @@ const EMPTY_CLASSIFICATION: AnalyticsClassificationResponse = {
   government: 0,
   law_enforcement: 0,
   interesting: 0,
+  complete: true,
   series: [],
 };
 const EMPTY_AIRCRAFT: AnalyticsAircraftResponse = {

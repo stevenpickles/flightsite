@@ -41,16 +41,25 @@ export interface AnalyticsWindow {
 
 /** One receiver-local day of the §3.7 `daily` series. `receiver_*` fields are
  * slice 033's joined activity for the same day, `null` where that slice
- * recorded none. */
+ * recorded none.
+ *
+ * `complete` (R3-02/A1) is `false` for a day whose rollup has not been
+ * computed yet — every field below except `day` and `new_aircraft` (always
+ * live-derived, never null) is then `null`, meaning "not computed yet", not
+ * "counted zero". Once `complete` is `true`, `null` reverts to its original,
+ * narrower meaning for the couple of fields that could always carry one
+ * (`max_range_nm` with no positioned sighting that day, `busiest_hour`
+ * before any traffic) — a real zero is a real zero. */
 export interface AnalyticsDailyRow {
   day: string;
-  unique_aircraft: number;
+  complete: boolean;
+  unique_aircraft: number | null;
   new_aircraft: number;
-  sightings: number;
-  interesting: number;
-  military: number;
-  government: number;
-  law_enforcement: number;
+  sightings: number | null;
+  interesting: number | null;
+  military: number | null;
+  government: number | null;
+  law_enforcement: number | null;
   max_range_nm: number | null;
   busiest_hour: number | null;
   receiver_messages: number | null;
@@ -117,6 +126,11 @@ export interface AnalyticsClassificationResponse {
   government: number;
   law_enforcement: number;
   interesting: number;
+  /** `false` when the window includes a day whose rollup is not computed
+   * yet (R3-02/A1) — the totals above are summed over whatever `series`
+   * rows are `complete`, so they may be an undercount while this is
+   * `false`. */
+  complete: boolean;
   series: AnalyticsDailyRow[];
 }
 
@@ -166,11 +180,9 @@ export interface AnalyticsSummary {
    * `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record` or
    * `milestone` whose moment falls inside the window. */
   new_milestones: number;
-  /** `false` while the day's rollup (the backend's day-keyed write behind
-   * `daily_stats`/`receiver_metrics_hourly`, R1-02/A1) has not yet caught up
-   * with "now" — the figures above are still real numbers, never a
-   * placeholder `0`, but a client should say so rather than imply they are
-   * final. Always `true` for a closed day. */
+  /** `false` when the window includes a day whose rollup is not computed
+   * yet (R3-02/A1) — every total above still stays a number (never `null`),
+   * this is only the caveat that one may be an undercount. */
   complete: boolean;
 }
 

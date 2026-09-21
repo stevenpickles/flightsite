@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import { ReceiverActivityCard } from "@/features/analytics/components/cards/ReceiverActivityCard";
 import type { AnalyticsDailyRow } from "@/lib/api/analytics";
+import { getLastMockChart } from "@/test/echartsMock";
 
 function dailyRow(
   overrides: Partial<AnalyticsDailyRow> = {},
 ): AnalyticsDailyRow {
   return {
     day: "2026-08-31",
+    complete: true,
     unique_aircraft: 10,
     new_aircraft: 1,
     sightings: 15,
@@ -82,5 +84,38 @@ describe("ReceiverActivityCard", () => {
       screen.queryByText("No data for this window."),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Aug 30, 2026/)).not.toBeInTheDocument();
+  });
+
+  it("names the value axis (R3-12)", () => {
+    render(
+      <ReceiverActivityCard
+        items={[dailyRow({ receiver_messages: 500, receiver_positions: 50 })]}
+        isLoading={false}
+      />,
+    );
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      yAxis: { name: string };
+    };
+    expect(option.yAxis.name).toBe("count");
+  });
+
+  it("renders a day not computed yet as 'not computed yet', not a fabricated zero (R3-02)", () => {
+    const items = [
+      dailyRow({
+        day: "2026-09-20",
+        complete: false,
+        receiver_messages: null,
+        receiver_positions: null,
+      }),
+    ];
+    render(<ReceiverActivityCard items={items} isLoading={false} />);
+
+    expect(
+      screen.queryByText("No data for this window."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Sep 20, 2026 — not computed yet/),
+    ).toBeInTheDocument();
   });
 });

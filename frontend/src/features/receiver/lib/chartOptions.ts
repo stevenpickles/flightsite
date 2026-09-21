@@ -187,7 +187,13 @@ export function buildSignalHistogramChart(params: {
       backgroundColor: "transparent",
       textStyle: { color: theme.mutedInk },
       grid: { left: 52, right: 16, top: 24, bottom: 56 },
-      tooltip: { trigger: "axis" },
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value: unknown) =>
+          typeof value === "number"
+            ? `${value} ${pluralize(value, "sighting")}`
+            : "no data",
+      },
       xAxis: {
         type: "category",
         name: "dB",

@@ -33,19 +33,51 @@ export function ReceiverSeriesChart({
   units,
   timezone,
 }: ReceiverSeriesChartProps) {
-  const effectiveResolution = config.alwaysDaily ? "daily" : resolution;
-  const { data, isLoading, isError, refetch } = useReceiverMetricSeriesQuery({
+  const primaryResolution = config.alwaysDaily ? "daily" : resolution;
+  const primaryQuery = useReceiverMetricSeriesQuery({
     metric: config.metric,
-    resolution: effectiveResolution,
+    resolution: primaryResolution,
   });
+
+  // R3-02 (A1's backend fix deferred here): the default /receiver window is
+  // 7d -> hourly, and `receiver_metrics_hourly` has no rows for the first
+  // several minutes of any install, so the hourly series reads empty even
+  // though raw ("high") samples already exist — a receiver plainly
+  // receiving data would otherwise open on "No data for this window."
+  // Fetched only once the primary query has actually resolved to zero
+  // points, never speculatively.
+  const hourlyEmpty =
+    primaryResolution === "hourly" &&
+    primaryQuery.isSuccess &&
+    primaryQuery.data.points.length === 0;
+  const fallbackQuery = useReceiverMetricSeriesQuery(
+    { metric: config.metric, resolution: "high" },
+    { enabled: hourlyEmpty },
+  );
+  const usingFallback =
+    hourlyEmpty &&
+    fallbackQuery.isSuccess &&
+    fallbackQuery.data.points.length > 0;
+
+  const activeQuery = usingFallback ? fallbackQuery : primaryQuery;
+  const effectiveResolution = usingFallback ? "high" : primaryResolution;
+  const isLoading =
+    primaryQuery.isPending || (hourlyEmpty && fallbackQuery.isPending);
+  const isError = primaryQuery.isError;
+  const refetch = useCallback(() => {
+    void primaryQuery.refetch();
+    if (hourlyEmpty) {
+      void fallbackQuery.refetch();
+    }
+  }, [primaryQuery, fallbackQuery, hourlyEmpty]);
 
   const points: ChartPoint[] = useMemo(
     () =>
-      (data?.points ?? []).map((point) => ({
+      (activeQuery.data?.points ?? []).map((point) => ({
         t: point.t,
         value: point.value === null ? null : config.convert(point.value, units),
       })),
-    [data?.points, config, units],
+    [activeQuery.data?.points, config, units],
   );
 
   const { summary } = useMemo(

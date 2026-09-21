@@ -125,6 +125,8 @@ export function TopGroupCard({
         },
         xAxis: {
           type: "value" as const,
+          name: "sightings",
+          nameTextStyle: { color: theme.mutedInk },
           axisLabel: { color: theme.mutedInk },
           axisLine: { lineStyle: { color: theme.grid } },
           splitLine: { lineStyle: { color: theme.grid } },
@@ -149,6 +151,7 @@ export function TopGroupCard({
         },
         series: [
           {
+            name: "Sightings",
             type: "bar" as const,
             data: ordered.map((row) => row.sightings),
             barMaxWidth: 18,

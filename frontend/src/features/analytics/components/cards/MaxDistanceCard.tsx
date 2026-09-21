@@ -38,7 +38,13 @@ export function MaxDistanceCard({
   errorDetail,
   onRetry,
 }: MaxDistanceCardProps) {
-  const hasData = items.some((row) => row.max_range_nm !== null);
+  // R3-02/A1: a day not computed yet also carries `max_range_nm: null`, so
+  // an otherwise-empty young install still has something worth drawing (a
+  // chart full of gaps and an honest caption) rather than the flat "No
+  // data" state, which reads as "there will never be anything here."
+  const hasData = items.some(
+    (row) => row.max_range_nm !== null || !row.complete,
+  );
 
   const buildOption = useCallback(
     (theme: ChartTheme) => {
@@ -92,10 +98,15 @@ export function MaxDistanceCard({
   const summary = !hasData
     ? "No detection distance recorded in this window."
     : `Maximum detection distance by day, in ${unitLabel}: ${items
-        .filter((row) => row.max_range_nm !== null)
-        .map(
-          (row) =>
-            `${formatCalendarDay(row.day)} — ${convertDistance(row.max_range_nm as number, units)} ${unitLabel}`,
+        // A complete day with no positioned sighting (`max_range_nm: null`)
+        // stays silently omitted, its longstanding meaning; a day not
+        // computed yet (`!row.complete`) is named explicitly instead
+        // (R3-02/A1) rather than looking identical to "nothing happened."
+        .filter((row) => !row.complete || row.max_range_nm !== null)
+        .map((row) =>
+          !row.complete
+            ? `${formatCalendarDay(row.day)} — not computed yet`
+            : `${formatCalendarDay(row.day)} — ${convertDistance(row.max_range_nm as number, units)} ${unitLabel}`,
         )
         .join("; ")}.`;
 

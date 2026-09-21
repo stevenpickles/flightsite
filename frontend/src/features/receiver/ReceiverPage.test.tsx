@@ -153,6 +153,67 @@ describe("ReceiverPage", () => {
     });
   });
 
+  it("falls back to 'high' resolution when the default 'hourly' series is empty (R3-02)", async () => {
+    const { fetchMock: baseline } = installReceiverStatsApiMock();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname === "/api/v1/receiver/metrics" &&
+          url.searchParams.get("metric") === "max_range_nm"
+        ) {
+          if (url.searchParams.get("resolution") === "hourly") {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify(
+                  metricSeries({ metric: "max_range_nm", points: [] }),
+                ),
+                {
+                  status: 200,
+                  headers: { "Content-Type": "application/json" },
+                },
+              ),
+            );
+          }
+          if (url.searchParams.get("resolution") === "high") {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify(
+                  metricSeries({
+                    metric: "max_range_nm",
+                    resolution: "high",
+                    points: [{ t: "2026-09-20T21:00:00.000Z", value: 42 }],
+                  }),
+                ),
+                {
+                  status: 200,
+                  headers: { "Content-Type": "application/json" },
+                },
+              ),
+            );
+          }
+        }
+        return baseline(input, init);
+      }),
+    );
+
+    renderApp("/receiver");
+
+    const heading = await screen.findByText("Maximum range");
+    const section = heading.closest("section");
+    expect(section).not.toBeNull();
+    await waitFor(() => {
+      // The young-install-on-hourly-only case (R3-02, A1 deferred): the
+      // default window opens on "hourly" and this metric's hourly series is
+      // empty, but "high" (raw) samples exist, so the chart draws those
+      // instead of the flat "No data for this window."
+      expect(
+        within(section as HTMLElement).queryByText("No data for this window."),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("shows an empty-state summary for a chart with no points", async () => {
     installReceiverStatsApiMock({
       series: {
@@ -162,13 +223,20 @@ describe("ReceiverPage", () => {
 
     renderApp("/receiver");
 
-    expect(await screen.findByText("Maximum range")).toBeInTheDocument();
+    const heading = await screen.findByText("Maximum range");
+    const section = heading.closest("section");
+    expect(section).not.toBeNull();
     await waitFor(() => {
       // The shared `EChart` wrapper's own empty-state copy (roadmap slice
       // 032) — it renders this instead of an empty canvas whenever
       // `buildOption` returns `null`, regardless of this chart's own
-      // (unused in that case) summary string.
-      expect(screen.getByText("No data for this window.")).toBeInTheDocument();
+      // (unused in that case) summary string. Scoped to this chart's own
+      // section: the default (all-null) range-by-bearing fixture this test
+      // does not override also renders the empty state (R3-09), so an
+      // unscoped query would match more than one element.
+      expect(
+        within(section as HTMLElement).getByText("No data for this window."),
+      ).toBeInTheDocument();
     });
   });
 
@@ -309,5 +377,15 @@ describe("ReceiverPage", () => {
 
     expect(await screen.findByText("Unknown")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("renders a null 'max range today' as 'Not computed yet', never a dash or a zero (R3-02)", async () => {
+    installReceiverStatsApiMock({
+      scorecard: scorecard({ max_range_today_nm: null }),
+    });
+
+    renderApp("/receiver");
+
+    expect(await screen.findByText("Not computed yet")).toBeInTheDocument();
   });
 });
