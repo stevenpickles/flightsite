@@ -247,4 +247,97 @@ describe("buildRangeByBearingChart", () => {
 
     expect(summary).toContain("not set yet");
   });
+
+  it("asks the wrapper for the empty state when 'ever' has all 72 sectors but every value is null (R3-09)", () => {
+    // The real API shape: 72 sectors are always present, but on an install
+    // with no range records at all every one of them carries a null value.
+    const { buildOption, summary } = buildRangeByBearingChart({
+      today: sectors({}),
+      ever: sectors({}),
+      unitLabel: "nm",
+      formatValue: (value) => `${value} nm`,
+    });
+
+    expect(summary).toMatch(/no range-by-bearing data/i);
+    expect(buildOption(theme)).toBeNull();
+  });
+
+  it("labels only the four cardinal points, blanking every other tick (R3-09)", () => {
+    const { buildOption } = buildRangeByBearingChart({
+      today: sectors({}),
+      ever: sectors({ 0: 100 }),
+      unitLabel: "nm",
+      formatValue: (value) => `${value} nm`,
+    });
+
+    const angleAxis = (
+      buildOption(theme) as {
+        angleAxis: {
+          axisLabel: { formatter: (value: string, index: number) => string };
+        };
+      }
+    ).angleAxis;
+    const { formatter } = angleAxis.axisLabel;
+    // Bucket 0 = North (bearing 2.5deg sector spans 0-5deg), 18 = East,
+    // 36 = South, 54 = West (72 sectors * 5deg each).
+    expect(formatter("3°", 0)).toBe("N");
+    expect(formatter("93°", 18)).toBe("E");
+    expect(formatter("183°", 36)).toBe("S");
+    expect(formatter("273°", 54)).toBe("W");
+    // Every other tick, including neighbors of a cardinal, is blank.
+    expect(formatter("8°", 1)).toBe("");
+    expect(formatter("358°", 71)).toBe("");
+  });
+
+  it("names the unit on every radius tick instead of a colliding axis name (R3-09)", () => {
+    const { buildOption } = buildRangeByBearingChart({
+      today: sectors({}),
+      ever: sectors({ 0: 100 }),
+      unitLabel: "nm",
+      formatValue: (value) => `${value} nm`,
+    });
+
+    const radiusAxis = (
+      buildOption(theme) as {
+        radiusAxis: {
+          name?: string;
+          axisLabel: { formatter: (value: number) => string };
+        };
+      }
+    ).radiusAxis;
+    expect(radiusAxis.name).toBeUndefined();
+    expect(radiusAxis.axisLabel.formatter(50)).toBe("50 nm");
+  });
+
+  it("omits the 'Today' legend entry and series when today has no data (R3-09)", () => {
+    const { buildOption } = buildRangeByBearingChart({
+      today: sectors({}),
+      ever: sectors({ 0: 100 }),
+      unitLabel: "nm",
+      formatValue: (value) => `${value} nm`,
+    });
+
+    const option = buildOption(theme) as {
+      legend: { data: string[] };
+      series: Array<{ name: string }>;
+    };
+    expect(option.legend.data).toEqual(["Ever"]);
+    expect(option.series.map((s) => s.name)).toEqual(["Ever"]);
+  });
+
+  it("includes the 'Today' legend entry and series when today has data (R3-09)", () => {
+    const { buildOption } = buildRangeByBearingChart({
+      today: sectors({ 0: 50 }),
+      ever: sectors({ 0: 100 }),
+      unitLabel: "nm",
+      formatValue: (value) => `${value} nm`,
+    });
+
+    const option = buildOption(theme) as {
+      legend: { data: string[] };
+      series: Array<{ name: string }>;
+    };
+    expect(option.legend.data).toEqual(["Ever", "Today"]);
+    expect(option.series.map((s) => s.name)).toEqual(["Ever", "Today"]);
+  });
 });
