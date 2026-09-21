@@ -10,6 +10,8 @@ import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPag
 import { AircraftTable } from "@/features/aircraft-page/AircraftTable";
 import { useAircraftTableState } from "@/features/aircraft-page/hooks/useAircraftTableState";
 import { PAGE_SIZE } from "@/features/aircraft-page/lib/urlState";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useAircraftListQuery, type AircraftSortKey } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
 
@@ -18,12 +20,18 @@ const item = requireNavItem("/aircraft");
 export function AircraftPage() {
   const { state, setState } = useAircraftTableState();
   const receiverQuery = useReceiverQuery();
-  const listQuery = useAircraftListQuery({
-    limit: PAGE_SIZE,
-    offset: (state.page - 1) * PAGE_SIZE,
-    sort: state.sort,
-    order: state.order,
-  });
+  // Page 1 only: the list grows at the front, so polling a later page would
+  // shuffle rows under the reader for no gain (`lib/refresh.ts`).
+  const refetchInterval = state.page === 1 ? LIST_REFRESH_MS : false;
+  const listQuery = useAircraftListQuery(
+    {
+      limit: PAGE_SIZE,
+      offset: (state.page - 1) * PAGE_SIZE,
+      sort: state.sort,
+      order: state.order,
+    },
+    { refetchInterval },
+  );
 
   const units = receiverQuery.data?.units ?? "aviation";
   const timezone = receiverQuery.data?.timezone ?? "UTC";
@@ -44,6 +52,13 @@ export function AircraftPage() {
       <header className="mb-4">
         <h1 className="text-2xl font-semibold tracking-tight">{item.label}</h1>
         <p className="text-sm text-muted-foreground">{item.description}</p>
+        <RefreshStatus
+          className="mt-1"
+          updatedAt={listQuery.dataUpdatedAt}
+          isFetching={listQuery.isFetching}
+          onRefresh={() => void listQuery.refetch()}
+          intervalMs={refetchInterval === false ? null : refetchInterval}
+        />
       </header>
 
       {listQuery.isPending ? (

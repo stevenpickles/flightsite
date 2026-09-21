@@ -12,6 +12,8 @@ import { requireNavItem } from "@/components/shell/nav-items";
 import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPaginationControls";
 import { SightingsFilters } from "@/features/sightings/SightingsFilters";
 import { SightingsTable } from "@/features/sightings/SightingsTable";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useSightingsTableState } from "@/features/sightings/hooks/useSightingsTableState";
 import {
   PAGE_SIZE,
@@ -29,16 +31,21 @@ const item = requireNavItem("/sightings");
 export function SightingsPage() {
   const { state, setState } = useSightingsTableState();
   const receiverQuery = useReceiverQuery();
-  const listQuery = useSightingListQuery({
-    limit: PAGE_SIZE,
-    offset: (state.page - 1) * PAGE_SIZE,
-    sort: state.sort,
-    order: state.order,
-    icao: state.icao,
-    from: state.from === undefined ? undefined : startOfDayIso(state.from),
-    to: state.to === undefined ? undefined : endOfDayIso(state.to),
-    open: state.open ? true : undefined,
-  });
+  // Page 1 only, as on `/aircraft` (`features/history/lib/refresh.ts`).
+  const refetchInterval = state.page === 1 ? LIST_REFRESH_MS : false;
+  const listQuery = useSightingListQuery(
+    {
+      limit: PAGE_SIZE,
+      offset: (state.page - 1) * PAGE_SIZE,
+      sort: state.sort,
+      order: state.order,
+      icao: state.icao,
+      from: state.from === undefined ? undefined : startOfDayIso(state.from),
+      to: state.to === undefined ? undefined : endOfDayIso(state.to),
+      open: state.open ? true : undefined,
+    },
+    { refetchInterval },
+  );
 
   const units = receiverQuery.data?.units ?? "aviation";
   const timezone = receiverQuery.data?.timezone ?? "UTC";
@@ -56,6 +63,13 @@ export function SightingsPage() {
       <header className="mb-4">
         <h1 className="text-2xl font-semibold tracking-tight">{item.label}</h1>
         <p className="text-sm text-muted-foreground">{item.description}</p>
+        <RefreshStatus
+          className="mt-1"
+          updatedAt={listQuery.dataUpdatedAt}
+          isFetching={listQuery.isFetching}
+          onRefresh={() => void listQuery.refetch()}
+          intervalMs={refetchInterval === false ? null : refetchInterval}
+        />
       </header>
 
       <SightingsFilters state={state} onChange={setState} />

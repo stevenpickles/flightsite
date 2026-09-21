@@ -26,19 +26,28 @@ import { ActivityRow } from "@/features/activity/components/ActivityRow";
 import { ActivityTypeFilter } from "@/features/activity/components/ActivityTypeFilter";
 import { useActivityPageState } from "@/features/activity/hooks/useActivityPageState";
 import { PAGE_SIZE } from "@/features/activity/lib/urlState";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
 
 export function ActivityPage() {
   const { state, setState } = useActivityPageState();
   const receiverQuery = useReceiverQuery();
-  const listQuery = useActivityQuery({
-    limit: PAGE_SIZE,
-    offset: (state.page - 1) * PAGE_SIZE,
-    // Omitted entirely when empty, so an unfiltered feed sends no `type` at
-    // all rather than a parameter meaning "everything".
-    types: state.types.length === 0 ? undefined : state.types,
-  });
+  // The feed's whole promise is "what happened while you weren't watching",
+  // so page 1 polls — the fastest of the three cadences, and still REST only:
+  // the live socket stays the Live Map's (`features/history/lib/refresh.ts`).
+  const refetchInterval = state.page === 1 ? ACTIVITY_REFRESH_MS : false;
+  const listQuery = useActivityQuery(
+    {
+      limit: PAGE_SIZE,
+      offset: (state.page - 1) * PAGE_SIZE,
+      // Omitted entirely when empty, so an unfiltered feed sends no `type` at
+      // all rather than a parameter meaning "everything".
+      types: state.types.length === 0 ? undefined : state.types,
+    },
+    { refetchInterval },
+  );
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
 
@@ -50,6 +59,13 @@ export function ActivityPage() {
           Firsts, records and milestones — what happened while you weren&rsquo;t
           watching.
         </p>
+        <RefreshStatus
+          className="mt-1"
+          updatedAt={listQuery.dataUpdatedAt}
+          isFetching={listQuery.isFetching}
+          onRefresh={() => void listQuery.refetch()}
+          intervalMs={refetchInterval === false ? null : refetchInterval}
+        />
       </header>
 
       <ActivityTypeFilter

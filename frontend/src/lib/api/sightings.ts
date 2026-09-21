@@ -235,27 +235,52 @@ export const sightingsQueryKeys = {
     ["sightings", "aircraft", params] as const,
 };
 
+/** Per-query refresh policy (review R2-03) — the same opt-in shape
+ * `lib/api/aircraft.ts` documents, duplicated rather than imported for the
+ * same reason `apiV1Fetch` is. */
+export interface RefreshOptions {
+  refetchInterval?: number | false;
+}
+
 /** One page of the Sightings table. `placeholderData: keepPreviousData`
  * keeps the previous page's rows on screen while the next page loads. */
 export function useSightingListQuery(
   params: SightingListParams,
+  options: RefreshOptions = {},
 ): UseQueryResult<SightingListResponse> {
   return useQuery({
     queryKey: sightingsQueryKeys.list(params),
     queryFn: () => getSightingList(params),
     placeholderData: keepPreviousData,
+    refetchInterval: options.refetchInterval ?? false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }
 
 /** One sighting's full detail. `enabled: false` when `id` is absent so a
- * route rendered without one never fires a request that can only 422. */
+ * route rendered without one never fires a request that can only 422.
+ *
+ * `refetchInterval` here means *while the sighting is open*: a closed
+ * sighting is a finished record and re-reading it returns the same bytes
+ * forever, while an open one grows a path, events and a duration for as long
+ * as the aircraft is overhead. The condition lives here rather than at the
+ * call site because only this hook can see the payload that answers it. */
 export function useSightingDetailQuery(
   id: number | undefined,
+  options: RefreshOptions = {},
 ): UseQueryResult<SightingDetail> {
+  const interval = options.refetchInterval ?? false;
   return useQuery({
     queryKey: sightingsQueryKeys.detail(id ?? -1),
     queryFn: () => getSightingDetail(id as number),
     enabled: id !== undefined,
+    refetchInterval: (query) =>
+      interval !== false && query.state.data?.ended_at === null
+        ? interval
+        : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: (failureCount, error) =>
       // A 404 is a real answer ("no such sighting"), not a transient failure.
       !(error instanceof SightingsApiError && error.status === 404) &&

@@ -19,6 +19,8 @@ import { LifetimeSection } from "@/features/aircraft-detail/components/LifetimeS
 import { LiveMapJumpLink } from "@/features/aircraft-detail/components/LiveMapJumpLink";
 import { RecentSightingsSection } from "@/features/aircraft-detail/components/RecentSightingsSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiV1Error, useAircraftDetailQuery } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
@@ -30,7 +32,13 @@ export function AircraftDetailPage() {
   const icao = rawIcao?.toLowerCase();
   const validIcao = icao !== undefined && ICAO_PATTERN.test(icao);
 
-  const detailQuery = useAircraftDetailQuery(validIcao ? icao : undefined);
+  // The cadence applies only while the airframe is in the live picture —
+  // that is the one state in which its lifetime block is still changing
+  // (review R2-03); the hook itself enforces the condition, since only it can
+  // see the payload the condition reads.
+  const detailQuery = useAircraftDetailQuery(validIcao ? icao : undefined, {
+    refetchInterval: DETAIL_REFRESH_MS,
+  });
   const receiverQuery = useReceiverQuery();
 
   if (!validIcao) {
@@ -86,6 +94,13 @@ export function AircraftDetailPage() {
             {detail.registration ?? <UnknownValue />}
           </p>
           {detail.live && <LiveMapJumpLink icao={detail.icao} />}
+          <RefreshStatus
+            className="mt-2"
+            updatedAt={detailQuery.dataUpdatedAt}
+            isFetching={detailQuery.isFetching}
+            onRefresh={() => void detailQuery.refetch()}
+            intervalMs={detail.live ? DETAIL_REFRESH_MS : null}
+          />
         </header>
 
         <IdentityMetadataSection aircraft={detail} />

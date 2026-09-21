@@ -148,6 +148,38 @@ describe("AircraftPage", () => {
     expect(router.state.location.search).not.toContain("page=");
   });
 
+  it("says how old the table is and fetches again on demand (R2-03)", async () => {
+    const { fetchMock } = installAircraftApiMock({
+      list: {
+        items: [aircraftListRow()],
+        total: 1,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/aircraft");
+    await screen.findByText("N302DN");
+
+    // The page commits to an age rather than leaving "is this current?"
+    // unanswerable, which is the whole of the finding.
+    expect(
+      within(screen.getByTestId("refresh-status")).getByText(/^Updated /),
+    ).toBeInTheDocument();
+
+    const before = fetchMock.mock.calls.filter(([url]) =>
+      String(url).startsWith("/api/v1/aircraft?"),
+    ).length;
+    await user.click(screen.getByRole("button", { name: /refresh/i }));
+
+    await waitFor(() => {
+      const after = fetchMock.mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/v1/aircraft?"),
+      ).length;
+      expect(after).toBeGreaterThan(before);
+    });
+  });
+
   it("opens the aircraft detail route when a row is clicked", async () => {
     installAircraftApiMock({
       list: {

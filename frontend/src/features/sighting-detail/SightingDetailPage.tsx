@@ -18,6 +18,8 @@ import {
 } from "@/features/sighting-detail/SightingDetailSections";
 import { SightingEventsTimeline } from "@/features/sighting-detail/SightingEventsTimeline";
 import { SightingPathMap } from "@/features/sighting-detail/SightingPathMap";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
 import { useAircraftDetailQuery } from "@/lib/api/aircraft";
@@ -29,7 +31,11 @@ export function SightingDetailPage() {
   const id =
     rawId !== undefined && /^\d+$/.test(rawId) ? Number(rawId) : undefined;
 
-  const detailQuery = useSightingDetailQuery(id);
+  // The cadence applies only while the sighting is open — see
+  // `useSightingDetailQuery` (review R2-03).
+  const detailQuery = useSightingDetailQuery(id, {
+    refetchInterval: DETAIL_REFRESH_MS,
+  });
   const receiverQuery = useReceiverQuery();
   // Best-effort: adds a registration/type to the header when it resolves,
   // but the page is fully usable from the sighting payload alone (it always
@@ -99,6 +105,13 @@ export function SightingDetailPage() {
             {sighting.callsign !== null && <> · Callsign {sighting.callsign}</>}
             {sighting.squawk !== null && <> · Squawk {sighting.squawk}</>}
           </p>
+          <RefreshStatus
+            className="mt-2"
+            updatedAt={detailQuery.dataUpdatedAt}
+            isFetching={detailQuery.isFetching}
+            onRefresh={() => void detailQuery.refetch()}
+            intervalMs={isOpen ? DETAIL_REFRESH_MS : null}
+          />
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
             <div>
               <dt className="text-xs text-muted-foreground">Started</dt>
