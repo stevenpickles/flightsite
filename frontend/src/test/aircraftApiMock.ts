@@ -91,6 +91,11 @@ export interface MockAircraftApiOptions {
    * function of the parsed request URL for tests that vary the result by
    * `sort`/`order`/`limit`/`offset`. */
   list?: AircraftListResponse | ((url: URL) => AircraftListResponse);
+  /** Serve an error envelope from `GET /api/v1/aircraft` instead — a fixed
+   * status, or a function of the request URL returning `null` to let the
+   * normal `list` response through. The function form is what lets a test
+   * load the page successfully and then fail a *refresh* (review R2-04). */
+  listStatus?: number | ((url: URL) => number | null);
   /** `icao -> AircraftDetail`; an address with no entry 404s the same way
    * the real endpoint does for an address never sighted. */
   detail?: Record<string, AircraftDetail>;
@@ -135,6 +140,22 @@ export function installAircraftApiMock(options: MockAircraftApiOptions = {}) {
       }
 
       if (url.pathname === "/api/v1/aircraft" && method === "GET") {
+        const status =
+          typeof options.listStatus === "function"
+            ? options.listStatus(url)
+            : (options.listStatus ?? null);
+        if (status !== null) {
+          return jsonResponse(
+            {
+              error: {
+                code: "internal_error",
+                message: "The aircraft list is unavailable",
+                detail: null,
+              },
+            },
+            status,
+          );
+        }
         const body =
           typeof options.list === "function"
             ? options.list(url)

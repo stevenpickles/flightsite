@@ -118,8 +118,11 @@ export interface MockActivityApiOptions {
    * function of the parsed request URL for tests that vary the result by
    * filter or page. */
   list?: ActivityListResponse | ((url: URL) => ActivityListResponse);
-  /** Serve an error envelope from `GET /api/v1/activity` instead. */
-  listStatus?: number;
+  /** Serve an error envelope from `GET /api/v1/activity` instead — a fixed
+   * status, or a function of the request URL returning `null` to let the
+   * normal `list` response through, which is how a test fails a *refresh*
+   * rather than the first load (review R2-04). */
+  listStatus?: number | ((url: URL) => number | null);
   receiver?: ReceiverInfo;
 }
 
@@ -156,7 +159,11 @@ export function installActivityApiMock(options: MockActivityApiOptions = {}) {
       }
 
       if (url.pathname === "/api/v1/activity" && method === "GET") {
-        if (options.listStatus !== undefined) {
+        const status =
+          typeof options.listStatus === "function"
+            ? options.listStatus(url)
+            : (options.listStatus ?? null);
+        if (status !== null) {
           return jsonResponse(
             {
               error: {
@@ -165,7 +172,7 @@ export function installActivityApiMock(options: MockActivityApiOptions = {}) {
                 detail: null,
               },
             },
-            options.listStatus,
+            status,
           );
         }
         const body =

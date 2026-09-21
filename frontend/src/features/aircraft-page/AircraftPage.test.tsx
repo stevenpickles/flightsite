@@ -180,6 +180,58 @@ describe("AircraftPage", () => {
     });
   });
 
+  it("offers a retry when the first load fails, and recovers without a reload (R2-04)", async () => {
+    let failing = true;
+    installAircraftApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: {
+        items: [aircraftListRow()],
+        total: 1,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/aircraft");
+
+    const failure = await screen.findByTestId("query-error-state");
+    expect(failure).toHaveAttribute("role", "alert");
+
+    failing = false;
+    await user.click(screen.getByRole("button", { name: /try again/i }));
+
+    // Recovered in place: no browser reload was needed, which is the whole
+    // of the finding.
+    expect(await screen.findByText("N302DN")).toBeInTheDocument();
+    expect(screen.queryByTestId("query-error-state")).not.toBeInTheDocument();
+  });
+
+  it("keeps the table, its sort headers and its pagination when a refresh fails (R2-04)", async () => {
+    let failing = false;
+    installAircraftApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: {
+        items: [aircraftListRow()],
+        total: 1,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/aircraft");
+    await screen.findByText("N302DN");
+
+    failing = true;
+    await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+
+    expect(await screen.findByTestId("query-error-banner")).toBeInTheDocument();
+    // The previous answer is still the best one anybody has, so it stays —
+    // along with every control capable of asking again.
+    expect(screen.getByText("N302DN")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ICAO" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
+  });
+
   it("opens the aircraft detail route when a row is clicked", async () => {
     installAircraftApiMock({
       list: {

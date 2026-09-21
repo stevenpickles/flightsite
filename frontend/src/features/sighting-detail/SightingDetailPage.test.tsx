@@ -1,4 +1,5 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -108,6 +109,33 @@ describe("SightingDetailPage", () => {
 
     await screen.findByText(/icao ae1463/i);
     expect(screen.getAllByText("Ongoing")).not.toHaveLength(0);
+  });
+
+  it("offers a retry for a load failure that is not a 404 (R2-04)", async () => {
+    let failing = true;
+    installSightingsApiMock({
+      detailStatus: () => (failing ? 500 : null),
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+      aircraft: {
+        ae1463: aircraftDetail({ icao: "ae1463", registration: "N302DN" }),
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/sightings/88213");
+
+    expect(
+      await screen.findByText(/could not load this sighting/i),
+    ).toBeInTheDocument();
+    // Distinct from the 404 state, which is an answer rather than a failure
+    // and therefore offers no retry.
+    const failure = screen.getByTestId("query-error-state");
+
+    failing = false;
+    await user.click(
+      within(failure).getByRole("button", { name: /try again/i }),
+    );
+
+    expect(await screen.findByText(/icao ae1463/i)).toBeInTheDocument();
   });
 
   it("renders the event timeline with plain-language labels", async () => {

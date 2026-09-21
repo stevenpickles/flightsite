@@ -19,6 +19,10 @@ import { LifetimeSection } from "@/features/aircraft-detail/components/LifetimeS
 import { LiveMapJumpLink } from "@/features/aircraft-detail/components/LiveMapJumpLink";
 import { RecentSightingsSection } from "@/features/aircraft-detail/components/RecentSightingsSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
+import {
+  QueryErrorBanner,
+  QueryErrorState,
+} from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -60,31 +64,55 @@ export function AircraftDetailPage() {
     );
   }
 
-  if (detailQuery.isError) {
+  // Only when nothing has ever loaded: a failure behind a rendered page
+  // becomes a banner further down, so a transient hiccup on a page the user
+  // is reading does not replace what they were reading (review R2-04).
+  const detail = detailQuery.data;
+  if (detail === undefined) {
     const notFound =
       detailQuery.error instanceof ApiV1Error &&
       detailQuery.error.status === 404;
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="text-lg font-semibold">
-          {notFound ? "Aircraft not found" : "Could not load this aircraft"}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {notFound
-            ? `This receiver has never sighted ${icao.toUpperCase()}.`
-            : detailQuery.error.message}
-        </p>
+        {notFound ? (
+          <>
+            <h1 className="text-lg font-semibold">Aircraft not found</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This receiver has never sighted {icao.toUpperCase()}.
+            </p>
+          </>
+        ) : (
+          <>
+            <h1 className="mb-3 text-lg font-semibold">
+              Could not load this aircraft
+            </h1>
+            <QueryErrorState
+              message={
+                detailQuery.error?.message ??
+                `The request for ${icao.toUpperCase()} failed.`
+              }
+              onRetry={() => void detailQuery.refetch()}
+              isRetrying={detailQuery.isFetching}
+            />
+          </>
+        )}
       </div>
     );
   }
 
-  const detail = detailQuery.data;
   const units = receiverQuery.data?.units ?? "aviation";
   const timezone = receiverQuery.data?.timezone ?? "UTC";
 
   return (
     <TooltipProvider delayDuration={200}>
       <div className="mx-auto max-w-2xl px-4 py-6">
+        {detailQuery.isError && (
+          <QueryErrorBanner
+            message={`Could not refresh this aircraft: ${detailQuery.error.message}.`}
+            onRetry={() => void detailQuery.refetch()}
+            isRetrying={detailQuery.isFetching}
+          />
+        )}
         <header className="border-b border-border pb-4">
           <h1 className="text-lg font-semibold">
             {detail.registration ?? detail.icao.toUpperCase()}

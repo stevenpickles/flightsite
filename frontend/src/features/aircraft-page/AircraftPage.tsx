@@ -10,6 +10,10 @@ import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPag
 import { AircraftTable } from "@/features/aircraft-page/AircraftTable";
 import { useAircraftTableState } from "@/features/aircraft-page/hooks/useAircraftTableState";
 import { PAGE_SIZE } from "@/features/aircraft-page/lib/urlState";
+import {
+  QueryErrorBanner,
+  QueryErrorState,
+} from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useAircraftListQuery, type AircraftSortKey } from "@/lib/api/aircraft";
@@ -63,34 +67,51 @@ export function AircraftPage() {
 
       {listQuery.isPending ? (
         <p className="text-sm text-muted-foreground">Loading aircraft…</p>
-      ) : listQuery.isError ? (
-        <p className="text-sm text-destructive">
-          Could not load the aircraft list: {listQuery.error.message}
-        </p>
-      ) : listQuery.data.items.length === 0 && state.page === 1 ? (
-        <p className="text-sm text-muted-foreground">
-          This receiver hasn&rsquo;t sighted any aircraft yet.
-        </p>
+      ) : listQuery.data === undefined ? (
+        // Nothing has ever loaded, so the failure *is* the page.
+        <QueryErrorState
+          message={`Could not load the aircraft list: ${listQuery.error?.message ?? "the request failed"}`}
+          onRetry={() => void listQuery.refetch()}
+          isRetrying={listQuery.isFetching}
+        />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <AircraftTable
-            rows={listQuery.data.items}
-            sort={state.sort}
-            order={state.order}
-            onSortChange={handleSortChange}
-            units={units}
-            timezone={timezone}
-            refreshing={listQuery.isFetching && listQuery.isPlaceholderData}
-          />
-          <AircraftPaginationControls
-            page={state.page}
-            pageSize={PAGE_SIZE}
-            rowCount={listQuery.data.items.length}
-            total={listQuery.data.total}
-            noun={{ singular: "aircraft", plural: "aircraft" }}
-            onPageChange={(page) => setState({ page })}
-          />
-        </div>
+        <>
+          {/* A failed refetch behind rows that are already on screen: keep
+           * them, keep the sort headers, keep the pagination, and say what
+           * happened above them (review R2-04). */}
+          {listQuery.isError && (
+            <QueryErrorBanner
+              message={`Could not refresh the aircraft list: ${listQuery.error.message}.`}
+              onRetry={() => void listQuery.refetch()}
+              isRetrying={listQuery.isFetching}
+            />
+          )}
+          {listQuery.data.items.length === 0 && state.page === 1 ? (
+            <p className="text-sm text-muted-foreground">
+              This receiver hasn&rsquo;t sighted any aircraft yet.
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <AircraftTable
+                rows={listQuery.data.items}
+                sort={state.sort}
+                order={state.order}
+                onSortChange={handleSortChange}
+                units={units}
+                timezone={timezone}
+                refreshing={listQuery.isFetching && listQuery.isPlaceholderData}
+              />
+              <AircraftPaginationControls
+                page={state.page}
+                pageSize={PAGE_SIZE}
+                rowCount={listQuery.data.items.length}
+                total={listQuery.data.total}
+                noun={{ singular: "aircraft", plural: "aircraft" }}
+                onPageChange={(page) => setState({ page })}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );

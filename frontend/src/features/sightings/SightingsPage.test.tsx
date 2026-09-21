@@ -226,6 +226,43 @@ describe("SightingsPage", () => {
     expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
   });
 
+  it("keeps the log on screen and offers a retry when a refresh fails (R2-04)", async () => {
+    let failing = false;
+    installSightingsApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: {
+        items: [sightingRow()],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/sightings");
+    await screen.findByText("N302DN");
+
+    failing = true;
+    await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+
+    const banner = await screen.findByTestId("query-error-banner");
+    expect(banner).toHaveAttribute("role", "alert");
+    expect(screen.getByText("N302DN")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Duration" }),
+    ).toBeInTheDocument();
+
+    failing = false;
+    await user.click(
+      within(banner).getByRole("button", { name: /try again/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("query-error-banner"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("opens the sighting detail route when a row is clicked", async () => {
     installSightingsApiMock({
       list: {

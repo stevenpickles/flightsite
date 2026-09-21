@@ -18,6 +18,10 @@ import {
 } from "@/features/sighting-detail/SightingDetailSections";
 import { SightingEventsTimeline } from "@/features/sighting-detail/SightingEventsTimeline";
 import { SightingPathMap } from "@/features/sighting-detail/SightingPathMap";
+import {
+  QueryErrorBanner,
+  QueryErrorState,
+} from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
@@ -64,31 +68,54 @@ export function SightingDetailPage() {
     );
   }
 
-  if (detailQuery.isError) {
+  // Only when nothing has ever loaded (review R2-04); a failure behind a
+  // rendered sighting becomes a banner below instead.
+  const sighting = detailQuery.data;
+  if (sighting === undefined) {
     const notFound =
       detailQuery.error instanceof SightingsApiError &&
       detailQuery.error.status === 404;
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="text-lg font-semibold">
-          {notFound ? "Sighting not found" : "Could not load this sighting"}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {notFound
-            ? `No sighting exists with id ${id}.`
-            : detailQuery.error.message}
-        </p>
+        {notFound ? (
+          <>
+            <h1 className="text-lg font-semibold">Sighting not found</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              No sighting exists with id {id}.
+            </p>
+          </>
+        ) : (
+          <>
+            <h1 className="mb-3 text-lg font-semibold">
+              Could not load this sighting
+            </h1>
+            <QueryErrorState
+              message={
+                detailQuery.error?.message ??
+                `The request for sighting ${id} failed.`
+              }
+              onRetry={() => void detailQuery.refetch()}
+              isRetrying={detailQuery.isFetching}
+            />
+          </>
+        )}
       </div>
     );
   }
 
-  const sighting = detailQuery.data;
   const aircraft = aircraftQuery.data;
   const isOpen = sighting.ended_at === null;
 
   return (
     <TooltipProvider delayDuration={200}>
       <div className="mx-auto max-w-3xl px-4 py-6">
+        {detailQuery.isError && (
+          <QueryErrorBanner
+            message={`Could not refresh this sighting: ${detailQuery.error.message}.`}
+            onRetry={() => void detailQuery.refetch()}
+            isRetrying={detailQuery.isFetching}
+          />
+        )}
         <header className="border-b border-border pb-4">
           <h1 className="text-lg font-semibold">
             <Link

@@ -26,6 +26,10 @@ import { ActivityRow } from "@/features/activity/components/ActivityRow";
 import { ActivityTypeFilter } from "@/features/activity/components/ActivityTypeFilter";
 import { useActivityPageState } from "@/features/activity/hooks/useActivityPageState";
 import { PAGE_SIZE } from "@/features/activity/lib/urlState";
+import {
+  QueryErrorBanner,
+  QueryErrorState,
+} from "@/features/history/components/QueryError";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useActivityQuery } from "@/lib/api/activity";
@@ -75,32 +79,52 @@ export function ActivityPage() {
 
       {listQuery.isPending ? (
         <p className="text-sm text-muted-foreground">Loading activity…</p>
-      ) : listQuery.isError ? (
-        <p className="text-sm text-destructive">
-          Could not load the activity feed: {listQuery.error.message}
-        </p>
-      ) : listQuery.data.items.length === 0 && state.page === 1 ? (
-        <p className="text-sm text-muted-foreground">
-          {state.types.length === 0
-            ? "Nothing has happened yet."
-            : "No activity matches these filters."}
-        </p>
+      ) : listQuery.data === undefined ? (
+        <QueryErrorState
+          message={`Could not load the activity feed: ${listQuery.error?.message ?? "the request failed"}`}
+          onRetry={() => void listQuery.refetch()}
+          isRetrying={listQuery.isFetching}
+        />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <ul className="divide-y divide-border/60">
-            {listQuery.data.items.map((event) => (
-              <ActivityRow key={event.id} event={event} timezone={timezone} />
-            ))}
-          </ul>
-          <AircraftPaginationControls
-            page={state.page}
-            pageSize={PAGE_SIZE}
-            rowCount={listQuery.data.items.length}
-            total={listQuery.data.total}
-            noun={{ singular: "event", plural: "events" }}
-            onPageChange={(page) => setState({ page })}
-          />
-        </div>
+        <>
+          {/* Before this, recovering meant clicking a filter chip — which
+           * worked only because it made a new query key, and silently
+           * changed what the user had asked for (review R2-04). */}
+          {listQuery.isError && (
+            <QueryErrorBanner
+              message={`Could not refresh the activity feed: ${listQuery.error.message}.`}
+              onRetry={() => void listQuery.refetch()}
+              isRetrying={listQuery.isFetching}
+            />
+          )}
+          {listQuery.data.items.length === 0 && state.page === 1 ? (
+            <p className="text-sm text-muted-foreground">
+              {state.types.length === 0
+                ? "Nothing has happened yet."
+                : "No activity matches these filters."}
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <ul className="divide-y divide-border/60">
+                {listQuery.data.items.map((event) => (
+                  <ActivityRow
+                    key={event.id}
+                    event={event}
+                    timezone={timezone}
+                  />
+                ))}
+              </ul>
+              <AircraftPaginationControls
+                page={state.page}
+                pageSize={PAGE_SIZE}
+                rowCount={listQuery.data.items.length}
+                total={listQuery.data.total}
+                noun={{ singular: "event", plural: "events" }}
+                onPageChange={(page) => setState({ page })}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -156,5 +156,32 @@ describe("ActivityPage", () => {
         screen.getByText(/could not load the activity feed/i),
       ).toBeInTheDocument(),
     );
+    // Announced, and recoverable without a reload (review R2-04, R2-17) —
+    // before this the page offered no control at all except its filter
+    // chips, which recover only by silently changing the user's filter.
+    const failure = screen.getByTestId("query-error-state");
+    expect(failure).toHaveAttribute("role", "alert");
+    expect(
+      within(failure).getByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the rows and the filter when a refresh fails (R2-04)", async () => {
+    let failing = false;
+    installActivityApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: page(3),
+    });
+    const user = userEvent.setup();
+    renderApp("/activity");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(3),
+    );
+
+    failing = true;
+    await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+
+    expect(await screen.findByTestId("query-error-banner")).toBeInTheDocument();
+    expect(screen.getAllByTestId("activity-row")).toHaveLength(3);
   });
 });
