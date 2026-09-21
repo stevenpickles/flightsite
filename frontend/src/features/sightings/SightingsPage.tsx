@@ -82,7 +82,9 @@ export function SightingsPage() {
       <SightingsFilters state={state} onChange={setState} />
 
       {listQuery.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading sightings…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading sightings…
+        </p>
       ) : listQuery.data === undefined ? (
         <QueryErrorState
           message={`Could not load the sightings log: ${listQuery.error?.message ?? "the request failed"}`}

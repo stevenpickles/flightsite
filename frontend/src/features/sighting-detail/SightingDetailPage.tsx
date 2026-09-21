@@ -18,6 +18,7 @@ import {
 } from "@/features/sighting-detail/SightingDetailSections";
 import { describePathSample } from "@/features/sighting-detail/lib/pathSample";
 import { SightingEventsTimeline } from "@/features/sighting-detail/SightingEventsTimeline";
+import { SightingPathLegend } from "@/features/sighting-detail/SightingPathLegend";
 import { SightingPathMap } from "@/features/sighting-detail/SightingPathMap";
 import {
   QueryErrorBanner,
@@ -68,7 +69,9 @@ export function SightingDetailPage() {
   if (detailQuery.isPending) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <p className="text-sm text-muted-foreground">Loading sighting…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading sighting…
+        </p>
       </div>
     );
   }
@@ -217,6 +220,15 @@ export function SightingDetailPage() {
           )}
         >
           <SightingPathMap path={sighting.path} />
+          {sighting.path.length > 0 && (
+            <SightingPathLegend
+              units={units}
+              altitudeColored={
+                sighting.path.filter((point) => point.altitude_ft !== null)
+                  .length >= 2
+              }
+            />
+          )}
         </DetailSection>
 
         <SightingRouteSection

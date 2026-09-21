@@ -364,6 +364,27 @@ describe("SightingDetailPage", () => {
     expect(screen.getByText(/30 seconds/)).toBeInTheDocument();
   });
 
+  it("gives its sections an H2 and keys the path's colours (R2-17)", async () => {
+    installSightingsApiMock({
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+    });
+
+    renderApp("/sightings/88213");
+
+    await screen.findByText(/icao ae1463/i);
+    // The review audited this route as H1 → H3 with no H2 anywhere, because
+    // `DetailSection` hard-coded `h3`.
+    const headings = screen.getAllByRole("heading", { level: 2 });
+    expect(headings.map((heading) => heading.textContent)).toContain("Events");
+
+    // The line is coloured by altitude and the endpoints are marked; before
+    // this, neither was explained anywhere on the page.
+    const legend = screen.getByTestId("path-legend");
+    expect(legend).toHaveTextContent("Start");
+    expect(legend).toHaveTextContent("End");
+    expect(legend).toHaveTextContent("FL450");
+  });
+
   it("shows a no-path message instead of a map for a sighting with an empty path", async () => {
     installSightingsApiMock({
       detail: { 88213: sightingDetail({ id: 88213, path: [] }) },

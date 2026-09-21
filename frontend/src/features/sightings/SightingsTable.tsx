@@ -134,6 +134,12 @@ export function SightingsTable({
        * which is what pushed Status off a 1440px desktop and left a phone
        * scrolling 3.2x sideways. */}
       <table className="w-full border-collapse text-sm">
+        {/* As on the Aircraft table: the table had no accessible name at
+         * all before this (review R2-17). */}
+        <caption className="sr-only">
+          Every observation period this receiver has recorded, sortable by
+          column.
+        </caption>
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
             {COLUMNS.map((column) => {

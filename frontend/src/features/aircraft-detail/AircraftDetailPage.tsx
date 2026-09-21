@@ -78,7 +78,9 @@ export function AircraftDetailPage() {
   if (detailQuery.isPending) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <p className="text-sm text-muted-foreground">Loading aircraft…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading aircraft…
+        </p>
       </div>
     );
   }

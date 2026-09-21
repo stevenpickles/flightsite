@@ -158,6 +158,22 @@ describe("AircraftDetailPage", () => {
     expect(row).toHaveTextContent("still running");
   });
 
+  it("puts its sections at H2, under the page's H1 (R2-17)", async () => {
+    installAircraftApiMock({
+      detail: { ae1463: aircraftDetail({ icao: "ae1463" }) },
+    });
+
+    renderApp("/aircraft/ae1463");
+
+    await screen.findByText(/ICAO AE1463/);
+    // The review audited this route as H1 → H3 with no H2 anywhere.
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(headings).toContain("Identity & metadata");
+    expect(headings).toContain("Manufacture & ownership");
+  });
+
   it("shows a not-found message for a valid-format icao this receiver never sighted", async () => {
     installAircraftApiMock({ detail: {} });
 

@@ -84,7 +84,9 @@ export function ActivityPage() {
       />
 
       {listQuery.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading activity…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading activity…
+        </p>
       ) : listQuery.data === undefined ? (
         <QueryErrorState
           message={`Could not load the activity feed: ${listQuery.error?.message ?? "the request failed"}`}

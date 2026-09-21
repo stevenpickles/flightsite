@@ -69,7 +69,9 @@ export function AircraftPage() {
       </header>
 
       {listQuery.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading aircraft…</p>
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading aircraft…
+        </p>
       ) : listQuery.data === undefined ? (
         // Nothing has ever loaded, so the failure *is* the page.
         <QueryErrorState

@@ -98,6 +98,11 @@ export function AircraftTable({
        * scroller is the floor for the cases the breakpoints cannot cover —
        * an unusually long operator name, a very narrow window. */}
       <table className="w-full border-collapse text-sm">
+        {/* A screen reader reaching this table got no name for it at all —
+         * `caption` and `aria-label` were both null (review R2-17). */}
+        <caption className="sr-only">
+          Every aircraft this receiver has sighted, sortable by column.
+        </caption>
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
             {COLUMNS.map((column) => {

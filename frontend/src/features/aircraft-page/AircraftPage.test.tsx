@@ -174,6 +174,26 @@ describe("AircraftPage", () => {
     });
   });
 
+  it("gives the table an accessible name (R2-17)", async () => {
+    installAircraftApiMock({
+      list: {
+        items: [aircraftListRow()],
+        total: 1,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/aircraft");
+    await screen.findByText("N302DN");
+
+    // `caption` and `aria-label` were both null, so a screen reader reaching
+    // the table was told nothing about what it held.
+    expect(
+      screen.getByRole("table", { name: /every aircraft this receiver/i }),
+    ).toBeInTheDocument();
+  });
+
   it("names the receiver's timezone and stamps every cell with its instant (R2-14)", async () => {
     installAircraftApiMock({
       list: {
