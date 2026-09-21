@@ -7,6 +7,7 @@ import { NonPositionedPanel } from "@/features/filters/components/NonPositionedP
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { defaultReceiverInfo } from "@/test/aircraftApiMock";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
@@ -55,11 +56,36 @@ describe("NonPositionedPanel", () => {
       screen.getByRole("button", { name: /non-positioned/i }),
     );
     expect(screen.getByText("RCH471")).toBeInTheDocument();
-    expect(screen.getByText(/5000 ft/)).toBeInTheDocument();
+    // Formatted through the same `features/aircraft-detail/lib/format`
+    // functions the detail panel and the interesting panel use (R1-13) —
+    // thousands separator, `dBFS` — not the panel's old local formatting.
+    expect(screen.getByText(/5,000 ft/)).toBeInTheDocument();
     expect(screen.getByText(/7000/)).toBeInTheDocument();
-    expect(screen.getByText(/-12.3 dB/)).toBeInTheDocument();
+    expect(screen.getByText(/-12.3 dBFS/)).toBeInTheDocument();
     // The positioned aircraft never appears in this list.
     expect(screen.queryByText("UAL45")).not.toBeInTheDocument();
+  });
+
+  it("formats altitude in metric when the receiver's units are metric", async () => {
+    act(() => {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [
+          makeAircraft({
+            icao: "aaaaaa",
+            callsign: "RCH471",
+            position: null,
+            altitude_ft: 10000,
+          }),
+        ],
+        receiver: defaultReceiverInfo({ units: "metric" }),
+      });
+    });
+    render(<NonPositionedPanel />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /non-positioned/i }),
+    );
+    // 10,000 ft -> ~3,048 m, the same conversion the detail panel applies.
+    expect(screen.getByText(/3,048 m/)).toBeInTheDocument();
   });
 
   it("selects the aircraft on click, same as a map click would", async () => {

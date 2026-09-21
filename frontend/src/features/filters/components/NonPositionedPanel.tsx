@@ -17,19 +17,26 @@
  * so `LiveMapPage` now owns that corner as one flex column and both cards
  * are plain children of it — two absolutely-positioned siblings claiming
  * `bottom-3 left-3` would simply have stacked on top of each other.
+ *
+ * Altitude and RSSI are formatted through the same
+ * `features/aircraft-detail/lib/format` functions every other surface uses
+ * (R1-13) — `InterestingPanel` right above this card already did — rather
+ * than a local, unit-blind `formatAltitude`: without that, this was the one
+ * list on the page that ignored the receiver's units setting and read
+ * `11880 ft` where the detail panel says `11,880 ft`.
  */
 
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
+import {
+  formatAltitude,
+  formatRssi,
+} from "@/features/aircraft-detail/lib/format";
 import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { cn } from "@/lib/utils";
-
-function formatAltitude(altitudeFt: number | null): string {
-  return altitudeFt === null ? "—" : `${Math.round(altitudeFt)} ft`;
-}
 
 export function NonPositionedPanel() {
   const hideNonPositioned = useFilterStore(
@@ -38,6 +45,8 @@ export function NonPositionedPanel() {
   const { aircraft } = useFilteredLiveAircraft();
   const selectedIcao = useLiveAircraftStore((state) => state.selectedIcao);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
+  const receiver = useLiveAircraftStore((state) => state.receiver);
+  const units = receiver?.units ?? "aviation";
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (hideNonPositioned) {
@@ -99,11 +108,9 @@ export function NonPositionedPanel() {
                     </span>
                     <span className="text-muted-foreground">
                       ICAO {view.icao.toUpperCase()} ·{" "}
-                      {formatAltitude(view.altitude_ft)} · Squawk{" "}
-                      {view.squawk ?? "—"} · RSSI{" "}
-                      {view.rssi_db === null
-                        ? "—"
-                        : `${view.rssi_db.toFixed(1)} dB`}
+                      {formatAltitude(view.altitude_ft, units) ?? "—"} ·
+                      Squawk {view.squawk ?? "—"} · RSSI{" "}
+                      {formatRssi(view.rssi_db) ?? "—"}
                     </span>
                   </button>
                 </li>
