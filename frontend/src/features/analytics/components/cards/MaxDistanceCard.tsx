@@ -24,6 +24,7 @@ export interface MaxDistanceCardProps {
   units: UnitSystem;
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
   onRetry?: () => void;
 }
 
@@ -33,6 +34,7 @@ export function MaxDistanceCard({
   units,
   isLoading,
   error,
+  errorDetail,
   onRetry,
 }: MaxDistanceCardProps) {
   const hasData = items.some((row) => row.max_range_nm !== null);
@@ -102,6 +104,7 @@ export function MaxDistanceCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
       onRetry={onRetry}
     >
       <EChart

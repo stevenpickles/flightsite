@@ -41,7 +41,9 @@ export function ChartCard({
         </p>
       ) : error !== undefined ? (
         <div className="flex flex-col items-center gap-2 py-8 text-center">
-          <p className="text-sm text-destructive">{error}</p>
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
           {onRetry !== undefined && (
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
               Retry

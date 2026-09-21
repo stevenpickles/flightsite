@@ -32,6 +32,7 @@ export interface TopAircraftCardProps {
   rows: AnalyticsAircraftRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
   onRetry?: () => void;
 }
 
@@ -81,6 +82,7 @@ export function TopAircraftCard({
   rows,
   isLoading,
   error,
+  errorDetail,
   onRetry,
 }: TopAircraftCardProps) {
   const navigate = useNavigate();
@@ -174,6 +176,7 @@ export function TopAircraftCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
       onRetry={onRetry}
     >
       <EChart

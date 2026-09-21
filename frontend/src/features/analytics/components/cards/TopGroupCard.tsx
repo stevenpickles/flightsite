@@ -36,6 +36,7 @@ export interface TopGroupCardProps {
   rows: AnalyticsGroupRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
   onRetry?: () => void;
 }
 
@@ -90,6 +91,7 @@ export function TopGroupCard({
   rows,
   isLoading,
   error,
+  errorDetail,
   onRetry,
 }: TopGroupCardProps) {
   // Reversed so the highest-ranked row (the backend's own sort) ends up at
@@ -170,6 +172,7 @@ export function TopGroupCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
       onRetry={onRetry}
     >
       <EChart

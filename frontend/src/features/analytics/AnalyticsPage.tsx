@@ -21,6 +21,7 @@ import {
 import { useReceiverQuery } from "@/lib/api/receiver";
 
 import { requireNavItem } from "@/components/shell/nav-items";
+import { AnalyticsErrorBanner } from "@/features/analytics/components/AnalyticsErrorBanner";
 import { ClassificationActivityCard } from "@/features/analytics/components/cards/ClassificationActivityCard";
 import { DailyCountsCard } from "@/features/analytics/components/cards/DailyCountsCard";
 import { MaxDistanceCard } from "@/features/analytics/components/cards/MaxDistanceCard";
@@ -31,20 +32,51 @@ import { TopAircraftCard } from "@/features/analytics/components/cards/TopAircra
 import { TopGroupCard } from "@/features/analytics/components/cards/TopGroupCard";
 import { PresetSelector } from "@/features/analytics/components/PresetSelector";
 import { useAnalyticsPresetState } from "@/features/analytics/hooks/useAnalyticsPresetState";
-import { latestDataUpdatedAt } from "@/features/analytics/lib/format";
+import {
+  describeError,
+  latestDataUpdatedAt,
+} from "@/features/analytics/lib/format";
 import { formatReceiverLocalClock } from "@/features/receiver/lib/format";
 
 const item = requireNavItem("/analytics");
 
-function queryErrorMessage(
-  isError: boolean,
-  error: Error | null,
+/** `/analytics/daily` alone backs four cards (Daily counts, Maximum
+ * detection distance, Receiver activity, Never seen before) — R3-08's
+ * "same error printed four times" case. */
+const DAILY_ERROR_MESSAGE = "Could not load daily activity data.";
+/** Shown on a card whose own failure is already explained, with a Retry, by
+ * the page-level banner (R3-08) — never the banner's message duplicated
+ * card-by-card, and never a raw backend string. */
+const SUPPRESSED_CARD_MESSAGE = "Could not load — see notice above.";
+
+interface AnalyticsQueryLike {
+  isError: boolean;
+  error: Error | null;
+  refetch: () => unknown;
+}
+
+/** Error/detail/retry props for a card whose query is *not* shared with any
+ * other card. Suppressed to a short pointer, with no Retry of its own, when
+ * every analytics query has failed at once (R3-08's "nine identical 'Failed
+ * to fetch' paragraphs" case) — the page banner already explains that and
+ * retries everything. */
+function independentCardProps(
+  query: AnalyticsQueryLike,
   fallback: string,
-): string | undefined {
-  if (!isError) {
-    return undefined;
+  allFailed: boolean,
+): { error?: string; errorDetail?: string; onRetry?: () => void } {
+  if (!query.isError) {
+    return {};
   }
-  return error?.message ?? fallback;
+  if (allFailed) {
+    return { error: SUPPRESSED_CARD_MESSAGE };
+  }
+  const described = describeError(true, query.error, fallback);
+  return {
+    error: described?.message,
+    errorDetail: described?.detail ?? undefined,
+    onRetry: () => void query.refetch(),
+  };
 }
 
 export function AnalyticsPage() {
@@ -61,6 +93,36 @@ export function AnalyticsPage() {
   const topTypesQuery = useAnalyticsTopTypesQuery({ preset });
   const topOperatorsQuery = useAnalyticsTopOperatorsQuery({ preset });
   const rarityQuery = useAnalyticsRarityQuery({ preset });
+
+  // R3-08: every analytics query failing at once (an unreachable API) gets
+  // one banner instead of nine identical "Failed to fetch" paragraphs.
+  const allFailed =
+    dailyQuery.isError &&
+    classificationQuery.isError &&
+    topAircraftQuery.isError &&
+    topTypesQuery.isError &&
+    topOperatorsQuery.isError &&
+    rarityQuery.isError;
+
+  function retryAll() {
+    void dailyQuery.refetch();
+    void classificationQuery.refetch();
+    void topAircraftQuery.refetch();
+    void topTypesQuery.refetch();
+    void topOperatorsQuery.refetch();
+    void rarityQuery.refetch();
+  }
+
+  // `/analytics/daily` alone backs four cards — R3-08 dedupes its failure
+  // into one banner (below) with one Retry, rather than the same message
+  // printed once per card; the four cards themselves fall back to a short
+  // pointer rather than repeating it.
+  const dailyCardError = dailyQuery.isError
+    ? { error: SUPPRESSED_CARD_MESSAGE }
+    : {};
+  const dailyDescribed = allFailed
+    ? undefined
+    : describeError(dailyQuery.isError, dailyQuery.error, DAILY_ERROR_MESSAGE);
 
   // R3-06: one freshness caption for the whole page rather than per card —
   // every card either shares `dailyQuery` or refreshes on the same 60 s
@@ -97,17 +159,31 @@ export function AnalyticsPage() {
         <PresetSelector preset={preset} onChange={setPreset} />
       </header>
 
+      {allFailed ? (
+        <AnalyticsErrorBanner
+          message="FlightSite can't reach the API."
+          onRetry={retryAll}
+        />
+      ) : (
+        dailyDescribed !== undefined && (
+          <AnalyticsErrorBanner
+            message={dailyDescribed.message}
+            detail={dailyDescribed.detail ?? undefined}
+            onRetry={() => void dailyQuery.refetch()}
+          />
+        )
+      )}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <TopAircraftCard
           window={topAircraftQuery.data?.window}
           rows={topAircraftQuery.data?.items ?? []}
           isLoading={topAircraftQuery.isPending}
-          error={queryErrorMessage(
-            topAircraftQuery.isError,
-            topAircraftQuery.error,
+          {...independentCardProps(
+            topAircraftQuery,
             "Could not load top aircraft.",
+            allFailed,
           )}
-          onRetry={() => void topAircraftQuery.refetch()}
         />
 
         <TopGroupCard
@@ -117,12 +193,11 @@ export function AnalyticsPage() {
           window={topTypesQuery.data?.window}
           rows={topTypesQuery.data?.items ?? []}
           isLoading={topTypesQuery.isPending}
-          error={queryErrorMessage(
-            topTypesQuery.isError,
-            topTypesQuery.error,
+          {...independentCardProps(
+            topTypesQuery,
             "Could not load top types.",
+            allFailed,
           )}
-          onRetry={() => void topTypesQuery.refetch()}
         />
 
         <TopGroupCard
@@ -132,36 +207,29 @@ export function AnalyticsPage() {
           window={topOperatorsQuery.data?.window}
           rows={topOperatorsQuery.data?.items ?? []}
           isLoading={topOperatorsQuery.isPending}
-          error={queryErrorMessage(
-            topOperatorsQuery.isError,
-            topOperatorsQuery.error,
+          {...independentCardProps(
+            topOperatorsQuery,
             "Could not load top operators.",
+            allFailed,
           )}
-          onRetry={() => void topOperatorsQuery.refetch()}
         />
 
         <ClassificationActivityCard
           window={classificationQuery.data?.window}
           series={classificationQuery.data?.series ?? []}
           isLoading={classificationQuery.isPending}
-          error={queryErrorMessage(
-            classificationQuery.isError,
-            classificationQuery.error,
+          {...independentCardProps(
+            classificationQuery,
             "Could not load classification activity.",
+            allFailed,
           )}
-          onRetry={() => void classificationQuery.refetch()}
         />
 
         <DailyCountsCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
           isLoading={dailyQuery.isPending}
-          error={queryErrorMessage(
-            dailyQuery.isError,
-            dailyQuery.error,
-            "Could not load daily counts.",
-          )}
-          onRetry={() => void dailyQuery.refetch()}
+          {...dailyCardError}
         />
 
         <MaxDistanceCard
@@ -169,36 +237,21 @@ export function AnalyticsPage() {
           items={dailyQuery.data?.items ?? []}
           units={units}
           isLoading={dailyQuery.isPending}
-          error={queryErrorMessage(
-            dailyQuery.isError,
-            dailyQuery.error,
-            "Could not load maximum detection distance.",
-          )}
-          onRetry={() => void dailyQuery.refetch()}
+          {...dailyCardError}
         />
 
         <ReceiverActivityCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
           isLoading={dailyQuery.isPending}
-          error={queryErrorMessage(
-            dailyQuery.isError,
-            dailyQuery.error,
-            "Could not load receiver activity.",
-          )}
-          onRetry={() => void dailyQuery.refetch()}
+          {...dailyCardError}
         />
 
         <NeverSeenBeforeCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
           isLoading={dailyQuery.isPending}
-          error={queryErrorMessage(
-            dailyQuery.isError,
-            dailyQuery.error,
-            "Could not load new-aircraft counts.",
-          )}
-          onRetry={() => void dailyQuery.refetch()}
+          {...dailyCardError}
         />
 
         <RarityListsCard
@@ -208,12 +261,11 @@ export function AnalyticsPage() {
           rareAircraft={rarityQuery.data?.rare_aircraft ?? []}
           rareTypes={rarityQuery.data?.rare_types ?? []}
           isLoading={rarityQuery.isPending}
-          error={queryErrorMessage(
-            rarityQuery.isError,
-            rarityQuery.error,
+          {...independentCardProps(
+            rarityQuery,
             "Could not load rarity data.",
+            allFailed,
           )}
-          onRetry={() => void rarityQuery.refetch()}
         />
       </div>
     </div>

@@ -120,6 +120,36 @@ export function formatSightings(count: number): string {
   return `${formatCompactNumber(count)} ${count === 1 ? "sighting" : "sightings"}`;
 }
 
+export interface DescribedError {
+  /** The human-written fallback — what a card actually shows (R3-08). */
+  message: string;
+  /** The backend's raw error text, if any, for an optional dev-facing detail
+   * line — never the primary message. */
+  detail: string | null;
+}
+
+/** Prefers a human-written `fallback` over the backend's raw
+ * `{"error": {"message": ...}}` string (R3-08) — that string is written for
+ * someone reading a log, not for the person looking at this card, and it
+ * leaked verbatim into the UI before this fix (`AnalyticsApiError`/
+ * `ReceiverStatsApiError` take their `message` straight from the response
+ * body). A tiny local stand-in for `lib/api/client.ts`'s `describeError`
+ * (agent B's app-shell/API-client work package, not yet landed when this
+ * shipped) — the integrator should fold call sites into the shared one once
+ * it exists. */
+export function describeError(
+  isError: boolean,
+  error: Error | null,
+  fallback: string,
+): DescribedError | undefined {
+  if (!isError) {
+    return undefined;
+  }
+  const detail =
+    error !== null && error.message.length > 0 ? error.message : null;
+  return { message: fallback, detail };
+}
+
 /** The most recent of several TanStack Query `dataUpdatedAt` epoch-ms
  * values, or `undefined` when none has ever succeeded (every one is `0`) —
  * the "Data as of" freshness caption (R3-06) reads this rather than any
