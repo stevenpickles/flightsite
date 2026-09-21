@@ -155,13 +155,19 @@ function describeConditions(conditions: AlertRuleConditions): string[] {
     phrases.push("on any watchlist");
   }
   if (conditions.rare_aircraft) {
+    // R4-20: worded, not templated — "1 time(s)" was a string that was
+    // never finished. Mirrors the backend's `_times()`
+    // (`backend/src/flightsite/alerts/model.py`).
+    const count = conditions.rare_aircraft.max_sightings;
     phrases.push(
-      `seen at most ${conditions.rare_aircraft.max_sightings} time(s) here`,
+      `seen at most ${count === 1 ? "once" : `${count} times`} here`,
     );
   }
   if (conditions.rare_type) {
+    // Mirrors the backend's `_plural(count, "airframe")`.
+    const count = conditions.rare_type.max_sightings;
     phrases.push(
-      `type seen on at most ${conditions.rare_type.max_sightings} airframe(s) here`,
+      `type seen on at most ${count} airframe${count === 1 ? "" : "s"} here`,
     );
   }
   if (conditions.min_distance_nm != null) {

@@ -159,7 +159,7 @@ describe("AlertRulesSection", () => {
     // the API stored, described back in the API's own words.
     const card = await screen.findByRole("article", { name: "Rare visitors" });
     expect(
-      within(card).getByText("seen at most 2 time(s) here"),
+      within(card).getByText("seen at most 2 times here"),
     ).toBeInTheDocument();
     // The builder closes once the rule exists.
     expect(
@@ -212,7 +212,7 @@ describe("AlertRulesSection", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(
-      await screen.findByText("seen at most 5 time(s) here"),
+      await screen.findByText("seen at most 5 times here"),
     ).toBeInTheDocument();
     // SPEC §45's "enable, then customize": tuning does not erase where the
     // rule came from.
