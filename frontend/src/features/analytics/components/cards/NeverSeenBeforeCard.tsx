@@ -12,6 +12,7 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
+import { formatCalendarDay } from "@/features/analytics/lib/format";
 
 export interface NeverSeenBeforeCardProps {
   window?: AnalyticsWindow;
@@ -71,7 +72,7 @@ export function NeverSeenBeforeCard({
     items.length === 0
       ? "No new aircraft in this window."
       : `New (never-seen-before) aircraft by day, ${total} total: ${items
-          .map((row) => `${row.day} — ${row.new_aircraft}`)
+          .map((row) => `${formatCalendarDay(row.day)} — ${row.new_aircraft}`)
           .join("; ")}.`;
 
   return (

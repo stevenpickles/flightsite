@@ -12,7 +12,10 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
-import { formatCompactNumber } from "@/features/analytics/lib/format";
+import {
+  formatCalendarDay,
+  formatCompactNumber,
+} from "@/features/analytics/lib/format";
 
 export interface ReceiverActivityCardProps {
   window?: AnalyticsWindow;
@@ -100,7 +103,7 @@ export function ReceiverActivityCard({
         )
         .map(
           (row) =>
-            `${row.day} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
+            `${formatCalendarDay(row.day)} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
         )
         .join("; ")}.`;
 

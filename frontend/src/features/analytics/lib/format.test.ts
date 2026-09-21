@@ -54,8 +54,23 @@ describe("formatWindowLabel", () => {
       timezone: "America/Los_Angeles",
     });
     expect(label).toContain("Aug 31, 2026");
-    expect(label).toContain("America/Los_Angeles");
     expect(label).not.toContain("–");
+  });
+
+  // R3-11: the timezone used to be repeated on every card's window caption
+  // ("Aug 31, 2026 · America/Los_Angeles"). It is now stated once, on the
+  // page itself (`AnalyticsPage`'s "Data as of" line), so the per-card
+  // caption carries no timezone of its own.
+  it("carries no timezone (stated once per page instead of once per card)", () => {
+    const label = formatWindowLabel({
+      preset: "today",
+      from: "2026-08-31T00:00:00.000Z",
+      to: "2026-09-01T00:00:00.000Z",
+      first_day: "2026-08-31",
+      last_day: "2026-08-31",
+      timezone: "America/Los_Angeles",
+    });
+    expect(label).not.toContain("America/Los_Angeles");
   });
 
   it("renders a range when the window spans multiple days", () => {

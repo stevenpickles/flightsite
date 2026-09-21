@@ -60,16 +60,18 @@ export function formatCalendarDay(day: string): string {
   }).format(date);
 }
 
-/** `"Aug 25 – Aug 31, 2026 · America/Los_Angeles"` (or a single date when
- * the window is one day) — the subtle window caption every analytics card
- * shows beneath its title, so a chart is never read against the wrong
- * range. */
+/** `"Aug 25 – Aug 31, 2026"` (or a single date when the window is one day)
+ * — the subtle window caption every analytics card shows beneath its
+ * title, so a chart is never read against the wrong range. Carries no
+ * timezone of its own (R3-11): five different renderings of a receiver-
+ * local date across the two pages, one of them the timezone stated once
+ * per card instead of once per page, is what R3-11 folded into one
+ * consistent picture — `AnalyticsPage`/`ReceiverPage` each state the
+ * timezone once, in their "Data as of" caption. */
 export function formatWindowLabel(window: AnalyticsWindow): string {
-  const range =
-    window.first_day === window.last_day
-      ? formatCalendarDay(window.first_day)
-      : `${formatCalendarDay(window.first_day)} – ${formatCalendarDay(window.last_day)}`;
-  return `${range} · ${window.timezone}`;
+  return window.first_day === window.last_day
+    ? formatCalendarDay(window.first_day)
+    : `${formatCalendarDay(window.first_day)} – ${formatCalendarDay(window.last_day)}`;
 }
 
 /** `"military_transport"` -> `"Military transport"` — a plain-language

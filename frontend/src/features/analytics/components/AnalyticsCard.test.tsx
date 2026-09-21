@@ -22,7 +22,7 @@ describe("AnalyticsCard", () => {
     );
 
     expect(screen.getByText("Loading…")).toBeInTheDocument();
-    expect(screen.queryByText(/UTC/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aug 31, 2026/)).not.toBeInTheDocument();
   });
 
   it("shows an error message in place of children", () => {
@@ -76,7 +76,7 @@ describe("AnalyticsCard", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("renders children and the echoed window once loaded", () => {
+  it("renders children and the echoed window once loaded, with no timezone of its own (R3-11)", () => {
     render(
       <AnalyticsCard title="Top aircraft" isLoading={false} window={WINDOW}>
         <p>content</p>
@@ -85,6 +85,9 @@ describe("AnalyticsCard", () => {
 
     expect(screen.getByText("content")).toBeInTheDocument();
     expect(screen.getByText("Top aircraft")).toBeInTheDocument();
-    expect(screen.getByText(/UTC/)).toBeInTheDocument();
+    expect(screen.getByText("Aug 31, 2026")).toBeInTheDocument();
+    // The timezone is stated once per page (AnalyticsPage's "Data as of"
+    // line), not once per card.
+    expect(screen.queryByText(/UTC/)).not.toBeInTheDocument();
   });
 });

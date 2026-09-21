@@ -60,7 +60,7 @@ export function ReceiverPage() {
                 new Date(dataAsOf).toISOString(),
                 timezone,
               )}{" "}
-              · refreshes every{" "}
+              {timezone} · refreshes every{" "}
               {Math.round(RECEIVER_CHART_REFETCH_INTERVAL_MS / 1000)} s
             </p>
           )}

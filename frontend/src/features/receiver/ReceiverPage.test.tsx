@@ -113,7 +113,7 @@ describe("ReceiverPage", () => {
 
     expect(
       await screen.findByText(
-        /Data as of \d{2}:\d{2}:\d{2} · refreshes every 30 s/,
+        /Data as of \d{2}:\d{2}:\d{2} UTC · refreshes every 30 s/,
       ),
     ).toBeInTheDocument();
   });

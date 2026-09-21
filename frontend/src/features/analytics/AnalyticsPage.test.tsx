@@ -120,7 +120,7 @@ describe("AnalyticsPage", () => {
 
     expect(
       await screen.findByText(
-        /Data as of \d{2}:\d{2}:\d{2} · refreshes every 60 s/,
+        /Data as of \d{2}:\d{2}:\d{2} UTC · refreshes every 60 s/,
       ),
     ).toBeInTheDocument();
   });

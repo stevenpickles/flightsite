@@ -174,9 +174,14 @@ export function formatReceiverLocalDateTime(
   }
 }
 
-/** The receiver-local calendar date for an ISO instant — e.g. `"2026-04-02"`
- * — for daily-bucketed chart axis labels. Falls back to the bare ISO string
- * on any error. */
+/** The receiver-local calendar date for an ISO instant — e.g. `"Apr 2, 2026"`
+ * — for daily-bucketed chart summaries/axis labels and the lifetime
+ * section's "since" line. Falls back to the bare ISO string on any error.
+ * Deliberately the same `month: "short", day: "numeric", year: "numeric"`
+ * shape `features/analytics/lib/format.ts`'s `formatCalendarDay` renders a
+ * `YYYY-MM-DD` day-key string in — R3-11 found five different date
+ * renderings across the two pages (this one used to be `MM/DD/YYYY`) and
+ * asked for one. */
 export function formatReceiverLocalDate(iso: string, timezone: string): string {
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) {
@@ -185,9 +190,9 @@ export function formatReceiverLocalDate(iso: string, timezone: string): string {
   try {
     return new Intl.DateTimeFormat(undefined, {
       timeZone: timezone,
+      month: "short",
+      day: "numeric",
       year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
     }).format(when);
   } catch {
     return when.toISOString();

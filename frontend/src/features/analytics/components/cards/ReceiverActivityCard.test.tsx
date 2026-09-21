@@ -56,8 +56,10 @@ describe("ReceiverActivityCard", () => {
     expect(
       screen.getByRole("img", { name: /receiver messages and positions/i }),
     ).toBeInTheDocument();
+    // R3-11: the day key is rendered through formatCalendarDay, not as the
+    // raw "2026-08-31" string.
     expect(
-      screen.getByText(/2026-08-31 — 120K messages, 6K positions/),
+      screen.getByText(/Aug 31, 2026 — 120K messages, 6K positions/),
     ).toBeInTheDocument();
   });
 
@@ -79,6 +81,6 @@ describe("ReceiverActivityCard", () => {
     expect(
       screen.queryByText("No data for this window."),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/2026-08-30/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aug 30, 2026/)).not.toBeInTheDocument();
   });
 });

@@ -16,6 +16,7 @@ import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
 import {
   convertDistance,
   distanceUnitLabel,
+  formatCalendarDay,
 } from "@/features/analytics/lib/format";
 
 export interface MaxDistanceCardProps {
@@ -94,7 +95,7 @@ export function MaxDistanceCard({
         .filter((row) => row.max_range_nm !== null)
         .map(
           (row) =>
-            `${row.day} — ${convertDistance(row.max_range_nm as number, units)} ${unitLabel}`,
+            `${formatCalendarDay(row.day)} — ${convertDistance(row.max_range_nm as number, units)} ${unitLabel}`,
         )
         .join("; ")}.`;
 

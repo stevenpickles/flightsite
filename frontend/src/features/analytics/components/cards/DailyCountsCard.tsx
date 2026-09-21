@@ -10,7 +10,10 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
-import { formatCompactNumber } from "@/features/analytics/lib/format";
+import {
+  formatCalendarDay,
+  formatCompactNumber,
+} from "@/features/analytics/lib/format";
 
 export interface DailyCountsCardProps {
   window?: AnalyticsWindow;
@@ -90,7 +93,7 @@ export function DailyCountsCard({
         `${items
           .map(
             (row) =>
-              `${row.day} — ${row.unique_aircraft} aircraft, ${row.sightings} sightings`,
+              `${formatCalendarDay(row.day)} — ${row.unique_aircraft} aircraft, ${row.sightings} sightings`,
           )
           .join("; ")}.`;
 

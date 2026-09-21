@@ -151,7 +151,7 @@ export function AnalyticsPage() {
                 new Date(dataAsOf).toISOString(),
                 timezone,
               )}{" "}
-              · refreshes every{" "}
+              {timezone} · refreshes every{" "}
               {Math.round(ANALYTICS_REFETCH_INTERVAL_MS / 1000)} s
             </p>
           )}

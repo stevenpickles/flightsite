@@ -42,11 +42,13 @@ describe("DailyCountsCard", () => {
     expect(
       screen.getByRole("img", { name: /daily aircraft and sighting counts/i }),
     ).toBeInTheDocument();
+    // R3-11: the day key is rendered through formatCalendarDay, not as the
+    // raw "2026-08-30" string.
     expect(
-      screen.getByText(/2026-08-30 — 8 aircraft, 11 sightings/),
+      screen.getByText(/Aug 30, 2026 — 8 aircraft, 11 sightings/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/2026-08-31 — 10 aircraft, 15 sightings/),
+      screen.getByText(/Aug 31, 2026 — 10 aircraft, 15 sightings/),
     ).toBeInTheDocument();
   });
 });

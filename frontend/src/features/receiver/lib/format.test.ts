@@ -105,8 +105,8 @@ describe("receiver-local time formatting", () => {
     expect(formatReceiverLocalDateTime(iso, "UTC")).toBe("2026-08-30 14:03");
   });
 
-  it("formats a calendar date", () => {
-    expect(formatReceiverLocalDate(iso, "UTC")).toBe("08/30/2026");
+  it("formats a calendar date (R3-11: the same style as formatCalendarDay)", () => {
+    expect(formatReceiverLocalDate(iso, "UTC")).toBe("Aug 30, 2026");
   });
 
   it("renders a different wall-clock time in a non-UTC timezone", () => {

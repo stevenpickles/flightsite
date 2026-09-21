@@ -47,7 +47,9 @@ describe("MaxDistanceCard", () => {
       />,
     );
 
-    expect(screen.getByText(/2026-08-31 — 100 nm/)).toBeInTheDocument();
+    // R3-11: the day key is rendered through formatCalendarDay, not as the
+    // raw "2026-08-31" string.
+    expect(screen.getByText(/Aug 31, 2026 — 100 nm/)).toBeInTheDocument();
   });
 
   it("converts to kilometers for metric units", () => {
@@ -59,7 +61,7 @@ describe("MaxDistanceCard", () => {
       />,
     );
 
-    expect(screen.getByText(/2026-08-31 — 185.2 km/)).toBeInTheDocument();
+    expect(screen.getByText(/Aug 31, 2026 — 185.2 km/)).toBeInTheDocument();
   });
 
   it("skips days with no distance in the summary", () => {
@@ -71,7 +73,7 @@ describe("MaxDistanceCard", () => {
       <MaxDistanceCard items={items} units="aviation" isLoading={false} />,
     );
 
-    expect(screen.queryByText(/2026-08-30/)).not.toBeInTheDocument();
-    expect(screen.getByText(/2026-08-31 — 50 nm/)).toBeInTheDocument();
+    expect(screen.queryByText(/Aug 30, 2026/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Aug 31, 2026 — 50 nm/)).toBeInTheDocument();
   });
 });
