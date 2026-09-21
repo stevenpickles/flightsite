@@ -423,9 +423,7 @@ describe("LiveMapPage", () => {
     // opens honestly reporting nothing rather than staying closed.
     renderPage("/?selected=aaaaaa");
     expect(useLiveAircraftStore.getState().selectedIcao).toBe("aaaaaa");
-    expect(
-      screen.getByRole("dialog", { name: "AAAAAA" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "AAAAAA" })).toBeInTheDocument();
     expect(
       screen.getByText(/no live data for this aircraft/i),
     ).toBeInTheDocument();
@@ -443,9 +441,7 @@ describe("LiveMapPage", () => {
         ]),
       );
     });
-    expect(
-      screen.getByRole("dialog", { name: "RCH471" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "RCH471" })).toBeInTheDocument();
     expect(
       screen.queryByText(/no live data for this aircraft/i),
     ).not.toBeInTheDocument();
@@ -458,9 +454,7 @@ describe("LiveMapPage", () => {
     useLiveAircraftStore.getState().selectAircraft("bbbbbb");
     renderPage("/");
     expect(useLiveAircraftStore.getState().selectedIcao).toBe("bbbbbb");
-    expect(
-      screen.getByRole("dialog", { name: "BBBBBB" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "BBBBBB" })).toBeInTheDocument();
   });
 
   it("answers the server's keepalive so the connection survives", async () => {
@@ -500,6 +494,113 @@ describe("LiveMapPage", () => {
   // on the documented path" and "closes it on teardown" are asserted in
   // `components/shell/AppShell.test.tsx` and `features/live/`, and what the
   // *map* tears down on unmount in `features/map/aircraft/AircraftLayer.test.tsx`.
+});
+
+describe("heading structure, landmarks and skip link (R1-11)", () => {
+  it("gives every floating card its own heading, in one hierarchy under the page h1", () => {
+    renderPage();
+    const headings = screen.getAllByRole("heading").map((heading) => ({
+      level: Number(heading.tagName.slice(1)),
+      name: heading.textContent,
+    }));
+    expect(headings[0]).toEqual({ level: 1, name: "Live Map" });
+    // Every card gets exactly one h2; order follows the page's own
+    // panel-order fix (non-positioned/interesting last, see LiveMapPage's
+    // doc comment) rather than visual position.
+    expect(
+      headings.filter((heading) => heading.level === 2).map((h) => h.name),
+    ).toEqual([
+      "Today at a glance",
+      "Basemap",
+      "Map layers",
+      "Activity",
+      "Non-positioned aircraft",
+      "Interesting aircraft",
+    ]);
+  });
+
+  it("routes each card through a named landmark region", () => {
+    renderPage();
+    expect(
+      screen.getByRole("region", { name: "Interesting aircraft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Non-positioned aircraft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Activity" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Today at a glance" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Basemap" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Map layers" }),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the non-positioned region entirely once that list is hidden", () => {
+    renderPage("/?hide_np=1");
+    expect(
+      screen.queryByRole("region", { name: "Non-positioned aircraft" }),
+    ).not.toBeInTheDocument();
+    // The heading goes with it — no orphaned, empty landmark left behind.
+    expect(
+      screen.queryByRole("heading", { name: "Non-positioned aircraft" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("puts every other card ahead of the interesting-aircraft list in tab order", () => {
+    renderPage();
+    const focusables = document.querySelectorAll<HTMLElement>(
+      "a[href], button, input, [tabindex]",
+    );
+    const order = [...focusables].map((element) => element);
+    const interestingToggle = screen.getByRole("button", {
+      name: /^interesting/i,
+    });
+    const nonPositionedToggle = screen.getByRole("button", {
+      name: /^non-positioned/i,
+    });
+    const activityToggle = screen.getByRole("button", { name: /^activity/i });
+    const todayToggle = screen.getByRole("button", { name: /^today/i });
+    const filtersToggle = screen.getByRole("button", { name: /^filters/i });
+
+    const indexOf = (el: HTMLElement) => order.indexOf(el);
+    const interestingIndex = indexOf(interestingToggle);
+
+    // Every one of these used to sit *after* all ~76+ interesting rows;
+    // each must now come before the interesting toggle itself.
+    expect(indexOf(nonPositionedToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(activityToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(todayToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(filtersToggle)).toBeLessThan(interestingIndex);
+  });
+
+  it("offers a skip-aircraft-list link whose target exists in the document", () => {
+    renderPage();
+    const link = screen.getByRole("link", { name: /skip aircraft list/i });
+    const href = link.getAttribute("href");
+    expect(href).toMatch(/^#/);
+    const targetId = href?.slice(1) ?? "";
+    expect(document.getElementById(targetId)).not.toBeNull();
+  });
+
+  it("navigates the skip link to its target on activation", async () => {
+    // jsdom does not implement a real browser's "focus the fragment target"
+    // behavior on navigation, so the observable half here is the hash
+    // change every browser performs before doing exactly that; the target
+    // being a real, focusable (`tabIndex={-1}`) element in the document is
+    // asserted above.
+    renderPage();
+    const link = screen.getByRole("link", { name: /skip aircraft list/i });
+    const targetId = link.getAttribute("href")?.slice(1) ?? "";
+    expect(document.getElementById(targetId)).toHaveAttribute("tabindex", "-1");
+
+    link.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(window.location.hash).toBe(`#${targetId}`);
+  });
 });
 
 describe("aviation overlays (roadmap slice 028)", () => {
