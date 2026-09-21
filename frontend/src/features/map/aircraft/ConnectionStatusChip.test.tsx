@@ -4,6 +4,9 @@
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
+import { useFilterStore } from "@/features/filters/store/useFilterStore";
+import { DEFAULT_FILTERS } from "@/features/filters/types";
 import {
   ConnectionStatusChip,
   ESCALATE_AFTER_ATTEMPTS,
@@ -13,6 +16,8 @@ import { makeAircraft } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
   useLiveAircraftStore.getState().reset();
+  resetFilteredLiveAircraftCache();
+  useFilterStore.setState({ filters: DEFAULT_FILTERS });
 });
 
 /** What a screen reader would actually read out of the live region: its
@@ -109,6 +114,70 @@ describe("ConnectionStatusChip", () => {
       useLiveAircraftStore.getState().setConnection("reconnecting");
     });
     expect(screen.queryByTestId("live-aircraft-count")).not.toBeInTheDocument();
+  });
+});
+
+describe("ConnectionStatusChip shown-of-total (R1-08)", () => {
+  /** Two aircraft, one of which a military filter would keep. */
+  function seedTwo() {
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("live");
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [
+          makeAircraft({ icao: "aaaaaa", position: { lat: 47, lon: -122 } }),
+          makeAircraft({
+            icao: "bbbbbb",
+            position: { lat: 47.1, lon: -122 },
+            interesting: {
+              severity: "high",
+              reasons: ["Rule: Military aircraft"],
+            },
+          }),
+        ],
+        receiver: null,
+      });
+    });
+  }
+
+  it("reports one number when no filter is narrowing the picture", () => {
+    render(<ConnectionStatusChip />);
+    seedTwo();
+    expect(screen.getByTestId("live-aircraft-count")).toHaveTextContent(
+      "· 2 aircraft",
+    );
+  });
+
+  it("reports shown-of-total as soon as a filter is on", () => {
+    // Issue R1-08: the chip said "Live · 77 aircraft" over a map drawing
+    // four, so a filter and a quiet sky looked the same.
+    render(<ConnectionStatusChip />);
+    seedTwo();
+    act(() => {
+      useFilterStore.setState({
+        filters: { ...DEFAULT_FILTERS, interestingOnly: true },
+      });
+    });
+
+    expect(screen.getByTestId("live-aircraft-count")).toHaveTextContent(
+      "· 1 of 2 aircraft",
+    );
+  });
+
+  it("goes back to one number when the filter is cleared", () => {
+    render(<ConnectionStatusChip />);
+    seedTwo();
+    act(() => {
+      useFilterStore.setState({
+        filters: { ...DEFAULT_FILTERS, interestingOnly: true },
+      });
+    });
+    act(() => {
+      useFilterStore.setState({ filters: DEFAULT_FILTERS });
+    });
+
+    expect(screen.getByTestId("live-aircraft-count")).toHaveTextContent(
+      "· 2 aircraft",
+    );
   });
 });
 

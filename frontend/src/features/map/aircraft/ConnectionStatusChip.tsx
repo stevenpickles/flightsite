@@ -24,6 +24,15 @@
  *    no longer being fed by anything, socket or REST fallback. A kept picture
  *    is only honest if its age is on screen beside it.
  *
+ * While live it also says how much of the picture is actually drawn. With no
+ * filter on that is one number — `· 77 aircraft` — but with one on the map
+ * shows fewer than it holds and nothing anywhere said so (issue R1-08): a
+ * user who narrowed to military traffic saw "Live · 77 aircraft" over a map
+ * with four icons on it, unable to tell a filter from a quiet sky. It then
+ * reads `· 12 of 77 aircraft`. The shown count comes from
+ * `useFilteredLiveAircraft`, the same `FilterResult` the map itself just
+ * drew, so the chip cannot report a picture different from the one beside it.
+ *
  * What is announced, and what is only shown (issue R1-15). The status word
  * is the whole of what this live region says. The aircraft count, the
  * attempt number and the age are all readings that change on their own — the
@@ -38,6 +47,9 @@
 import { useEffect, useState } from "react";
 
 import { formatRelativeAge } from "@/features/aircraft-detail/lib/format";
+import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
+import { countActiveFilters } from "@/features/filters/lib/activeFilterCount";
+import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { ConnectionStatus } from "@/lib/ws/liveSocket";
 import { cn } from "@/lib/utils";
@@ -83,6 +95,13 @@ export function ConnectionStatusChip() {
   // imply a picture the socket has not actually delivered yet.
   const aircraftCount = useLiveAircraftStore((state) =>
     status === "live" ? Object.keys(state.aircraft).length : 0,
+  );
+  // What the map is *drawing*, which is not the same number as soon as any
+  // filter is on (issue R1-08). Read through the same hook every other panel
+  // uses, so the chip cannot disagree with the picture beside it.
+  const shownCount = useFilteredLiveAircraft().aircraft.length;
+  const filtered = useFilterStore(
+    (state) => countActiveFilters(state.filters) > 0,
   );
 
   const showAge = stale && lastUpdate !== null;
@@ -152,7 +171,10 @@ export function ConnectionStatusChip() {
         // changes, not count aircraft, and the announcement it would bury
         // is the one that matters: the feed dropping.
         <span aria-hidden="true" data-testid="live-aircraft-count">
-          · {aircraftCount} aircraft
+          ·{" "}
+          {filtered
+            ? `${shownCount} of ${aircraftCount} aircraft`
+            : `${aircraftCount} aircraft`}
         </span>
       )}
       {showAge && (
