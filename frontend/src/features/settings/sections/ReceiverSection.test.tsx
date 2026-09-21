@@ -132,4 +132,38 @@ describe("ReceiverSection", () => {
       await screen.findByText(/input should be less than or equal to 90/i),
     ).toBeInTheDocument();
   });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["location", "latitude"],
+                msg: "Input should be less than or equal to 90",
+                type: "less_than_equal",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.type(screen.getByLabelText(/site name/i), " Edited");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/input should be less than or equal to 90/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.type(screen.getByLabelText(/site name/i), " Again");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
 });

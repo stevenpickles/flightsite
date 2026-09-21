@@ -18,6 +18,7 @@ import {
 import { validateTimezone } from "@/features/settings/lib/validation";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -51,8 +52,13 @@ export function UnitsTimeSection({ config }: UnitsTimeSectionProps) {
 
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
-  const timezoneError =
-    validateTimezone(draft.timezone) ?? fieldErrors.timezone ?? null;
+  // R4-02: a server rejection of the timezone must stay visible without
+  // permanently disabling Save — only the client-side check blocks it.
+  const timezone = fieldMessage(
+    validateTimezone(draft.timezone),
+    fieldErrors.timezone,
+  );
+  const timezoneError = timezone.message;
 
   function handleSave() {
     mutation.mutate(buildUnitsAndTimePatch(draft), {
@@ -159,7 +165,7 @@ export function UnitsTimeSection({ config }: UnitsTimeSectionProps) {
         isPending={mutation.isPending}
         justSaved={mutation.isSuccess && !isDirty}
         errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
-        hasBlockingError={timezoneError !== null}
+        hasBlockingError={timezone.blocking}
         onSave={handleSave}
       />
     </SettingsSection>

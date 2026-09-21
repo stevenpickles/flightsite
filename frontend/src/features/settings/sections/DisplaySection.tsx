@@ -18,6 +18,7 @@ import {
 } from "@/features/settings/lib/validation";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -39,15 +40,21 @@ export function DisplaySection({ config }: DisplaySectionProps) {
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
 
-  const displayRadiusError =
-    validateDisplayRadius(draft.displayRadiusNm) ??
-    fieldErrors.display_radius_nm ??
-    null;
-  const radiiError =
-    validateRangeRingRadii(draft.rangeRingRadiiNm) ??
-    fieldErrors["map.range_ring_radii_nm"] ??
-    null;
-  const hasBlockingError = Boolean(displayRadiusError ?? radiiError);
+  // R4-02: `hasBlockingError` is derived from the client-side validators
+  // only — a server rejection is shown but never disables Save, or a 422
+  // here would leave the section unsavable until an unrelated edit or a
+  // page reload (`docs/reviews/2026-09-20-site-review.md`).
+  const displayRadius = fieldMessage(
+    validateDisplayRadius(draft.displayRadiusNm),
+    fieldErrors.display_radius_nm,
+  );
+  const radii = fieldMessage(
+    validateRangeRingRadii(draft.rangeRingRadiiNm),
+    fieldErrors["map.range_ring_radii_nm"],
+  );
+  const displayRadiusError = displayRadius.message;
+  const radiiError = radii.message;
+  const hasBlockingError = displayRadius.blocking || radii.blocking;
 
   function handleSave() {
     mutation.mutate(buildDisplayPatch(draft), {

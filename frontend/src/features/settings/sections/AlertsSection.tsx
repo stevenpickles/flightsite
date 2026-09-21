@@ -15,6 +15,7 @@ import {
 import { validateAlertRadius } from "@/features/settings/lib/validation";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -35,10 +36,13 @@ export function AlertsSection({ config }: AlertsSectionProps) {
 
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
-  const alertRadiusError =
-    validateAlertRadius(draft.alertRadiusNm) ??
-    fieldErrors.alert_radius_nm ??
-    null;
+  // R4-02: only the client-side check blocks Save — a server rejection of
+  // the radius stays visible but retryable.
+  const alertRadius = fieldMessage(
+    validateAlertRadius(draft.alertRadiusNm),
+    fieldErrors.alert_radius_nm,
+  );
+  const alertRadiusError = alertRadius.message;
 
   function toggleTemplate(id: string, checked: boolean) {
     const next = checked
@@ -124,7 +128,7 @@ export function AlertsSection({ config }: AlertsSectionProps) {
         isPending={mutation.isPending}
         justSaved={mutation.isSuccess && !isDirty}
         errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
-        hasBlockingError={alertRadiusError !== null}
+        hasBlockingError={alertRadius.blocking}
         onSave={handleSave}
       />
     </SettingsSection>

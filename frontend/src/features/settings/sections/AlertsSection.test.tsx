@@ -79,4 +79,40 @@ describe("AlertsSection", () => {
       alerts: { enabled_templates: ["military", "government"] },
     });
   });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["alert_radius_nm"],
+                msg: "Input should be greater than 0",
+                type: "greater_than",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.clear(screen.getByLabelText(/alert radius/i));
+    await user.type(screen.getByLabelText(/alert radius/i), "5");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/input should be greater than 0/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.clear(screen.getByLabelText(/alert radius/i));
+    await user.type(screen.getByLabelText(/alert radius/i), "6");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
 });

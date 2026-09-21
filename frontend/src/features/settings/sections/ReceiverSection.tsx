@@ -19,6 +19,7 @@ import {
 } from "@/features/settings/lib/draft";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import type { FlightSiteConfig } from "@/lib/api/config";
@@ -45,25 +46,34 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
 
-  const siteNameError =
-    validateSiteName(draft.siteName) ??
-    fieldErrors["location.site_name"] ??
-    null;
-  const latitudeError =
-    validateLatitude(draft.latitude) ??
-    fieldErrors["location.latitude"] ??
-    null;
-  const longitudeError =
-    validateLongitude(draft.longitude) ??
-    fieldErrors["location.longitude"] ??
-    null;
-  const antennaError =
-    validateAntennaHeight(draft.antennaHeightFt) ??
-    fieldErrors["location.antenna_height_ft"] ??
-    null;
-  const hasBlockingError = Boolean(
-    siteNameError ?? latitudeError ?? longitudeError ?? antennaError,
+  // R4-02: only the client-side validators gate Save — a server rejection
+  // is still shown next to its field, but never leaves the section
+  // unsavable until an unrelated edit or a page reload.
+  const siteName = fieldMessage(
+    validateSiteName(draft.siteName),
+    fieldErrors["location.site_name"],
   );
+  const latitude = fieldMessage(
+    validateLatitude(draft.latitude),
+    fieldErrors["location.latitude"],
+  );
+  const longitude = fieldMessage(
+    validateLongitude(draft.longitude),
+    fieldErrors["location.longitude"],
+  );
+  const antenna = fieldMessage(
+    validateAntennaHeight(draft.antennaHeightFt),
+    fieldErrors["location.antenna_height_ft"],
+  );
+  const siteNameError = siteName.message;
+  const latitudeError = latitude.message;
+  const longitudeError = longitude.message;
+  const antennaError = antenna.message;
+  const hasBlockingError =
+    siteName.blocking ||
+    latitude.blocking ||
+    longitude.blocking ||
+    antenna.blocking;
 
   function handleSave() {
     mutation.mutate(buildReceiverPatch(draft), {

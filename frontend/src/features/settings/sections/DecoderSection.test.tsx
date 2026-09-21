@@ -127,4 +127,40 @@ describe("DecoderSection", () => {
       screen.getByRole("button", { name: /test connection/i }),
     ).toBeDisabled();
   });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["receiver", "port"],
+                msg: "Input should be less than or equal to 65535",
+                type: "less_than_equal",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.clear(screen.getByLabelText(/port/i));
+    await user.type(screen.getByLabelText(/port/i), "8081");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/input should be less than or equal to 65535/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.clear(screen.getByLabelText(/port/i));
+    await user.type(screen.getByLabelText(/port/i), "8082");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
 });
