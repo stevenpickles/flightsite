@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Button } from "@/components/ui/button";
 import {
   DetailRow,
   HealthCard,
@@ -47,10 +49,33 @@ import { useDiagnosticsQuery } from "@/lib/api/diagnostics";
  * §10 fixes that at seven sections, so this follows the `/activity`
  * precedent of a route inside the shell with no `NAV_ITEMS` entry.
  */
+
+/** The current time, re-read every `intervalMs` — the same lazy-initial-state
+ * plus `setInterval` shape `useRelativeAge` uses, which keeps every
+ * `Date.now()` read out of the render body itself (`react-hooks/purity`):
+ * the only call at render time is the `useState` lazy initializer, which
+ * only ever runs once, and the periodic call lives in a timer callback. Used
+ * for the R4-04 "generated N ago" readouts, which would otherwise freeze at
+ * whatever age was true on the render that received the payload. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function HealthPage() {
-  const { data, isLoading, isError, error } = useDiagnosticsQuery();
+  const { data, isLoading, isError, error, refetch, isRefetching } =
+    useDiagnosticsQuery();
   const { data: config } = useConfigQuery();
   const timezone = config?.config.timezone ?? "UTC";
+  // Called unconditionally, before either early return, so the age readouts
+  // below stay live without breaking the Rules of Hooks.
+  const now = useNow(15_000);
 
   if (isLoading) {
     return (
@@ -63,7 +88,13 @@ export function HealthPage() {
     );
   }
 
-  if (isError || data === undefined) {
+  // R4-04: this page exists to be readable *while* things are going wrong,
+  // so a full-page error is reserved for "never loaded" — the one state
+  // with nothing else to show. A poll that starts failing after a good
+  // load keeps rendering the last payload (`data` stays populated; React
+  // Query does not clear it on a background refetch error) with a warning
+  // banner below, rather than replacing every card with a red line.
+  if (data === undefined) {
     return (
       <div className="p-8">
         <h1 className="text-2xl font-semibold">Health</h1>
@@ -77,6 +108,11 @@ export function HealthPage() {
       </div>
     );
   }
+
+  const generatedAgeS = Math.max(
+    0,
+    (now - new Date(data.generated_at).getTime()) / 1000,
+  );
 
   const overall = overallPresentation(data.status);
   const decoder = decoderPresentation(data.decoder.state);
@@ -123,6 +159,30 @@ export function HealthPage() {
           </Link>
         </div>
       </header>
+
+      {isError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/50 bg-warning/10 p-3 text-sm"
+        >
+          <p className="text-warning">
+            Refreshing failed — showing the state from{" "}
+            {formatAgeAgo(generatedAgeS)}.
+            {error instanceof Error ? ` (${error.message})` : ""}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isRefetching}
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            {isRefetching ? "Retrying…" : "Retry"}
+          </Button>
+        </div>
+      )}
 
       {/* SPEC §67's headline figures, in one scan. */}
       <div
@@ -452,8 +512,11 @@ export function HealthPage() {
       </section>
 
       <p className="text-xs text-muted-foreground">
-        Generated {formatReceiverLocalDateTime(data.generated_at, timezone)} ·
-        refreshes automatically.
+        {/* R4-04: states the age rather than a blanket "refreshes
+            automatically" — the banner above already says so when that claim
+            has stopped being true. */}
+        Generated {formatReceiverLocalDateTime(data.generated_at, timezone)} (
+        {formatAgeAgo(generatedAgeS)}).
       </p>
     </div>
   );

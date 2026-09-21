@@ -1,7 +1,9 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
+import { defaultFlightSiteConfig } from "@/test/configApiMock";
 import {
   database,
   decoder,
@@ -14,6 +16,7 @@ import {
   metadataSource,
 } from "@/test/diagnosticsApiMock";
 import { renderApp } from "@/test/test-utils";
+import { DIAGNOSTICS_POLL_MS } from "@/lib/api/diagnostics";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -354,6 +357,76 @@ describe("HealthPage degraded states", () => {
       await screen.findByText(/Could not load diagnostics/),
     ).toBeInTheDocument();
   });
+});
+
+describe("HealthPage R4-04: a failing poll keeps the last good payload", () => {
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it(
+    "keeps the cards on screen and shows a stale banner instead of blanking the page",
+    async () => {
+      let diagnosticsCalls = 0;
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const raw = typeof input === "string" ? input : input.toString();
+          const method = (init?.method ?? "GET").toUpperCase();
+          const url = new URL(raw, "http://localhost");
+
+          if (url.pathname === "/api/internal/config" && method === "GET") {
+            return jsonResponse({
+              first_run: false,
+              config: defaultFlightSiteConfig(),
+              secrets_set: {},
+            });
+          }
+          if (url.pathname === "/api/v1/diagnostics" && method === "GET") {
+            diagnosticsCalls += 1;
+            if (diagnosticsCalls === 1) {
+              return jsonResponse(diagnostics());
+            }
+            // Every poll after the first fails — a decoder unplugged, a
+            // reverse proxy blip, anything that outlives one 10s cycle.
+            return jsonResponse(
+              { error: { code: "unavailable", message: "Backend is down" } },
+              503,
+            );
+          }
+          throw new Error(`Unhandled fetch in test: ${method} ${raw}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+
+      renderApp("/health");
+
+      await screen.findByText("Healthy");
+
+      // The next scheduled poll (DIAGNOSTICS_POLL_MS) fails — the page must
+      // not discard the cards it already has.
+      await screen.findByText(/refreshing failed/i, undefined, {
+        timeout: DIAGNOSTICS_POLL_MS + 5000,
+      });
+      const banner = screen.getByRole("alert");
+      expect(
+        within(banner).getByRole("button", { name: /retry/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(
+        screen.getByRole("group", { name: "Health summary" }),
+      ).toBeInTheDocument();
+
+      // Retry is offered — and using it does not itself throw or blank
+      // the page even while still failing.
+      await user.click(within(banner).getByRole("button", { name: /retry/i }));
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+    },
+    DIAGNOSTICS_POLL_MS + 10_000,
+  );
 });
 
 describe("HealthPage notification status", () => {
