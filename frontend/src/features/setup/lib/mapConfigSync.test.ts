@@ -33,6 +33,9 @@ describe("deriveMapConfig", () => {
     );
     expect(derived).toEqual({
       receiver: { lat: 51.5, lon: -0.12, label: "Home Roof" },
+      // A configured location is the one thing that licenses the map to
+      // draw a receiver marker and range rings (issue R1-05).
+      receiverConfigured: true,
       ringRadiiNm: [50, 100, 150, 200],
       unit: "nm",
       displayRadiusNm: 250,

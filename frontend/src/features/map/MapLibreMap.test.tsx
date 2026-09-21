@@ -6,8 +6,11 @@ import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import {
   RANGE_RING_LINE_LAYER_ID,
+  RANGE_RINGS_SOURCE_ID,
   RECEIVER_DOT_LAYER_ID,
+  RECEIVER_SOURCE_ID,
 } from "@/features/map/overlayLayers";
+import type { MapConfig } from "@/features/map/types";
 import {
   AttributionControlMock,
   getLastMockMap,
@@ -29,6 +32,13 @@ afterEach(() => {
 const basemap = getDefaultBasemap();
 const otherBasemap = getBasemapById("osm-raster")!;
 const config = DEV_PLACEHOLDER_MAP_CONFIG;
+
+/** Whatever the receiver-marker source currently holds. */
+function receiverFeatures(map: MapLibreMockMap): unknown[] {
+  const data = map.getSource(RECEIVER_SOURCE_ID)?.data as
+    { features: unknown[] } | undefined;
+  return data?.features ?? [];
+}
 
 describe("MapLibreMap", () => {
   it("renders a map container centered on the receiver", () => {
@@ -147,7 +157,25 @@ describe("MapLibreMap", () => {
     expect(screen.getByTestId("maplibre-container")).toBeInTheDocument();
   });
 
-  it("clears the degraded indicator once the map loads successfully", () => {
+  it("keeps the degraded indicator up while only the tiles are down", () => {
+    // Issue R1-05: `load` fires on a map whose tile requests have already
+    // failed — that *is* the degraded case, a working renderer with no
+    // imagery — so clearing the flag there cancelled the notice the error
+    // listener had just raised and the outage went unannounced.
+    render(<MapLibreMap config={config} basemap={basemap} />);
+    const map = getLastMockMap();
+
+    act(() => {
+      map.emit("error", { error: new Error("network error") });
+      map.emit("load");
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /basemap unavailable/i,
+    );
+  });
+
+  it("clears the degraded indicator when a basemap source actually loads", () => {
     render(<MapLibreMap config={config} basemap={basemap} />);
     const map = getLastMockMap();
 
@@ -157,9 +185,67 @@ describe("MapLibreMap", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
 
     act(() => {
-      map.emit("load");
+      // FlightSite's own client-drawn GeoJSON loads without a network and
+      // must not be read as evidence that the basemap came back.
+      map.emit("sourcedata", {
+        isSourceLoaded: true,
+        sourceId: RANGE_RINGS_SOURCE_ID,
+      });
+    });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    act(() => {
+      map.emit("sourcedata", {
+        isSourceLoaded: true,
+        sourceId: "openmaptiles",
+      });
     });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("corrects the overlays when the real config arrives after the style load", () => {
+    // Issue R1-05: with the tile host blocked, `isStyleLoaded()` never
+    // becomes true, so the old config effect bailed on every run and the
+    // rings and receiver marker kept whichever config won the race against
+    // `GET /api/internal/config` — the placeholder, 1,400 nm away.
+    const { rerender } = render(
+      <MapLibreMap config={config} basemap={basemap} />,
+    );
+    const map = getLastMockMap();
+    act(() => {
+      map.emit("error", { error: new Error("tiles blocked") });
+      map.emit("load");
+    });
+    // `isStyleLoaded()` is `_loaded && every source loaded`, so a style
+    // whose vector tiles are erroring reports false for as long as the
+    // outage lasts — while its layers stay perfectly editable. That gap is
+    // what the old guard tripped over.
+    map.styleLoaded = false;
+    // Nothing is drawn from the placeholder at all.
+    expect(receiverFeatures(map)).toEqual([]);
+
+    const realConfig: MapConfig = {
+      ...config,
+      receiver: { lat: 39.8283, lon: -98.5795, label: "Review Site" },
+      receiverConfigured: true,
+    };
+    act(() => {
+      rerender(<MapLibreMap config={realConfig} basemap={basemap} />);
+    });
+
+    expect(receiverFeatures(map)).toHaveLength(1);
+    expect(
+      (receiverFeatures(map)[0] as { geometry: { coordinates: number[] } })
+        .geometry.coordinates,
+    ).toEqual([-98.5795, 39.8283]);
+  });
+
+  it("names no placeholder site while the receiver location is unknown", () => {
+    render(<MapLibreMap config={config} basemap={basemap} />);
+    expect(screen.getByTestId("maplibre-container")).toHaveAttribute(
+      "aria-label",
+      "Live map — receiver location not configured",
+    );
   });
 
   it("does not call setStyle on initial mount (the map is already constructed with that style)", () => {

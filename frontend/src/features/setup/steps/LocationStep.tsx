@@ -52,6 +52,11 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
             ? draft.siteName
             : "Selected location",
       },
+      // Only once the entered coordinates are valid is there a point to
+      // mark; before that `lat`/`lon` are just the camera's fallback
+      // centre, and a marker on them would be claiming the user had picked
+      // a location they have not picked (issue R1-05).
+      receiverConfigured: latitudeError === null && longitudeError === null,
       // No range rings here — this map is purely for picking a point, and
       // rings would just be visual noise before a display radius exists.
       ringRadiiNm: [],

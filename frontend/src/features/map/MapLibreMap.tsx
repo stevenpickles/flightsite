@@ -11,6 +11,7 @@ import type { BasemapDefinition } from "@/features/map/basemaps";
 import { MapInstanceContext } from "@/features/map/MapInstanceContext";
 import {
   ensureOverlayLayers,
+  FLIGHTSITE_SOURCE_PREFIX,
   RANGE_RING_LINE_LAYER_ID,
 } from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
@@ -191,12 +192,30 @@ export function MapLibreMap({
       // has actually finished loading is the one the rings/marker should
       // reflect, not whatever `config` happened to be at construction time.
       ensureOverlayLayers(map, configRef.current);
-      setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     });
 
     map.on("error", () => {
       setTilesUnavailable(true);
+    });
+
+    // The degraded notice is cleared by evidence that tiles are arriving,
+    // never by `load` — issue R1-05. `load` fires on a map whose tile
+    // requests have already failed (that is the whole degraded case: the
+    // renderer is fine, the imagery is not), so clearing the flag there
+    // cancelled the notice the `error` listener had just raised, and the
+    // outage went unannounced. A `sourcedata` event reporting a fully
+    // loaded source is the positive signal; FlightSite's own client-drawn
+    // GeoJSON sources are excluded, since they load without a network at
+    // all and would clear the flag on a map with no basemap whatsoever.
+    map.on("sourcedata", (event) => {
+      if (
+        event.isSourceLoaded &&
+        typeof event.sourceId === "string" &&
+        !event.sourceId.startsWith(FLIGHTSITE_SOURCE_PREFIX)
+      ) {
+        setTilesUnavailable(false);
+      }
     });
 
     map.on("click", (event) => {
@@ -254,7 +273,6 @@ export function MapLibreMap({
     }
     const handleStyleLoad = () => {
       ensureOverlayLayers(map, configRef.current);
-      setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     };
     map.once("style.load", handleStyleLoad);
@@ -278,16 +296,32 @@ export function MapLibreMap({
   }, [basemap]);
 
   // Config change (receiver position/rings): refresh the overlay data in
-  // place when the style is already loaded; otherwise the pending style
-  // load (initial or from a basemap switch) will pick up the latest
-  // config when it calls ensureOverlayLayers itself.
+  // place.
+  //
+  // Keyed on `styleEpoch` as well as `config` — issue R1-05. The guard this
+  // replaces was `!map.isStyleLoaded()`, which asks a stricter question than
+  // this effect needs: `isStyleLoaded()` is `_loaded && every source loaded`,
+  // so a style whose *vector tiles* are failing reports false indefinitely
+  // even though its layers are perfectly editable. With the tile host
+  // blocked, the config effect therefore bailed on every run, its only
+  // dependency was `config`, and nothing ever retried — so whichever config
+  // happened to be current when `load` fired was the one the rings and the
+  // receiver marker kept forever. That was the placeholder whenever the
+  // style won the race against `GET /api/internal/config`, tile outage or
+  // not.
+  //
+  // `styleEpoch` is bumped exactly once per *completed* style load, so
+  // waiting for it to leave 0 is the same readiness check without the
+  // tile-loading half, and re-running on it covers the other direction: a
+  // basemap switch re-applies the current config rather than the one the
+  // switch's own handler closed over.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) {
+    if (!map || styleEpoch === 0) {
       return;
     }
     ensureOverlayLayers(map, config);
-  }, [config]);
+  }, [config, styleEpoch]);
 
   // One-time camera recenter, independent of the style/tile load above:
   // the map is constructed with whatever `config` the *first* render held
@@ -334,7 +368,11 @@ export function MapLibreMap({
           className="h-full w-full"
           data-testid="maplibre-container"
           role="application"
-          aria-label={`Live map centered on ${config.receiver.label}`}
+          aria-label={
+            config.receiverConfigured
+              ? `Live map centered on ${config.receiver.label}`
+              : "Live map — receiver location not configured"
+          }
         />
         {tilesUnavailable && !mapUnsupported && (
           <div
