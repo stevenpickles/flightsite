@@ -8,9 +8,7 @@ import {
 
 describe("parseSelectedIcaoFromSearchParams", () => {
   it("returns null when the param is absent", () => {
-    expect(
-      parseSelectedIcaoFromSearchParams(new URLSearchParams()),
-    ).toBeNull();
+    expect(parseSelectedIcaoFromSearchParams(new URLSearchParams())).toBeNull();
   });
 
   it("returns null for a blank value", () => {

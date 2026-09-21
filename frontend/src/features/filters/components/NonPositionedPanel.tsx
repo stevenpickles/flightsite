@@ -108,8 +108,8 @@ export function NonPositionedPanel() {
                     </span>
                     <span className="text-muted-foreground">
                       ICAO {view.icao.toUpperCase()} ·{" "}
-                      {formatAltitude(view.altitude_ft, units) ?? "—"} ·
-                      Squawk {view.squawk ?? "—"} · RSSI{" "}
+                      {formatAltitude(view.altitude_ft, units) ?? "—"} · Squawk{" "}
+                      {view.squawk ?? "—"} · RSSI{" "}
                       {formatRssi(view.rssi_db) ?? "—"}
                     </span>
                   </button>
