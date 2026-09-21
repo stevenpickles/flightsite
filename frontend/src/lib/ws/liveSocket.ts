@@ -50,6 +50,15 @@ import {
  * a snapshot, every later outage is `reconnecting`. The distinction is what
  * lets the status chip stay quiet on first load and speak up when a working
  * stream drops.
+ *
+ * It is not, on its own, enough to describe a socket that never connects —
+ * issue R1-04. A reverse proxy that does not forward the WebSocket upgrade
+ * (the single most likely misconfiguration for this product) leaves the state
+ * at `connecting` forever, which reads as "any moment now" rather than "this
+ * is not going to work", and a map with no aircraft on it then looks exactly
+ * like an empty sky. That is what the attempt count reported alongside the
+ * status is for: the chip escalates its wording once retries have plainly
+ * stopped being a formality.
  */
 export type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
@@ -70,8 +79,16 @@ export interface LiveSocketHandlers {
   onSnapshot: (data: SnapshotData) => void;
   /** A `delta` frame: one second's batch (§4.3). */
   onDelta: (data: DeltaData) => void;
-  /** Connection state changed. Called only on a genuine transition. */
-  onStatus: (status: ConnectionStatus) => void;
+  /**
+   * Connection state changed.
+   *
+   * Called on a genuine transition of *either* argument: `attempt` is the
+   * count of consecutive failed connection attempts (0 while live, 1 after
+   * the first failure), so a socket stuck on one status still reports every
+   * retry (issue R1-04). A caller that does not care destructures the first
+   * argument and is unaffected.
+   */
+  onStatus: (status: ConnectionStatus, attempt: number) => void;
   /**
    * An `activity_batch` frame: everything one detector pass recorded
    * (§4.4, roadmap slice 035, batched by slice 057).
@@ -148,6 +165,8 @@ export class LiveSocket {
   private started = false;
   private everConnected = false;
   private status: ConnectionStatus = "connecting";
+  /** The `attempt` last handed to `onStatus` — see {@link emitStatus}. */
+  private lastEmittedAttempt = 0;
 
   constructor(options: LiveSocketOptions = {}) {
     this.handlers = {
@@ -170,6 +189,11 @@ export class LiveSocket {
     return this.status;
   }
 
+  /** Consecutive failed connection attempts; 0 once a snapshot has landed. */
+  get connectionAttempt(): number {
+    return this.attempt;
+  }
+
   /** Opens the connection. Idempotent — a second call while running is a no-op. */
   start(): void {
     if (this.started) {
@@ -179,7 +203,8 @@ export class LiveSocket {
     // Emitted unconditionally rather than through `emitStatus`, so a caller
     // that only listens to the callback still learns the initial state.
     this.status = "connecting";
-    this.handlers.onStatus("connecting");
+    this.attempt = 0;
+    this.handlers.onStatus("connecting", 0);
     this.open();
   }
 
@@ -340,11 +365,21 @@ export class LiveSocket {
     }
   }
 
+  /**
+   * Reports `status` if either it or the attempt count has moved.
+   *
+   * Including the attempt in what counts as a change is issue R1-04: a
+   * socket whose upgrade is blocked never leaves `connecting`, so a
+   * status-only comparison reported the state once, at mount, and then
+   * stayed silent through every failed retry — leaving the chip saying
+   * "Connecting" indefinitely with nothing to escalate on.
+   */
   private emitStatus(status: ConnectionStatus): void {
-    if (this.status === status) {
+    if (this.status === status && this.lastEmittedAttempt === this.attempt) {
       return;
     }
     this.status = status;
-    this.handlers.onStatus(status);
+    this.lastEmittedAttempt = this.attempt;
+    this.handlers.onStatus(status, this.attempt);
   }
 }

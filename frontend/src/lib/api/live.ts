@@ -136,6 +136,37 @@ export interface LiveAircraft {
   provenance: Record<string, string>;
 }
 
+/** `docs/API.md` §2.4's list envelope as `/aircraft/current` returns it:
+ * `items` and `total` only, because the live picture is not paginated (a
+ * truncated one would be a wrong one). */
+export interface CurrentAircraftResponse {
+  items: LiveAircraft[];
+  total: number;
+}
+
+export const CURRENT_AIRCRAFT_PATH = "/api/v1/aircraft/current";
+
+/**
+ * The whole live picture over REST — the fallback for when the socket is
+ * down (issue R1-03).
+ *
+ * It answers with exactly the objects the socket's `snapshot` carries, so a
+ * client that has lost the stream can keep a true picture instead of an
+ * empty one. Deliberately a plain function rather than a TanStack Query
+ * hook: its caller is `features/live/useLiveConnection`, which polls it on
+ * its own schedule only while the connection is down and stops the moment a
+ * snapshot lands — a cadence no query cache should be second-guessing, and
+ * one that must not be shared with any other consumer.
+ */
+export async function getCurrentAircraft(): Promise<LiveAircraft[]> {
+  const response = await fetch(CURRENT_AIRCRAFT_PATH);
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  const body = (await response.json()) as CurrentAircraftResponse;
+  return Array.isArray(body.items) ? body.items : [];
+}
+
 /** Non-secret receiver identity and configuration — `docs/API.md` §3.2. */
 export interface ReceiverInfo {
   site_name: string | null;

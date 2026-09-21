@@ -1,8 +1,13 @@
-import { render, screen } from "@testing-library/react";
-import { act } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+// `act` from `@testing-library/react`, not from `react`: it is the one that
+// sets `IS_REACT_ACT_ENVIRONMENT`, which the chip's own age timer needs now
+// that it schedules state updates of its own.
+import { act, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectionStatusChip } from "@/features/map/aircraft/ConnectionStatusChip";
+import {
+  ConnectionStatusChip,
+  ESCALATE_AFTER_ATTEMPTS,
+} from "@/features/map/aircraft/ConnectionStatusChip";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
@@ -73,5 +78,113 @@ describe("ConnectionStatusChip", () => {
       useLiveAircraftStore.getState().setConnection("reconnecting");
     });
     expect(screen.queryByTestId("live-aircraft-count")).not.toBeInTheDocument();
+  });
+});
+
+describe("ConnectionStatusChip escalation (R1-03, R1-04)", () => {
+  it("counts retries while the socket is down", () => {
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("reconnecting", 2);
+    });
+
+    const chip = screen.getByRole("status");
+    expect(chip).toHaveTextContent("Reconnecting");
+    expect(screen.getByTestId("connection-attempt")).toHaveTextContent(
+      "attempt 2",
+    );
+    // The number changes on a timer; a live region that re-reads itself
+    // every retry would bury the one announcement that matters.
+    expect(screen.getByTestId("connection-attempt")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+  });
+
+  it("escalates past the threshold, whichever state it is stuck in", () => {
+    // Issue R1-04: a blocked WebSocket upgrade never leaves `connecting`,
+    // so "Connecting" was the whole of what the user was ever told, over a
+    // map with no aircraft on it.
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore
+        .getState()
+        .setConnection("connecting", ESCALATE_AFTER_ATTEMPTS);
+    });
+
+    const chip = screen.getByRole("status");
+    expect(chip).toHaveTextContent(/live feed unavailable/i);
+    expect(chip).toHaveAttribute("data-escalated", "true");
+  });
+
+  it("does not escalate on an ordinary blip below the threshold", () => {
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore
+        .getState()
+        .setConnection("reconnecting", ESCALATE_AFTER_ATTEMPTS - 1);
+    });
+
+    const chip = screen.getByRole("status");
+    expect(chip).toHaveTextContent("Reconnecting");
+    expect(chip).not.toHaveTextContent(/unavailable/i);
+  });
+
+  it("dates a picture nobody is feeding any more", () => {
+    // Issue R1-03: a kept picture is only honest with its age beside it.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));
+      render(<ConnectionStatusChip />);
+      act(() => {
+        useLiveAircraftStore.getState().setConnection("live");
+        useLiveAircraftStore
+          .getState()
+          .applySnapshot({ aircraft: [makeAircraft()], receiver: null });
+      });
+      expect(
+        screen.queryByTestId("connection-last-update"),
+      ).not.toBeInTheDocument();
+
+      act(() => {
+        useLiveAircraftStore.getState().markPictureStale();
+        useLiveAircraftStore.getState().setConnection("reconnecting", 1);
+      });
+      act(() => {
+        // `advanceTimersByTime` moves the mocked clock too, so this lands
+        // the tick exactly twelve seconds after the snapshot.
+        vi.setSystemTime(new Date("2026-09-20T12:00:11Z"));
+        vi.advanceTimersByTime(1_000);
+      });
+
+      expect(screen.getByTestId("connection-last-update")).toHaveTextContent(
+        "last update 12s ago",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows no age before any picture has ever arrived", () => {
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("connecting", 1);
+    });
+    expect(
+      screen.queryByTestId("connection-last-update"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops the age again once a fallback poll refreshes the picture", () => {
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("reconnecting", 1);
+      useLiveAircraftStore.getState().applyFallbackPicture([makeAircraft()]);
+    });
+
+    expect(screen.getByRole("status")).toHaveAttribute("data-stale", "false");
+    expect(
+      screen.queryByTestId("connection-last-update"),
+    ).not.toBeInTheDocument();
   });
 });

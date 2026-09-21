@@ -40,10 +40,39 @@ import { InterestingRow } from "@/features/interesting/components/InterestingRow
 import { orderInterestingAircraft } from "@/features/interesting/lib/ordering";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 
+/** The browser's own wall-clock reading of a `Date.now()` value — what
+ * `lastUpdate` is measured on, so it is the clock to render it against
+ * (the receiver's, which the rest of the app formats history in, is a
+ * different one and may be skewed from it). */
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString();
+}
+
+/**
+ * What an empty panel says, given whether anything is still feeding it.
+ *
+ * "No interesting aircraft right now" is an assertion about the sky, and
+ * issue R1-03 is that the panel went on making it through every outage —
+ * loudest at exactly the moment it was least entitled to. It is said only
+ * when the picture is live. Otherwise the sentence is about the feed, and
+ * about how old the answer is.
+ */
+function emptyStateText(stale: boolean, lastUpdate: number | null): string {
+  if (!stale) {
+    return "No interesting aircraft right now.";
+  }
+  if (lastUpdate === null) {
+    return "Waiting for the live feed — no picture yet.";
+  }
+  return `Feed lost. None as of ${clockTime(lastUpdate)}.`;
+}
+
 export function InterestingPanel() {
   const [isExpanded, setIsExpanded] = useState(true);
   const { aircraft } = useFilteredLiveAircraft();
   const allAircraft = useLiveAircraftStore((state) => state.aircraft);
+  const stale = useLiveAircraftStore((state) => state.stale);
+  const lastUpdate = useLiveAircraftStore((state) => state.lastUpdate);
   const receiver = useLiveAircraftStore((state) => state.receiver);
   const selectedIcao = useLiveAircraftStore((state) => state.selectedIcao);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
@@ -92,10 +121,13 @@ export function InterestingPanel() {
       {isExpanded && (
         <div className="border-t border-border">
           {rows.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">
-              {total === 0
-                ? "No interesting aircraft right now."
-                : "Every interesting aircraft is hidden by the current filters."}
+            <p
+              data-testid="interesting-empty"
+              className="px-3 py-2 text-xs text-muted-foreground"
+            >
+              {total > 0
+                ? "Every interesting aircraft is hidden by the current filters."
+                : emptyStateText(stale, lastUpdate)}
             </p>
           ) : (
             <ul className="max-h-64 overflow-y-auto">
@@ -109,6 +141,16 @@ export function InterestingPanel() {
                 />
               ))}
             </ul>
+          )}
+          {stale && lastUpdate !== null && rows.length > 0 && (
+            // A list nobody is updating is still worth showing — it is the
+            // last true thing known — but only dated (issue R1-03).
+            <p
+              data-testid="interesting-stale-note"
+              className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground"
+            >
+              Feed lost — as of {clockTime(lastUpdate)}.
+            </p>
           )}
           {hidden > 0 && rows.length > 0 && (
             <p

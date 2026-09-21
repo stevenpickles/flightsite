@@ -27,6 +27,109 @@ beforeEach(() => {
   store().reset();
 });
 
+describe("staleness (R1-03)", () => {
+  it("starts stale, with nothing ever having arrived", () => {
+    // An empty picture nobody has fed is precisely the case a panel must
+    // not report as an empty sky.
+    expect(store().stale).toBe(true);
+    expect(store().lastUpdate).toBeNull();
+  });
+
+  it("keeps every aircraft when the connection is lost, and dates them", () => {
+    store().applySnapshot(
+      { aircraft: [makeAircraft({ icao: "aaaaaa" })], receiver: null },
+      T0,
+    );
+    expect(store().stale).toBe(false);
+    expect(store().lastUpdate).toBe(T0);
+
+    store().markPictureStale();
+
+    // The whole of the fix: an outage is not a fact about the sky.
+    expect(Object.keys(store().aircraft)).toEqual(["aaaaaa"]);
+    expect(store().stale).toBe(true);
+    expect(store().lastUpdate).toBe(T0);
+  });
+
+  it("does not notify when an already-stale picture is marked stale again", () => {
+    // The initial `connecting` status takes this path on every mount.
+    const before = store();
+    store().markPictureStale();
+    expect(useLiveAircraftStore.getState()).toBe(before);
+  });
+
+  it("a delta refreshes the age, so a live picture is never dated", () => {
+    store().applySnapshot(
+      { aircraft: [makeAircraft({ icao: "aaaaaa" })], receiver: null },
+      T0,
+    );
+    store().markPictureStale();
+    store().applyDelta(
+      { updated: [makeAircraft({ icao: "aaaaaa" })], stale: [], removed: [] },
+      T0 + 4000,
+    );
+
+    expect(store().stale).toBe(false);
+    expect(store().lastUpdate).toBe(T0 + 4000);
+  });
+
+  it("tracks the connection's attempt count for the chip", () => {
+    store().setConnection("reconnecting", 4);
+    expect(store().connection).toBe("reconnecting");
+    expect(store().connectionAttempt).toBe(4);
+
+    // A status set without one is a healthy status: zero failures.
+    store().setConnection("live");
+    expect(store().connectionAttempt).toBe(0);
+  });
+});
+
+describe("applyFallbackPicture (R1-03)", () => {
+  it("replaces the picture wholesale and clears the staleness", () => {
+    store().applySnapshot(
+      { aircraft: [makeAircraft({ icao: "aaaaaa" })], receiver: null },
+      T0,
+    );
+    store().markPictureStale();
+
+    store().applyFallbackPicture([makeAircraft({ icao: "bbbbbb" })], T0 + 5000);
+
+    expect(Object.keys(store().aircraft)).toEqual(["bbbbbb"]);
+    // A poll that answered is as current as a frame that arrived.
+    expect(store().stale).toBe(false);
+    expect(store().lastUpdate).toBe(T0 + 5000);
+  });
+
+  it("leaves the receiver block alone — this endpoint does not carry one", () => {
+    const receiver = {
+      site_name: "Test",
+      latitude: 47.6,
+      longitude: -122.3,
+      antenna_height_ft: null,
+      timezone: "UTC",
+      units: "aviation" as const,
+      display_radius_nm: 250,
+      alert_radius_nm: null,
+      demo_mode: true,
+      t0: null,
+    };
+    store().applySnapshot({ aircraft: [], receiver }, T0);
+    store().applyFallbackPicture([makeAircraft()], T0 + 5000);
+
+    expect(store().receiver).toEqual(receiver);
+  });
+
+  it("keeps the position anchor of an aircraft that has not moved", () => {
+    // A poll is no more evidence that an aircraft moved than a reconnect's
+    // snapshot is.
+    store().applySnapshot({ aircraft: [makeAircraft()], receiver: null }, T0);
+    const anchor = store().aircraft.ae1463?.positionChangedAt;
+    store().applyFallbackPicture([makeAircraft()], T0 + 5000);
+
+    expect(store().aircraft.ae1463?.positionChangedAt).toBe(anchor);
+  });
+});
+
 describe("applySnapshot", () => {
   it("replaces the whole picture", () => {
     store().applySnapshot(

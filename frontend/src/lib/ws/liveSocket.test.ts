@@ -17,12 +17,16 @@ interface Harness {
   snapshots: SnapshotData[];
   deltas: DeltaData[];
   statuses: ConnectionStatus[];
+  /** Every `(status, attempt)` pair reported, in order — issue R1-04 made
+   * the attempt count part of what a status change means. */
+  reports: [ConnectionStatus, number][];
 }
 
 function harness(): Harness {
   const snapshots: SnapshotData[] = [];
   const deltas: DeltaData[] = [];
   const statuses: ConnectionStatus[] = [];
+  const reports: [ConnectionStatus, number][] = [];
   const socket = new LiveSocket({
     url: "ws://test/api/v1/ws/live",
     socketFactory: (url) => new FakeWebSocket(url) as unknown as LiveSocketLike,
@@ -31,9 +35,12 @@ function harness(): Harness {
     random: () => 0,
     onSnapshot: (data) => snapshots.push(data),
     onDelta: (data) => deltas.push(data),
-    onStatus: (status) => statuses.push(status),
+    onStatus: (status, attempt) => {
+      statuses.push(status);
+      reports.push([status, attempt]);
+    },
   });
-  return { socket, snapshots, deltas, statuses };
+  return { socket, snapshots, deltas, statuses, reports };
 }
 
 function snapshotFrame(seq: number) {
@@ -361,7 +368,41 @@ describe("LiveSocket", () => {
     getLastWebSocket().emitClose();
 
     // "Reconnecting" would claim there was something to reconnect to.
-    expect(statuses).toEqual(["connecting"]);
+    expect(new Set(statuses)).toEqual(new Set(["connecting"]));
+    socket.stop();
+  });
+
+  it("counts every failed attempt, so a blocked upgrade is visible", () => {
+    // Issue R1-04: a reverse proxy that does not forward the upgrade leaves
+    // the status at `connecting` forever. Reporting only status changes
+    // meant one call at mount and silence after it, so the chip had nothing
+    // to escalate on and said "Connecting" over an empty map indefinitely.
+    const { socket, reports } = harness();
+    socket.start();
+    getLastWebSocket().emitClose();
+    vi.advanceTimersByTime(250);
+    getLastWebSocket().emitClose();
+    vi.advanceTimersByTime(600);
+    getLastWebSocket().emitClose();
+
+    expect(reports).toEqual([
+      ["connecting", 0],
+      ["connecting", 1],
+      ["connecting", 2],
+      ["connecting", 3],
+    ]);
+    socket.stop();
+  });
+
+  it("reports the attempt count back to zero once a snapshot lands", () => {
+    const { socket, reports } = harness();
+    socket.start();
+    getLastWebSocket().emitClose();
+    vi.advanceTimersByTime(250);
+    getLastWebSocket().emitFrame(snapshotFrame(1));
+
+    expect(reports.at(-1)).toEqual(["live", 0]);
+    expect(socket.connectionAttempt).toBe(0);
     socket.stop();
   });
 

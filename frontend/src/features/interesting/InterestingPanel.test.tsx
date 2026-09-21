@@ -207,6 +207,59 @@ describe("InterestingPanel", () => {
     expect(screen.getByTestId("interesting-count")).toHaveTextContent("0");
   });
 
+  it("never asserts an empty sky from a picture nobody is feeding", () => {
+    // Issue R1-03: on a socket drop the panel said "No interesting aircraft
+    // right now" — an assertion about the sky, made at exactly the moment
+    // it was least entitled to make one.
+    seed([makeAircraft({ icao: "aaaaaa" })]);
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+
+    const empty = screen.getByTestId("interesting-empty");
+    expect(empty).not.toHaveTextContent("No interesting aircraft right now.");
+    expect(empty).toHaveTextContent(/feed lost/i);
+    expect(empty).toHaveTextContent(/as of/i);
+  });
+
+  it("says it is waiting when no picture has ever arrived", () => {
+    // The blocked-upgrade case (R1-04), before the REST fallback answers.
+    render(<InterestingPanel />);
+    expect(screen.getByTestId("interesting-empty")).toHaveTextContent(
+      "Waiting for the live feed — no picture yet.",
+    );
+  });
+
+  it("dates a kept list rather than presenting it as current", () => {
+    seed(demoScenario());
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+
+    expect(rowIcaos()).toEqual(["cccccc", "bbbbbb"]);
+    expect(screen.getByTestId("interesting-stale-note")).toHaveTextContent(
+      /feed lost — as of/i,
+    );
+  });
+
+  it("drops the stale note once the fallback poll refreshes the picture", () => {
+    seed(demoScenario());
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+    expect(screen.getByTestId("interesting-stale-note")).toBeInTheDocument();
+
+    act(() => {
+      useLiveAircraftStore.getState().applyFallbackPicture(demoScenario());
+    });
+    expect(
+      screen.queryByTestId("interesting-stale-note"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps counting matches a filter has hidden, and says how many", () => {
     // A filter narrows the list, never the count: an altitude band that
     // happens to exclude a critical squawk must not make the panel look
