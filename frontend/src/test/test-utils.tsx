@@ -3,6 +3,8 @@ import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 
+import { NotFoundPage } from "@/components/NotFoundPage";
+import { RouteErrorPage } from "@/components/RouteErrorPage";
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
@@ -29,22 +31,29 @@ export function renderApp(initialPath = "/") {
     [
       {
         element: <RootLayout />,
+        errorElement: <RouteErrorPage standalone />,
         children: [
           {
             path: "/",
             element: <AppShell />,
             children: [
-              { index: true, element: <LiveMapPage /> },
-              { path: "aircraft", element: <AircraftPage /> },
-              { path: "aircraft/:icao", element: <AircraftDetailPage /> },
-              { path: "sightings", element: <SightingsPage /> },
-              { path: "sightings/:id", element: <SightingDetailPage /> },
-              { path: "analytics", element: <AnalyticsPage /> },
-              { path: "receiver", element: <ReceiverPage /> },
-              { path: "alerts", element: <AlertsPage /> },
-              { path: "settings", element: <SettingsPage /> },
-              { path: "activity", element: <ActivityPage /> },
-              { path: "health", element: <HealthPage /> },
+              {
+                errorElement: <RouteErrorPage />,
+                children: [
+                  { index: true, element: <LiveMapPage /> },
+                  { path: "aircraft", element: <AircraftPage /> },
+                  { path: "aircraft/:icao", element: <AircraftDetailPage /> },
+                  { path: "sightings", element: <SightingsPage /> },
+                  { path: "sightings/:id", element: <SightingDetailPage /> },
+                  { path: "analytics", element: <AnalyticsPage /> },
+                  { path: "receiver", element: <ReceiverPage /> },
+                  { path: "alerts", element: <AlertsPage /> },
+                  { path: "settings", element: <SettingsPage /> },
+                  { path: "activity", element: <ActivityPage /> },
+                  { path: "health", element: <HealthPage /> },
+                  { path: "*", element: <NotFoundPage /> },
+                ],
+              },
             ],
           },
           { path: "/setup", element: <SetupWizardPage /> },
