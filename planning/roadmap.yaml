@@ -2243,6 +2243,48 @@ slices:
     risk_level: medium
     notes: "Owner-observed on fermi.local 2026-09-05 (issue #185): five dataset promotions overflowed the persistence queue three times and the alerts queue twice because `promote` resolved ~900k airframes in Python inside the single writer transaction. Added by Fable outside the phase plan."
 
+  - id: "076"
+    title: "Site review remediation"
+    phase: 8
+    branch: "076-site-review-remediation"
+    status: in_progress
+    depends_on: ["075"]
+    objective: "Fix every finding of the 2026-09-20 formal site review (docs/reviews/2026-09-20-site-review.md) so each page provides useful information robustly before v0.9.0."
+    scope:
+      - "backend: rollup day keys resolved from the live receiver timezone with repair of mis-keyed rows and null-not-zero for uncomputed windows (R1-02, R3-01, R1-17, R3-02, R3-03); nulls-last ascending sorts and open-sighting durations (R2-01, R2-02); alert-match rows carry the aircraft snapshot and link to the sighting, history refreshes, plural wording (R4-08, R4-05, R4-20)"
+      - "app shell: route error boundaries and a not-found page; responsive sidebar (rail below md, overlay drawer); typed NetworkError with human messages (R0-01, R0-02, R1-06, R2-16, R3-04, R1-07, R2-08, R3-07, R4-06, R3-08, R4-19)"
+      - "Live Map: basemap switch keeps every layer; REST fallback and honest connection states; receiver-derived defaults on tile outage; severity-weighted attention; theme-affine basemap; notices; shown-of-total count; selection in the URL; keyboard reach; notification status; non-positioned formatting; chip live-region (R1-01..R1-16)"
+      - "history pages: per-query refresh and keep-table-on-error with retry; activity filter vocabulary and dates; focusable sighting rows; responsive column collapse; out-of-range page state; age; callsign tracker links; labelled path sample; timezone named; timeline fields; heading/table a11y (R2-03..R2-17)"
+      - "Analytics/Receiver: retry and refresh with an as-of line; polar labels; plurals; one date formatter; axis units; unsupported tiles hidden; T0 explained (R3-05..R3-14)"
+      - "Alerts/Settings/Health/Setup: success-on-surface token; server errors never disable Save; templates managed on the Alerts page only; Health keeps its cached payload; Alerts URL state; watchlist names; shared confirm dialog; honest metadata status; date formatter; unit hints; shared source labels; wizard draft persistence; copy; version tile; touched gates (R4-01..R4-21)"
+    out_of_scope:
+      - "aircraft age from a registry first-registered date; hover readout on the sighting path; bidirectional metric input; two-way template sync; WebSocket-driven /activity (review §5)"
+    acceptance_criteria:
+      - "every finding in docs/reviews/2026-09-20-site-review.md §3 is fixed or explicitly deferred in the PR body with a tracked follow-up"
+      - "on a fresh install whose timezone is set by the wizard, Today at a Glance, Analytics 'Today' and the Receiver scorecard agree with each other and with the rollup tables, without a restart"
+      - "switching the basemap keeps every FlightSite layer (unit test with a mock that fires style.load from setStyle)"
+      - "every healthy status pill and decoder-test success passes WCAG AA contrast in both themes (asserted)"
+      - "a render error or unknown URL shows an in-chrome error/not-found view; every page inside the shell is usable at 390 px with no horizontal scroll"
+      - "every list/chart surface refreshes or offers retry without a reload; a failed request never unmounts the controls that would retry it"
+      - "nothing in review §4 'What must not regress' regresses (checked in the self-review)"
+      - "`Closes #205` in the PR body"
+    required_tests:
+      - "backend: timezone-provider and repair tests, nulls-last sort tests, open-sighting duration tests, alert-match snapshot tests, describe() plural tests; migration test if a repair migration is added"
+      - "frontend: error boundary/not-found, sidebar breakpoint, NetworkError messages, basemap style.load, REST fallback and chip states, refresh/retry per page, contrast assertion, settings 422 re-enable, Health cached-payload banner, wizard draft persistence; visual baselines refreshed where layouts changed"
+    expected_artifacts:
+      - docs/reviews/2026-09-20-site-review.md
+      - backend/src/flightsite/analytics/
+      - backend/src/flightsite/receiver/
+      - backend/src/flightsite/api/
+      - backend/src/flightsite/alerts/model.py
+      - frontend/src/routes.tsx
+      - frontend/src/components/shell/
+      - frontend/src/lib/api/client.ts
+      - frontend/src/features/
+    preferred_agent: opus
+    risk_level: high
+    notes: "Owner request 2026-09-20: 'review each page and make sure it's providing useful information ... in a really robust way' before v0.9.0. Findings fixed by eight agents (Opus for backend/live/map/cross-page, Sonnet for contained UI) in isolated worktrees, one commit per finding group, integrated by Fable. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
