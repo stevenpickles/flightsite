@@ -16,6 +16,7 @@ import {
   SightingRecordsSection,
   SightingRouteSection,
 } from "@/features/sighting-detail/SightingDetailSections";
+import { describePathSample } from "@/features/sighting-detail/lib/pathSample";
 import { SightingEventsTimeline } from "@/features/sighting-detail/SightingEventsTimeline";
 import { SightingPathMap } from "@/features/sighting-detail/SightingPathMap";
 import {
@@ -185,7 +186,20 @@ export function SightingDetailPage() {
           </dl>
         </header>
 
-        <DetailSection title="Path">
+        {/* The drawn line is a sample, and the page used to say so nowhere:
+         * "Path" beside "Position reports 543" with eleven vertices on
+         * screen left a reader to conclude one of the two numbers was wrong
+         * (review R2-12). Simplification is correct for a closed sighting
+         * (SPEC §19); for an open one this is the crash-recovery checkpoint
+         * tail, which is why the two are named differently. */}
+        <DetailSection
+          title={isOpen ? "Path (checkpointed)" : "Path (simplified)"}
+          description={describePathSample(
+            sighting.path.length,
+            sighting.reception.position_count,
+            isOpen,
+          )}
+        >
           <SightingPathMap path={sighting.path} />
         </DetailSection>
 

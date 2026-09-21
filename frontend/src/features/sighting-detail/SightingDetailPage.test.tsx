@@ -306,6 +306,39 @@ describe("SightingDetailPage", () => {
     });
   });
 
+  it("says the drawn path is a sample and how big a one (R2-12)", async () => {
+    installSightingsApiMock({
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+    });
+
+    renderApp("/sightings/88213");
+
+    // The fixture is a closed sighting with a two-point path and 2,210
+    // position reports — the contradiction the review found, now explained.
+    expect(await screen.findByText("Path (simplified)")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 points, simplified from 2,210 position reports."),
+    ).toBeInTheDocument();
+  });
+
+  it("names an open sighting's path a checkpoint tail, not a simplification", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          ended_at: null,
+          duration_s: null,
+          closure_reason: null,
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    expect(await screen.findByText("Path (checkpointed)")).toBeInTheDocument();
+    expect(screen.getByText(/30 seconds/)).toBeInTheDocument();
+  });
+
   it("shows a no-path message instead of a map for a sighting with an empty path", async () => {
     installSightingsApiMock({
       detail: { 88213: sightingDetail({ id: 88213, path: [] }) },
