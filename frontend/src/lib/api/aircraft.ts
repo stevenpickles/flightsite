@@ -36,7 +36,14 @@ export interface LifetimeRecord {
   first_seen: string;
   last_seen: string;
   sighting_count: number;
+  /** Total observed time across every sighting, **including** one still in
+   * progress. It used to sum closed sightings only — a storage detail that
+   * reached the screen as "Cumulative observed time 0s" for an aircraft that
+   * had been overhead for sixteen minutes (review R2-02). */
   cumulative_duration_s: number;
+  /** How much of {@link LifetimeRecord.cumulative_duration_s} is still
+   * accruing, in seconds; `null` when no sighting is open. */
+  open_sighting_elapsed_s: number | null;
   closest_approach_nm: number | null;
   max_range_nm: number | null;
   lowest_altitude_ft: number | null;

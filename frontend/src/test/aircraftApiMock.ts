@@ -51,6 +51,7 @@ export function aircraftDetail(
       last_seen: "2026-08-30T22:41:55.000Z",
       sighting_count: 41,
       cumulative_duration_s: 51_840,
+      open_sighting_elapsed_s: null,
       closest_approach_nm: 2.1,
       max_range_nm: 141.8,
       lowest_altitude_ft: 1250,

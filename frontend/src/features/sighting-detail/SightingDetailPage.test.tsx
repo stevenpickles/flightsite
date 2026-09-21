@@ -111,6 +111,31 @@ describe("SightingDetailPage", () => {
     expect(screen.getAllByText("Ongoing")).not.toHaveLength(0);
   });
 
+  it("gives an open sighting a running duration and an open closure (R2-02)", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          ended_at: null,
+          duration_s: null,
+          elapsed_s: 964,
+          closure_reason: null,
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    await screen.findByText(/icao ae1463/i);
+    // A page that calls the sighting "Ongoing" must not then call its
+    // duration and its closure Unknown.
+    expect(
+      screen.getByText("Still open · running for 16m 04s"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Still open")).toBeInTheDocument();
+    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+  });
+
   it("offers a retry for a load failure that is not a 404 (R2-04)", async () => {
     let failing = true;
     installSightingsApiMock({

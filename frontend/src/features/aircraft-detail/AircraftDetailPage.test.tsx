@@ -52,6 +52,7 @@ describe("AircraftDetailPage", () => {
             last_seen: "2026-08-30T22:41:55.000Z",
             sighting_count: 41,
             cumulative_duration_s: 51_840,
+            open_sighting_elapsed_s: null,
             closest_approach_nm: 2.1,
             max_range_nm: 141.8,
             lowest_altitude_ft: 1250,
@@ -125,6 +126,36 @@ describe("AircraftDetailPage", () => {
     ).toBeInTheDocument();
     // And it says what a callsign link actually opens.
     expect(fr24.getAttribute("title")).toMatch(/not this airframe/i);
+  });
+
+  it("counts a sighting still in progress in the cumulative time, and says so (R2-02)", async () => {
+    installAircraftApiMock({
+      detail: {
+        ae1463: aircraftDetail({
+          icao: "ae1463",
+          lifetime: {
+            first_seen: "2026-09-21T01:33:24.000Z",
+            last_seen: "2026-09-21T01:49:30.000Z",
+            sighting_count: 1,
+            // The review's case: overhead since T0 and reported as `0s`,
+            // because the total summed closed sightings only.
+            cumulative_duration_s: 964,
+            open_sighting_elapsed_s: 964,
+            closest_approach_nm: null,
+            max_range_nm: null,
+            lowest_altitude_ft: null,
+            highest_altitude_ft: null,
+          },
+        }),
+      },
+    });
+
+    renderApp("/aircraft/ae1463");
+
+    await screen.findByText(/ICAO AE1463/);
+    const row = screen.getByText("Cumulative observed time").closest("div");
+    expect(row).toHaveTextContent("16m 4s");
+    expect(row).toHaveTextContent("still running");
   });
 
   it("shows a not-found message for a valid-format icao this receiver never sighted", async () => {

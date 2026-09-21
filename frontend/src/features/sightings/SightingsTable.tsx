@@ -23,7 +23,10 @@ import {
 } from "@/features/history/lib/columnPriority";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
-import { formatSightingDuration } from "@/features/sightings/lib/format";
+import {
+  formatOpenSightingDuration,
+  formatSightingDuration,
+} from "@/features/sightings/lib/format";
 import type {
   SightingRow,
   SightingSortKey,
@@ -226,7 +229,14 @@ export function SightingsTable({
               <td
                 className={cn("px-3 py-2 whitespace-nowrap", CELL.duration_s)}
               >
-                {row.duration_s === null ? (
+                {/* An open sighting has no *recorded* duration, which is not
+                 * the same as an unknown one — both ends are known, one of
+                 * them is "now" (review R2-02). */}
+                {row.open ? (
+                  <span className="text-accent">
+                    {formatOpenSightingDuration(row.elapsed_s)}
+                  </span>
+                ) : row.duration_s === null ? (
                   <UnknownValue />
                 ) : (
                   formatSightingDuration(row.duration_s)

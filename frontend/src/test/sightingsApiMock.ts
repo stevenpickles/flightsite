@@ -10,6 +10,26 @@ import type {
 
 import { aircraftDetail, defaultReceiverInfo } from "@/test/aircraftApiMock";
 
+/**
+ * `open` / `elapsed_s` (§3.7) derived from whatever `ended_at` the test
+ * asked for, unless the test named them itself.
+ *
+ * Without this, `sightingRow({ ended_at: null })` would produce a row the
+ * server could never send — open by its `ended_at` and closed by its `open`
+ * flag — and every test of open-sighting rendering would be testing a shape
+ * that does not exist.
+ */
+function openFields(
+  endedAt: string | null,
+  overrides: { open?: boolean; elapsed_s?: number | null },
+): { open: boolean; elapsed_s: number | null } {
+  const open = overrides.open ?? endedAt === null;
+  return {
+    open,
+    elapsed_s: overrides.elapsed_s ?? (open ? 964 : null),
+  };
+}
+
 /** A `SightingRow`, defaulting to a fully-resolved, closed example —
  * override just the fields a test cares about. */
 export function sightingRow(overrides: Partial<SightingRow> = {}): SightingRow {
@@ -36,6 +56,12 @@ export function sightingRow(overrides: Partial<SightingRow> = {}): SightingRow {
     max_alert_severity: null,
     provenance: {},
     ...overrides,
+    ...openFields(
+      overrides.ended_at === undefined
+        ? "2026-08-30T22:41:55.000Z"
+        : overrides.ended_at,
+      overrides,
+    ),
   };
 }
 
@@ -98,6 +124,12 @@ export function sightingDetail(
     ],
     provenance: { route: "aerodatabox" },
     ...overrides,
+    ...openFields(
+      overrides.ended_at === undefined
+        ? "2026-08-30T22:41:55.000Z"
+        : overrides.ended_at,
+      overrides,
+    ),
   };
 }
 

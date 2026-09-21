@@ -42,9 +42,27 @@ export function LifetimeSection({
         label="Sighting count"
         value={String(lifetime.sighting_count)}
       />
+      {/* The total now includes a sighting still in progress, so it no
+       * longer reads `0s` for an aircraft that has been overhead for
+       * sixteen minutes (review R2-02). When part of it is still accruing,
+       * the row says how much — otherwise the number would quietly change
+       * under a reader with no explanation. */}
       <FieldRow
         label="Cumulative observed time"
-        value={formatDurationShort(lifetime.cumulative_duration_s * 1000)}
+        value={
+          <span>
+            {formatDurationShort(lifetime.cumulative_duration_s * 1000)}
+            {lifetime.open_sighting_elapsed_s !== null && (
+              <span className="font-normal text-muted-foreground">
+                {" · "}
+                {formatDurationShort(
+                  lifetime.open_sighting_elapsed_s * 1000,
+                )}{" "}
+                still running
+              </span>
+            )}
+          </span>
+        }
       />
       <FieldRow
         label="Closest approach"

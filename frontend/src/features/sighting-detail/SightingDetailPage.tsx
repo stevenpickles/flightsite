@@ -27,7 +27,10 @@ import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { DETAIL_REFRESH_MS } from "@/features/history/lib/refresh";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
-import { formatSightingDuration } from "@/features/sightings/lib/format";
+import {
+  formatOpenSightingDuration,
+  formatSightingDuration,
+} from "@/features/sightings/lib/format";
 import { useAircraftDetailQuery } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
 import { SightingsApiError, useSightingDetailQuery } from "@/lib/api/sightings";
@@ -168,7 +171,14 @@ export function SightingDetailPage() {
             <div>
               <dt className="text-xs text-muted-foreground">Duration</dt>
               <dd>
-                {sighting.duration_s === null ? (
+                {/* A sighting this page calls "Ongoing" two cells to the
+                 * left must not have an `Unknown` duration: both ends are
+                 * known, and one of them is now (review R2-02). */}
+                {isOpen ? (
+                  <span className="text-accent">
+                    {formatOpenSightingDuration(sighting.elapsed_s)}
+                  </span>
+                ) : sighting.duration_s === null ? (
                   <UnknownValue />
                 ) : (
                   formatSightingDuration(sighting.duration_s)
@@ -178,7 +188,11 @@ export function SightingDetailPage() {
             <div>
               <dt className="text-xs text-muted-foreground">Closure</dt>
               <dd>
-                {sighting.closure_reason === null ? (
+                {/* Nothing closed it because nothing has closed it yet —
+                 * "Still open", not `Unknown` (review R2-02). */}
+                {isOpen ? (
+                  <span className="text-muted-foreground">Still open</span>
+                ) : sighting.closure_reason === null ? (
                   <UnknownValue />
                 ) : (
                   <ClosureReasonTooltip reason={sighting.closure_reason} />

@@ -54,7 +54,17 @@ export interface SightingRow {
   classification: Classification | null;
   started_at: string;
   ended_at: string | null;
+  /** The *recorded* duration of a finished sighting; `null` while the
+   * sighting is still open, where {@link SightingRow.elapsed_s} is the
+   * answer instead (§3.7). */
   duration_s: number | null;
+  /** `true` exactly when `ended_at` is `null` — the server's own statement
+   * of "still running", so the UI does not have to infer it. */
+  open: boolean;
+  /** Whole seconds from `started_at` to now, `null` once the sighting has
+   * closed. "Not closed yet" is a different fact from "the decoder never
+   * reported this", and this is what lets the two read differently. */
+  elapsed_s: number | null;
   closure_reason: ClosureReason | null;
   closest_approach_nm: number | null;
   max_range_nm: number | null;
@@ -115,7 +125,11 @@ export interface SightingDetail {
   squawk: string | null;
   started_at: string;
   ended_at: string | null;
+  /** As on {@link SightingRow}: the recorded duration of a finished
+   * sighting, `null` while open. */
   duration_s: number | null;
+  open: boolean;
+  elapsed_s: number | null;
   closure_reason: ClosureReason | null;
   route: RouteInfo;
   reception: ReceptionStats;

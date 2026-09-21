@@ -7,8 +7,9 @@
 import type { ClosureReason } from "@/lib/api/sightings";
 
 /** `"3m 12s"`, `"1h 04m"`, `"2d 3h"` — a sighting's duration, in whichever
- * unit keeps the string short. `null` (an open sighting has none yet) is the
- * caller's job to render as "Ongoing" — this only formats a real duration. */
+ * unit keeps the string short. `null` (an open sighting has no *recorded*
+ * duration) is the caller's job; {@link formatOpenSightingDuration} is what
+ * an open sighting says instead. */
 export function formatSightingDuration(durationS: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationS));
   const days = Math.floor(totalSeconds / 86_400);
@@ -26,6 +27,25 @@ export function formatSightingDuration(durationS: number): string {
     return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   }
   return `${seconds}s`;
+}
+
+/**
+ * What an open sighting says where a closed one says its duration — "Still
+ * open · running for 16m 04s" (review R2-02).
+ *
+ * `Unknown` is reserved for "the decoder never reported this" (§2.7), and a
+ * sighting the same row labels "Ongoing" two columns to the left is not
+ * that: its start and now are both known. The two facts need different
+ * words, and the server's `elapsed_s` supplies the number so the browser's
+ * clock is never the source of a duration.
+ *
+ * `null` elapsed — an older backend, or a clock that cannot answer — still
+ * gets the honest half of the sentence rather than falling back to Unknown.
+ */
+export function formatOpenSightingDuration(elapsedS: number | null): string {
+  return elapsedS === null
+    ? "Still open"
+    : `Still open · running for ${formatSightingDuration(elapsedS)}`;
 }
 
 export interface ClosureReasonInfo {

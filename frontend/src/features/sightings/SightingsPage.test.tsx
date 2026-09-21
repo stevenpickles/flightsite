@@ -86,6 +86,33 @@ describe("SightingsPage", () => {
     expect(await screen.findAllByText("Ongoing")).not.toHaveLength(0);
   });
 
+  it("says how long an open sighting has been running, not Unknown (R2-02)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [
+          sightingRow({
+            id: 1,
+            ended_at: null,
+            duration_s: null,
+            elapsed_s: 964,
+          }),
+        ],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+
+    // `Unknown` means "the decoder never reported this". A sighting the same
+    // row calls "Ongoing" two columns to the left is a different fact.
+    const duration = await screen.findByText(
+      "Still open · running for 16m 04s",
+    );
+    expect(duration.closest("td")).not.toHaveTextContent("Unknown");
+  });
+
   it("sorts by a clicked sortable column, descending first, and toggles on a second click", async () => {
     const { fetchMock } = installSightingsApiMock({
       list: {
