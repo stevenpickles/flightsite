@@ -186,7 +186,7 @@ export function DecoderSection({ config }: DecoderSectionProps) {
           {testMutation.isSuccess && testResult && (
             <p
               className={
-                testResult.ok ? "text-accent-foreground" : "text-destructive"
+                testResult.ok ? "text-success-on-surface" : "text-destructive"
               }
             >
               {testResult.ok

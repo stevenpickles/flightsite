@@ -23,7 +23,7 @@ const TONE_PRESENTATION: Record<
   StatusTone,
   { icon: LucideIcon; className: string }
 > = {
-  ok: { icon: CheckCircle2, className: "text-accent-foreground" },
+  ok: { icon: CheckCircle2, className: "text-success-on-surface" },
   warn: {
     icon: AlertTriangle,
     className: "text-amber-600 dark:text-amber-500",
