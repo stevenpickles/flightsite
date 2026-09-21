@@ -486,6 +486,23 @@ class StoredAlertMatch:
     identities a client links on, and reading them from their own tables means
     a rename can never leave the history naming something that no longer
     exists. ``rule_name`` is ``None`` for a built-in match, which has no rule.
+
+    The identity block — ``callsign``, ``registration``, ``type_code`` — and
+    the two sighting records are joined for the same reason and answer a
+    different question. SPEC §48 says a notification carries "callsign/tail,
+    aircraft type, classification, altitude, distance, match reason", and the
+    history is exactly where someone goes when they *missed* the
+    notification; a bare six-hex address is not something a person
+    recognises. Every one of them is ``None``-able and means §2.7's absence:
+    no callsign was ever transmitted, no metadata source knows this airframe,
+    the sighting never had a position.
+
+    ``closest_approach_nm`` and ``lowest_alt_ft`` are the *sighting's*
+    records, not a snapshot taken at the instant of the match —
+    ``alert_matches`` stores no position, and inventing one now would be
+    worse than naming what is actually known. On a sighting still open they
+    keep moving; the field names are the ones §3.5/§3.7 already use for the
+    same facts, so nothing suggests otherwise.
     """
 
     id: int
@@ -499,6 +516,11 @@ class StoredAlertMatch:
     rule_name: str | None = None
     builtin_key: str | None = None
     notified: bool = False
+    callsign: str | None = None
+    registration: str | None = None
+    type_code: str | None = None
+    closest_approach_nm: float | None = None
+    lowest_alt_ft: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1204,6 +1204,15 @@ def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
     it. The ``reason`` is the text recorded when the match happened, never
     recomposed from the rule as it stands today — so history keeps saying what
     the user was actually shown even after the rule behind it is renamed.
+
+    ``callsign``/``registration``/``aircraft_type`` and the two record fields
+    are the airframe this match was about, read through the sighting the row
+    already points at. SPEC §48 requires a notification to name the aircraft
+    in terms a person recognises, and the history is where someone looks when
+    they missed the notification — a row identifying its subject only as
+    ``D25F97`` does not answer that. The field names are the ones §3.5 and
+    §3.7 publish for the same facts, so one set of frontend field components
+    renders an alert row, a sighting row and a historical aircraft row.
     """
     return {
         "id": match.id,
@@ -1212,6 +1221,11 @@ def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
         "reason": match.reason,
         "icao": match.icao24,
         "sighting_id": match.sighting_id,
+        "callsign": match.callsign,
+        "registration": match.registration,
+        "aircraft_type": match.type_code,
+        "closest_approach_nm": match.closest_approach_nm,
+        "lowest_altitude_ft": match.lowest_alt_ft,
         "rule": (None if match.rule_id is None else {"id": match.rule_id, "name": match.rule_name}),
         "builtin_key": match.builtin_key,
         "notified": match.notified,

@@ -37,6 +37,26 @@ export interface AlertMatch {
   reason: string;
   icao: string;
   sighting_id: number;
+  /**
+   * The airframe in terms a person recognises, read through `sighting_id`
+   * (docs/API.md §3.10). SPEC §48 asks a notification to carry
+   * "callsign/tail, aircraft type ... altitude, distance", and the history
+   * is where someone looks when they missed the notification — a row
+   * identified only as `D25F97` does not answer that.
+   *
+   * `null` is §2.7's absence, not a placeholder: nothing transmitted a
+   * callsign, or no metadata source has heard of this address.
+   */
+  callsign: string | null;
+  registration: string | null;
+  aircraft_type: string | null;
+  /**
+   * The *sighting's* records, not a snapshot at the instant of the match —
+   * `alert_matches` stores no position of its own. On a sighting still open
+   * they keep moving between reads.
+   */
+  closest_approach_nm: number | null;
+  lowest_altitude_ft: number | null;
   /** `null` for a built-in emergency match. */
   rule: AlertMatchRuleRef | null;
   /** `null` for a rule match; a built-in detector's key (e.g.

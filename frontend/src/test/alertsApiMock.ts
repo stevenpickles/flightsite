@@ -64,6 +64,15 @@ export function alertMatch(overrides: Partial<AlertMatch> = {}): AlertMatch {
     reason: "Rule: Military aircraft",
     icao: "ae1463",
     sighting_id: 42,
+    // The airframe identity §3.10 carries through `sighting_id`. Defaulted
+    // to "nothing is known" — the state of a fresh install before any
+    // metadata import — so a test that cares about the identity line has to
+    // say so, and every other test keeps exercising the null path.
+    callsign: null,
+    registration: null,
+    aircraft_type: null,
+    closest_approach_nm: null,
+    lowest_altitude_ft: null,
     rule: { id: 1, name: "Military aircraft" },
     builtin_key: null,
     notified: false,

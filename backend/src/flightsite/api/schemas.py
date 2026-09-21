@@ -996,6 +996,20 @@ class AlertMatchView(_Model):
     reason: str
     icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
     sighting_id: int
+    #: The airframe as it was known through this match's sighting — SPEC §48
+    #: asks a notification to carry "callsign/tail, aircraft type", and the
+    #: history is where someone looks when they missed the notification.
+    #: ``null`` is §2.7's absence: nothing transmitted a callsign, or no
+    #: metadata source has heard of this address.
+    callsign: str | None = None
+    registration: str | None = None
+    aircraft_type: str | None = None
+    #: The *sighting's* records, not a snapshot at the instant of the match:
+    #: ``alert_matches`` stores no position, and these are the nearest true
+    #: answer to "how close, how low was it". On a sighting still open they
+    #: keep moving.
+    closest_approach_nm: float | None = None
+    lowest_altitude_ft: int | None = None
     #: ``null`` for a built-in emergency match, which has no rule.
     rule: AlertMatchRuleRef | None = None
     #: ``null`` for a rule match; a built-in detector's key otherwise.

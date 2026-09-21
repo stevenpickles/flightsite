@@ -26,6 +26,7 @@ from httpx import AsyncClient
 
 from flightsite.alerts import AlertService, AlertSeverity
 from flightsite.alerts.model import RuleConditions
+from flightsite.api.schemas import AlertMatchView
 from flightsite.app import create_app
 from flightsite.ingest import AircraftStateUpdate, Position
 
@@ -503,7 +504,9 @@ def test_a_created_rule_is_in_force_for_the_next_live_read(client: TestClient) -
 # ---------------------------------------------------- the interesting surfaces
 
 
-def _update(icao: str, *, squawk: str | None = None) -> AircraftStateUpdate:
+def _update(
+    icao: str, *, squawk: str | None = None, callsign: str | None = None
+) -> AircraftStateUpdate:
     from datetime import UTC, datetime
 
     return AircraftStateUpdate(
@@ -513,6 +516,7 @@ def _update(icao: str, *, squawk: str | None = None) -> AircraftStateUpdate:
         position_source="adsb",
         altitude_ft=25_000.0,
         squawk=squawk,
+        callsign=callsign,
         on_ground=False,
     )
 
@@ -659,6 +663,50 @@ async def test_a_rule_match_names_its_rule_in_the_history(
     assert match["rule"] == {"id": created.id, "name": "Everything nearby"}
     assert match["builtin_key"] is None
     assert match["reason"] == "Rule: Everything nearby"
+
+
+async def test_a_history_row_identifies_the_aircraft_a_person_saw(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """R4-08, and SPEC §48: a row identified its subject only as `D25F97`.
+
+    The history is where someone goes when they *missed* the notification,
+    and SPEC §48 asks a notification to carry "callsign/tail, aircraft type
+    ... altitude, distance". All of it is reachable through the
+    `sighting_id` the row already published, so the row carries it.
+    """
+    live_app.feed(_update("ae1463", squawk="7600", callsign="RCH492"))
+    await live_app.evaluate_alerts()
+
+    (match,) = (await rest.get(MATCHES_PATH)).json()["items"]
+
+    assert match["callsign"] == "RCH492"
+    # The sighting's records, not a snapshot at the instant of the match:
+    # `alert_matches` stores no position of its own.
+    assert match["lowest_altitude_ft"] == 25_000
+    assert match["closest_approach_nm"] is not None
+    AlertMatchView.model_validate(match)
+
+
+async def test_a_history_row_says_unknown_rather_than_dropping_an_unknown_airframe(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """§2.7 through the new joins.
+
+    The resolved metadata is LEFT JOINed, so an airframe no import has ever
+    heard of — the ordinary case on a fresh install — still has an alert
+    history, with `null` identity fields, rather than disappearing from it.
+    A callsign nothing transmitted is `null` for the same reason.
+    """
+    live_app.feed(_update("ae1463", squawk="7700"))
+    await live_app.evaluate_alerts()
+
+    (match,) = (await rest.get(MATCHES_PATH)).json()["items"]
+
+    assert match["icao"] == "ae1463"
+    assert match["callsign"] is None
+    assert match["registration"] is None
+    assert match["aircraft_type"] is None
 
 
 @pytest.mark.parametrize(

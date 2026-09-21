@@ -91,10 +91,98 @@ describe("AlertHistorySection", () => {
       within(row).getByText("Rule: Military aircraft"),
     ).toBeInTheDocument();
     expect(within(row).getByText("High")).toBeInTheDocument();
+    // Nothing is known about this airframe beyond its address, so the
+    // address is what the link names — "Unknown" would name nothing.
     expect(within(row).getByRole("link", { name: "AE1463" })).toHaveAttribute(
       "href",
       "/aircraft/ae1463",
     );
+  });
+
+  it("names the aircraft the way a person would recognise it", async () => {
+    // R4-08: the row used to read `Rule: Military aircraft | D25F97 |
+    // Military aircraft` — the rule twice, and the aircraft as a bare hex.
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          icao: "d25f97",
+          callsign: "RCH492",
+          aircraft_type: "C17",
+          registration: "05-5153",
+          reason: "Rule: Military aircraft",
+          rule: { id: 1, name: "Military aircraft" },
+        }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const row = within(list).getByRole("listitem");
+    expect(
+      within(row).getByRole("link", { name: "RCH492 · C17 · 05-5153" }),
+    ).toHaveAttribute("href", "/aircraft/d25f97");
+    // The address stays reachable, once, beside the name it belongs to.
+    expect(within(row).getByText("D25F97")).toBeInTheDocument();
+  });
+
+  it("names the rule once, not twice", async () => {
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          reason: "Rule: Military aircraft",
+          rule: { id: 1, name: "Military aircraft" },
+        }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const row = within(list).getByRole("listitem");
+    // The stored reason *is* "Rule: " + the rule's name, so rendering the
+    // name beside it said one thing twice.
+    expect(within(row).queryByText("Military aircraft")).toBeNull();
+    expect(
+      within(row).getByText("Rule: Military aircraft"),
+    ).toBeInTheDocument();
+  });
+
+  it("links the row to the sighting it happened during", async () => {
+    installAlertsApiMock({ matches: [alertMatch({ sighting_id: 70 })] });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    expect(
+      within(list).getByRole("link", { name: "Sighting 70" }),
+    ).toHaveAttribute("href", "/sightings/70");
+  });
+
+  it("shows what was true of the sighting, and omits what was not known", async () => {
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          id: 1,
+          closest_approach_nm: 11.2,
+          lowest_altitude_ft: 21000,
+        }),
+        alertMatch({ id: 2, reason: "Rule: Second" }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const [withRecords, withoutRecords] = within(list).getAllByRole("listitem");
+    expect(within(withRecords!).getByText("Closest 11.2 nm")).toBeVisible();
+    expect(
+      within(withRecords!).getByText("Lowest FL210 · 21,000 ft"),
+    ).toBeVisible();
+    // A sighting that never had a position publishes null for both, and
+    // §2.7's absence is rendered as absence rather than as a zero.
+    expect(within(withoutRecords!).queryByText(/^Closest/)).toBeNull();
+    expect(within(withoutRecords!).queryByText(/^Lowest/)).toBeNull();
   });
 
   it("names the built-in detector behind a match that has no rule", async () => {

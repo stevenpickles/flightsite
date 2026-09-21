@@ -552,9 +552,9 @@ combination is a `400`, not an empty series:
 | `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
-`severity`, `reason`, `icao`, `sighting_id`, `rule` (null for a built-in match),
-`builtin_key` (set when the match came from a built-in rather than a user rule, e.g.
-`emergency_7600`), and `notified`:
+`severity`, `reason`, `icao`, `sighting_id`, an identity block for the airframe,
+`rule` (null for a built-in match), `builtin_key` (set when the match came from a
+built-in rather than a user rule, e.g. `emergency_7600`), and `notified`:
 
 ```json
 {
@@ -564,11 +564,35 @@ An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
   "reason": "Emergency squawk 7600 (radio failure)",
   "icao": "56ff74",
   "sighting_id": 70,
+  "callsign": "RCH492",
+  "registration": "05-5153",
+  "aircraft_type": "C17",
+  "closest_approach_nm": 11.2,
+  "lowest_altitude_ft": 21000,
   "rule": null,
   "builtin_key": "emergency_7600",
   "notified": false
 }
 ```
+
+`callsign`, `registration` and `aircraft_type` name the aircraft in terms a person
+recognises. SPEC §48 requires a notification to carry "callsign/tail, aircraft type,
+classification, altitude, distance, match reason", and the history is exactly where
+someone looks when they *missed* the notification — a row whose only identification
+is `56ff74` does not answer that. Each is `null` per §2.7 when it is genuinely
+absent: nothing transmitted a callsign, or no metadata source has heard of this
+address. The names are the ones §3.5 and §3.7 already use for the same facts, so one
+set of client components renders an alert row, a sighting row and an aircraft row.
+
+`closest_approach_nm` and `lowest_altitude_ft` are the **sighting's** records, not a
+snapshot taken at the instant of the match: `alert_matches` stores no position of its
+own, and these are the nearest true answer to "how close, how low was it". On a
+sighting still open they keep moving between reads.
+
+`reason` remains the single statement of *what matched*. A client rendering a row
+should not also print `rule.name` beside it — for a rule match the two are the same
+string, because the stored reason is `"Rule: " + rule.name`. `rule` is there to link
+to the rule and to survive a rename, not to be shown twice.
 
 `rule_id` narrows the history to one user rule — the per-rule drill-down the Alerts
 page offers next to each rule. It is a **filter, not a lookup**: an id that names no
