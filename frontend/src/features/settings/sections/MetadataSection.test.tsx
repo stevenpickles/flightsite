@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
+import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import type { FlightSiteConfig } from "@/lib/api/config";
 import {
@@ -16,7 +16,9 @@ const TIMEZONE = "UTC";
 //: A fixed instant far enough in the past that its relative age never
 // resolves to something like "just now" no matter when the suite runs.
 const OK_SUCCESS_MS = Date.UTC(2020, 0, 15, 8, 30, 0);
-const EXPECTED_LOCAL_TIME = formatReceiverLocalTime(
+// R4-12: metadata is routinely weeks old, so the section now names the
+// date, not just the wall-clock time.
+const EXPECTED_LOCAL_TIME = formatReceiverLocalDateTime(
   new Date(OK_SUCCESS_MS).toISOString(),
   TIMEZONE,
 );

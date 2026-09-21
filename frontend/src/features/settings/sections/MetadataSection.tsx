@@ -9,7 +9,7 @@ import {
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
+import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
@@ -162,7 +162,10 @@ function SourceCard({ source, timezone }: SourceCardProps) {
         <p className="text-xs text-muted-foreground">Never updated.</p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Last updated {formatReceiverLocalTime(lastSuccessIso, timezone)}
+          {/* R4-12: metadata is imported manually and is routinely weeks
+              old, at which point a bare wall-clock time names a day nobody
+              can identify. */}
+          Last updated {formatReceiverLocalDateTime(lastSuccessIso, timezone)}
           {relativeAge ? ` · ${relativeAge}` : ""}
         </p>
       )}
@@ -241,7 +244,7 @@ function MetadataAgeLine({
         <span className="font-medium text-foreground">never</span>
       ) : (
         <span className="font-medium text-foreground">
-          {formatReceiverLocalTime(ageIso, timezone)}
+          {formatReceiverLocalDateTime(ageIso, timezone)}
           {relativeAge ? ` (${relativeAge})` : ""}
         </span>
       )}
