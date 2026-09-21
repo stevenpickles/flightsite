@@ -13,12 +13,11 @@ import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { InterestingPanel } from "@/features/interesting/InterestingPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
-import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
-import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { useActiveBasemap } from "@/features/map/useActiveBasemap";
 import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
 import { TodayPanel } from "@/features/today/TodayPanel";
 
@@ -117,9 +116,8 @@ function SkipAircraftListLink() {
  * *visual* stack exactly as it was (interesting on top).
  */
 export function LiveMapPage() {
-  const basemapId = useBasemapStore((state) => state.basemapId);
   const config = useMapConfigStore((state) => state.config);
-  const basemap = getBasemapById(basemapId) ?? getDefaultBasemap();
+  const basemap = useActiveBasemap();
   const hideNonPositioned = useFilterStore(
     (state) => state.filters.hideNonPositioned,
   );

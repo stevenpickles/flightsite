@@ -93,3 +93,41 @@ export function getDefaultBasemap(): BasemapDefinition {
   }
   return basemap;
 }
+
+/**
+ * The basemap to show under `theme` when the user has not chosen one.
+ *
+ * This is what {@link BasemapDefinition.themeAffinity} was declared for, and
+ * until issue R1-14 nothing read it: a light-theme user got bright panels
+ * floating over the near-black `dark-aviation` default (sampled at
+ * `(10,14,26)` in both themes while the chrome switched correctly), and the
+ * only way out was finding the basemap switcher. First registry entry whose
+ * affinity matches, so the order in {@link BASEMAPS} is the preference
+ * order; the registry default if a theme somehow has no match at all.
+ */
+export function getThemeDefaultBasemap(
+  theme: BasemapThemeAffinity,
+): BasemapDefinition {
+  return (
+    BASEMAPS.find((basemap) => basemap.themeAffinity === theme) ??
+    getDefaultBasemap()
+  );
+}
+
+/**
+ * The basemap actually in force: the user's explicit choice if they have
+ * made one, otherwise the theme's default.
+ *
+ * An explicit choice is sticky across theme changes on purpose — someone
+ * who picked OpenStreetMap wants OpenStreetMap, in either theme — so the
+ * theme only ever decides what has not been decided. `explicitId` is `null`
+ * when nothing has been chosen and is also treated as nothing when it names
+ * a basemap this build does not have.
+ */
+export function resolveActiveBasemap(
+  explicitId: string | null,
+  theme: BasemapThemeAffinity,
+): BasemapDefinition {
+  const explicit = explicitId === null ? undefined : getBasemapById(explicitId);
+  return explicit ?? getThemeDefaultBasemap(theme);
+}

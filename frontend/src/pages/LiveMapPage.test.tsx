@@ -16,7 +16,6 @@ import {
 } from "@/features/map/aircraft/aircraftLayers";
 import type { AircraftFeatureProperties } from "@/features/map/aircraft/geojson";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { DEFAULT_BASEMAP_ID } from "@/features/map/basemaps";
 import {
   AIRPORT_LAYER_IDS,
   AIRPORTS_SOURCE_ID,
@@ -34,10 +33,12 @@ import {
   DEFAULT_OVERLAY_VISIBILITY,
   OVERLAY_VISIBILITY_STORAGE_KEY,
 } from "@/features/map/overlayVisibilityPersistence";
+import { getBasemapById } from "@/features/map/basemaps";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { LiveMapPage } from "@/pages/LiveMapPage";
+import { useUiStore } from "@/store/useUiStore";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import {
   getLastMockMap,
@@ -102,7 +103,8 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
-  useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+  useBasemapStore.setState({ explicitBasemapId: null });
+  useUiStore.setState({ theme: "dark" });
   useNotificationStore.getState().reset();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -507,6 +509,44 @@ describe("LiveMapPage", () => {
     expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
     expect(map.getSource(AIRCRAFT_SOURCE_ID)).toBeDefined();
     expect(map.images.size).toBeGreaterThan(0);
+  });
+
+  it("follows the theme to a matching basemap when the user has picked none", async () => {
+    // Issue R1-14: the chrome switched themes correctly while the map pixel
+    // stayed `(10,14,26)` in both, so light-theme users got bright panels
+    // floating over the near-black default basemap.
+    const map = await renderLoadedMap();
+    expect(map.setStyle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useUiStore.setState({ theme: "light" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(map.setStyle).toHaveBeenCalledWith(
+      getBasemapById("light-aviation")!.style,
+    );
+    // And the picture survives the swap, like any other basemap change.
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+  });
+
+  it("leaves an explicitly chosen basemap alone when the theme changes", async () => {
+    const map = await renderLoadedMap();
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole("radio", { name: /openstreetmap/i }),
+      );
+    });
+    map.setStyle.mockClear();
+
+    await act(async () => {
+      useUiStore.setState({ theme: "light" });
+    });
+
+    expect(map.setStyle).not.toHaveBeenCalled();
   });
 
   it("restores the picture when switching back to the basemap it started on", async () => {

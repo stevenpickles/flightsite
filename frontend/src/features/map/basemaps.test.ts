@@ -5,7 +5,9 @@ import {
   DEFAULT_BASEMAP_ID,
   getBasemapById,
   getDefaultBasemap,
+  getThemeDefaultBasemap,
   isValidBasemapId,
+  resolveActiveBasemap,
 } from "@/features/map/basemaps";
 
 describe("basemap registry", () => {
@@ -82,5 +84,46 @@ describe("getBasemapById", () => {
 describe("getDefaultBasemap", () => {
   it("returns the default registry entry", () => {
     expect(getDefaultBasemap().id).toBe(DEFAULT_BASEMAP_ID);
+  });
+});
+
+describe("getThemeDefaultBasemap (R1-14)", () => {
+  it("matches each theme to a basemap designed for it", () => {
+    // `themeAffinity` has been in the registry since slice 013 and nothing
+    // read it, so a light-theme user got bright panels over a near-black map
+    // until they found the switcher.
+    expect(getThemeDefaultBasemap("dark").themeAffinity).toBe("dark");
+    expect(getThemeDefaultBasemap("light").themeAffinity).toBe("light");
+  });
+
+  it("keeps the registry default for the dark theme", () => {
+    expect(getThemeDefaultBasemap("dark").id).toBe(DEFAULT_BASEMAP_ID);
+  });
+});
+
+describe("resolveActiveBasemap (R1-14)", () => {
+  it("follows the theme while the user has chosen nothing", () => {
+    expect(resolveActiveBasemap(null, "dark").id).toBe("dark-aviation");
+    expect(resolveActiveBasemap(null, "light").id).toBe("light-aviation");
+  });
+
+  it("keeps an explicit choice in either theme", () => {
+    // Someone who picked OpenStreetMap wants OpenStreetMap; the theme only
+    // ever decides what has not been decided.
+    expect(resolveActiveBasemap("osm-raster", "dark").id).toBe("osm-raster");
+    expect(resolveActiveBasemap("osm-raster", "light").id).toBe("osm-raster");
+  });
+
+  it("falls back to the theme's default for a basemap this build dropped", () => {
+    expect(resolveActiveBasemap("removed-in-a-later-release", "light").id).toBe(
+      "light-aviation",
+    );
+  });
+
+  it("returns registry constants, so the map never re-styles on a re-render", () => {
+    // `MapLibreMap`'s basemap effect keys on this object's identity.
+    expect(resolveActiveBasemap(null, "light")).toBe(
+      resolveActiveBasemap(null, "light"),
+    );
   });
 });
