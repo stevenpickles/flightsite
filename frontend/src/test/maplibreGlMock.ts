@@ -30,6 +30,8 @@ export class MapLibreMockMap {
 
   options: Record<string, unknown>;
   handlers = new Map<string, Set<MockEventHandler>>();
+  /** `once` registrations, keyed by the caller's own handler — see `once`. */
+  onceWrappers = new Map<MockEventHandler, MockEventHandler>();
   sources = new Map<string, MockSource>();
   layers = new Map<string, Record<string, unknown>>();
   images = new Map<string, unknown>();
@@ -54,8 +56,26 @@ export class MapLibreMockMap {
   styleLoaded = false;
 
   addControl = vi.fn();
+  /**
+   * Mirrors what `Map.setStyle` actually does to an inline style object,
+   * which is what every registry entry is (issue R1-01).
+   *
+   * `setStyle` defaults to `diff: true`, so for an object style it runs
+   * `Style.setState` **synchronously**: every layer, source and image the
+   * next style does not declare — all of FlightSite's, since they are added
+   * imperatively — is removed, and `style.load` is fired before the call
+   * returns (maplibre-gl 6.6.0). This mock previously did neither: it
+   * emitted nothing and left the layers in place, so the basemap-switch test
+   * passed against code that registered its `style.load` handler *after*
+   * `setStyle` and could therefore never re-add anything. Firing the event
+   * here is what makes that test exercise the ordering rather than assume it.
+   */
   setStyle = vi.fn(() => {
+    this.layers.clear();
+    this.sources.clear();
+    this.images.clear();
     this.styleLoaded = false;
+    this.emit("style.load");
   });
   jumpTo = vi.fn();
   fitBounds = vi.fn();
@@ -82,16 +102,28 @@ export class MapLibreMockMap {
     return this;
   }
 
+  /** Registered under the *caller's* handler, not the self-removing wrapper,
+   * so `off(event, handler)` unregisters it — real MapLibre's `Evented.off`
+   * searches `_oneTimeListeners` by the original listener too, and a cleanup
+   * that silently failed to detach would leave a stale handler firing on the
+   * next style swap. */
   once(event: string, handler: MockEventHandler): this {
     const wrapped: MockEventHandler = (payload) => {
+      this.off(event, handler);
       handler(payload);
-      this.off(event, wrapped);
     };
+    this.onceWrappers.set(handler, wrapped);
     return this.on(event, wrapped);
   }
 
   off(event: string, handler: MockEventHandler): this {
-    this.handlers.get(event)?.delete(handler);
+    const listeners = this.handlers.get(event);
+    listeners?.delete(handler);
+    const wrapped = this.onceWrappers.get(handler);
+    if (wrapped) {
+      listeners?.delete(wrapped);
+      this.onceWrappers.delete(handler);
+    }
     return this;
   }
 

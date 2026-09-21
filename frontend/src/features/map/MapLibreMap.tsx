@@ -9,7 +9,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 import type { BasemapDefinition } from "@/features/map/basemaps";
 import { MapInstanceContext } from "@/features/map/MapInstanceContext";
-import { ensureOverlayLayers } from "@/features/map/overlayLayers";
+import {
+  ensureOverlayLayers,
+  RANGE_RING_LINE_LAYER_ID,
+} from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
 import { cn } from "@/lib/utils";
 
@@ -225,7 +228,21 @@ export function MapLibreMap({
   }, []);
 
   // Basemap switch: swap the style, then re-add the overlay layers once
-  // the new style finishes loading (setStyle discards custom layers).
+  // the new style is in place (setStyle discards custom layers).
+  //
+  // **The listener goes on before `setStyle`, not after** — issue R1-01,
+  // and the whole of it. `Map.setStyle` defaults to `diff: true`, which for
+  // an inline style object (every registry entry is one) runs
+  // `Style.setState` *synchronously* inside the call: it removes every layer
+  // and source the next style does not declare — which is all of ours, added
+  // imperatively — and then fires `style.load` before `setStyle` has
+  // returned (maplibre-gl 6.6.0, `Style.setState`). Registering the handler
+  // afterwards therefore registered it one instruction too late, every time:
+  // the only event that would ever fire had already fired, `ensureOverlayLayers`
+  // never ran, `styleEpoch` never bumped, and one click on the basemap
+  // switcher emptied the map of aircraft, rings, receiver marker, airports,
+  // airspace and the selected track until a reload. Switching back did not
+  // help — the same ordering ran again on the way back.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) {
@@ -235,13 +252,24 @@ export function MapLibreMap({
       isInitialBasemapRef.current = false;
       return undefined;
     }
-    map.setStyle(basemap.style);
     const handleStyleLoad = () => {
       ensureOverlayLayers(map, configRef.current);
       setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     };
     map.once("style.load", handleStyleLoad);
+    map.setStyle(basemap.style);
+    // Self-healing second chance, for the paths that fire no event at all.
+    // `setState` fires `style.load` only when the diff produced at least one
+    // operation, and it throws out to a full `_updateStyle` reload when the
+    // diff hits something it cannot apply; a future MapLibre could move the
+    // dispatch again. Asking the map directly — style loaded, our layers
+    // gone — needs no assumption about which path ran. It cannot double up:
+    // the handler above adds that very layer, so a style.load that has
+    // already been handled fails this test.
+    if (map.isStyleLoaded() && !map.getLayer(RANGE_RING_LINE_LAYER_ID)) {
+      handleStyleLoad();
+    }
     return () => {
       map.off("style.load", handleStyleLoad);
     };

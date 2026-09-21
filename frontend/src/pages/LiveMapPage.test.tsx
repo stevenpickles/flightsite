@@ -27,6 +27,10 @@ import {
   AIRSPACE_SOURCE_ID,
 } from "@/features/map/overlays/airspaceLayers";
 import {
+  RANGE_RING_LINE_LAYER_ID,
+  RECEIVER_DOT_LAYER_ID,
+} from "@/features/map/overlayLayers";
+import {
   DEFAULT_OVERLAY_VISIBILITY,
   OVERLAY_VISIBILITY_STORAGE_KEY,
 } from "@/features/map/overlayVisibilityPersistence";
@@ -471,27 +475,61 @@ describe("LiveMapPage", () => {
     expect(socket.sent).toEqual([JSON.stringify({ type: "pong" })]);
   });
 
-  it("re-attaches the aircraft layers after a basemap switch", async () => {
-    // setStyle discards custom sources, layers and registered images.
+  it("keeps the whole FlightSite picture through a basemap switch", async () => {
+    // Issue R1-01, and the shape the regression actually had: one click on
+    // the basemap switcher removed every FlightSite layer and nothing put
+    // them back, while the connection chip went on reporting a live picture.
+    // Nothing is emitted by hand here — `setStyle` clears the style and
+    // fires `style.load` itself, exactly as maplibre-gl 6 does for an inline
+    // style object, so the assertions below fail against a `style.load`
+    // handler registered after the swap rather than before it.
+    const map = await renderLoadedMap();
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [makeAircraft({ icao: "aaaaaa" })]),
+      );
+    });
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole("radio", { name: /openstreetmap/i }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Aircraft, range rings and the receiver marker — the three things the
+    // review found missing from an otherwise perfectly rendered OSM basemap.
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
+    expect(map.getSource(AIRCRAFT_SOURCE_ID)).toBeDefined();
+    expect(map.images.size).toBeGreaterThan(0);
+  });
+
+  it("restores the picture when switching back to the basemap it started on", async () => {
+    // The review's second observation: switching back did not recover the
+    // map either, because the same ordering ran again on the way home.
     const map = await renderLoadedMap();
     await act(async () => {
       await userEvent.click(
         screen.getByRole("radio", { name: /openstreetmap/i }),
       );
     });
-    map.layers.clear();
-    map.sources.clear();
-    map.images.clear();
-
     await act(async () => {
-      map.emit("style.load");
+      await userEvent.click(
+        screen.getByRole("radio", { name: /dark aviation/i }),
+      );
     });
     await act(async () => {
       await Promise.resolve();
     });
 
     expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
-    expect(map.images.size).toBeGreaterThan(0);
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
   });
 
   // Socket ownership moved to the app shell in ADR-0015, so "opens the socket
@@ -644,19 +682,14 @@ describe("aviation overlays (roadmap slice 028)", () => {
   });
 
   it("re-attaches both overlays after a basemap switch", async () => {
-    // setStyle discards custom sources, layers and registered images.
+    // setStyle discards custom sources, layers and registered images, and
+    // fires `style.load` from inside the call (see the mock) — the overlays
+    // come back off that event or not at all.
     const map = await renderLoadedMap();
     await act(async () => {
       await userEvent.click(
         screen.getByRole("radio", { name: /openstreetmap/i }),
       );
-    });
-    map.layers.clear();
-    map.sources.clear();
-    map.images.clear();
-
-    await act(async () => {
-      map.emit("style.load");
     });
     await act(async () => {
       await Promise.resolve();

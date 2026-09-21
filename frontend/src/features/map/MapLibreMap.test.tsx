@@ -5,6 +5,10 @@ import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import {
+  RANGE_RING_LINE_LAYER_ID,
+  RECEIVER_DOT_LAYER_ID,
+} from "@/features/map/overlayLayers";
+import {
   AttributionControlMock,
   getLastMockMap,
   MapLibreMockMap,
@@ -165,6 +169,33 @@ describe("MapLibreMap", () => {
   });
 
   it("swaps the style and re-adds overlay layers on a basemap change", () => {
+    // Issue R1-01: `setStyle` clears the style's custom layers and fires
+    // `style.load` synchronously for an inline style object, so nothing is
+    // emitted by hand here. A handler registered after the swap would miss
+    // that event and leave the map empty, which is precisely what shipped.
+    const { rerender } = render(
+      <MapLibreMap config={config} basemap={basemap} />,
+    );
+    const map = getLastMockMap();
+    act(() => {
+      map.emit("load");
+    });
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+
+    act(() => {
+      rerender(<MapLibreMap config={config} basemap={otherBasemap} />);
+    });
+
+    expect(map.setStyle).toHaveBeenCalledWith(otherBasemap.style);
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
+  });
+
+  it("re-adds the overlay layers even if the style swap fires no event", () => {
+    // The self-healing branch: `Style.setState` fires `style.load` only when
+    // its diff produced an operation, and falls back to a full style reload
+    // when the diff cannot be applied. Asking the map — style loaded, our
+    // layers gone — covers every path without assuming which one ran.
     const { rerender } = render(
       <MapLibreMap config={config} basemap={basemap} />,
     );
@@ -173,14 +204,17 @@ describe("MapLibreMap", () => {
       map.emit("load");
     });
 
-    rerender(<MapLibreMap config={config} basemap={otherBasemap} />);
-    expect(map.setStyle).toHaveBeenCalledWith(otherBasemap.style);
-
-    map.layers.clear();
-    act(() => {
-      map.emit("style.load");
+    map.setStyle = vi.fn(() => {
+      map.layers.clear();
+      map.sources.clear();
+      map.styleLoaded = true;
     });
-    expect(map.layers.size).toBeGreaterThan(0);
+    act(() => {
+      rerender(<MapLibreMap config={config} basemap={otherBasemap} />);
+    });
+
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
   });
 
   it("removes the map instance on unmount", () => {
