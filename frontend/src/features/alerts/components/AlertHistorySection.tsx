@@ -13,7 +13,11 @@ import {
   formatDistance,
   formatReceiverLocalDateTime,
 } from "@/features/aircraft-detail/lib/format";
-import { useAlertMatchesQuery, type AlertMatch } from "@/lib/api/alertMatches";
+import {
+  ALERT_MATCHES_POLL_MS,
+  useAlertMatchesQuery,
+  type AlertMatch,
+} from "@/lib/api/alertMatches";
 import { useConfigQuery, type UnitSystem } from "@/lib/api/config";
 import type { AlertSeverity } from "@/lib/api/sightings";
 
@@ -173,6 +177,14 @@ export interface AlertHistorySectionProps {
  * rule has since been deleted is simply gone, because deleting a rule
  * deletes the matches it produced.
  *
+ * A record that keeps up with itself. The newest page re-reads every
+ * {@link ALERT_MATCHES_POLL_MS} while it is on screen, because a page whose
+ * subject is "every alert that has fired" and which cannot show an alert
+ * that fired a minute ago is not telling the truth about its own subject —
+ * it was possible to sit on this tab while five alerts reached the database
+ * and see none of them. Only the newest unfiltered page polls; see
+ * `isNewestPage` below for why paging back switches it off.
+ *
  * Paging is "older/newer" rather than numbered: the endpoint deliberately
  * reports no total, the history growing without bound over a multi-year
  * install, so a page count would be a number nobody can compute. A page
@@ -205,12 +217,23 @@ export function AlertHistorySection({
   const timezone = configQuery.data?.config.timezone ?? "UTC";
   const units = configQuery.data?.config.units ?? "aviation";
 
-  const matchesQuery = useAlertMatchesQuery({
-    limit: PAGE_SIZE,
-    offset,
-    ...(severity === "" ? {} : { severity }),
-    ...(ruleFilter === null ? {} : { rule_id: ruleFilter.id }),
-  });
+  // The newest page of the history is a live record; anything else is a
+  // fixed window into the past. Polling only the former is what lets an
+  // alert that just fired appear without also shuffling rows under a reader
+  // who paged back or narrowed by severity deliberately. A rule filter is
+  // not an exclusion: "what is this rule catching" is just as live a
+  // question as "what is firing", and it is still page one.
+  const isNewestPage = offset === 0 && severity === "";
+
+  const matchesQuery = useAlertMatchesQuery(
+    {
+      limit: PAGE_SIZE,
+      offset,
+      ...(severity === "" ? {} : { severity }),
+      ...(ruleFilter === null ? {} : { rule_id: ruleFilter.id }),
+    },
+    { refetchInterval: isNewestPage ? ALERT_MATCHES_POLL_MS : false },
+  );
 
   const items = matchesQuery.data?.items ?? [];
   const hasOlder = items.length === PAGE_SIZE;

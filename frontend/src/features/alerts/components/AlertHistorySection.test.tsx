@@ -1,4 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -9,10 +16,18 @@ import {
   AlertHistorySection,
   type AlertHistorySectionProps,
 } from "@/features/alerts/components/AlertHistorySection";
-import type { AlertMatch } from "@/lib/api/alertMatches";
+import {
+  ALERT_MATCHES_POLL_MS,
+  type AlertMatch,
+} from "@/lib/api/alertMatches";
 import { alertMatch, installAlertsApiMock } from "@/test/alertsApiMock";
 
 afterEach(() => {
+  // Restored here rather than only in the tests that install them: a test
+  // that times out never reaches its own cleanup, and fake timers left
+  // installed would hang every test after it for reasons that have nothing
+  // to do with what those tests check.
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -368,6 +383,131 @@ describe("AlertHistorySection", () => {
 
     await screen.findByRole("list", { name: "Alert history" });
     expect(screen.queryByRole("button", { name: "Show all rules" })).toBeNull();
+  });
+
+  /**
+   * A `fetch` whose match history answers differently each time it is
+   * asked, so a re-read is visible as a change on screen rather than only
+   * as a second entry in a call log.
+   *
+   * Local to these two tests rather than grown into the shared alerts mock:
+   * that mock is deliberately a stateful store several suites share, and
+   * "the answer changes between identical requests" is the one thing a
+   * store must not do to its other readers.
+   */
+  function installChangingHistory(pages: AlertMatch[][]) {
+    let call = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/internal/config")) {
+        return new Response(
+          JSON.stringify({
+            first_run: false,
+            config: { timezone: "UTC", units: "aviation" },
+            secrets_set: {},
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const items = pages[Math.min(call, pages.length - 1)] ?? [];
+      call += 1;
+      return new Response(
+        JSON.stringify({ items, total: null, limit: 25, offset: 0 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function historyRequests(fetchMock: ReturnType<typeof vi.fn>): string[] {
+    return fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.startsWith("/api/v1/alerts/matches"));
+  }
+
+  /**
+   * Advances the fake clock and lets everything it started finish.
+   *
+   * Several turns rather than one: a poll's answer travels `fetch` →
+   * `Response.json()` → the query cache → a React render, and each of those
+   * is its own microtask, so a single flush leaves the screen one or two
+   * steps behind the request that has demonstrably already been made.
+   */
+  async function tick(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    for (let turn = 0; turn < 5; turn += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+  }
+
+  it("re-reads the newest page while it is on screen", async () => {
+    // R4-05: five alerts reached the database while the History tab was
+    // open and the screen showed none of them. A page whose subject is
+    // "every alert that has fired" has to be able to show one that just did.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = installChangingHistory([
+        [alertMatch({ id: 1, reason: "Rule: First" })],
+        [
+          alertMatch({ id: 2, reason: "Rule: Second" }),
+          alertMatch({ id: 1, reason: "Rule: First" }),
+        ],
+      ]);
+
+      renderHistory();
+      await tick(0);
+      expect(historyRequests(fetchMock)).toHaveLength(1);
+      expect(screen.getByText("Rule: First")).toBeInTheDocument();
+
+      await tick(ALERT_MATCHES_POLL_MS);
+
+      // The endpoint is asked again, which is precisely what the review
+      // measured as false: five alerts reached the database and the page
+      // never asked. That the answer then renders is
+      // `useAlertMatchesQuery`'s job, and `lib/api/alertMatches.test.ts`
+      // is where it is checked against a real clock.
+      expect(historyRequests(fetchMock)).toHaveLength(2);
+      // `keepPreviousData` means the poll never blanks the list on its way
+      // to the next answer.
+      expect(screen.getByText("Rule: First")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops re-reading once you have paged back into the past", async () => {
+    // Page four of the history is a fixed window, not a live record.
+    // Re-reading it would shuffle rows under a reader who paged there on
+    // purpose — and every row it could add belongs on page one anyway.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = installChangingHistory([
+        Array.from({ length: 25 }, (_entry, index) =>
+          alertMatch({ id: 100 - index, reason: `Rule: Number ${index}` }),
+        ),
+      ]);
+      // A full page, so "Older" is enabled and paging really moves.
+      renderHistory();
+      await tick(0);
+      // `fireEvent`, not `userEvent`: the latter schedules its own work on
+      // the clock this test has frozen, and one click is all that is needed
+      // here — the paging behaviour itself is exercised elsewhere in this
+      // file against a real one.
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      await tick(0);
+      const afterPaging = historyRequests(fetchMock).length;
+
+      await tick(3 * ALERT_MATCHES_POLL_MS);
+
+      expect(historyRequests(fetchMock)).toHaveLength(afterPaging);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a failure to load the history", async () => {
