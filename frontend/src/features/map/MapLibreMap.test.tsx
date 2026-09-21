@@ -157,6 +157,23 @@ describe("MapLibreMap", () => {
     expect(screen.getByTestId("maplibre-container")).toBeInTheDocument();
   });
 
+  it("places the degraded notice clear of the corners the panels claim", () => {
+    // Issue R1-16: at `bottom-3 left-3 z-10` the notice shared a slot, and a
+    // z-index, with the Live Map's interesting/non-positioned column, and
+    // lost — one word of it was legible in the review's screenshot.
+    render(<MapLibreMap config={config} basemap={basemap} />);
+    act(() => {
+      getLastMockMap().emit("error", { error: new Error("network error") });
+    });
+
+    const slot = screen.getByTestId("map-degraded-notice");
+    // Above every floating panel (they are z-10/z-20), and in the one edge
+    // of the map none of them occupies.
+    expect(slot).toHaveClass("z-30");
+    expect(slot).toHaveClass("justify-center");
+    expect(slot.className).not.toMatch(/\bleft-3\b|\bright-3\b/);
+  });
+
   it("keeps the degraded indicator up while only the tiles are down", () => {
     // Issue R1-05: `load` fires on a map whose tile requests have already
     // failed — that *is* the degraded case, a working renderer with no

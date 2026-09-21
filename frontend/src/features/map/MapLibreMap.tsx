@@ -61,6 +61,25 @@ export interface MapLibreMapProps {
 const INITIAL_ZOOM = 6;
 
 /**
+ * Where a map-level notice goes, and why it is not a corner (issue R1-16).
+ *
+ * All four corners of the Live Map are claimed: the connection chip and the
+ * basemap switcher take the top two, the interesting/non-positioned column
+ * the bottom left, the activity panel and the display-radius indicator the
+ * bottom right. A notice placed in one of them is a notice behind a card —
+ * the review's screenshot of the degraded notice has exactly one word of it
+ * legible. The bottom centre is the one edge nothing floats over, and
+ * `bottom-10` clears MapLibre's own attribution bar.
+ *
+ * `z-30` puts it above every floating panel (`z-10`/`z-20`) deliberately,
+ * rather than leaving the order to DOM position: a degraded-mode notice is
+ * the one thing on this map that must be readable even when it is in the
+ * way. `pointer-events-none` keeps the map underneath clickable.
+ */
+const NOTICE_SLOT_CLASSES =
+  "pointer-events-none absolute inset-x-0 bottom-10 z-30 flex justify-center px-3";
+
+/**
  * Owns the MapLibre GL instance for the Live Map: basemap style, an
  * always-visible attribution control, and the client-drawn range-ring /
  * receiver-marker overlays. Aircraft rendering is out of this slice's
@@ -375,11 +394,26 @@ export function MapLibreMap({
           }
         />
         {tilesUnavailable && !mapUnsupported && (
+          // Bottom-centre, above the attribution bar, and above the panels
+          // in the stacking order — issue R1-16. At `bottom-3 left-3` this
+          // shared a slot with the Live Map's interesting/non-positioned
+          // column, was the same `z-10` as it, and lost: the review's
+          // screenshot has one word of the notice legible behind the
+          // panels. The bottom centre is the one edge of the map no
+          // floating card claims, and `z-30` settles the order by intent
+          // rather than by DOM accident.
           <div
-            role="status"
-            className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm"
+            className={NOTICE_SLOT_CLASSES}
+            data-testid="map-degraded-notice"
           >
-            Basemap unavailable — rings and receiver position still shown.
+            <p
+              role="status"
+              className="max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-center text-xs text-muted-foreground shadow-sm backdrop-blur-sm"
+            >
+              {config.receiverConfigured
+                ? "Basemap unavailable — aircraft, range rings and receiver position are still shown."
+                : "Basemap unavailable — aircraft are still shown."}
+            </p>
           </div>
         )}
         {mapUnsupported && (
