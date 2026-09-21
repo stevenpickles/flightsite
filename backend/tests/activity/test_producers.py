@@ -334,6 +334,44 @@ def test_a_busier_day_than_ever_before_names_the_day_and_the_count() -> None:
     assert batch.events[0].payload["previous_day"] == "2026-05-01"
 
 
+def test_a_day_that_beats_itself_names_no_previous_day() -> None:
+    """Issue #205, finding R1-17: the feed read "2026-09-20 . previous 2026-09-20".
+
+    A day improving on its own earlier total has no previous day to name — the
+    record it beat is its own — so the clause is omitted rather than rendered
+    as a record and the record it beat sharing one date.
+    """
+    batch = record_events(
+        ReceiverRecords(busiest_day="2026-09-20", busiest_day_count=60_000.0),
+        ReceiverRecords(busiest_day="2026-09-20", busiest_day_count=68_764.0),
+        now_ms=NOW_MS,
+    )
+
+    assert batch.events[0].payload == {
+        "record": RecordKind.BUSIEST_DAY.value,
+        "day": "2026-09-20",
+        "value": 68_764,
+    }
+
+
+def test_the_busiest_day_is_named_on_the_receivers_own_calendar() -> None:
+    """The day key comes from ``receiver_metrics_daily``, which is local (§10).
+
+    The same finding's other half: the date the feed printed was the **UTC**
+    day, because the writer had captured its zone at construction. What this
+    holds is the seam — whatever day key the daily tier stores is the day the
+    milestone announces, so keying that tier locally is enough to fix it.
+    """
+    batch = record_events(
+        ReceiverRecords(busiest_day="2026-09-19", busiest_day_count=60_000.0),
+        ReceiverRecords(busiest_day="2026-09-20", busiest_day_count=68_764.0),
+        now_ms=NOW_MS,
+    )
+
+    assert batch.events[0].payload["day"] == "2026-09-20"
+    assert batch.events[0].payload["previous_day"] == "2026-09-19"
+
+
 def test_a_busiest_day_recomputed_downwards_is_not_a_record() -> None:
     """A rollup repair that lowers the standing day's total is a correction.
 
