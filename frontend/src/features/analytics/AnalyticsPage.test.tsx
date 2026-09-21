@@ -112,6 +112,19 @@ describe("AnalyticsPage", () => {
     );
   });
 
+  it("shows a page-level 'Data as of ... refreshes every 60 s' caption once loaded (R3-06)", async () => {
+    installAnalyticsApiMock();
+    renderAnalyticsPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Analytics" });
+
+    expect(
+      await screen.findByText(
+        /Data as of \d{2}:\d{2}:\d{2} · refreshes every 60 s/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows a per-card error message when a query fails", async () => {
     vi.stubGlobal(
       "fetch",

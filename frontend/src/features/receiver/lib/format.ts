@@ -120,6 +120,31 @@ export function formatReceiverLocalTime(iso: string, timezone: string): string {
   }
 }
 
+/** The receiver-local wall-clock time, with seconds, for an ISO instant —
+ * e.g. `"14:03:22"`. Used for the "Data as of" freshness caption (R3-06),
+ * where `formatReceiverLocalTime`'s minute resolution would make every
+ * refresh within the same minute look like no refresh happened at all. */
+export function formatReceiverLocalClock(
+  iso: string,
+  timezone: string,
+): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(when);
+  } catch {
+    return when.toISOString();
+  }
+}
+
 /** The receiver-local calendar date and wall-clock time for an ISO instant —
  * e.g. `"2026-04-02 18:11"` — for chart tooltips and axis labels spanning
  * more than a day. Falls back to the bare ISO string on any error. */

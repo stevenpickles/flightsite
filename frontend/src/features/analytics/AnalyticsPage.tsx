@@ -10,6 +10,7 @@
  * once and the choice survives a reload or a shared link.
  */
 import {
+  ANALYTICS_REFETCH_INTERVAL_MS,
   useAnalyticsClassificationActivityQuery,
   useAnalyticsDailyQuery,
   useAnalyticsRarityQuery,
@@ -30,6 +31,8 @@ import { TopAircraftCard } from "@/features/analytics/components/cards/TopAircra
 import { TopGroupCard } from "@/features/analytics/components/cards/TopGroupCard";
 import { PresetSelector } from "@/features/analytics/components/PresetSelector";
 import { useAnalyticsPresetState } from "@/features/analytics/hooks/useAnalyticsPresetState";
+import { latestDataUpdatedAt } from "@/features/analytics/lib/format";
+import { formatReceiverLocalClock } from "@/features/receiver/lib/format";
 
 const item = requireNavItem("/analytics");
 
@@ -48,6 +51,7 @@ export function AnalyticsPage() {
   const { preset, setPreset } = useAnalyticsPresetState();
   const receiverQuery = useReceiverQuery();
   const units = receiverQuery.data?.units ?? "aviation";
+  const timezone = receiverQuery.data?.timezone ?? "UTC";
 
   const dailyQuery = useAnalyticsDailyQuery({ preset });
   const classificationQuery = useAnalyticsClassificationActivityQuery({
@@ -58,6 +62,18 @@ export function AnalyticsPage() {
   const topOperatorsQuery = useAnalyticsTopOperatorsQuery({ preset });
   const rarityQuery = useAnalyticsRarityQuery({ preset });
 
+  // R3-06: one freshness caption for the whole page rather than per card —
+  // every card either shares `dailyQuery` or refreshes on the same 60 s
+  // interval, so the most recent of the six is what "the page" is as of.
+  const dataAsOf = latestDataUpdatedAt([
+    dailyQuery.dataUpdatedAt,
+    classificationQuery.dataUpdatedAt,
+    topAircraftQuery.dataUpdatedAt,
+    topTypesQuery.dataUpdatedAt,
+    topOperatorsQuery.dataUpdatedAt,
+    rarityQuery.dataUpdatedAt,
+  ]);
+
   return (
     <div className="flex h-full flex-col gap-4 px-4 py-6 md:px-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -66,6 +82,17 @@ export function AnalyticsPage() {
             {item.label}
           </h1>
           <p className="text-sm text-muted-foreground">{item.description}</p>
+          {dataAsOf !== undefined && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Data as of{" "}
+              {formatReceiverLocalClock(
+                new Date(dataAsOf).toISOString(),
+                timezone,
+              )}{" "}
+              · refreshes every{" "}
+              {Math.round(ANALYTICS_REFETCH_INTERVAL_MS / 1000)} s
+            </p>
+          )}
         </div>
         <PresetSelector preset={preset} onChange={setPreset} />
       </header>

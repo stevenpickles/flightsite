@@ -119,3 +119,15 @@ export function tooltipLines(lines: ReadonlyArray<string | null>): string {
 export function formatSightings(count: number): string {
   return `${formatCompactNumber(count)} ${count === 1 ? "sighting" : "sightings"}`;
 }
+
+/** The most recent of several TanStack Query `dataUpdatedAt` epoch-ms
+ * values, or `undefined` when none has ever succeeded (every one is `0`) —
+ * the "Data as of" freshness caption (R3-06) reads this rather than any
+ * single card's timestamp, since the page shares queries across cards and a
+ * user reads freshness for the page, not per card. */
+export function latestDataUpdatedAt(
+  timestamps: readonly number[],
+): number | undefined {
+  const present = timestamps.filter((value) => value > 0);
+  return present.length === 0 ? undefined : Math.max(...present);
+}

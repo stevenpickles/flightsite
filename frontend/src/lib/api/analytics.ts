@@ -321,19 +321,27 @@ export const analyticsQueryKeys = {
     ["analytics", "rarity", params] as const,
 };
 
-/** Applied to every Analytics query below (R3-05): the app-wide default of
- * `retry: 1` and no focus refetch (`lib/queryClient.ts`) means a card that
- * caught one transient 500 never asked again — a tab left open all afternoon
- * simply stayed broken. `retry: 3` with a short, fixed delay — the same
- * `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call, rather than
- * TanStack Query's default exponential backoff climbing toward a 30 s
- * ceiling: a card on a page someone has open should settle in well under a
- * second. `refetchOnWindowFocus: true` gives a returning user a free extra
- * chance beyond that without waiting on `refetchInterval` (R3-06). */
+/** How often an Analytics card re-asks its endpoint while the page is open
+ * (R3-06) — nothing on this page polled at all before, so a tab left open
+ * overnight (or simply across a receiver-local midnight, since every window
+ * here is resolved against the *receiver's* calendar) kept showing the
+ * figures it had on load, forever. */
+export const ANALYTICS_REFETCH_INTERVAL_MS = 60_000;
+
+/** Applied to every Analytics query below (R3-05/R3-06): the app-wide
+ * default of `retry: 1`, no focus refetch and no polling (`lib/queryClient.ts`)
+ * means a card that caught one transient 500 never asked again, and a card
+ * that loaded fine never asked again either. `retry: 3` with a short, fixed
+ * delay — the same `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call,
+ * rather than TanStack Query's default exponential backoff climbing toward a
+ * 30 s ceiling: a card on a page someone has open should settle in well
+ * under a second. `refetchOnWindowFocus: true` gives a returning user a free
+ * extra chance beyond `refetchInterval`. */
 const RESILIENT_QUERY_OPTIONS = {
   retry: 3,
   retryDelay: 250,
   refetchOnWindowFocus: true,
+  refetchInterval: ANALYTICS_REFETCH_INTERVAL_MS,
 } as const;
 
 /** `staleTime`/`refetchOnWindowFocus`/`refetchInterval` are overridden past

@@ -105,6 +105,18 @@ describe("ReceiverPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a page-level 'Data as of ... refreshes every 30 s' caption once loaded (R3-06)", async () => {
+    installReceiverStatsApiMock();
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText(
+        /Data as of \d{2}:\d{2}:\d{2} · refreshes every 30 s/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("requests hourly resolution by default and switches to high/daily via the window selector", async () => {
     const { fetchMock } = installReceiverStatsApiMock();
     const user = userEvent.setup();

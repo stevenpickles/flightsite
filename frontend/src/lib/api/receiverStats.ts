@@ -155,24 +155,34 @@ async function apiV1Fetch<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Applied to every Receiver-stats query below (R3-05): the app-wide default
- * of `retry: 1` and no focus refetch (`lib/queryClient.ts`) meant a card that
- * caught one transient 500 never asked again short of a window change or a
- * reload. `retry: 3` with a short, fixed delay — the same
- * `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call, rather than
- * TanStack Query's default exponential backoff climbing toward a 30 s
+/** How often a Receiver chart re-asks its endpoint while the page is open
+ * (R3-06) — none of these polled at all before, so a tab left open kept
+ * showing the figures it had on load, forever. Faster than the Analytics
+ * page's 60 s (`lib/api/analytics.ts`): these are the receiver's own
+ * near-real-time coverage/rate charts, not day-bucketed rollups. */
+export const RECEIVER_CHART_REFETCH_INTERVAL_MS = 30_000;
+
+/** Applied to every Receiver-stats query below except the scorecard, which
+ * sets its own faster `refetchInterval` (R3-05): the app-wide default of
+ * `retry: 1`, no focus refetch and no polling (`lib/queryClient.ts`) meant a
+ * chart that caught one transient 500 never asked again, and a chart that
+ * loaded fine never asked again either. `retry: 3` with a short, fixed delay
+ * — the same `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call, rather
+ * than TanStack Query's default exponential backoff climbing toward a 30 s
  * ceiling: a chart on a page someone has open should settle in well under a
  * second. `refetchOnWindowFocus: true` gives a returning user a free extra
- * chance beyond that without waiting on a `refetchInterval` (R3-06). */
+ * chance beyond `refetchInterval`. */
 const RESILIENT_QUERY_OPTIONS = {
   retry: 3,
   retryDelay: 250,
   refetchOnWindowFocus: true,
+  refetchInterval: RECEIVER_CHART_REFETCH_INTERVAL_MS,
 } as const;
 
 /** How often the scorecard is re-polled while the page is visible — short
  * enough that "current visible"/"messages per sec" reads as live without a
- * WebSocket subscription of its own. */
+ * WebSocket subscription of its own. Set after the spread below so it wins
+ * over `RESILIENT_QUERY_OPTIONS`'s slower chart-cadence default. */
 export const SCORECARD_POLL_MS = 5_000;
 
 export function getReceiverScorecard(): Promise<ReceiverScorecard> {
@@ -183,8 +193,8 @@ export function useReceiverScorecardQuery(): UseQueryResult<ReceiverScorecard> {
   return useQuery({
     queryKey: ["receiver", "scorecard"],
     queryFn: getReceiverScorecard,
-    refetchInterval: SCORECARD_POLL_MS,
     ...RESILIENT_QUERY_OPTIONS,
+    refetchInterval: SCORECARD_POLL_MS,
   });
 }
 
