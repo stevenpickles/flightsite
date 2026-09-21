@@ -263,6 +263,33 @@ describe("SightingsPage", () => {
     );
   });
 
+  it("gives every row a keyboard route into its sighting (R2-07)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [sightingRow({ id: 42 }), sightingRow({ id: 43 })],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+    await screen.findAllByText("N302DN");
+
+    // The review audited fifty rendered rows and found zero anchors, zero
+    // buttons and zero `[tabindex]` — no keyboard or screen-reader user
+    // could open any sighting from the log at all.
+    const rows = screen.getAllByTestId("sighting-row");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const link = within(row).getByRole("link");
+      expect(link).toHaveAttribute(
+        "href",
+        `/sightings/${row.getAttribute("data-sighting-id")}`,
+      );
+    }
+  });
+
   it("opens the sighting detail route when a row is clicked", async () => {
     installSightingsApiMock({
       list: {

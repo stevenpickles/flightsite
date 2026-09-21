@@ -6,7 +6,7 @@
  * render as plain headers.
  */
 
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
 import { classificationSummary } from "@/features/aircraft-detail/lib/classificationSummary";
@@ -146,11 +146,9 @@ export function SightingsTable({
           {rows.map((row) => (
             <tr
               key={row.id}
-              // As on the Aircraft table, but load-bearing rather than
-              // convenient: a sightings row contains no anchor at all, so the
-              // sighting id exists nowhere in the DOM. Without this the E2E
-              // suite cannot assert that the row it clicked is the sighting
-              // the detail page then opened.
+              // As on the Aircraft table: the Start cell's anchor carries
+              // the id too, but only in its href, so this keeps a stable
+              // hook for the E2E suite to address one specific row by.
               data-testid="sighting-row"
               data-sighting-id={row.id}
               // The aircraft identity too: a row displays registration or
@@ -161,8 +159,19 @@ export function SightingsTable({
               onClick={() => navigate(`/sightings/${row.id}`)}
               className="cursor-pointer border-b border-border/60 hover:bg-secondary/50"
             >
+              {/* The Start cell is this row's anchor, exactly as Tail is on
+               * the Aircraft table. Before it existed the row carried no
+               * focusable element at all, so a keyboard or screen-reader
+               * user could not open *any* sighting from the log (review
+               * R2-07). The row's own click handler stays for the mouse. */}
               <td className="px-3 py-2 whitespace-nowrap">
-                {formatReceiverLocalDateTime(row.started_at, timezone)}
+                <Link
+                  to={`/sightings/${row.id}`}
+                  onClick={(event) => event.stopPropagation()}
+                  className="font-medium text-accent hover:underline"
+                >
+                  {formatReceiverLocalDateTime(row.started_at, timezone)}
+                </Link>
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {row.ended_at === null ? (
