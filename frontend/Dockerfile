@@ -27,7 +27,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Runtime stage: nginx, unprivileged (non-root, listens on 8080).
 # ---------------------------------------------------------------------------
-FROM nginxinc/nginx-unprivileged:1.31.4-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31.5-alpine AS runtime
 
 # Patch every base-image package that has a published fix until the pinned
 # nginx tag ships them. Targeted upgrades (libexpat for CVE-2026-66046, then
