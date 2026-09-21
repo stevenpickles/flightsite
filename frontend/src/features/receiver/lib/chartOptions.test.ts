@@ -63,6 +63,22 @@ describe("buildTimeSeriesChart", () => {
     expect(summary).toContain("3 points");
   });
 
+  it("pluralizes '1 point' (not '1 points') and collapses a single-point range to 'at <time>' (R3-10)", () => {
+    const { summary } = buildTimeSeriesChart({
+      points: [{ t: "2026-08-30T21:00:00.000Z", value: 7 }],
+      kind: "line",
+      timezone: "UTC",
+      resolution: "hourly",
+      seriesName: "Messages per second",
+      unitLabel: "msg/s",
+      formatValue: (value) => `${value} msg/s`,
+    });
+
+    expect(summary).toContain("1 point at");
+    expect(summary).not.toContain("1 points");
+    expect(summary).not.toMatch(/from .* to .*\./);
+  });
+
   it("reports 'no readings' when every point is null", () => {
     const { summary } = buildTimeSeriesChart({
       points: [

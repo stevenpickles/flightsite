@@ -6,6 +6,10 @@ import type { UnitSystem } from "@/lib/api/config";
 import { useReceiverLifetimeStatsQuery } from "@/lib/api/receiverStats";
 import { Button } from "@/components/ui/button";
 import {
+  formatCalendarDay,
+  formatSightings,
+} from "@/features/analytics/lib/format";
+import {
   cardinalFromDegrees,
   formatCount,
   formatDistance,
@@ -62,6 +66,14 @@ export function LifetimeStatsSection({
   const maxRange = data.max_range;
   const busiestDay = data.busiest_day;
   const mostFrequent = data.most_frequent_aircraft;
+  // R3-10: when every lifetime sighting total equals the unique-aircraft
+  // count, every aircraft has been seen exactly once — "most frequently
+  // seen" then names an arbitrary tie-break as if it were a record, which
+  // reads as more meaningful than it is. (The reverse can never happen: a
+  // total below the unique count is impossible, since each aircraft
+  // contributes at least one sighting to be counted as seen at all.)
+  const allAircraftTiedAtOneSighting =
+    data.unique_aircraft > 0 && data.total_sightings === data.unique_aircraft;
 
   return (
     <section
@@ -121,15 +133,17 @@ export function LifetimeStatsSection({
             value={
               busiestDay === null
                 ? "—"
-                : `${busiestDay.day} (${formatCount(busiestDay.message_count)} msgs)`
+                : `${formatCalendarDay(busiestDay.day)} (${formatCount(busiestDay.message_count)} msgs)`
             }
           />
           <Row
             label="Most frequently seen aircraft"
             value={
-              mostFrequent === null
-                ? "—"
-                : `${mostFrequent.registration ?? mostFrequent.icao.toUpperCase()} (${formatCount(mostFrequent.sighting_count)} sightings)`
+              allAircraftTiedAtOneSighting
+                ? `${formatCount(data.unique_aircraft)} aircraft tied at 1 sighting`
+                : mostFrequent === null
+                  ? "—"
+                  : `${mostFrequent.registration ?? mostFrequent.icao.toUpperCase()} (${formatSightings(mostFrequent.sighting_count)})`
             }
           />
           <Row

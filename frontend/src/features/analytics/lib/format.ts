@@ -42,7 +42,12 @@ function parseCalendarDay(day: string): Date {
   return new Date(`${day}T00:00:00Z`);
 }
 
-function formatCalendarDay(day: string): string {
+/** `"Jul 4, 2026"` for a `YYYY-MM-DD` receiver-local calendar-day string
+ * (a rollup's day key, not an ISO instant) — exported so
+ * `features/receiver/components/LifetimeStatsSection.tsx` can format
+ * `busiest_day.day` the same way rather than rendering the bare
+ * `"2026-07-04"` the API returns (R3-10/R3-11). */
+export function formatCalendarDay(day: string): string {
   const date = parseCalendarDay(day);
   if (Number.isNaN(date.getTime())) {
     return day;
@@ -115,9 +120,20 @@ export function tooltipLines(lines: ReadonlyArray<string | null>): string {
   return [`<strong>${head}</strong>`, ...rest].join("<br/>");
 }
 
+/** `"1 point"` / `"3 points"` — the simple English-plural helper R3-10 asks
+ * every generated-copy count to go through (`"1 points"`, `"1 sightings"`
+ * read as bugs, not measurements). Exported so
+ * `features/receiver/lib/chartOptions.ts` reuses this rather than writing a
+ * second one, per the review's own note that the analytics side already
+ * gets this right. Every noun this module pluralizes is regular (no
+ * "1 day"/"2 days" irregulars to special-case), so a plain `+"s"` suffices. */
+export function pluralize(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
+}
+
 /** `"1 sighting"` / `"12 sightings"` — the count line of a ranking tooltip. */
 export function formatSightings(count: number): string {
-  return `${formatCompactNumber(count)} ${count === 1 ? "sighting" : "sightings"}`;
+  return `${formatCompactNumber(count)} ${pluralize(count, "sighting")}`;
 }
 
 export interface DescribedError {

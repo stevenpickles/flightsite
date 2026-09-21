@@ -19,6 +19,7 @@
 import type * as echarts from "echarts/core";
 
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
+import { pluralize } from "@/features/analytics/lib/format";
 import type { ReceiverSeriesResolution } from "@/lib/api/receiverStats";
 import {
   formatReceiverLocalDate,
@@ -89,10 +90,19 @@ export function buildTimeSeriesChart(
   const latestPresent = [...values].reverse().find((value) => value !== null);
   const peak = present.length > 0 ? Math.max(...present) : null;
 
+  const pointWord = pluralize(points.length, "point");
+  // A one-point series has the same category at both ends — stating that as
+  // a "from X to X" range read as a bug rather than the single-sample
+  // window it is.
+  const rangePhrase =
+    points.length === 1
+      ? `at ${categories[0]}`
+      : `from ${categories[0]} to ${categories[categories.length - 1]}`;
+
   const summary =
     present.length === 0
-      ? `${seriesName}: no readings across ${points.length} time points from ${categories[0]} to ${categories[categories.length - 1]}.`
-      : `${seriesName}: ${points.length} points from ${categories[0]} to ${categories[categories.length - 1]}. ` +
+      ? `${seriesName}: no readings across ${points.length} time ${pointWord} ${rangePhrase}.`
+      : `${seriesName}: ${points.length} ${pointWord} ${rangePhrase}. ` +
         `Latest ${formatValue(latestPresent as number)}, peak ${formatValue(peak as number)}.`;
 
   return {

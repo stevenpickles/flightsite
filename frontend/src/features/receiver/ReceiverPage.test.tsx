@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   installReceiverStatsApiMock,
+  lifetimeStats,
   metricSeries,
   rangeByBearing,
   scorecard,
@@ -206,6 +207,61 @@ describe("ReceiverPage", () => {
     const withinSection = within(section as HTMLElement);
     expect(withinSection.getByText("40,213")).toBeInTheDocument();
     expect(withinSection.getByText(/Delta Air Lines/)).toBeInTheDocument();
+  });
+
+  it("formats the busiest day as a locale date, not the raw day key (R3-10)", async () => {
+    installReceiverStatsApiMock({
+      lifetime: lifetimeStats({
+        busiest_day: { day: "2026-07-04", message_count: 5_100_000 },
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(await screen.findByText(/Jul 4, 2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/2026-07-04/)).not.toBeInTheDocument();
+  });
+
+  it("pluralizes 'sighting' correctly for the most frequently seen aircraft", async () => {
+    installReceiverStatsApiMock({
+      lifetime: lifetimeStats({
+        most_frequent_aircraft: {
+          icao: "0a4fce",
+          registration: null,
+          sighting_count: 1,
+        },
+        // Not every aircraft tied at 1 — a genuine (if small) record.
+        unique_aircraft: 95,
+        total_sightings: 200,
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText(/0A4FCE \(1 sighting\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a tie-aware caption instead of a fabricated record when every aircraft has exactly 1 sighting (R3-10)", async () => {
+    installReceiverStatsApiMock({
+      lifetime: lifetimeStats({
+        most_frequent_aircraft: {
+          icao: "0a4fce",
+          registration: null,
+          sighting_count: 1,
+        },
+        unique_aircraft: 95,
+        total_sightings: 95,
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText("95 aircraft tied at 1 sighting"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/0A4FCE/)).not.toBeInTheDocument();
   });
 
   it("renders 'never-data' first-run states without crashing", async () => {
