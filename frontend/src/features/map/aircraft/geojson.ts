@@ -15,6 +15,7 @@
 
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 
+import { meritsAttention } from "@/features/interesting/lib/ordering";
 import { resolveAircraftIcon } from "@/features/map/aircraft/icons/resolveIcon";
 import { iconImageId } from "@/features/map/aircraft/icons/silhouettes";
 import { displayPosition } from "@/features/map/aircraft/interpolation";
@@ -68,9 +69,24 @@ export interface AircraftFeatureProperties {
   selected: boolean;
   onGround: boolean;
   /** True when the aircraft carries an active alert match (slice 038,
-   * populated on the wire since that slice landed). Drives the label
-   * priority tiering and the indicator glyph. */
+   * populated on the wire since that slice landed). Drives the label's
+   * indicator glyph — presence, which is what SPEC §35 asks the label for. */
   interesting: boolean;
+  /**
+   * True when that match is at or above `ATTENTION_SEVERITY_FLOOR` — the
+   * attention ring, the label priority tier and the collision sort key all
+   * key off this rather than off {@link AircraftFeatureProperties.interesting}.
+   *
+   * Issue R1-10: on a new install the default templates include
+   * `first_ever`, which matches every airframe the receiver has not heard
+   * before, so 76 of 77 aircraft carried a ring and won every label
+   * collision. "Distinct attention styling" (SPEC §36) that applies to
+   * everything is not styling, and a label priority that applies to
+   * everything defeats the zoom/density declutter it overrides. Resolved in
+   * TypeScript against the ladder table, exactly as this property's
+   * `severity` sibling says severity ordering always is.
+   */
+  attention: boolean;
   /** The active match's severity (`docs/API.md` §2.8), or `""` when nothing
    * is matching — the attention ring's style expressions read this.
    *
@@ -224,10 +240,11 @@ export function buildAircraftFeatureCollection(
     const dimmed = dimmedIcaos?.has(icao) ?? false;
     const selected = icao === selectedIcao;
     const interesting = view.interesting !== null;
+    const attention = meritsAttention(view.interesting?.severity);
     const tier = deriveLabelTier({
       zoom,
       densityLatched,
-      priority: selected || interesting,
+      priority: selected || attention,
     });
     features.push(
       feature(position.lon, position.lat, {
@@ -242,6 +259,7 @@ export function buildAircraftFeatureCollection(
         selected,
         onGround: view.on_ground === true,
         interesting,
+        attention,
         severity: view.interesting?.severity ?? "",
         label: renderLabelText(buildAircraftLabelLines(view), tier),
       }),
@@ -279,6 +297,7 @@ export function buildAircraftFeatureCollection(
         // statement about what is matching *now*, and an aircraft the server
         // has said is gone is not matching anything.
         interesting: false,
+        attention: false,
         severity: "",
         label: "",
       }),
