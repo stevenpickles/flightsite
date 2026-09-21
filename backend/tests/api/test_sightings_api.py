@@ -17,6 +17,7 @@ import pytest
 from httpx import AsyncClient
 
 from flightsite.api.schemas import SightingDetail, SightingRow
+from flightsite.db.clock import utc_now_ms
 from flightsite.sightings.tracks import TrackSample
 
 from .aircraft_history_fixtures import SeedAircraft, seed_operator_groups
@@ -378,6 +379,101 @@ async def test_the_open_filter_matches_sightings_with_no_ended_at(
     assert ids(body) == [seeded[1]]
     assert body["items"][0]["ended_at"] is None
     assert body["items"][0]["duration_s"] is None
+
+
+# ----------------------------------------------------------- open sightings
+
+
+#: How much slack an "elapsed" assertion allows for the time between seeding
+#: a sighting and the endpoint reading its own clock. Generous enough that a
+#: loaded CI box cannot make it flaky, tight enough that a serializer
+#: reporting `0` — the defect — could never pass it.
+_ELAPSED_SLACK_S = 30
+
+
+async def test_an_open_sighting_says_it_is_open_and_how_long_it_has_run(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """R2-02: "Ongoing" and "Duration Unknown" cannot both be true.
+
+    `Unknown` is §2.7's word for "the decoder never reported this". A
+    sighting that started sixteen minutes ago and has not closed is not
+    unknown in that sense — both its start and the current time are known —
+    so the row says `open: true` and carries the elapsed time, while
+    `duration_s` stays null because there is still no *recorded* duration.
+    """
+    started_ms = utc_now_ms() - 16 * MINUTE_MS
+    await seed(live_app, open_sighting(started_ms=started_ms), aircraft=AIRCRAFT)
+
+    row = (await rest.get("/api/v1/sightings")).json()["items"][0]
+
+    assert row["ended_at"] is None
+    assert row["duration_s"] is None
+    assert row["open"] is True
+    assert 16 * 60 <= row["elapsed_s"] < 16 * 60 + _ELAPSED_SLACK_S
+    SightingRow.model_validate(row)
+
+
+async def test_a_closed_sighting_is_not_open_and_reports_no_elapsed_time(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """The counterpart: `elapsed_s` is not "age of the record".
+
+    Once a sighting has ended, `duration_s` is the whole answer. Reporting
+    time-since-start for a flight that landed last April would describe how
+    old the row is, which is a fact about the database rather than about
+    anything that flew.
+    """
+    await seed(
+        live_app,
+        closed_sighting(started_ms=BASE_MS, ended_ms=BASE_MS + 5 * MINUTE_MS),
+        aircraft=AIRCRAFT,
+    )
+
+    row = (await rest.get("/api/v1/sightings")).json()["items"][0]
+
+    assert row["open"] is False
+    assert row["elapsed_s"] is None
+    assert row["duration_s"] == 300
+
+
+async def test_the_detail_of_an_open_sighting_carries_the_same_two_fields(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """One vocabulary across the table and the page it links to (§3.7)."""
+    started_ms = utc_now_ms() - 9 * MINUTE_MS
+    seeded = await seed(live_app, open_sighting(started_ms=started_ms), aircraft=AIRCRAFT)
+
+    body = (await rest.get(f"/api/v1/sightings/{seeded[0]}")).json()
+
+    assert body["ended_at"] is None
+    assert body["duration_s"] is None
+    assert body["open"] is True
+    assert 9 * 60 <= body["elapsed_s"] < 9 * 60 + _ELAPSED_SLACK_S
+    SightingDetail.model_validate(body)
+
+
+async def test_every_row_of_a_page_measures_elapsed_against_one_instant(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """One clock reading per response, not one per row.
+
+    Two open sightings that started in the same millisecond must report the
+    same elapsed time. If each row read the clock for itself, a page would
+    occasionally disagree with itself across a second boundary — and a
+    duration column sorted by the client would go non-monotonic for a reason
+    nothing on screen could explain.
+    """
+    started_ms = utc_now_ms() - 5 * MINUTE_MS
+    await seed(
+        live_app,
+        *(open_sighting(started_ms=started_ms) for _index in range(4)),
+        aircraft=AIRCRAFT,
+    )
+
+    items = (await rest.get("/api/v1/sightings")).json()["items"]
+
+    assert len({item["elapsed_s"] for item in items}) == 1
 
 
 # --------------------------------------------------------------------- shape

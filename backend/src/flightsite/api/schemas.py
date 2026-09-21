@@ -217,7 +217,18 @@ class LifetimeRecord(_Model):
     first_seen: IsoTimestamp
     last_seen: IsoTimestamp
     sighting_count: int
+    #: SPEC §53's cumulative observation duration — and it *includes* the
+    #: sighting still running, if there is one. `aircraft.total_observed_ms`
+    #: accrues only at close (to avoid double-counting across flushes), which
+    #: is correct for the column and would be a wrong answer here: an
+    #: airframe sixteen minutes overhead is not one this receiver has watched
+    #: for `0` seconds.
     cumulative_duration_s: int
+    #: How much of `cumulative_duration_s` is still accruing — the open
+    #: sighting's elapsed time, or `null` when this airframe has none open.
+    #: Published separately so a client can say "16m so far, still running"
+    #: instead of inferring an ongoing sighting from a total that moves.
+    open_sighting_elapsed_s: int | None = None
     closest_approach_nm: float | None = None
     max_range_nm: float | None = None
     lowest_altitude_ft: int | None = None
@@ -327,11 +338,23 @@ class SightingRow(_Model):
     operator_group: str | None = None
     classification: Classification | None = None
     started_at: IsoTimestamp
-    #: ``null`` while the sighting is open (§3.6).
+    #: ``null`` while the sighting is open (§3.7).
     ended_at: IsoTimestamp | None = None
-    #: ``null`` while the sighting is open — duration is only meaningful once
-    #: it has actually ended.
+    #: ``null`` while the sighting is open — the *recorded* duration is only
+    #: meaningful once it has actually ended. While it is open, ``elapsed_s``
+    #: is the live answer.
     duration_s: int | None = None
+    #: Whether this sighting is still running. ``ended_at is null`` says the
+    #: same thing, but saying it out loud is the point: a client that has to
+    #: infer a state from an absence renders "Unknown" — the word §2.7
+    #: reserves for "the decoder never reported this" — for a sighting the
+    #: page beside it calls "Ongoing".
+    open: bool = False
+    #: Seconds from ``started_at`` to the instant this response was built —
+    #: present only while ``open``. A finished sighting's answer is
+    #: ``duration_s``; "time since it started" would then describe the age of
+    #: the record rather than the length of the flight.
+    elapsed_s: int | None = None
     closure_reason: ClosureReasonLiteral | None = None
     closest_approach_nm: float | None = None
     max_range_nm: float | None = None
@@ -414,8 +437,21 @@ class SightingDetail(_Model):
     callsign: str | None = None
     squawk: str | None = None
     started_at: IsoTimestamp
+    #: ``null`` while the sighting is open (§3.7).
     ended_at: IsoTimestamp | None = None
+    #: ``null`` while the sighting is open — see :class:`SightingRow`.
     duration_s: int | None = None
+    #: Whether this sighting is still running. ``ended_at is null`` says the
+    #: same thing, but saying it out loud is the point: a client that has to
+    #: infer a state from an absence renders "Unknown" — the word §2.7
+    #: reserves for "the decoder never reported this" — for a sighting the
+    #: page beside it calls "Ongoing".
+    open: bool = False
+    #: Seconds from ``started_at`` to the instant this response was built —
+    #: present only while ``open``. A finished sighting's answer is
+    #: ``duration_s``; "time since it started" would then describe the age of
+    #: the record rather than the length of the flight.
+    elapsed_s: int | None = None
     closure_reason: ClosureReasonLiteral | None = None
     #: Never ``null`` as a whole — see :class:`RouteView`.
     route: RouteView = Field(default_factory=RouteView)

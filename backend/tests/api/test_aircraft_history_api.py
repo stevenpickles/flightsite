@@ -13,13 +13,16 @@ import pytest
 from httpx import AsyncClient
 
 from flightsite.api.schemas import AircraftDetail, AircraftHistoryRow
+from flightsite.db.clock import utc_now_ms
 
 from ..live.conftest import make_update
 from .aircraft_history_fixtures import SeedAircraft, seed_aircraft, seed_operator_groups
 from .conftest import LiveApp
+from .sighting_fixtures import SeedSighting, seed_sightings
 
 BASE_MS = 1_756_000_000_000
 DAY_MS = 86_400_000
+MINUTE_MS = 60_000
 
 
 def icaos(body: dict[str, Any]) -> list[str]:
@@ -589,6 +592,73 @@ async def test_detail_reports_the_documented_lifetime_block(
     assert detail.lifetime.lowest_altitude_ft == 1250
     assert detail.lifetime.highest_altitude_ft == 41000
     assert detail.live is False
+
+
+async def test_cumulative_observed_time_includes_the_sighting_still_running(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """R2-02 on the airframe: SPEC §53 asks how long this receiver has watched.
+
+    `aircraft.total_observed_ms` is a sum over *closed* sightings — correct
+    for the column, because accruing it on each flush of an open sighting
+    would double-count at close. Published raw it told the owner of an
+    aircraft overhead right now that their cumulative observed time was
+    `0s`. The time spent watching plainly includes the part being spent now.
+    """
+    started_ms = utc_now_ms() - 16 * MINUTE_MS
+    await seed_sightings(
+        live_app.app.state.database,
+        [
+            SeedAircraft(
+                icao24="ae1463",
+                first_seen_ms=BASE_MS,
+                last_seen_ms=started_ms,
+                sighting_count=2,
+                total_observed_ms=600_000,
+            )
+        ],
+        [SeedSighting(icao24="ae1463", started_ms=started_ms)],
+    )
+
+    lifetime = (await rest.get("/api/v1/aircraft/ae1463")).json()["lifetime"]
+
+    open_elapsed_s = lifetime["open_sighting_elapsed_s"]
+    assert 16 * 60 <= open_elapsed_s < 16 * 60 + 30
+    # The closed 600 s, plus what is still accruing — and the running part
+    # published on its own, so a client can say how much of the total is
+    # still moving rather than inferring it from a number that changes.
+    assert lifetime["cumulative_duration_s"] == 600 + open_elapsed_s
+
+
+async def test_an_airframe_with_nothing_open_reports_only_its_closed_total(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """`null`, not `0`: "no sighting is open" is not "an open sighting of
+    zero length", and §2.7 keeps those two apart everywhere else too."""
+    await seed_sightings(
+        live_app.app.state.database,
+        [
+            SeedAircraft(
+                icao24="ae1463",
+                first_seen_ms=BASE_MS,
+                last_seen_ms=BASE_MS + DAY_MS,
+                total_observed_ms=600_000,
+            )
+        ],
+        [
+            SeedSighting(
+                icao24="ae1463",
+                started_ms=BASE_MS,
+                ended_ms=BASE_MS + 600_000,
+                duration_ms=600_000,
+            )
+        ],
+    )
+
+    lifetime = (await rest.get("/api/v1/aircraft/ae1463")).json()["lifetime"]
+
+    assert lifetime["open_sighting_elapsed_s"] is None
+    assert lifetime["cumulative_duration_s"] == 600
 
 
 async def test_detail_reports_manufacture_year_and_owner_with_provenance(

@@ -384,13 +384,28 @@ Lifetime record block (SPEC §53):
   "first_seen": "2026-04-02T18:11:09Z",
   "last_seen": "2026-08-30T22:41:55Z",
   "sighting_count": 41,
-  "cumulative_duration_s": 51840,
+  "cumulative_duration_s": 52803,
+  "open_sighting_elapsed_s": 963,
   "closest_approach_nm": 2.1,
   "max_range_nm": 141.8,
   "lowest_altitude_ft": 1250,
   "highest_altitude_ft": 41000
 }
 ```
+
+`cumulative_duration_s` is SPEC §53's cumulative observation duration and **includes
+the sighting still running**, if this airframe has one. The stored column behind it
+(`aircraft.total_observed_ms`) sums *closed* sightings only — that is deliberate on
+the storage side, so a flush of an open sighting cannot double-count it at close —
+but publishing it raw told the owner of an aircraft sixteen minutes overhead that
+their cumulative observed time was `0s`.
+
+`open_sighting_elapsed_s` is how much of that total is still accruing: the open
+sighting's `started_at` to now, or `null` when nothing is open for this airframe.
+`null` rather than `0` per §2.7 — "no sighting is open" is not "an open sighting of
+zero length" — and published separately so a client can render "14h 40m so far,
+still running" instead of inferring an ongoing sighting from a total that moves
+between reads.
 
 ### 3.6 Map overlays — slices 027/028
 
@@ -416,6 +431,25 @@ size class to include.
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
 `started_at`. A value without a timezone is interpreted as UTC rather than rejected.
 
+**Open sightings.** Every list row and the detail object carry two fields that say
+whether the sighting is still running, and for how long:
+
+| Field | Meaning |
+|---|---|
+| `open` | `true` while the sighting has not closed. The same fact as `ended_at: null`, said out loud so a client never has to read a state out of an absence. |
+| `elapsed_s` | Seconds from `started_at` to the instant the response was built. Present only while `open`; `null` on a closed sighting, whose answer is `duration_s`. |
+
+`duration_s` keeps meaning exactly what it stores: the **recorded** duration of a
+finished sighting, and `null` until there is one. What that `null` must *not* be
+rendered as is "Unknown" — §2.7 reserves that word for "the decoder never reported
+this", and a sighting the same page calls "Ongoing" is not unknown in that sense:
+its start time and the current time are both known. "Not closed yet" is a different
+fact and gets different fields. Likewise `closure_reason` is `null` because there
+has been no closure, not because the reason was lost.
+
+Every row of one page is measured against a single clock reading, so two sightings
+that started in the same millisecond always report the same `elapsed_s`.
+
 Sighting detail sketch:
 
 ```json
@@ -427,6 +461,8 @@ Sighting detail sketch:
   "started_at": "2026-08-30T22:02:10Z",
   "ended_at": "2026-08-30T22:41:55Z",
   "duration_s": 2385,
+  "open": false,
+  "elapsed_s": null,
   "closure_reason": "gap_timeout",
   "route": {
     "origin": "KTCM",
@@ -461,8 +497,8 @@ Sighting detail sketch:
 ```
 
 `path` is the Douglas-Peucker-simplified, timestamp-ordered track (playback-capable,
-SPEC §19). Active sightings return the live full-resolution track instead and
-`ended_at: null`.
+SPEC §19). Active sightings return the live full-resolution track instead, with
+`ended_at: null` and `open: true`.
 
 ### 3.8 Analytics — slice 031
 
