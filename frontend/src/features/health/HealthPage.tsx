@@ -34,6 +34,9 @@ import {
 } from "@/features/receiver/lib/format";
 import { useConfigQuery } from "@/lib/api/config";
 import { useDiagnosticsQuery } from "@/lib/api/diagnostics";
+// R4-14: shared with Settings' Aircraft Metadata section, so the same
+// source reads as the same name ("FAA", not "faa") on both pages.
+import { rowNoun, sourceLabel } from "@/lib/metadata/sources";
 
 /**
  * The health and diagnostics area — SPEC §67, roadmap slice 042.
@@ -414,7 +417,9 @@ export function HealthPage() {
                 className="border-b border-border py-2 last:border-0"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium">{source.source}</span>
+                  <span className="text-sm font-medium">
+                    {sourceLabel(source.source)}
+                  </span>
                   <StatusPill
                     tone={presentation.tone}
                     label={presentation.label}
@@ -422,7 +427,7 @@ export function HealthPage() {
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {source.last_success_at !== null
-                    ? `Imported ${formatAgeAgo(source.age_s)} · ${formatCount(source.row_count)} rows`
+                    ? `Imported ${formatAgeAgo(source.age_s)} · ${formatCount(source.row_count)} ${rowNoun(source.source)}`
                     : "No successful import yet"}
                 </p>
                 {source.last_error !== null && (
@@ -434,7 +439,7 @@ export function HealthPage() {
             );
           })}
           <Link
-            to="/settings"
+            to="/settings#settings-metadata"
             className="mt-3 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
           >
             Update metadata in Settings

@@ -286,6 +286,36 @@ describe("HealthPage degraded states", () => {
 
     expect(await screen.findByText("download timed out")).toBeInTheDocument();
     expect(screen.getByText("No successful import yet")).toBeInTheDocument();
+    // R4-14: the same source reads as the same name Settings uses, not the
+    // raw internal key.
+    expect(screen.getByText("FAA")).toBeInTheDocument();
+    expect(screen.queryByText("faa")).toBeNull();
+  });
+
+  it("names sources and their row noun the same way Settings does, and links there directly (R4-14)", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        metadata: metadata({
+          sources: [
+            metadataSource({
+              source: "airports",
+              status: "ok",
+              row_count: 74_112,
+            }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", {
+      name: "Metadata datasets",
+    });
+    expect(within(card).getByText("Airports")).toBeInTheDocument();
+    expect(within(card).getByText(/74,112 airports/)).toBeInTheDocument();
+    expect(
+      within(card).getByRole("link", { name: /update metadata in settings/i }),
+    ).toHaveAttribute("href", "/settings#settings-metadata");
   });
 
   it("renders recent errors with their detail", async () => {

@@ -33,6 +33,9 @@ import {
   type MetadataSourceStatus,
   type MetadataSourceStatusEntry,
 } from "@/lib/api/metadata";
+// R4-14: shared with the Health page's Metadata datasets card, so the same
+// source reads as the same name ("FAA", not "faa") on both pages.
+import { rowNoun, sourceLabel } from "@/lib/metadata/sources";
 
 export interface MetadataSectionProps {
   /** IANA timezone "last updated" times render in — `config.timezone`
@@ -40,36 +43,6 @@ export interface MetadataSectionProps {
   timezone: string;
   /** The full config, for the opt-in OpenSky source's toggle. */
   config: FlightSiteConfig;
-}
-
-/** Display names for sources whose own name does not read as one.
- *
- * `airports` is deliberately absent: capitalising it gives "Airports", which
- * is exactly right, and a map entry restating that would be one more thing to
- * keep in step. `routes` cannot fall through the same way — "Routes" would not
- * say whose routes these are, and slice 071 makes the answer part of the
- * point: they come from an offline directory this install holds, not from the
- * online provider configured under Enrichment. */
-const SOURCE_LABELS: Record<string, string> = {
-  mictronics: "Mictronics",
-  faa: "FAA",
-  opensky: "OpenSky",
-  routes: "Flight routes (VRS)",
-};
-
-function sourceLabel(name: string): string {
-  return SOURCE_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-/** What a source's `row_count` counts. Sources not named here count
- * airframes, which is what every source counted before slice 027. */
-const SOURCE_ROW_NOUNS: Record<string, string> = {
-  airports: "airports",
-  routes: "routes",
-};
-
-function rowNoun(name: string): string {
-  return SOURCE_ROW_NOUNS[name] ?? "aircraft";
 }
 
 /** Attribution for the datasets whose *contents* FlightSite serves back.
