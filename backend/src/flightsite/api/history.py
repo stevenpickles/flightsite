@@ -34,6 +34,15 @@ is not guaranteed stable across two reads with different ``LIMIT``/``OFFSET``
 values, and an unstable tiebreak would let the same row appear on two pages
 or vanish from both.
 
+Nulls sort last in **both** directions (:func:`_direction`). Seven of the ten
+documented sort keys are nullable — an airframe no metadata import has ever
+heard of has no registration, type, operator or classification, and one never
+seen with a position has no closest approach or maximum range — and SQLite's
+default puts ``NULL`` first on ``ASC``. That made "closest approach,
+ascending" answer with the aircraft that have *no* closest approach: §2.7
+says a missing value is the absence of an answer, not the smallest one, so it
+belongs after every real answer whichever way the column is read.
+
 Total is computed, not omitted
 -------------------------------
 
@@ -64,7 +73,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, func, select
 from sqlalchemy.engine import RowMapping
 
 from flightsite.db import Database
@@ -143,6 +152,19 @@ _COLUMNS: Final[tuple[Any, ...]] = (
 )
 
 
+def _direction(column: Any, order: str) -> UnaryExpression[Any]:
+    """One sort key as an ``ORDER BY`` term, with nulls last either way.
+
+    ``nulls_last()`` on the descending branch too, not only the ascending
+    one: SQLite happens to sort ``NULL`` last on ``DESC`` already, but that
+    is a property of one engine's default, not of the contract this endpoint
+    publishes — saying it explicitly is what keeps "unknown is not an answer"
+    true of both directions rather than true of one by accident.
+    """
+    ordered: UnaryExpression[Any] = column.asc() if order == "asc" else column.desc()
+    return ordered.nulls_last()
+
+
 def _joined_query() -> Select[Any]:
     """The shared ``aircraft`` → resolved metadata → classification join.
 
@@ -217,8 +239,7 @@ class AircraftHistoryRepository:
         conditions = _filters(
             classification=classification, operator_group=operator_group, type_code=type_code
         )
-        column = SORT_COLUMNS[sort]
-        direction = column.asc() if order == "asc" else column.desc()
+        direction = _direction(SORT_COLUMNS[sort], order)
 
         filtered = _joined_query().where(*conditions) if conditions else _joined_query()
         query = filtered.order_by(direction, Aircraft.icao24.asc()).limit(limit).offset(offset)

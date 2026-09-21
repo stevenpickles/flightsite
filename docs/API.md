@@ -73,6 +73,12 @@ GET /api/v1/aircraft?limit=50&offset=100&sort=last_seen&order=desc
 
 - `limit` (default 50, max 500), `offset` (default 0).
 - `sort` accepts documented column keys per endpoint; `order` is `asc`|`desc`.
+- **Rows whose sort value is `null` come last, in both directions.** §2.7 makes a
+  missing value the absence of an answer rather than the smallest one, so ascending
+  by `closest_approach_nm` puts the aircraft that genuinely came closest on the first
+  page, not the ones that have no closest approach. Every sort also carries a stable
+  final tiebreak (`icao24` or `id`, always ascending) so paging cannot repeat or skip
+  a row.
 - Filters are endpoint-specific query params (documented per endpoint).
 - Responses wrap items in an envelope:
 

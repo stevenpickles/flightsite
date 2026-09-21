@@ -187,6 +187,91 @@ async def test_sorting_by_closest_approach_orders_ascending(
     assert ids(body) == [seeded[1], seeded[0]]
 
 
+# ----------------------------------------------------------------- null sorts
+
+
+#: Three sightings covering every §3.7 sort key at once. The two closed ones
+#: hold the low and high end of each; the open one has no ``ended_ms``, so
+#: the persistence worker has written it no ``duration_ms`` yet, and it was
+#: never heard with a position, so it has no closest approach and no maximum
+#: range either — three SQL NULLs on three of the four sort keys. Its
+#: ``started_ms`` sits in the *middle*, so "last" on the non-nullable key
+#: cannot be reached by accident.
+def _null_sort_fixture() -> tuple[SeedSighting, ...]:
+    return (
+        closed_sighting(
+            started_ms=BASE_MS,
+            ended_ms=BASE_MS + MINUTE_MS,
+            closest_approach_nm=1.0,
+            max_range_nm=50.0,
+        ),
+        closed_sighting(
+            started_ms=BASE_MS + 2 * HOUR_MS,
+            ended_ms=BASE_MS + 2 * HOUR_MS + 30 * MINUTE_MS,
+            closest_approach_nm=9.0,
+            max_range_nm=900.0,
+        ),
+        open_sighting(started_ms=BASE_MS + HOUR_MS),
+    )
+
+
+#: Every §3.7 sort key in both directions, as positions into
+#: :func:`_null_sort_fixture`'s seeded ids. The three nullable keys end on
+#: the open sighting whichever way they are read; ``started_at`` keeps it in
+#: the middle.
+_SORT_EXPECTATIONS: list[tuple[str, str, list[int]]] = [
+    ("started_at", "asc", [0, 2, 1]),
+    ("started_at", "desc", [1, 2, 0]),
+    ("duration_s", "asc", [0, 1, 2]),
+    ("duration_s", "desc", [1, 0, 2]),
+    ("closest_approach_nm", "asc", [0, 1, 2]),
+    ("closest_approach_nm", "desc", [1, 0, 2]),
+    ("max_range_nm", "asc", [0, 1, 2]),
+    ("max_range_nm", "desc", [1, 0, 2]),
+]
+
+
+@pytest.mark.parametrize(("sort", "order", "expected"), _SORT_EXPECTATIONS)
+async def test_every_sort_key_places_unknown_values_last_in_both_directions(
+    live_app: LiveApp, rest: AsyncClient, sort: str, order: str, expected: list[int]
+) -> None:
+    """§2.7 in the ORDER BY, and the reason it mattered most here.
+
+    ``?sort=duration_s&order=asc`` means "shortest sighting first". With
+    SQLite's ``NULL``-first ``ASC`` it answered with *open* sightings — the
+    ones with no recorded duration at all — page after page, which put the
+    shortest closed sighting out of reach of the sort entirely.
+    """
+    seeded = await seed(live_app, *_null_sort_fixture(), aircraft=AIRCRAFT)
+
+    body = (await rest.get(f"/api/v1/sightings?sort={sort}&order={order}")).json()
+
+    assert ids(body) == [seeded[index] for index in expected]
+
+
+@pytest.mark.parametrize("order", ["asc", "desc"])
+async def test_the_first_page_of_a_duration_sort_holds_closed_sightings(
+    live_app: LiveApp, rest: AsyncClient, order: str
+) -> None:
+    """Paging, not only ordering: the answer has to be *reachable*.
+
+    A receiver with several aircraft overhead has several open sightings at
+    once, and with nulls first every one of them outranked every closed
+    sighting — so the first page of "shortest first" held no duration at all.
+    """
+    seeded = await seed(
+        live_app,
+        *(open_sighting(started_ms=BASE_MS + index * MINUTE_MS) for index in range(5)),
+        closed_sighting(started_ms=BASE_MS, ended_ms=BASE_MS + 90_000),
+        aircraft=AIRCRAFT,
+    )
+
+    page = (await rest.get(f"/api/v1/sightings?sort=duration_s&order={order}&limit=1")).json()
+
+    assert ids(page) == [seeded[5]]
+    assert page["items"][0]["duration_s"] == 90
+
+
 async def test_sorting_by_max_range_orders_descending(live_app: LiveApp, rest: AsyncClient) -> None:
     seeded = await seed(
         live_app,
