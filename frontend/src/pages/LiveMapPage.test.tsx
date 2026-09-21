@@ -32,6 +32,7 @@ import {
 } from "@/features/map/overlayVisibilityPersistence";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
+import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import {
@@ -39,6 +40,7 @@ import {
   MapLibreMockMap,
   resetMapLibreMock,
 } from "@/test/maplibreGlMock";
+import { installNotificationMock } from "@/test/notificationMock";
 import {
   EMPTY_FEATURE_COLLECTION,
   installOverlaysApiMock,
@@ -97,6 +99,8 @@ beforeEach(() => {
 afterEach(() => {
   window.localStorage.clear();
   useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+  useNotificationStore.getState().reset();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -600,6 +604,31 @@ describe("heading structure, landmarks and skip link (R1-11)", () => {
     link.focus();
     await userEvent.keyboard("{Enter}");
     expect(window.location.hash).toBe(`#${targetId}`);
+  });
+});
+
+describe("notification status pill (R1-12)", () => {
+  it("stays off the page entirely once permission is granted", () => {
+    installNotificationMock({ permission: "granted" });
+    renderPage();
+    expect(
+      screen.queryByTestId("notification-status-pill"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a blocked permission on the map itself, with a link to Settings", () => {
+    // R1-12's evidence: an emergency-squawk match delivered with no browser
+    // notification and no hint anywhere on the page the user is watching.
+    installNotificationMock({ permission: "denied" });
+    renderPage();
+    expect(screen.getByTestId("notification-status-pill")).toHaveAttribute(
+      "data-permission",
+      "denied",
+    );
+    expect(screen.getByRole("link", { name: /settings/i })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
   });
 });
 

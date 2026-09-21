@@ -19,6 +19,7 @@ import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
 import { TodayPanel } from "@/features/today/TodayPanel";
 
 const item = requireNavItem("/");
@@ -152,6 +153,7 @@ export function LiveMapPage() {
         <ActivityPanel />
       </PanelRegion>
       <DisplayRadiusIndicator />
+      <NotificationStatusPill />
 
       <SkipAircraftListLink />
       {/* The bottom-left corner, as one upward-growing column: the two
