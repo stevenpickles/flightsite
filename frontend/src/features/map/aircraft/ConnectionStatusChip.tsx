@@ -24,12 +24,15 @@
  *    no longer being fed by anything, socket or REST fallback. A kept picture
  *    is only honest if its age is on screen beside it.
  *
- * What is announced, and what is only shown. The attempt number and the age
- * both change on a timer, and a `role="status"` region that re-reads itself
- * every second buries the one announcement that matters. Both are therefore
- * `aria-hidden`: a screen reader hears "Reconnecting" once and "Live feed
- * unavailable — retrying" once, at the moment each becomes true, which is
- * exactly the set of state changes worth interrupting for.
+ * What is announced, and what is only shown (issue R1-15). The status word
+ * is the whole of what this live region says. The aircraft count, the
+ * attempt number and the age are all readings that change on their own — the
+ * count went 43 → 56 → 64 → 72 → 77 over twenty minutes of the review — and
+ * a `role="status"` region containing any of them re-announces the entire
+ * chip on every tick, burying the one announcement that matters: the feed
+ * dropping. All three are therefore `aria-hidden`, so a screen reader hears
+ * "Live", "Reconnecting" and "Live feed unavailable — retrying" once each,
+ * at the moment each becomes true, and nothing else.
  */
 
 import { useEffect, useState } from "react";
@@ -137,9 +140,18 @@ export function ConnectionStatusChip() {
       {status === "live" && (
         // A quiet, user-visible confirmation that the live picture is
         // non-empty — not just that the socket connected. Also gives the
-        // E2E live-map flow (roadmap slice 020) a stable, accessible signal
-        // for "aircraft have actually arrived" beyond the connection state.
-        <span data-testid="live-aircraft-count">
+        // E2E live-map flow (roadmap slice 020) a stable signal for
+        // "aircraft have actually arrived" beyond the connection state.
+        //
+        // `aria-hidden` for the same reason the attempt number and the age
+        // are (issue R1-15): the count is a telemetry reading that changes
+        // whenever anything enters or leaves the picture — the review
+        // watched it go 43 → 56 → 64 → 72 → 77 over twenty minutes — and
+        // inside a `role="status"` live region every one of those changes
+        // re-announced the whole chip. A live region should announce state
+        // changes, not count aircraft, and the announcement it would bury
+        // is the one that matters: the feed dropping.
+        <span aria-hidden="true" data-testid="live-aircraft-count">
           · {aircraftCount} aircraft
         </span>
       )}

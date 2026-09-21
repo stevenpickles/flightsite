@@ -15,6 +15,16 @@ beforeEach(() => {
   useLiveAircraftStore.getState().reset();
 });
 
+/** What a screen reader would actually read out of the live region: its
+ * text, minus every `aria-hidden` descendant. */
+function announcedText(region: HTMLElement): string {
+  const clone = region.cloneNode(true) as HTMLElement;
+  for (const hidden of clone.querySelectorAll('[aria-hidden="true"]')) {
+    hidden.remove();
+  }
+  return clone.textContent?.trim() ?? "";
+}
+
 describe("ConnectionStatusChip", () => {
   it("reports the initial connecting state", () => {
     render(<ConnectionStatusChip />);
@@ -50,6 +60,27 @@ describe("ConnectionStatusChip", () => {
   it("announces changes politely rather than interrupting", () => {
     render(<ConnectionStatusChip />);
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("announces the status word only, never the aircraft count", () => {
+    // Issue R1-15: the count changes whenever anything enters or leaves the
+    // picture, and inside a live region every one of those changes
+    // re-announced the chip — noise that buries the feed dropping.
+    render(<ConnectionStatusChip />);
+    act(() => {
+      useLiveAircraftStore.getState().setConnection("live");
+      useLiveAircraftStore
+        .getState()
+        .applySnapshot({ aircraft: [makeAircraft()], receiver: null });
+    });
+
+    const region = screen.getByRole("status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    for (const node of region.querySelectorAll("span")) {
+      expect(node).toHaveAttribute("aria-hidden", "true");
+    }
+    // Only the status word is left for a screen reader to read.
+    expect(announcedText(region)).toBe("Live");
   });
 
   it("shows a live aircraft count once the socket is live", () => {
