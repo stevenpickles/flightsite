@@ -188,6 +188,63 @@ describe("MetadataSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("never claims 'never' while the status is still loading (R4-11)", async () => {
+    let resolveStatus!: (value: Response) => void;
+    const pendingStatus = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/internal/metadata/status" && method === "GET") {
+          return pendingStatus;
+        }
+        throw new Error(`Unhandled fetch in test: ${method} ${url}`);
+      }),
+    );
+    renderSection();
+
+    expect(screen.getByText("Checking…")).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    // Nothing is known about whether an update is already running, so the
+    // button must not read as available.
+    expect(
+      screen.getByRole("button", { name: /update aircraft metadata/i }),
+    ).toBeDisabled();
+    // Skeleton cards, not "no sources are registered" (empty sources and
+    // unknown sources must not render identically).
+    expect(
+      screen.getByLabelText("Loading metadata sources"),
+    ).toBeInTheDocument();
+
+    resolveStatus(
+      new Response(JSON.stringify({ sources: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(await screen.findByText("never")).toBeInTheDocument();
+  });
+
+  it("says 'Unknown', not 'never', once the status read has failed (R4-11)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("boom", { status: 500 })),
+    );
+    renderSection();
+
+    expect(
+      await screen.findByText(/unknown — could not read source status/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /update aircraft metadata/i }),
+    ).toBeDisabled();
+  });
+
   it("triggers an update and reflects the in-progress state from the very next poll", async () => {
     installMetadataApiMock({
       statusSequence: [
