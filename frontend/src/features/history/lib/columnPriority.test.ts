@@ -28,14 +28,12 @@ describe("columnClasses", () => {
     // The point of the lookup: a `<th>` that hides at `lg` and a `<td>` that
     // does not would leave the table a column out of step with its own
     // header, which is worse than either choice made consistently.
-    const columns = [
-      { key: "tail" as const },
-      { key: "operator" as const, showFrom: "lg" as const },
-    ];
-    const classes = columnClasses(columns);
+    const tail = { key: "tail" as const, showFrom: undefined };
+    const operator = { key: "operator" as const, showFrom: "lg" as const };
+    const classes = columnClasses([tail, operator]);
 
-    expect(classes.tail).toBe(columnVisibilityClass(columns[0]));
-    expect(classes.operator).toBe(columnVisibilityClass(columns[1]));
+    expect(classes.tail).toBe(columnVisibilityClass(tail));
+    expect(classes.operator).toBe(columnVisibilityClass(operator));
     expect(classes.operator).toContain("lg:table-cell");
   });
 });

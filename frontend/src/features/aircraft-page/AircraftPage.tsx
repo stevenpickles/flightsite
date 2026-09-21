@@ -14,6 +14,7 @@ import {
   QueryErrorBanner,
   QueryErrorState,
 } from "@/features/history/components/QueryError";
+import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useAircraftListQuery, type AircraftSortKey } from "@/lib/api/aircraft";
@@ -86,10 +87,12 @@ export function AircraftPage() {
               isRetrying={listQuery.isFetching}
             />
           )}
-          {listQuery.data.items.length === 0 && state.page === 1 ? (
-            <p className="text-sm text-muted-foreground">
-              This receiver hasn&rsquo;t sighted any aircraft yet.
-            </p>
+          {listQuery.data.items.length === 0 ? (
+            <EmptyResult
+              message="This receiver hasn’t sighted any aircraft yet."
+              page={state.page}
+              onBackToFirstPage={() => setState({ page: 1 })}
+            />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
               <AircraftTable

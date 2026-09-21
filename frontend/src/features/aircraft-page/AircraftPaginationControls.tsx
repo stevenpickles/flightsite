@@ -48,15 +48,27 @@ export function AircraftPaginationControls({
   const canGoBack = page > 1;
   const canGoForward =
     totalPages === null ? rowCount === pageSize : page < totalPages;
+  // "Page 999 of 2" is a sentence that contradicts itself, and the footer
+  // used to print it for any out-of-range `?page=` (review R2-09).
+  const pastTheEnd = totalPages !== null && page > totalPages;
+  // Back from past the end goes to the last page that exists, not to page
+  // 998 — which is also empty, and was the only recovery on offer.
+  const previousPage =
+    pastTheEnd && totalPages !== null ? totalPages : page - 1;
+
+  const counted =
+    total === null
+      ? null
+      : `${total.toLocaleString()} ${total === 1 ? noun.singular : noun.plural}`;
 
   return (
     <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2 text-sm text-muted-foreground">
       <p>
-        {total === null
+        {counted === null
           ? `Page ${page}`
-          : `Page ${page} of ${totalPages} · ${total.toLocaleString()} ${
-              total === 1 ? noun.singular : noun.plural
-            }`}
+          : pastTheEnd
+            ? `Page ${page} is past the end · ${counted}`
+            : `Page ${page} of ${totalPages} · ${counted}`}
       </p>
       <div className="flex gap-2">
         <Button
@@ -64,7 +76,7 @@ export function AircraftPaginationControls({
           variant="outline"
           size="sm"
           disabled={!canGoBack}
-          onClick={() => onPageChange(page - 1)}
+          onClick={() => onPageChange(previousPage)}
         >
           Previous
         </Button>

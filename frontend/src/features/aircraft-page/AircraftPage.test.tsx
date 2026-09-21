@@ -148,6 +148,31 @@ describe("AircraftPage", () => {
     expect(router.state.location.search).not.toContain("page=");
   });
 
+  it("says so and offers a way back when the URL names a page past the end (R2-09)", async () => {
+    installAircraftApiMock({
+      list: (url) => ({
+        items: [],
+        total: 68,
+        limit: PAGE_SIZE,
+        offset: Number(url.searchParams.get("offset") ?? "0"),
+      }),
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp("/aircraft?page=999");
+
+    // Before: a header row, no body rows, "Page 999 of 2", and no
+    // explanation — reachable from a bookmark after history is pruned.
+    const state = await screen.findByTestId("past-the-end");
+    expect(state).toHaveAttribute("role", "status");
+    expect(state).toHaveTextContent("There is nothing on page 999");
+
+    await user.click(screen.getByRole("button", { name: /back to page 1/i }));
+
+    await waitFor(() => {
+      expect(router.state.location.search).not.toContain("page=");
+    });
+  });
+
   it("says how old the table is and fetches again on demand (R2-03)", async () => {
     const { fetchMock } = installAircraftApiMock({
       list: {

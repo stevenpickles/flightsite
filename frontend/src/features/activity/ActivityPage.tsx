@@ -33,6 +33,7 @@ import {
   QueryErrorBanner,
   QueryErrorState,
 } from "@/features/history/components/QueryError";
+import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useActivityQuery } from "@/lib/api/activity";
@@ -100,12 +101,16 @@ export function ActivityPage() {
               isRetrying={listQuery.isFetching}
             />
           )}
-          {listQuery.data.items.length === 0 && state.page === 1 ? (
-            <p className="text-sm text-muted-foreground">
-              {state.types.length === 0
-                ? "Nothing has happened yet."
-                : "No activity matches these filters."}
-            </p>
+          {listQuery.data.items.length === 0 ? (
+            <EmptyResult
+              message={
+                state.types.length === 0
+                  ? "Nothing has happened yet."
+                  : "No activity matches these filters."
+              }
+              page={state.page}
+              onBackToFirstPage={() => setState({ page: 1 })}
+            />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
               <ul className="divide-y divide-border/60">

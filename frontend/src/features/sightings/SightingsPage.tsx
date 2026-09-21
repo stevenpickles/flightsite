@@ -16,6 +16,7 @@ import {
   QueryErrorBanner,
   QueryErrorState,
 } from "@/features/history/components/QueryError";
+import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { LIST_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useSightingsTableState } from "@/features/sightings/hooks/useSightingsTableState";
@@ -97,10 +98,12 @@ export function SightingsPage() {
               isRetrying={listQuery.isFetching}
             />
           )}
-          {listQuery.data.items.length === 0 && state.page === 1 ? (
-            <p className="text-sm text-muted-foreground">
-              No sightings match these filters.
-            </p>
+          {listQuery.data.items.length === 0 ? (
+            <EmptyResult
+              message="No sightings match these filters."
+              page={state.page}
+              onBackToFirstPage={() => setState({ page: 1 })}
+            />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
               <SightingsTable

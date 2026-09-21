@@ -109,6 +109,46 @@ describe("AircraftPaginationControls", () => {
     expect(screen.getByText("Page 1 of 1 · 1 sighting")).toBeInTheDocument();
   });
 
+  it("never prints a page number past its own total (R2-09)", () => {
+    render(
+      <AircraftPaginationControls
+        page={999}
+        pageSize={50}
+        rowCount={0}
+        total={68}
+        noun={AIRCRAFT}
+        onPageChange={vi.fn()}
+      />,
+    );
+
+    // "Page 999 of 2" is a sentence that contradicts itself.
+    expect(screen.queryByText(/Page 999 of/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Page 999 is past the end · 68 aircraft"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
+  });
+
+  it("sends Previous to the last real page from past the end (R2-09)", async () => {
+    const onPageChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AircraftPaginationControls
+        page={999}
+        pageSize={50}
+        rowCount={0}
+        total={68}
+        noun={AIRCRAFT}
+        onPageChange={onPageChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /previous/i }));
+
+    // Not 998, which is just as empty and was the only recovery on offer.
+    expect(onPageChange).toHaveBeenCalledWith(2);
+  });
+
   it("reports the target page on click", async () => {
     const onPageChange = vi.fn();
     const user = userEvent.setup();
