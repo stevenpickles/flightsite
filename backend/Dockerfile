@@ -14,7 +14,7 @@
 # Build stage: resolve the locked dependency set and build the package into
 # a self-contained virtualenv.
 # ---------------------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.12.8-python3.12-trixie-slim AS build
+FROM ghcr.io/astral-sh/uv:0.12.17-python3.12-trixie-slim AS build
 
 # UV_COMPILE_BYTECODE: pre-compile .pyc files so the runtime image starts
 #   faster instead of compiling on first import.
@@ -56,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # installs prebuilt manylinux wheels, and only the resulting venv is copied
 # across, so there is no glibc-ABI coupling between the two stages.
 # ---------------------------------------------------------------------------
-FROM python:3.12.14-slim-bookworm AS runtime
+FROM python:3.14.6-slim-bookworm AS runtime
 
 # Non-root, fixed-uid user (docs/SECURITY.md §7: both containers run as
 # non-root on minimal base images). uid/gid 1000 is the conventional
