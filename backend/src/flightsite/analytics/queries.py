@@ -57,7 +57,7 @@ from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flightsite.activity.model import ActivityEventType
-from flightsite.analytics.bucketing import Window, local_hour
+from flightsite.analytics.bucketing import Window, day_start_ms, local_hour
 from flightsite.db import (
     ActivityEvent,
     Aircraft,
@@ -320,17 +320,66 @@ class AnalyticsQueries:
                     )
                 ).all()
             }
-        return tuple(self._daily_row(day, rollups.get(day), receiver.get(day)) for day in days)
+            new_aircraft = await self._new_aircraft_by_day(session, window, days)
+        return tuple(
+            self._daily_row(day, rollups.get(day), receiver.get(day), new_aircraft.get(day, 0))
+            for day in days
+        )
+
+    async def _new_aircraft_by_day(
+        self, session: AsyncSession, window: Window, days: Sequence[str]
+    ) -> dict[str, int]:
+        """Airframes first ever heard on each day of the window.
+
+        One definition of *never seen before*, and this is it (issue #205,
+        finding R3-03): an airframe whose ``aircraft.first_seen_ms`` falls
+        inside the window, attributed to the receiver-local day that instant
+        fell in. ``GET /analytics/rarity`` counts exactly this predicate over
+        exactly these bounds, so the "Never seen before" card and the "Locally
+        rare" card beside it cannot print different numbers for one quantity —
+        the page previously said ``0`` and ``99`` in the same breath, because
+        one read the rollup and the other read ``aircraft``.
+
+        ``daily_stats.new_aircraft`` holds the same figure and is left where
+        it is (``docs/DATA_MODEL.md`` §6.5), but it is not what is served:
+        this form is exact for an explicit window that begins mid-day, and it
+        answers before the day's rollup has been computed at all.
+
+        The cost is one range scan of ``ix_aircraft_first_seen`` bounded by
+        the airframes *first heard* inside the window — for ``t0`` that is
+        every airframe the receiver has ever heard, the same order as the
+        whole-history ``COUNT(*)`` in :meth:`unique_aircraft`. The day
+        boundaries are computed once and the sorted values walked against
+        them, so no row costs a zone conversion of its own.
+        """
+        values = (
+            await session.scalars(
+                select(Aircraft.first_seen_ms)
+                .where(
+                    Aircraft.first_seen_ms >= window.start_ms,
+                    Aircraft.first_seen_ms < window.end_ms,
+                )
+                .order_by(Aircraft.first_seen_ms)
+            )
+        ).all()
+        counts = dict.fromkeys(days, 0)
+        starts = [day_start_ms(day, self._zone) for day in days]
+        index = 0
+        for value in values:
+            while index + 1 < len(starts) and value >= starts[index + 1]:
+                index += 1
+            counts[days[index]] += 1
+        return counts
 
     @staticmethod
-    def _daily_row(day: str, rollup: Any, receiver: Any) -> DailyRow:
+    def _daily_row(day: str, rollup: Any, receiver: Any, new_aircraft: int) -> DailyRow:
         base = (
-            DailyRow(day=day)
+            DailyRow(day=day, new_aircraft=new_aircraft)
             if rollup is None
             else DailyRow(
                 day=day,
                 unique_aircraft=int(rollup.unique_aircraft),
-                new_aircraft=int(rollup.new_aircraft),
+                new_aircraft=new_aircraft,
                 sightings=int(rollup.sightings),
                 interesting=int(rollup.interesting),
                 military=int(rollup.military),

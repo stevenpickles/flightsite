@@ -515,6 +515,18 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 
+**"Never seen before" has one definition across every surface** (issue #205): an
+airframe whose `aircraft.first_seen_ms` — its first-ever observation by this
+receiver — falls inside the window, attributed to the receiver-local day that
+instant fell in. `rarity.never_seen_before` is that count for the whole window,
+`daily[].new_aircraft` is it per day, and `summary.new_aircraft` is the sum; all
+three come from one query, so `summary.new_aircraft == rarity.never_seen_before`
+always. The figure is **not** read from `daily_stats.new_aircraft`: the stored
+column holds the same number but is only as current as the last rollup pass, and
+serving both left the Analytics page reporting "never seen before" as `0` on one
+card and `99` on the card beside it. It is also the only one of the daily row's
+counts that is never `null` — see below.
+
 `top-types` and `top-operators` share one row shape: `key` (the ICAO type
 designator, or the operator group id as a string), `label` (what to display),
 `sightings`, `unique_aircraft`, `days_seen`, `first_seen_at`/`last_seen_at`, and

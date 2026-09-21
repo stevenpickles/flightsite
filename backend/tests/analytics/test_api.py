@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 from flightsite.activity import (
     ActivityBatch,
@@ -645,6 +646,48 @@ async def test_rarity_counts_never_seen_before_over_the_window(
 
     assert today["never_seen_before"] == 1
     assert week["never_seen_before"] == 3
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+async def test_never_seen_before_is_one_number_on_every_surface(
+    harness: Harness, rest: AsyncClient, preset: str
+) -> None:
+    """Issue #205, finding R3-03: the page said both ``0`` and ``99``.
+
+    "Never seen before" is one SPEC §58 concept, and the Analytics page shows
+    it twice — as the daily bar series (``daily.new_aircraft``, summed into
+    ``summary.new_aircraft``) and as the Locally-rare card's headline
+    (``rarity.never_seen_before``). They now read one query, so the two cards
+    cannot disagree whatever the rollups happen to hold.
+    """
+    await seed(harness)
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset=preset))["summary"]
+    rarity = await get(rest, "/api/v1/analytics/rarity", preset=preset)
+    daily = (await get(rest, "/api/v1/analytics/daily", preset=preset))["items"]
+
+    assert summary["new_aircraft"] == rarity["never_seen_before"]
+    assert sum(row["new_aircraft"] for row in daily) == rarity["never_seen_before"]
+
+
+async def test_never_seen_before_agrees_before_the_rollup_is_computed(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """The young install: the rollup has not run, and the figure still holds.
+
+    Deriving it from ``aircraft.first_seen_ms`` rather than from
+    ``daily_stats.new_aircraft`` is what makes this true — the rollup-backed
+    form read ``0`` for a day it had not folded yet.
+    """
+    await seed(harness)
+    async with harness.database.writer_session() as session:
+        await session.execute(text("DELETE FROM daily_stats"))
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+    rarity = await get(rest, "/api/v1/analytics/rarity", preset="today")
+
+    assert rarity["never_seen_before"] == 1
+    assert summary["new_aircraft"] == 1
 
 
 async def test_rarity_lists_airframes_seen_in_the_window_with_low_lifetime_counts(
