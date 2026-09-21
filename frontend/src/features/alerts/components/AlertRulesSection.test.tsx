@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AlertRulesSection } from "@/features/alerts/components/AlertRulesSection";
 import { alertRule, installAlertsApiMock } from "@/test/alertsApiMock";
+import { watchlist } from "@/test/watchlistsApiMock";
 import { renderWithProviders } from "@/test/test-utils";
 
 afterEach(() => {
@@ -75,6 +76,49 @@ describe("AlertRulesSection", () => {
     // The conditions are the backend's own prose, so this card, a
     // notification and the history all say the same thing about the rule.
     expect(within(card).getByText("military")).toBeInTheDocument();
+  });
+
+  it("names the watchlist a rule matches, not its bare id (R4-09)", async () => {
+    installAlertsApiMock({
+      rules: [
+        alertRule({
+          name: "R4 watchlist rule",
+          conditions: { version: 1, watchlist_id: 42 },
+        }),
+      ],
+      watchlists: [watchlist({ id: 42, name: "R4 probe list" })],
+    });
+
+    renderWithProviders(<AlertRulesSection />);
+
+    const card = await screen.findByRole("article", {
+      name: "R4 watchlist rule",
+    });
+    expect(
+      await within(card).findByText("on watchlist R4 probe list"),
+    ).toBeInTheDocument();
+    expect(within(card).queryByText("on watchlist 42")).toBeNull();
+  });
+
+  it("falls back to the bare id for a watchlist that no longer exists (R4-09)", async () => {
+    installAlertsApiMock({
+      rules: [
+        alertRule({
+          name: "Orphaned watchlist rule",
+          conditions: { version: 1, watchlist_id: 99 },
+        }),
+      ],
+      watchlists: [],
+    });
+
+    renderWithProviders(<AlertRulesSection />);
+
+    const card = await screen.findByRole("article", {
+      name: "Orphaned watchlist rule",
+    });
+    expect(
+      await within(card).findByText("on watchlist 99"),
+    ).toBeInTheDocument();
   });
 
   it("names the template a shipped rule came from", async () => {
