@@ -219,10 +219,9 @@ describe("AlertRulesSection", () => {
     expect(screen.getByText(/from template/i)).toBeInTheDocument();
   });
 
-  it("deletes a rule once the warning is accepted", async () => {
+  it("deletes a rule once the confirmation dialog is accepted (R4-10)", async () => {
     const user = userEvent.setup();
     installAlertsApiMock({ rules: [alertRule({ name: "Military aircraft" })] });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderWithProviders(<AlertRulesSection />);
     await screen.findByRole("article", { name: "Military aircraft" });
@@ -230,6 +229,13 @@ describe("AlertRulesSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Delete Military aircraft" }),
     );
+    // No typed phrase for this variant — a single rule, not every row
+    // FlightSite has ever recorded — just a dialog to confirm on.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/alerts it has already recorded/i),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(
@@ -238,10 +244,9 @@ describe("AlertRulesSection", () => {
     });
   });
 
-  it("keeps a rule when the deletion warning is declined", async () => {
+  it("keeps a rule when the confirmation dialog is cancelled (R4-10)", async () => {
     const user = userEvent.setup();
     installAlertsApiMock({ rules: [alertRule({ name: "Military aircraft" })] });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     renderWithProviders(<AlertRulesSection />);
     await screen.findByRole("article", { name: "Military aircraft" });
@@ -249,7 +254,10 @@ describe("AlertRulesSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Delete Military aircraft" }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("article", { name: "Military aircraft" }),
     ).toBeInTheDocument();

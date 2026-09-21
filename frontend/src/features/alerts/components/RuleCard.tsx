@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { RuleBuilderForm } from "@/features/alerts/components/RuleBuilderForm";
+import { ConfirmDangerDialog } from "@/features/settings/components/ConfirmDangerDialog";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
 import {
   useDeleteAlertRuleMutation,
@@ -89,6 +90,11 @@ export interface RuleCardProps {
  */
 export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
   const [editing, setEditing] = useState(false);
+  // R4-10: a native `window.confirm` guarded this delete — unstyled,
+  // theme-ignoring, and some browsers let a user suppress it for the
+  // session, after which the button becomes a one-click irreversible
+  // delete that also removes every alert this rule has recorded.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const headingId = useId();
 
   const updateMutation = useUpdateAlertRuleMutation();
@@ -111,13 +117,12 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
     });
   }
 
-  function handleDelete(): void {
-    const confirmed = window.confirm(
-      `Delete “${rule.name}”? The alerts it has already recorded are deleted with it.`,
-    );
-    if (confirmed) {
-      deleteMutation.mutate(rule.id);
-    }
+  function confirmDelete(): void {
+    deleteMutation.mutate(rule.id, {
+      onSuccess: () => {
+        setConfirmingDelete(false);
+      },
+    });
   }
 
   function handleSave(input: AlertRuleWriteInput): void {
@@ -208,7 +213,9 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
             size="sm"
             disabled={deleteMutation.isPending}
             aria-label={`Delete ${rule.name}`}
-            onClick={handleDelete}
+            onClick={() => {
+              setConfirmingDelete(true);
+            }}
           >
             Delete
           </Button>
@@ -249,6 +256,20 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
           }}
         />
       )}
+
+      <ConfirmDangerDialog
+        open={confirmingDelete}
+        onClose={() => {
+          setConfirmingDelete(false);
+        }}
+        title={`Delete "${rule.name}"?`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        isPending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
+      >
+        <p>The alerts it has already recorded are deleted with it.</p>
+      </ConfirmDangerDialog>
     </article>
   );
 }
