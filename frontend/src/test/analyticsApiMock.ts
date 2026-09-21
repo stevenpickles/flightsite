@@ -71,6 +71,7 @@ export function analyticsSummaryResponse(
       first_sighting_at: "2026-08-31T13:05:00.000Z",
       last_sighting_at: "2026-08-31T20:41:00.000Z",
       new_milestones: 2,
+      complete: true,
       ...overrides,
     },
   };
@@ -92,6 +93,7 @@ const EMPTY_SUMMARY: AnalyticsSummaryResponse = {
     first_sighting_at: null,
     last_sighting_at: null,
     new_milestones: 0,
+    complete: true,
   },
 };
 

@@ -165,6 +165,35 @@ describe("useAnalyticsSummaryQuery", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
+
+  it("polls every 60 s on its own, not only on mount (R1-02 frontend follow-up)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(
+        (_input?: RequestInfo | URL, _init?: RequestInit) =>
+          Promise.resolve(jsonResponse(EMPTY_SUMMARY_BODY)),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(
+        () => useAnalyticsSummaryQuery({ preset: "today" }, "2026-08-31"),
+        { wrapper: createQueryWrapper() },
+      );
+      await vi.waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // The "Today at a glance" card is left on screen for hours with no
+      // interaction at all — a viewer only re-focusing the window or
+      // remounting the component must not be what a fresh figure depends on.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("getAnalyticsClassificationActivity", () => {

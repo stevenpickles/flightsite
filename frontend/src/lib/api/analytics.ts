@@ -166,6 +166,12 @@ export interface AnalyticsSummary {
    * `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record` or
    * `milestone` whose moment falls inside the window. */
   new_milestones: number;
+  /** `false` while the day's rollup (the backend's day-keyed write behind
+   * `daily_stats`/`receiver_metrics_hourly`, R1-02/A1) has not yet caught up
+   * with "now" — the figures above are still real numbers, never a
+   * placeholder `0`, but a client should say so rather than imply they are
+   * final. Always `true` for a closed day. */
+  complete: boolean;
 }
 
 export interface AnalyticsSummaryResponse {
@@ -315,11 +321,15 @@ export const analyticsQueryKeys = {
     ["analytics", "rarity", params] as const,
 };
 
-/** `staleTime`/`refetchOnWindowFocus` are overridden past the app-wide
- * defaults (`lib/queryClient.ts`'s 30 s, no focus refetch): the Live Map's
- * "Today at a glance" card is meant to look current when a user tabs back to
- * it, and 60 s keeps a floating card that is visible far more often than the
- * Analytics page from re-requesting on every render. */
+/** `staleTime`/`refetchOnWindowFocus`/`refetchInterval` are overridden past
+ * the app-wide defaults (`lib/queryClient.ts`'s 30 s, no focus refetch, no
+ * interval — never changed here): the Live Map's "Today at a glance" card is
+ * meant to look current whether or not a user does anything at all. It is a
+ * floating card left on screen for hours at a time, not a page visited once
+ * and read, so `refetchInterval` polls every 60 s on its own rather than
+ * only on mount or a window-focus round-trip — the same 60 s `staleTime`
+ * already used, so a focus-triggered refetch and the interval's own tick
+ * never race each other into two requests back to back. */
 export function useAnalyticsSummaryQuery(
   params: AnalyticsWindowParams,
   localDate: string,
@@ -329,6 +339,7 @@ export function useAnalyticsSummaryQuery(
     queryFn: () => getAnalyticsSummary(params),
     staleTime: 60_000,
     refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
 }
 

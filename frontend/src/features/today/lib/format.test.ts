@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatAsOfTime,
   formatCount,
   formatDistance,
   formatHourRange,
@@ -42,5 +43,24 @@ describe("formatHourRange", () => {
 
   it("reads as 'No data yet' rather than a blank tile", () => {
     expect(formatHourRange(null)).toBe("No data yet");
+  });
+});
+
+describe("formatAsOfTime", () => {
+  it("renders the receiver-local wall-clock time with seconds", () => {
+    // 2026-08-31T20:03:22Z is 13:03:22 in America/Los_Angeles (PDT, UTC-7).
+    const epochMs = Date.parse("2026-08-31T20:03:22.000Z");
+    expect(formatAsOfTime(epochMs, "America/Los_Angeles")).toBe("13:03:22");
+  });
+
+  it("falls back to UTC-labelled ISO for an unparseable timezone", () => {
+    const epochMs = Date.parse("2026-08-31T20:03:22.000Z");
+    expect(formatAsOfTime(epochMs, "Not/AZone")).toBe(
+      "2026-08-31T20:03:22.000Z",
+    );
+  });
+
+  it("falls back to a dash for a non-finite instant", () => {
+    expect(formatAsOfTime(Number.NaN, "UTC")).toBe("—");
   });
 });

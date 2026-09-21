@@ -53,3 +53,32 @@ export function formatHourRange(hour: number | null): string {
   const next = (hour + 1) % 24;
   return `${pad(hour)}:00–${pad(next)}:00`;
 }
+
+/** `"14:03:22"` — the receiver-local wall-clock time an instant falls on,
+ * 24-hour with seconds. Used for the panel's "as of" line: when its figures
+ * were actually fetched (`UseQueryResult.dataUpdatedAt`, a `Date.now()`-style
+ * epoch millisecond reading, not an ISO string), so a viewer can tell a
+ * quietly-stale card apart from one `refetchInterval` just refreshed. The
+ * same three-field local-time format `features/aircraft-detail/lib/format.ts`'s
+ * `formatReceiverLocalTime` produces for "Last seen", kept local per this
+ * file's own self-contained-feature duplication convention (see the module
+ * doc comment) rather than imported. Falls back to a bare ISO instant if the
+ * timezone is unparseable, the same way that function does, rather than
+ * throwing mid-render. */
+export function formatAsOfTime(epochMs: number, timezone: string): string {
+  const when = new Date(epochMs);
+  if (Number.isNaN(when.getTime())) {
+    return "—";
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(when);
+  } catch {
+    return when.toISOString();
+  }
+}
