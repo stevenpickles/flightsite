@@ -24,6 +24,7 @@ import {
   useReceiverScorecardQuery,
   type ReceiverHealth,
 } from "@/lib/api/receiverStats";
+import { Button } from "@/components/ui/button";
 import {
   formatCount,
   formatDistance,
@@ -78,7 +79,7 @@ export interface ReceiverScorecardProps {
 }
 
 export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
-  const { data, isLoading, isError } = useReceiverScorecardQuery();
+  const { data, isLoading, isError, refetch } = useReceiverScorecardQuery();
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading scorecard…</p>;
@@ -86,7 +87,19 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
 
   if (isError || data === undefined) {
     return (
-      <p className="text-sm text-destructive">Could not load the scorecard.</p>
+      <div className="flex items-center gap-3">
+        <p role="alert" className="text-sm text-destructive">
+          Could not load the scorecard.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void refetch()}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
 

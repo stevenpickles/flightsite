@@ -321,6 +321,21 @@ export const analyticsQueryKeys = {
     ["analytics", "rarity", params] as const,
 };
 
+/** Applied to every Analytics query below (R3-05): the app-wide default of
+ * `retry: 1` and no focus refetch (`lib/queryClient.ts`) means a card that
+ * caught one transient 500 never asked again — a tab left open all afternoon
+ * simply stayed broken. `retry: 3` with a short, fixed delay — the same
+ * `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call, rather than
+ * TanStack Query's default exponential backoff climbing toward a 30 s
+ * ceiling: a card on a page someone has open should settle in well under a
+ * second. `refetchOnWindowFocus: true` gives a returning user a free extra
+ * chance beyond that without waiting on `refetchInterval` (R3-06). */
+const RESILIENT_QUERY_OPTIONS = {
+  retry: 3,
+  retryDelay: 250,
+  refetchOnWindowFocus: true,
+} as const;
+
 /** `staleTime`/`refetchOnWindowFocus`/`refetchInterval` are overridden past
  * the app-wide defaults (`lib/queryClient.ts`'s 30 s, no focus refetch, no
  * interval — never changed here): the Live Map's "Today at a glance" card is
@@ -338,7 +353,7 @@ export function useAnalyticsSummaryQuery(
     queryKey: analyticsQueryKeys.summary(params, localDate),
     queryFn: () => getAnalyticsSummary(params),
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
+    ...RESILIENT_QUERY_OPTIONS,
     refetchInterval: 60_000,
   });
 }
@@ -349,6 +364,7 @@ export function useAnalyticsDailyQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.daily(params),
     queryFn: () => getAnalyticsDaily(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -358,6 +374,7 @@ export function useAnalyticsClassificationActivityQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.classification(params),
     queryFn: () => getAnalyticsClassificationActivity(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -367,6 +384,7 @@ export function useAnalyticsTopAircraftQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topAircraft(params),
     queryFn: () => getAnalyticsTopAircraft(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -376,6 +394,7 @@ export function useAnalyticsTopTypesQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topTypes(params),
     queryFn: () => getAnalyticsTopTypes(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -385,6 +404,7 @@ export function useAnalyticsTopOperatorsQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topOperators(params),
     queryFn: () => getAnalyticsTopOperators(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -394,5 +414,6 @@ export function useAnalyticsRarityQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.rarity(params),
     queryFn: () => getAnalyticsRarity(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }

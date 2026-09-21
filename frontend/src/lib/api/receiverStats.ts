@@ -155,6 +155,21 @@ async function apiV1Fetch<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** Applied to every Receiver-stats query below (R3-05): the app-wide default
+ * of `retry: 1` and no focus refetch (`lib/queryClient.ts`) meant a card that
+ * caught one transient 500 never asked again short of a window change or a
+ * reload. `retry: 3` with a short, fixed delay — the same
+ * `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call, rather than
+ * TanStack Query's default exponential backoff climbing toward a 30 s
+ * ceiling: a chart on a page someone has open should settle in well under a
+ * second. `refetchOnWindowFocus: true` gives a returning user a free extra
+ * chance beyond that without waiting on a `refetchInterval` (R3-06). */
+const RESILIENT_QUERY_OPTIONS = {
+  retry: 3,
+  retryDelay: 250,
+  refetchOnWindowFocus: true,
+} as const;
+
 /** How often the scorecard is re-polled while the page is visible — short
  * enough that "current visible"/"messages per sec" reads as live without a
  * WebSocket subscription of its own. */
@@ -169,6 +184,7 @@ export function useReceiverScorecardQuery(): UseQueryResult<ReceiverScorecard> {
     queryKey: ["receiver", "scorecard"],
     queryFn: getReceiverScorecard,
     refetchInterval: SCORECARD_POLL_MS,
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -208,6 +224,7 @@ export function useReceiverMetricSeriesQuery(
   return useQuery({
     queryKey: ["receiver", "metrics", params],
     queryFn: () => getReceiverMetricSeries(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -221,6 +238,7 @@ export function useReceiverRangeByBearingQuery(): UseQueryResult<ReceiverRangeBy
   return useQuery({
     queryKey: ["receiver", "range-by-bearing"],
     queryFn: getReceiverRangeByBearing,
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -260,6 +278,7 @@ export function useReceiverSignalDistributionQuery(
   return useQuery({
     queryKey: ["receiver", "signal-distribution", params],
     queryFn: () => getReceiverSignalDistribution(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -271,5 +290,6 @@ export function useReceiverLifetimeStatsQuery(): UseQueryResult<ReceiverLifetime
   return useQuery({
     queryKey: ["receiver", "lifetime"],
     queryFn: getReceiverLifetimeStats,
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }

@@ -19,6 +19,7 @@ export interface ReceiverActivityCardProps {
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 export function ReceiverActivityCard({
@@ -26,6 +27,7 @@ export function ReceiverActivityCard({
   items,
   isLoading,
   error,
+  onRetry,
 }: ReceiverActivityCardProps) {
   const hasData = items.some(
     (row) => row.receiver_messages !== null || row.receiver_positions !== null,
@@ -106,6 +108,7 @@ export function ReceiverActivityCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

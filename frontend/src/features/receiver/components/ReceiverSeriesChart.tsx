@@ -34,7 +34,7 @@ export function ReceiverSeriesChart({
   timezone,
 }: ReceiverSeriesChartProps) {
   const effectiveResolution = config.alwaysDaily ? "daily" : resolution;
-  const { data, isLoading, isError } = useReceiverMetricSeriesQuery({
+  const { data, isLoading, isError, refetch } = useReceiverMetricSeriesQuery({
     metric: config.metric,
     resolution: effectiveResolution,
   });
@@ -88,6 +88,7 @@ export function ReceiverSeriesChart({
       title={config.title}
       isLoading={isLoading}
       error={isError ? "Could not load this chart." : undefined}
+      onRetry={() => void refetch()}
     >
       <EChart
         buildOption={buildOption}

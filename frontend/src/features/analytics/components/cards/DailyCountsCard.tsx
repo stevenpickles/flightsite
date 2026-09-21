@@ -17,6 +17,7 @@ export interface DailyCountsCardProps {
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 export function DailyCountsCard({
@@ -24,6 +25,7 @@ export function DailyCountsCard({
   items,
   isLoading,
   error,
+  onRetry,
 }: DailyCountsCardProps) {
   const buildOption = useCallback(
     (theme: ChartTheme) => {
@@ -96,6 +98,7 @@ export function DailyCountsCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

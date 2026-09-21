@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import type { UnitSystem } from "@/lib/api/config";
 import { useReceiverLifetimeStatsQuery } from "@/lib/api/receiverStats";
+import { Button } from "@/components/ui/button";
 import {
   cardinalFromDegrees,
   formatCount,
@@ -30,7 +31,7 @@ export function LifetimeStatsSection({
   units,
   timezone,
 }: LifetimeStatsSectionProps) {
-  const { data, isLoading, isError } = useReceiverLifetimeStatsQuery();
+  const { data, isLoading, isError, refetch } = useReceiverLifetimeStatsQuery();
 
   if (isLoading) {
     return (
@@ -42,9 +43,19 @@ export function LifetimeStatsSection({
 
   if (isError || data === undefined) {
     return (
-      <p className="text-sm text-destructive">
-        Could not load lifetime statistics.
-      </p>
+      <div className="flex items-center gap-3">
+        <p role="alert" className="text-sm text-destructive">
+          Could not load lifetime statistics.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void refetch()}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
 

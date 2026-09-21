@@ -80,6 +80,7 @@ export function AnalyticsPage() {
             topAircraftQuery.error,
             "Could not load top aircraft.",
           )}
+          onRetry={() => void topAircraftQuery.refetch()}
         />
 
         <TopGroupCard
@@ -94,6 +95,7 @@ export function AnalyticsPage() {
             topTypesQuery.error,
             "Could not load top types.",
           )}
+          onRetry={() => void topTypesQuery.refetch()}
         />
 
         <TopGroupCard
@@ -108,6 +110,7 @@ export function AnalyticsPage() {
             topOperatorsQuery.error,
             "Could not load top operators.",
           )}
+          onRetry={() => void topOperatorsQuery.refetch()}
         />
 
         <ClassificationActivityCard
@@ -119,6 +122,7 @@ export function AnalyticsPage() {
             classificationQuery.error,
             "Could not load classification activity.",
           )}
+          onRetry={() => void classificationQuery.refetch()}
         />
 
         <DailyCountsCard
@@ -130,6 +134,7 @@ export function AnalyticsPage() {
             dailyQuery.error,
             "Could not load daily counts.",
           )}
+          onRetry={() => void dailyQuery.refetch()}
         />
 
         <MaxDistanceCard
@@ -142,6 +147,7 @@ export function AnalyticsPage() {
             dailyQuery.error,
             "Could not load maximum detection distance.",
           )}
+          onRetry={() => void dailyQuery.refetch()}
         />
 
         <ReceiverActivityCard
@@ -153,6 +159,7 @@ export function AnalyticsPage() {
             dailyQuery.error,
             "Could not load receiver activity.",
           )}
+          onRetry={() => void dailyQuery.refetch()}
         />
 
         <NeverSeenBeforeCard
@@ -164,6 +171,7 @@ export function AnalyticsPage() {
             dailyQuery.error,
             "Could not load new-aircraft counts.",
           )}
+          onRetry={() => void dailyQuery.refetch()}
         />
 
         <RarityListsCard
@@ -178,6 +186,7 @@ export function AnalyticsPage() {
             rarityQuery.error,
             "Could not load rarity data.",
           )}
+          onRetry={() => void rarityQuery.refetch()}
         />
       </div>
     </div>

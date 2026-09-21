@@ -18,6 +18,7 @@ export interface ClassificationActivityCardProps {
   series: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 export function ClassificationActivityCard({
@@ -25,6 +26,7 @@ export function ClassificationActivityCard({
   series,
   isLoading,
   error,
+  onRetry,
 }: ClassificationActivityCardProps) {
   const buildOption = useCallback(
     (theme: ChartTheme) => {
@@ -97,6 +99,7 @@ export function ClassificationActivityCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

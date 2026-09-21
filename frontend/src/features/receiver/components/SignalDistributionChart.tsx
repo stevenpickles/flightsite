@@ -13,7 +13,8 @@ const TITLE = "Signal strength distribution";
  * `rssi_avg_db` (roadmap slice 052) over the receiver's whole history by
  * default — `docs/API.md` §3.8. */
 export function SignalDistributionChart() {
-  const { data, isLoading, isError } = useReceiverSignalDistributionQuery();
+  const { data, isLoading, isError, refetch } =
+    useReceiverSignalDistributionQuery();
   const buckets = useMemo(() => data?.buckets ?? [], [data?.buckets]);
 
   const { summary } = useMemo(
@@ -32,6 +33,7 @@ export function SignalDistributionChart() {
       title={TITLE}
       isLoading={isLoading}
       error={isError ? "Could not load this chart." : undefined}
+      onRetry={() => void refetch()}
     >
       <EChart
         buildOption={buildOption}

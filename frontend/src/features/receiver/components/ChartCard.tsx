@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
+
 interface ChartCardProps {
   titleId: string;
   title: string;
@@ -8,6 +10,9 @@ interface ChartCardProps {
    * `features/analytics/components/AnalyticsCard.tsx`'s loading/error shape,
    * the pattern roadmap slice 032 established for every chart card. */
   error?: string;
+  /** Refetches the query behind this card (R3-05) — a failed chart otherwise
+   * never recovers short of a preset/window change or a full reload. */
+  onRetry?: () => void;
   children: ReactNode;
 }
 
@@ -19,6 +24,7 @@ export function ChartCard({
   title,
   isLoading,
   error,
+  onRetry,
   children,
 }: ChartCardProps) {
   return (
@@ -34,7 +40,14 @@ export function ChartCard({
           Loading…
         </p>
       ) : error !== undefined ? (
-        <p className="py-8 text-center text-sm text-destructive">{error}</p>
+        <div className="flex flex-col items-center gap-2 py-8 text-center">
+          <p className="text-sm text-destructive">{error}</p>
+          {onRetry !== undefined && (
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          )}
+        </div>
       ) : (
         children
       )}

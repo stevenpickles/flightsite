@@ -32,6 +32,7 @@ export interface TopAircraftCardProps {
   rows: AnalyticsAircraftRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 /** The registration, or the upper-cased hex when none is known — what the
@@ -80,6 +81,7 @@ export function TopAircraftCard({
   rows,
   isLoading,
   error,
+  onRetry,
 }: TopAircraftCardProps) {
   const navigate = useNavigate();
 
@@ -172,6 +174,7 @@ export function TopAircraftCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

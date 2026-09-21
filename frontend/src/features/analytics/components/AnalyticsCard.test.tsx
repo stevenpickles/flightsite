@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 
@@ -39,6 +40,40 @@ describe("AnalyticsCard", () => {
       screen.getByText("Could not load top aircraft."),
     ).toBeInTheDocument();
     expect(screen.queryByText("content")).not.toBeInTheDocument();
+  });
+
+  it("shows no Retry button in the error state when onRetry is omitted (R3-08's page-banner cards)", () => {
+    render(
+      <AnalyticsCard
+        title="Top aircraft"
+        isLoading={false}
+        error="Could not load top aircraft."
+      >
+        <p>content</p>
+      </AnalyticsCard>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a Retry button in the error state that calls onRetry (R3-05)", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <AnalyticsCard
+        title="Top aircraft"
+        isLoading={false}
+        error="Could not load top aircraft."
+        onRetry={onRetry}
+      >
+        <p>content</p>
+      </AnalyticsCard>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("renders children and the echoed window once loaded", () => {

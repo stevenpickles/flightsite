@@ -36,6 +36,7 @@ export interface TopGroupCardProps {
   rows: AnalyticsGroupRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 /** How much of a description the axis shows before the tooltip takes over:
@@ -89,6 +90,7 @@ export function TopGroupCard({
   rows,
   isLoading,
   error,
+  onRetry,
 }: TopGroupCardProps) {
   // Reversed so the highest-ranked row (the backend's own sort) ends up at
   // the top of the horizontal bar — ECharts draws a category axis's first
@@ -168,6 +170,7 @@ export function TopGroupCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

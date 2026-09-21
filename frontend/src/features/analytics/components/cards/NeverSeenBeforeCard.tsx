@@ -18,6 +18,7 @@ export interface NeverSeenBeforeCardProps {
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  onRetry?: () => void;
 }
 
 export function NeverSeenBeforeCard({
@@ -25,6 +26,7 @@ export function NeverSeenBeforeCard({
   items,
   isLoading,
   error,
+  onRetry,
 }: NeverSeenBeforeCardProps) {
   const total = items.reduce((sum, row) => sum + row.new_aircraft, 0);
 
@@ -76,6 +78,7 @@ export function NeverSeenBeforeCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

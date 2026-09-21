@@ -68,6 +68,43 @@ describe("ReceiverPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("recovers a failed chart without a reload when Retry is clicked (R3-05)", async () => {
+    const { fetchMock: baseline } = installReceiverStatsApiMock();
+    let failSignalDistribution = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname === "/api/v1/receiver/signal-distribution" &&
+          failSignalDistribution
+        ) {
+          return Promise.resolve(new Response("", { status: 500 }));
+        }
+        return baseline(input, init);
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText("Could not load this chart."),
+    ).toBeInTheDocument();
+
+    failSignalDistribution = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Could not load this chart."),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      await screen.findByText(/Signal strength distribution over/),
+    ).toBeInTheDocument();
+  });
+
   it("requests hourly resolution by default and switches to high/daily via the window selector", async () => {
     const { fetchMock } = installReceiverStatsApiMock();
     const user = userEvent.setup();
