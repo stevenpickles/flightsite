@@ -19,6 +19,7 @@ import { LifetimeSection } from "@/features/aircraft-detail/components/LifetimeS
 import { LiveMapJumpLink } from "@/features/aircraft-detail/components/LiveMapJumpLink";
 import { RecentSightingsSection } from "@/features/aircraft-detail/components/RecentSightingsSection";
 import { UnknownValue } from "@/features/aircraft-detail/components/UnknownValue";
+import { formatAircraftAge } from "@/features/aircraft-detail/lib/format";
 import {
   QueryErrorBanner,
   QueryErrorState,
@@ -142,6 +143,15 @@ export function AircraftDetailPage() {
                 : String(detail.manufacture_year)
             }
             provenanceSource={detail.provenance.manufacture_year ?? "decoder"}
+          />
+          {/* SPEC §23 lists "manufacture year; aircraft age" as two items,
+           * and the second was implemented nowhere (review R2-10). It is
+           * computed here rather than served, so it is attributed to
+           * `derived` (SPEC §22) — nobody told FlightSite this. */}
+          <FieldRow
+            label="Age"
+            value={formatAircraftAge(detail.manufacture_year)}
+            provenanceSource="derived"
           />
           <FieldRow
             label="Owner"

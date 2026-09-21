@@ -70,6 +70,8 @@ describe("AircraftDetailPage", () => {
     // Both "Operator" and "Operator group" show the same string here.
     expect(screen.getAllByText("Delta Air Lines")).toHaveLength(2);
     expect(screen.getByText("2018")).toBeInTheDocument();
+    // SPEC §23's second item, derived from the first (review R2-10).
+    expect(screen.getByText(/^\d+ years \(built 2018\)$/)).toBeInTheDocument();
     expect(screen.getByText("Some Owner LLC")).toBeInTheDocument();
     // Mission renders through MISSION_LABELS, never the raw slug.
     expect(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cardinalFromDegrees,
+  formatAircraftAge,
   formatAltitude,
   formatDegreesWithCardinal,
   formatDistance,
@@ -237,6 +238,32 @@ describe("formatReceiverLocalDateTime", () => {
 
   it("falls back to the ISO string for an unparseable instant", () => {
     expect(formatReceiverLocalDateTime("not-a-date", "UTC")).toBe("not-a-date");
+  });
+});
+
+describe("formatAircraftAge", () => {
+  const NOW = new Date("2026-09-20T12:00:00Z");
+
+  it("names the age and the year it was built", () => {
+    expect(formatAircraftAge(2008, NOW)).toBe("18 years (built 2008)");
+  });
+
+  it("uses the singular for one year", () => {
+    expect(formatAircraftAge(2025, NOW)).toBe("1 year (built 2025)");
+  });
+
+  it("says under a year rather than '0 years'", () => {
+    expect(formatAircraftAge(2026, NOW)).toBe("Under a year (built 2026)");
+  });
+
+  it("is Unknown when the registry has no manufacture year", () => {
+    // §2.7: absent is `null`, and the caller renders it as Unknown — never
+    // as a fabricated zero.
+    expect(formatAircraftAge(null, NOW)).toBeNull();
+  });
+
+  it("refuses to print a negative age for a registry's future year", () => {
+    expect(formatAircraftAge(2031, NOW)).toBeNull();
   });
 });
 

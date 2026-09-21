@@ -287,6 +287,38 @@ export function formatReceiverLocalDateTime(
   }
 }
 
+/**
+ * Aircraft age from its manufacture year — `"18 years (built 2008)"` (SPEC
+ * §23/§50, PRODUCT §4.3; review R2-10 found it implemented nowhere).
+ *
+ * Whole calendar years, and the built year is carried along so the
+ * approximation is visible rather than implied: a registry's manufacture
+ * *year* cannot say whether an airframe rolled out in January or December,
+ * so "18 years" means "in its eighteenth calendar year", not eighteen years
+ * to the day. That is exactly what SPEC §23 asks for and no more, which is
+ * why this is `derived` provenance rather than a value from a source.
+ *
+ * `null` for an absent year (the caller renders `Unknown`, §2.7) and also
+ * for a year in the future — a registry typo must not print "-3 years".
+ */
+export function formatAircraftAge(
+  manufactureYear: number | null,
+  now: Date = new Date(),
+): string | null {
+  if (manufactureYear === null || !Number.isFinite(manufactureYear)) {
+    return null;
+  }
+  const years = now.getFullYear() - manufactureYear;
+  if (years < 0) {
+    return null;
+  }
+  const built = `built ${manufactureYear}`;
+  if (years === 0) {
+    return `Under a year (${built})`;
+  }
+  return `${years} ${years === 1 ? "year" : "years"} (${built})`;
+}
+
 /** The receiver-local calendar day an ISO instant falls on, as
  * `"YYYY-MM-DD"` — the key the activity feed groups its rows by (review
  * R2-06). Built from `formatToParts` rather than a locale pattern so the
