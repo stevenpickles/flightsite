@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiFetch, ApiError } from "@/lib/api/client";
+import {
+  apiFetch,
+  ApiError,
+  describeError,
+  NetworkError,
+} from "@/lib/api/client";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -103,5 +108,47 @@ describe("apiFetch", () => {
     await expect(
       apiFetch("/api/internal/decoder/test"),
     ).resolves.toBeUndefined();
+  });
+
+  it("wraps a transport failure in a NetworkError with a human message", async () => {
+    const cause = new TypeError("Failed to fetch");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
+
+    let error: unknown;
+    try {
+      await apiFetch("/api/internal/config");
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(NetworkError);
+    expect((error as NetworkError).message).toBe(
+      "FlightSite's backend is not responding.",
+    );
+    // The raw browser text is kept for devtools, not shown to the user.
+    expect((error as NetworkError).cause).toBe(cause);
+    expect((error as NetworkError).message).not.toMatch(/failed to fetch/i);
+  });
+});
+
+describe("describeError", () => {
+  it("returns an ApiError's own (backend-authored) message verbatim", () => {
+    const error = new ApiError(422, "invalid receiver host");
+    expect(describeError(error)).toBe("invalid receiver host");
+  });
+
+  it("returns NetworkError's fixed transport message", () => {
+    const error = new NetworkError(new TypeError("Failed to fetch"));
+    expect(describeError(error)).toBe(
+      "FlightSite's backend is not responding.",
+    );
+  });
+
+  it("never surfaces a plain Error's own message for anything else", () => {
+    expect(describeError(new TypeError("Failed to fetch"))).toBe(
+      "Something went wrong.",
+    );
+    expect(describeError("kaboom")).toBe("Something went wrong.");
+    expect(describeError(null)).toBe("Something went wrong.");
   });
 });
