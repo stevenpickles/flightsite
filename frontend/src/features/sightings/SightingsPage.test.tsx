@@ -263,6 +263,35 @@ describe("SightingsPage", () => {
     );
   });
 
+  it("keeps Status on screen and defers the columns that crowded it out (R2-08, R2-13)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [sightingRow({ id: 1 })],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+    await screen.findByText("N302DN");
+
+    const header = (label: string) =>
+      screen.getByRole("columnheader", { name: label });
+
+    // §57's alert/interesting column is essential — it is the one a
+    // 1440x900 desktop could not see at all.
+    expect(header("Status").className).not.toContain("hidden");
+    expect(header("Start").className).not.toContain("hidden");
+    // The four that were costing it that width wait for a wide window, and
+    // their header and body cell agree about it.
+    for (const label of ["Classification", "Lowest alt.", "Positions"]) {
+      expect(header(label).className).toContain("2xl:table-cell");
+    }
+    const row = screen.getByTestId("sighting-row");
+    expect(within(row).getByText("2210").className).toContain("2xl:table-cell");
+  });
+
   it("gives every row a keyboard route into its sighting (R2-07)", async () => {
     installSightingsApiMock({
       list: {

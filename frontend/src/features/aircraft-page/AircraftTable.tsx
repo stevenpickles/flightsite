@@ -13,6 +13,12 @@ import {
   formatDistance,
   formatReceiverLocalDateTime,
 } from "@/features/aircraft-detail/lib/format";
+import { TableScroller } from "@/features/history/components/TableScroller";
+import {
+  columnClasses,
+  columnVisibilityClass,
+  type PrioritizedColumn,
+} from "@/features/history/lib/columnPriority";
 import type {
   AircraftListRow,
   AircraftSortKey,
@@ -21,24 +27,44 @@ import type {
 import type { UnitSystem } from "@/lib/api/config";
 import { cn } from "@/lib/utils";
 
-interface Column {
+interface Column extends PrioritizedColumn {
   key: AircraftSortKey;
   label: string;
-  align?: "right";
 }
 
+/**
+ * SPEC §56's ten columns, each declaring the narrowest window at which it
+ * earns its width (review R2-08).
+ *
+ * The four with no `showFrom` are what a phone gets: who it was, its
+ * address, when it was last heard, and how close it came — identity, time
+ * and distance, which the review named as the question the page is actually
+ * asked. Everything hidden is one click away on `/aircraft/:icao`.
+ */
 const COLUMNS: readonly Column[] = [
   { key: "registration", label: "Tail" },
   { key: "icao", label: "ICAO" },
-  { key: "type", label: "Type / model" },
-  { key: "operator", label: "Operator" },
-  { key: "classification", label: "Classification" },
-  { key: "first_seen", label: "First seen" },
+  { key: "type", label: "Type / model", showFrom: "md" },
+  { key: "operator", label: "Operator", showFrom: "lg" },
+  { key: "classification", label: "Classification", showFrom: "xl" },
+  { key: "first_seen", label: "First seen", showFrom: "lg" },
   { key: "last_seen", label: "Last seen" },
-  { key: "sighting_count", label: "Sightings", align: "right" },
+  {
+    key: "sighting_count",
+    label: "Sightings",
+    align: "right",
+    showFrom: "md",
+  },
   { key: "closest_approach_nm", label: "Closest approach", align: "right" },
-  { key: "max_range_nm", label: "Farthest detection", align: "right" },
+  {
+    key: "max_range_nm",
+    label: "Farthest detection",
+    align: "right",
+    showFrom: "sm",
+  },
 ];
+
+const CELL = columnClasses(COLUMNS);
 
 export interface AircraftTableProps {
   rows: AircraftListRow[];
@@ -65,13 +91,15 @@ export function AircraftTable({
   const navigate = useNavigate();
 
   return (
-    <div
-      className={cn(
-        "overflow-x-auto transition-opacity",
-        refreshing && "opacity-60",
-      )}
+    <TableScroller
+      className={cn("transition-opacity", refreshing && "opacity-60")}
+      detailNoun="aircraft"
     >
-      <table className="w-full min-w-[900px] border-collapse text-sm">
+      {/* No fixed `min-w`: the columns that would have forced 900px of
+       * horizontal scrolling on a phone are hidden there instead, and the
+       * scroller is the floor for the cases the breakpoints cannot cover —
+       * an unusually long operator name, a very narrow window. */}
+      <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
             {COLUMNS.map((column) => {
@@ -89,7 +117,7 @@ export function AircraftTable({
                   }
                   className={cn(
                     "px-3 py-2 font-semibold",
-                    column.align === "right" && "text-right",
+                    columnVisibilityClass(column),
                   )}
                 >
                   <button
@@ -127,7 +155,7 @@ export function AircraftTable({
               onClick={() => navigate(`/aircraft/${row.icao}`)}
               className="cursor-pointer border-b border-border/60 hover:bg-secondary/50"
             >
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.registration)}>
                 <Link
                   to={`/aircraft/${row.icao}`}
                   onClick={(event) => event.stopPropagation()}
@@ -136,10 +164,10 @@ export function AircraftTable({
                   {row.registration ?? <UnknownValue />}
                 </Link>
               </td>
-              <td className="px-3 py-2 font-mono text-xs">
+              <td className={cn("px-3 py-2 font-mono text-xs", CELL.icao)}>
                 {row.icao.toUpperCase()}
               </td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.type)}>
                 {row.aircraft_type ?? <UnknownValue />}
                 {row.model !== null && (
                   <span className="block text-xs text-muted-foreground">
@@ -147,29 +175,35 @@ export function AircraftTable({
                   </span>
                 )}
               </td>
-              <td className="px-3 py-2">{row.operator ?? <UnknownValue />}</td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.operator)}>
+                {row.operator ?? <UnknownValue />}
+              </td>
+              <td className={cn("px-3 py-2", CELL.classification)}>
                 {classificationSummary(row.classification) ?? <UnknownValue />}
               </td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td
+                className={cn("px-3 py-2 whitespace-nowrap", CELL.first_seen)}
+              >
                 {formatReceiverLocalDateTime(row.first_seen, timezone)}
               </td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td className={cn("px-3 py-2 whitespace-nowrap", CELL.last_seen)}>
                 {formatReceiverLocalDateTime(row.last_seen, timezone)}
               </td>
-              <td className="px-3 py-2 text-right">{row.sighting_count}</td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.sighting_count)}>
+                {row.sighting_count}
+              </td>
+              <td className={cn("px-3 py-2", CELL.closest_approach_nm)}>
                 {formatDistance(row.closest_approach_nm, units) ?? (
                   <UnknownValue />
                 )}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.max_range_nm)}>
                 {formatDistance(row.max_range_nm, units) ?? <UnknownValue />}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScroller>
   );
 }

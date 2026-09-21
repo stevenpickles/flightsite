@@ -139,7 +139,10 @@ export function SightingDetailPage() {
             onRefresh={() => void detailQuery.refetch()}
             intervalMs={isOpen ? DETAIL_REFRESH_MS : null}
           />
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
+          {/* One column on a phone: two 134px columns are what printed
+           * "Ended Ongoing" off the right edge in the review's 390px
+           * capture (R2-08). */}
+          <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <dt className="text-xs text-muted-foreground">Started</dt>
               <dd>

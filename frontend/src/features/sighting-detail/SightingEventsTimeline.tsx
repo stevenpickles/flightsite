@@ -66,13 +66,17 @@ export function SightingEventsTimeline({
         return (
           <li
             key={`${event.at}-${index}`}
-            className="flex items-start gap-3 text-sm"
+            // Wrapping, so a long label and the timestamp share the row when
+            // there is width for it and stack when there is not. At 390px
+            // the fixed row printed "Alert matched" on top of its own
+            // 21:34:36 (review R2-08).
+            className="flex flex-wrap items-start gap-x-3 gap-y-0.5 text-sm"
           >
             <Icon
               aria-hidden="true"
               className={`mt-0.5 size-4 shrink-0 ${tone}`}
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="font-medium">{info.label}</p>
               {info.detail !== null && (
                 <p className="text-xs text-muted-foreground">{info.detail}</p>

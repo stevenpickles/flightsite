@@ -16,6 +16,12 @@ import {
   formatReceiverLocalDateTime,
   formatReceiverLocalTime,
 } from "@/features/aircraft-detail/lib/format";
+import { TableScroller } from "@/features/history/components/TableScroller";
+import {
+  columnClasses,
+  columnVisibilityClass,
+  type PrioritizedColumn,
+} from "@/features/history/lib/columnPriority";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
@@ -27,13 +33,24 @@ import type {
 import type { UnitSystem } from "@/lib/api/config";
 import { cn } from "@/lib/utils";
 
-interface Column {
+interface Column extends PrioritizedColumn {
   key: string;
   label: string;
   sortKey?: SightingSortKey;
-  align?: "right";
 }
 
+/**
+ * SPEC §57's columns, each declaring the narrowest window at which it earns
+ * its width (review R2-08, R2-13).
+ *
+ * Status is essential and stays essential: it is §57's alert/interesting
+ * column, it answers "was anything interesting?", and it was the one a
+ * standard 1440x900 desktop could not see — 98px of it clipped past the
+ * right edge of a scroller with no visible scrollbar. The four columns that
+ * were costing it that width (classification, both altitudes, position
+ * count) now wait for `2xl`, which is what brings Status back on screen at
+ * 1440. None of them is lost: every one is on the sighting's own page.
+ */
 const COLUMNS: readonly Column[] = [
   { key: "started_at", label: "Start", sortKey: "started_at" },
   { key: "ended_at", label: "End" },
@@ -42,28 +59,48 @@ const COLUMNS: readonly Column[] = [
     label: "Duration",
     sortKey: "duration_s",
     align: "right",
+    showFrom: "sm",
   },
   { key: "tail", label: "Tail / callsign" },
-  { key: "type", label: "Type" },
-  { key: "operator", label: "Operator" },
-  { key: "classification", label: "Classification" },
+  { key: "type", label: "Type", showFrom: "md" },
+  { key: "operator", label: "Operator", showFrom: "lg" },
+  { key: "classification", label: "Classification", showFrom: "2xl" },
   {
     key: "closest_approach_nm",
     label: "Closest approach",
     sortKey: "closest_approach_nm",
     align: "right",
+    showFrom: "sm",
   },
   {
     key: "max_range_nm",
     label: "Max range",
     sortKey: "max_range_nm",
     align: "right",
+    showFrom: "lg",
   },
-  { key: "lowest_altitude_ft", label: "Lowest alt.", align: "right" },
-  { key: "highest_altitude_ft", label: "Highest alt.", align: "right" },
-  { key: "position_count", label: "Positions", align: "right" },
+  {
+    key: "lowest_altitude_ft",
+    label: "Lowest alt.",
+    align: "right",
+    showFrom: "2xl",
+  },
+  {
+    key: "highest_altitude_ft",
+    label: "Highest alt.",
+    align: "right",
+    showFrom: "2xl",
+  },
+  {
+    key: "position_count",
+    label: "Positions",
+    align: "right",
+    showFrom: "2xl",
+  },
   { key: "status", label: "Status" },
 ];
+
+const CELL = columnClasses(COLUMNS);
 
 export interface SightingsTableProps {
   rows: SightingRow[];
@@ -87,13 +124,14 @@ export function SightingsTable({
   const navigate = useNavigate();
 
   return (
-    <div
-      className={cn(
-        "overflow-x-auto transition-opacity",
-        refreshing && "opacity-60",
-      )}
+    <TableScroller
+      className={cn("transition-opacity", refreshing && "opacity-60")}
+      detailNoun="sighting's"
     >
-      <table className="w-full min-w-[1100px] border-collapse text-sm">
+      {/* No fixed `min-w`: thirteen columns forced 1100px at every width,
+       * which is what pushed Status off a 1440px desktop and left a phone
+       * scrolling 3.2x sideways. */}
+      <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
             {COLUMNS.map((column) => {
@@ -112,7 +150,7 @@ export function SightingsTable({
                   }
                   className={cn(
                     "px-3 py-2 font-semibold",
-                    column.align === "right" && "text-right",
+                    columnVisibilityClass(column),
                   )}
                 >
                   {column.sortKey === undefined ? (
@@ -164,7 +202,9 @@ export function SightingsTable({
                * focusable element at all, so a keyboard or screen-reader
                * user could not open *any* sighting from the log (review
                * R2-07). The row's own click handler stays for the mouse. */}
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td
+                className={cn("px-3 py-2 whitespace-nowrap", CELL.started_at)}
+              >
                 <Link
                   to={`/sightings/${row.id}`}
                   onClick={(event) => event.stopPropagation()}
@@ -173,21 +213,23 @@ export function SightingsTable({
                   {formatReceiverLocalDateTime(row.started_at, timezone)}
                 </Link>
               </td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td className={cn("px-3 py-2 whitespace-nowrap", CELL.ended_at)}>
                 {row.ended_at === null ? (
                   <span className="font-medium text-accent">Ongoing</span>
                 ) : (
                   formatReceiverLocalTime(row.ended_at, timezone)
                 )}
               </td>
-              <td className="px-3 py-2 text-right whitespace-nowrap">
+              <td
+                className={cn("px-3 py-2 whitespace-nowrap", CELL.duration_s)}
+              >
                 {row.duration_s === null ? (
                   <UnknownValue />
                 ) : (
                   formatSightingDuration(row.duration_s)
                 )}
               </td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.tail)}>
                 {row.registration ?? row.callsign ?? <UnknownValue />}
                 {row.registration !== null && row.callsign !== null && (
                   <span className="block text-xs text-muted-foreground">
@@ -195,7 +237,7 @@ export function SightingsTable({
                   </span>
                 )}
               </td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.type)}>
                 {row.aircraft_type ?? <UnknownValue />}
                 {row.model !== null && (
                   <span className="block text-xs text-muted-foreground">
@@ -203,30 +245,34 @@ export function SightingsTable({
                   </span>
                 )}
               </td>
-              <td className="px-3 py-2">{row.operator ?? <UnknownValue />}</td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.operator)}>
+                {row.operator ?? <UnknownValue />}
+              </td>
+              <td className={cn("px-3 py-2", CELL.classification)}>
                 {classificationSummary(row.classification) ?? <UnknownValue />}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.closest_approach_nm)}>
                 {formatDistance(row.closest_approach_nm, units) ?? (
                   <UnknownValue />
                 )}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.max_range_nm)}>
                 {formatDistance(row.max_range_nm, units) ?? <UnknownValue />}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.lowest_altitude_ft)}>
                 {formatAltitude(row.lowest_altitude_ft, units) ?? (
                   <UnknownValue />
                 )}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className={cn("px-3 py-2", CELL.highest_altitude_ft)}>
                 {formatAltitude(row.highest_altitude_ft, units) ?? (
                   <UnknownValue />
                 )}
               </td>
-              <td className="px-3 py-2 text-right">{row.position_count}</td>
-              <td className="px-3 py-2">
+              <td className={cn("px-3 py-2", CELL.position_count)}>
+                {row.position_count}
+              </td>
+              <td className={cn("px-3 py-2", CELL.status)}>
                 <div className="flex flex-wrap items-center gap-1">
                   {row.max_alert_severity !== null && (
                     <AlertSeverityBadge severity={row.max_alert_severity} />
@@ -248,6 +294,6 @@ export function SightingsTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScroller>
   );
 }
