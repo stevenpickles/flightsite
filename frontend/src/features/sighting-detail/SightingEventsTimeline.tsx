@@ -16,7 +16,10 @@ import {
   Tag,
 } from "lucide-react";
 
-import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
+import {
+  formatReceiverLocalDateTime,
+  formatReceiverLocalTime,
+} from "@/features/aircraft-detail/lib/format";
 import { describeSightingEvent } from "@/features/sighting-detail/lib/eventDescriptions";
 import type { SightingEvent, SightingEventType } from "@/lib/api/sightings";
 
@@ -75,9 +78,16 @@ export function SightingEventsTimeline({
                 <p className="text-xs text-muted-foreground">{info.detail}</p>
               )}
             </div>
-            <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+            {/* A sighting can straddle midnight, so the time of day alone is
+             * not an instant; the `title` carries the receiver-local
+             * datetime and the UTC instant behind it (review R2-06). */}
+            <time
+              dateTime={event.at}
+              title={`${formatReceiverLocalDateTime(event.at, timezone)} · ${event.at}`}
+              className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground"
+            >
               {formatReceiverLocalTime(event.at, timezone)}
-            </span>
+            </time>
           </li>
         );
       })}

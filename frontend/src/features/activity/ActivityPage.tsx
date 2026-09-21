@@ -21,8 +21,11 @@
  * page came back" as the signal there is a next one.
  */
 
+import { Fragment } from "react";
+
 import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPaginationControls";
 import { ActivityRow } from "@/features/activity/components/ActivityRow";
+import { groupActivityByDay } from "@/features/activity/lib/dayGroups";
 import { ActivityTypeFilter } from "@/features/activity/components/ActivityTypeFilter";
 import { useActivityPageState } from "@/features/activity/hooks/useActivityPageState";
 import { PAGE_SIZE } from "@/features/activity/lib/urlState";
@@ -106,13 +109,32 @@ export function ActivityPage() {
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
               <ul className="divide-y divide-border/60">
-                {listQuery.data.items.map((event) => (
-                  <ActivityRow
-                    key={event.id}
-                    event={event}
-                    timezone={timezone}
-                  />
-                ))}
+                {groupActivityByDay(listQuery.data.items, timezone).map(
+                  (group, index) => (
+                    // `index` in the key as well as the day: an unordered
+                    // page would produce the same day twice, and a duplicate
+                    // React key would be a second bug on top of the first.
+                    <Fragment key={`${group.key}-${index}`}>
+                      <li className="bg-secondary/40 px-4 py-1.5">
+                        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {group.label}
+                          {group.label !== group.key && (
+                            <span className="ml-2 font-normal normal-case tracking-normal">
+                              {group.key}
+                            </span>
+                          )}
+                        </h2>
+                      </li>
+                      {group.events.map((event) => (
+                        <ActivityRow
+                          key={event.id}
+                          event={event}
+                          timezone={timezone}
+                        />
+                      ))}
+                    </Fragment>
+                  ),
+                )}
               </ul>
               <AircraftPaginationControls
                 page={state.page}

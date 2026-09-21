@@ -53,6 +53,21 @@ describe("ActivityPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("dates the rows by grouping them under a receiver-local day (R2-06)", async () => {
+    installActivityApiMock({ list: page(3) });
+    renderApp("/activity");
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(3),
+    );
+    // The fixture's events are all on 2026-08-31 UTC, and the mock receiver
+    // is on UTC — so one header, carrying the day the bare `12:00` times
+    // belonged to and never said.
+    const headers = screen.getAllByRole("heading", { level: 2 });
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toHaveTextContent("2026-08-31");
+  });
+
   it("offers Alerts and Emergencies, the feed's most common rows (R2-05)", async () => {
     const { fetchMock } = installActivityApiMock({ list: page(2) });
     const user = userEvent.setup();

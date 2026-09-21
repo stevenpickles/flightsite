@@ -287,6 +287,33 @@ export function formatReceiverLocalDateTime(
   }
 }
 
+/** The receiver-local calendar day an ISO instant falls on, as
+ * `"YYYY-MM-DD"` — the key the activity feed groups its rows by (review
+ * R2-06). Built from `formatToParts` rather than a locale pattern so the
+ * key is the same string whatever locale the browser is set to; falls back
+ * to the first ten characters of the ISO instant (its UTC day) if the
+ * timezone is unusable, which is wrong by at most one day and never throws
+ * mid-render. */
+export function receiverLocalDayKey(iso: string, timezone: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(when);
+    const get = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    return when.toISOString().slice(0, 10);
+  }
+}
+
 /** `"3m 12s"` for a track-duration span; used by the current-track mini
  * stats (accumulated points since selection, not a stored duration). */
 export function formatDurationShort(ms: number): string {
