@@ -176,6 +176,31 @@ class RarityCondition(_Document):
     max_sightings: int = Field(ge=1, le=MAX_RARITY_THRESHOLD)
 
 
+def _times(count: int) -> str:
+    """``1`` as "once", anything else as "N times".
+
+    English, not a template with the plural bolted on in brackets. The rule
+    card is prose a user reads — "seen at most 1 time(s) here" is the shape
+    of a string that was never finished, and the builder's own field label
+    for the same idea ("At most this many sightings here") already reads
+    properly. ``max_sightings`` is ``ge=1``, so there is no zero case to
+    word.
+    """
+    return "once" if count == 1 else f"{count} times"
+
+
+def _plural(count: int, noun: str) -> str:
+    """``count`` and ``noun``, with the noun pluralised by a trailing ``s``.
+
+    Only ever applied to nouns whose plural really is ``+s`` (``airframe``);
+    this is not a general inflector and must not become one — a
+    codebase-wide pluralisation problem is a localisation problem, and the
+    honest fix for that is a library rather than a growing table of
+    exceptions here.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 class RuleConditions(_Document):
     """The ``AND``-combined condition set of one rule (§4.2, SPEC §43).
 
@@ -248,6 +273,10 @@ class RuleConditions(_Document):
         rule the user wrote (``docs/API.md`` §3.3's ``"Rule: Military
         aircraft"``), because the rule's name is the user's own description of
         what it detects and is what they want to read in a notification.
+
+        Counts are worded, not templated — see :func:`_times` and
+        :func:`_plural`. These phrases are read by a person on the Rules tab,
+        and "1 time(s)" is a string that was never finished.
         """
         phrases: list[str] = []
         if self.classification is not None:
@@ -261,9 +290,11 @@ class RuleConditions(_Document):
         if self.watchlist_any:
             phrases.append("on any watchlist")
         if self.rare_aircraft is not None:
-            phrases.append(f"seen at most {self.rare_aircraft.max_sightings} time(s) here")
+            phrases.append(f"seen at most {_times(self.rare_aircraft.max_sightings)} here")
         if self.rare_type is not None:
-            phrases.append(f"type seen on at most {self.rare_type.max_sightings} airframe(s) here")
+            phrases.append(
+                f"type seen on at most {_plural(self.rare_type.max_sightings, 'airframe')} here"
+            )
         if self.min_distance_nm is not None:
             phrases.append(f"at least {self.min_distance_nm:g} nm away")
         if self.max_distance_nm is not None:

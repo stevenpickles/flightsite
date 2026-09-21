@@ -167,8 +167,8 @@ def test_describe_names_every_condition_set() -> None:
         "type C17",
         "model containing 'Globemaster'",
         "on watchlist 3",
-        "seen at most 2 time(s) here",
-        "type seen on at most 1 airframe(s) here",
+        "seen at most 2 times here",
+        "type seen on at most 1 airframe here",
         "at least 5 nm away",
         "within 50 nm",
         "at or above 1000 ft",
@@ -178,6 +178,39 @@ def test_describe_names_every_condition_set() -> None:
 
 def test_describe_names_the_any_watchlist_condition() -> None:
     assert RuleConditions(watchlist_any=True).describe() == ("on any watchlist",)
+
+
+@pytest.mark.parametrize(
+    ("max_sightings", "expected"),
+    [
+        # The shipped "First-ever aircraft" rule: `max_sightings=1` is
+        # exactly "never seen here before", and it is the threshold most
+        # installs actually run, so it is the one the placeholder made
+        # ugliest.
+        (1, "seen at most once here"),
+        (2, "seen at most 2 times here"),
+        (17, "seen at most 17 times here"),
+    ],
+)
+def test_describe_words_the_rare_aircraft_count(max_sightings: int, expected: str) -> None:
+    conditions = RuleConditions(rare_aircraft=RarityCondition(max_sightings=max_sightings))
+
+    assert conditions.describe() == (expected,)
+
+
+@pytest.mark.parametrize(
+    ("max_sightings", "expected"),
+    [
+        (1, "type seen on at most 1 airframe here"),
+        (3, "type seen on at most 3 airframes here"),
+    ],
+)
+def test_describe_pluralises_the_rare_type_airframe_count(
+    max_sightings: int, expected: str
+) -> None:
+    conditions = RuleConditions(rare_type=RarityCondition(max_sightings=max_sightings))
+
+    assert conditions.describe() == (expected,)
 
 
 def test_applies_on_ground_defaults_to_false() -> None:

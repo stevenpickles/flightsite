@@ -409,7 +409,7 @@ def test_a_rule_can_be_replaced(client: TestClient) -> None:
     assert updated["name"] == "Rare aircraft"
     assert updated["severity"] == "interesting"
     assert updated["enabled"] is False
-    assert updated["describes"] == ["seen at most 2 time(s) here"]
+    assert updated["describes"] == ["seen at most 2 times here"]
 
 
 def test_a_rule_can_be_deleted(client: TestClient) -> None:
