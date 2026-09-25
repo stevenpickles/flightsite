@@ -159,6 +159,54 @@ describe("SetupWizardPage", () => {
     });
   });
 
+  it("survives a refresh mid-wizard: the draft and step are restored (R4-15)", async () => {
+    installConfigApiMock({ firstRun: true });
+    const user = userEvent.setup();
+    const { unmount } = renderSetupWizardPage();
+
+    // (a) Welcome
+    await screen.findByText(/welcome to flightsite/i);
+    await user.type(screen.getByLabelText(/site name/i), "R4 Review Site");
+    await user.click(screen.getByRole("button", { name: /^next$/i }));
+
+    // (b) Location — entered but not yet advanced past.
+    await screen.findByText(/receiver location/i);
+    await user.type(screen.getByLabelText(/latitude/i), "47.6");
+    await user.type(screen.getByLabelText(/longitude/i), "-122.3");
+
+    // A browser refresh unmounts the whole app and remounts it fresh —
+    // nothing here should be read from unmount cleanup, only from
+    // `sessionStorage`, which a real refresh does not clear.
+    unmount();
+    renderSetupWizardPage();
+
+    // Lands back on the step it was on, not Welcome.
+    await screen.findByText(/receiver location/i);
+    expect(screen.getByLabelText(/latitude/i)).toHaveValue("47.6");
+    expect(screen.getByLabelText(/longitude/i)).toHaveValue("-122.3");
+
+    // And the earlier step's field survived too.
+    await user.click(screen.getByRole("button", { name: "Welcome" }));
+    expect(screen.getByLabelText(/site name/i)).toHaveValue("R4 Review Site");
+  });
+
+  it("clears the persisted draft once setup finishes, so a later visit starts clean (R4-15)", async () => {
+    installConfigApiMock({ firstRun: true });
+    const user = userEvent.setup();
+    const { unmount } = renderSetupWizardPage();
+
+    await completeWizard(user, { wantsNotifications: true });
+    await screen.findByText("Live Map Page");
+    unmount();
+
+    // A later visit to /setup (a deliberate re-run) must not resurface the
+    // finished attempt.
+    installConfigApiMock({ firstRun: false });
+    renderSetupWizardPage();
+
+    expect(await screen.findByText(/update your setup/i)).toBeInTheDocument();
+  });
+
   it("lets the user revisit an already-completed step from the progress indicator", async () => {
     installConfigApiMock({ firstRun: true });
     const user = userEvent.setup();
