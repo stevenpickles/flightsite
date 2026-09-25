@@ -2247,7 +2247,7 @@ slices:
     title: "Site review remediation"
     phase: 8
     branch: "076-site-review-remediation"
-    status: in_progress
+    status: merged
     depends_on: ["075"]
     objective: "Fix every finding of the 2026-09-20 formal site review (docs/reviews/2026-09-20-site-review.md) so each page provides useful information robustly before v0.9.0."
     scope:
