@@ -231,10 +231,26 @@ export function HealthPage() {
         <StatTile
           label="Version"
           value={data.versions.backend}
+          // R4-18: SPEC §67 asks for both the frontend and backend
+          // versions — the payload always carried all four, only the
+          // backend's ever reached the tile. The case this matters most is
+          // exactly the one that was invisible: a browser holding a stale
+          // cached bundle against an already-upgraded backend, where the
+          // two now differ and a single unlabelled number could not say
+          // which one it was even looking at.
           secondary={
-            data.versions.schema_revision !== null
-              ? `Schema ${data.versions.schema_revision}`
-              : undefined
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span>
+                {`Frontend ${data.versions.frontend} · API ${data.versions.api} · Schema ${data.versions.schema_revision ?? "—"}`}
+              </span>
+              {data.versions.frontend !== data.versions.backend && (
+                <StatusPill
+                  tone="warn"
+                  label="Reload to update the page"
+                  className="font-normal"
+                />
+              )}
+            </span>
           }
         />
         <StatTile

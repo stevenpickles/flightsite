@@ -43,7 +43,10 @@ describe("HealthPage", () => {
     // Backend uptime and version.
     expect(within(summary).getByText("1d 1h")).toBeInTheDocument();
     expect(within(summary).getByText("0.9.2")).toBeInTheDocument();
-    expect(within(summary).getByText("Schema 0012")).toBeInTheDocument();
+    // R4-18: the secondary now names all three, not just the schema.
+    expect(
+      within(summary).getByText("Frontend 0.9.2 · API v1 · Schema 0012"),
+    ).toBeInTheDocument();
     // Database size and free disk space.
     expect(within(summary).getByText("256 MB")).toBeInTheDocument();
     expect(within(summary).getByText("12 GB")).toBeInTheDocument();
@@ -415,6 +418,35 @@ describe("HealthPage degraded states", () => {
     // the user every other answer on the page.
     expect(await screen.findByText("0.9.2")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("warns to reload when the cached frontend bundle is stale (R4-18)", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        versions: {
+          backend: "0.9.3",
+          frontend: "0.9.2",
+          api: "v1",
+          schema_revision: "0013",
+        },
+      }),
+    });
+    renderApp("/health");
+
+    // Backend renders as the value — the version this install actually is.
+    expect(await screen.findByText("0.9.3")).toBeInTheDocument();
+    expect(
+      screen.getByText("Frontend 0.9.2 · API v1 · Schema 0013"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Reload to update the page")).toBeInTheDocument();
+  });
+
+  it("shows no reload warning when the frontend and backend versions agree", async () => {
+    installDiagnosticsApiMock();
+    renderApp("/health");
+
+    await screen.findByText("0.9.2");
+    expect(screen.queryByText(/reload to update/i)).toBeNull();
   });
 
   it("explains itself when diagnostics cannot be loaded at all", async () => {
