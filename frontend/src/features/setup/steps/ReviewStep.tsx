@@ -90,6 +90,13 @@ export function ReviewStep({
         />
       </div>
 
+      {selectedTemplateLabels.length > 0 && (
+        <p className="-mt-4 text-xs text-muted-foreground">
+          Each becomes a rule on the Alerts page once setup finishes, where it
+          can be retuned or switched off.
+        </p>
+      )}
+
       {submitError && (
         <p role="alert" className="text-sm text-destructive">
           {submitError}

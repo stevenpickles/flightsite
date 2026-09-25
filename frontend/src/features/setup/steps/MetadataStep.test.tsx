@@ -21,6 +21,8 @@ describe("MetadataStep", () => {
     expect(
       screen.getByText(/downloaded from settings after setup/i),
     ).toBeInTheDocument();
+    // R4-16: names the opt-in OpenSky source, not just Mictronics/FAA.
+    expect(screen.getByText(/opensky/i)).toBeInTheDocument();
   });
 
   it("disables the enrichment checkbox when there is no usable key", () => {
