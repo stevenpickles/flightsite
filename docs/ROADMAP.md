@@ -41,6 +41,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.6.1 | 8 | Same-day hotfix superseding v0.6.0: migration 0015's sightings rebuild runs with foreign keys off and checked, resumable from a failed v0.6.0 attempt (slice 072; recorded 2026-09-05) |
 | v0.7.0 | 8 | Empty tracker: per-rule alert history, metadata URL overrides, demo classification airframes, true-cadence consumer follow-ups, labelled-count density tier, kill-drill and style-spec test hardening (slice 073; recorded 2026-09-06) |
 | v0.8.0 | 8 | Self-explanatory Analytics rankings: tail number and type on every Top aircraft bar, the long-form description beside every Top types designator, richer tooltips on both; visual capture waits for a populated demo picture (slice 074; recorded 2026-09-19) |
+| v0.9.0 | 8 | Useful and robust on every page: the 2026-09-20 formal site review's 71 findings fixed (rollups keyed on the live receiver timezone with a one-time repair, basemap switch keeps every layer, legible status text, error boundaries, responsive shell, refresh/retry everywhere, honest ordering and not-yet states), plus a metadata import that no longer starves the live pipeline and per-consumer drop attribution (slices 075–076; migration 0016; recorded 2026-09-25) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices

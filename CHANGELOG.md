@@ -5,6 +5,118 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.9.0] — 2026-09-25
+
+Every page is now expected to be useful *and* robust: a formal site review
+found 71 things that were wrong, misleading or fragile, and this release fixes
+all of them. Underneath, a full metadata import no longer stalls the live
+pipeline, and the diagnostics say which consumer fell behind.
+
+### Fixed — correctness
+- **Analytics, Receiver and Today at a Glance read the right day.** The
+  rollup writers captured the receiver timezone once at process start, which
+  on every fresh install is `UTC` because the setup wizard writes the
+  timezone after the backend has booted; "today" then read a day that held
+  nothing. The writers now resolve the live timezone on every pass, and an
+  install whose rollups were built under another zone rebuilds them once on
+  the first boot after upgrade, one day per transaction (#205, R1-02/R3-01)
+- **Switching the basemap keeps every layer.** One click on the basemap
+  picker removed aircraft, range rings, receiver marker, airports, airspace
+  and the selected track until a reload (R1-01)
+- Ascending sorts on the Aircraft and Sightings tables put unknown values
+  last instead of first, so "closest approach" no longer answers with
+  aircraft that have none (R2-01)
+- An open sighting reports its running duration and "still open" rather than
+  `0s` / `Unknown`; an aircraft's cumulative observed time includes it
+  (R2-02)
+- Analytics no longer reports "never seen before" as two different numbers
+  on one page; rollup-backed figures that are not computed yet read
+  "Not computed yet" rather than `0` (R3-02/R3-03)
+- "New busiest day" is judged on the receiver's calendar and never names a
+  day as its own previous record (R1-17)
+- Healthy status pills and the decoder test's "Connected" confirmation are
+  legible in both themes; they were rendered in an on-accent colour on a card
+  surface (R4-01)
+
+### Fixed — robustness
+- A render error or a mistyped URL shows an in-app error or not-found page
+  instead of React Router's developer screen (R0-01/R0-02)
+- The Live Map keeps its picture across a lost connection, marks it stale,
+  polls the REST API while the socket is down, and the connection chip says
+  what is happening; panels no longer assert an empty sky (R1-03/R1-04)
+- Every history page, the Analytics and Receiver cards, the alert history
+  and Today at a Glance refresh on their own and say when their data is from;
+  a failed request keeps the last data on screen with a retry instead of
+  unmounting the table (R2-03/R2-04, R3-05/R3-06, R4-05)
+- The Health page keeps its last good payload when a poll fails and shows a
+  stale banner with a retry (R4-04)
+- A Settings save the backend rejects no longer leaves the section unsavable
+  (R4-02); the setup wizard survives a browser refresh (R4-15)
+- Phone width: the sidebar collapses to a rail with an overlay drawer below
+  the `md` breakpoint, and tables collapse secondary columns with a visible
+  scroll edge (R1-07/R2-08/R3-07/R4-06)
+- Tile outages no longer draw the receiver at a development placeholder
+  (R1-05); transport failures read as "FlightSite's backend is not
+  responding." rather than `Failed to fetch` (R3-08/R4-19)
+
+### Added
+- Live Map: selected aircraft in the URL, "showing N of M" beside the
+  filters, browser-notification status on the map, headings and skip links
+  for every panel, a light basemap by default in the light theme, attention
+  styling weighted by severity so a new install is not all "interesting"
+- Aircraft detail: age from the manufacture year, tracker links that use the
+  callsign when no registration is known
+- Sightings: every row reachable by keyboard; the drawn path labelled as a
+  sample of N of M points; the receiver's timezone named on every history
+  page
+- Activity: Alerts and Emergencies in the type filter, rows grouped by day
+- Alerts: the history identifies the aircraft (callsign · type ·
+  registration) and links to its sighting; tab and rule filter in the URL;
+  watchlist names on rule cards; the app's own confirmation dialog for
+  deletes; alert templates managed in one place — the Alerts page's Templates
+  gallery (the Settings checkbox list is gone; the wizard's selection seeds
+  the first run)
+- Settings: metric conversion hints under nm/ft inputs; honest "Checking…" /
+  "Unknown" metadata status; dates on values that can be weeks old
+- Health: a Live events card naming each consumer of the live event stream
+  with its shed count and backlog; frontend/API/schema versions with a warning
+  on mismatch; shared metadata source names
+- Receiver: unsupported decoder metrics hidden with one explanatory line;
+  cardinal points on the range polar plot; units on every chart axis
+- `GET /api/v1/diagnostics` gains `live_events`; `websocket.events_dropped`
+  is now the WebSocket subscriber's own figure (#185)
+
+### Changed
+- A full **Update Aircraft Metadata** run no longer holds the database writer
+  for the length of the resolution rebuild: resolution and classification
+  are built page by page in a worker thread into two scratch tables
+  (migration 0016) and installed with a set-based swap, so sighting
+  persistence and alert evaluation keep up during an import (#185)
+- API: nulls-last ordering on every list endpoint (§2.4); `open` and
+  `elapsed_s` on sightings (§3.7); `lifetime.open_sighting_elapsed_s` (§3.5);
+  `complete` on analytics rows, classification activity and summary, with the
+  rollup-backed fields nullable when not computed (§3.8/§3.9); alert-match
+  rows carry `callsign`, `registration`, `aircraft_type`,
+  `closest_approach_nm`, `lowest_altitude_ft` (§3.10)
+- The visual-regression fixtures and every baseline were re-recorded
+
+### Upgrade notes
+- **Back up first** (`docker compose exec backend flightsite-backup create`).
+- Migration 0016 adds two empty scratch tables and moves no data.
+- On the first boot after upgrade the analytics rollups are rebuilt once
+  from the sightings history, one day per transaction; Analytics and the
+  Receiver charts may lag a minute or two on a multi-year database while
+  that runs. Receiver daily metrics older than the high-resolution window and
+  the range-by-bearing history keep their original day key.
+- The review itself is in `docs/reviews/2026-09-20-site-review.md`.
+
+### Known issues
+- #153 (clean Raspberry Pi 4 qualification on non-SD storage) remains
+  deferred by the owner. Follow-ups from the review: #209 (aircraft age on the
+  Live Map panel needs `manufacture_year` on the live payload), #210 (E2E for
+  basemap switch and tile outage), #211 (severity/offset in the Alerts URL),
+  #212 (consolidate the analytics-local error helper)
+
 ## [0.8.0] — 2026-09-19
 
 The Analytics page's two headline rankings now explain themselves: an
