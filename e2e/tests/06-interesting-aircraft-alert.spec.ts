@@ -253,9 +253,11 @@ test.describe("interesting-aircraft alert", () => {
     const history = page.getByRole("list", { name: "Alert history" });
     await expect(history).toBeVisible();
     await expect(history).toContainText(`Rule: ${PROBE_RULE_NAME}`);
-    // The entry links back to the aircraft it fired for.
+    // The entry links back to the aircraft it fired for. Since slice 076
+    // (R4-08) the link is named by callsign/type/registration where known,
+    // so it is found by its target rather than by the hex it may not show.
     await expect(
-      history.getByRole("link", { name: icao.toUpperCase() }).first(),
+      history.locator(`a[href="/aircraft/${icao.toLowerCase()}"]`).first(),
     ).toBeVisible();
   });
 

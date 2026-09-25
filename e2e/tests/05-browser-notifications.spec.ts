@@ -266,7 +266,12 @@ test.describe("browser notification permission", () => {
 
     // Client-side navigation, so the counter above stays in scope: opening
     // the page that *owns* the ask must still not perform it.
-    await page.getByRole("link", { name: "Settings" }).click();
+    // Scoped to the primary nav: the Live Map's notification status pill
+    // (slice 076, R1-12) carries its own "Settings" link.
+    await page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "Settings" })
+      .click();
     await expect(page.getByTestId(STATUS)).toBeVisible();
 
     expect(
