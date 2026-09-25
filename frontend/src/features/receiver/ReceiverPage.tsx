@@ -77,7 +77,12 @@ export function ReceiverPage() {
         </Link>
       </div>
 
-      <ReceiverScorecard units={units} />
+      <h2 className="text-base font-medium">Scorecard</h2>
+      <ReceiverScorecard
+        units={units}
+        t0={receiver?.t0 ?? null}
+        timezone={timezone}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-medium">Charts</h2>

@@ -30,18 +30,31 @@ import {
   formatDistance,
   formatDurationCompact,
   formatRatePerSec,
+  formatReceiverLocalDate,
 } from "@/features/receiver/lib/format";
 
 interface StatTileProps {
   label: string;
   value: ReactNode;
   secondary?: ReactNode;
+  /** An `abbr`-style tooltip on the label, for jargon like "T0" that means
+   * nothing at the point of use without it (R3-14). */
+  labelTitle?: string;
 }
 
-function StatTile({ label, value, secondary }: StatTileProps) {
+function StatTile({ label, value, secondary, labelTitle }: StatTileProps) {
   return (
     <div className="rounded-lg border border-border bg-card p-3 text-card-foreground">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={
+          labelTitle !== undefined
+            ? "text-xs text-muted-foreground underline decoration-dotted"
+            : "text-xs text-muted-foreground"
+        }
+        title={labelTitle}
+      >
+        {label}
+      </p>
       <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
       {secondary !== undefined && (
         <p className="mt-0.5 text-xs text-muted-foreground">{secondary}</p>
@@ -76,9 +89,19 @@ function HealthTile({ health }: { health: ReceiverHealth }) {
 
 export interface ReceiverScorecardProps {
   units: UnitSystem;
+  /** `ReceiverInfo.t0` — the receiver's first-ever persisted observation,
+   * already fetched by `ReceiverPage` and previously unused here (R3-14):
+   * the tile below said "since T0" with no date and no explanation of what
+   * "T0" means. `null` before setup records one. */
+  t0: string | null;
+  timezone: string;
 }
 
-export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
+export function ReceiverScorecard({
+  units,
+  t0,
+  timezone,
+}: ReceiverScorecardProps) {
   const { data, isLoading, isError, refetch } = useReceiverScorecardQuery();
 
   if (isLoading) {
@@ -159,7 +182,13 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
       />
       <StatTile
         label="Unique aircraft since T0"
+        labelTitle="T0: the first observation this receiver ever persisted"
         value={formatCount(data.unique_aircraft_since_t0)}
+        secondary={
+          t0 !== null
+            ? `Since ${formatReceiverLocalDate(t0, timezone)}`
+            : undefined
+        }
       />
       {!decoderStatsUnsupported && (
         <StatTile

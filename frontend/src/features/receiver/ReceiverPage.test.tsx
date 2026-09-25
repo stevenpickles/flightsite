@@ -348,6 +348,62 @@ describe("ReceiverPage", () => {
     expect(withinSection.getByText(/Delta Air Lines/)).toBeInTheDocument();
   });
 
+  it("renders the lifetime statistics heading at h2, not h3, with a space before 'since' (R3-14)", async () => {
+    installReceiverStatsApiMock();
+
+    renderApp("/receiver");
+
+    const heading = await screen.findByRole("heading", {
+      level: 2,
+      name: /Lifetime statistics/,
+    });
+    // The bug: "Lifetime statistics" and "since ..." ran together into one
+    // word in the accessible name with no space between them.
+    expect(heading.textContent).not.toMatch(/statisticssince/);
+  });
+
+  it("renders 'Common model' alongside common type and operator (R3-14)", async () => {
+    installReceiverStatsApiMock();
+
+    renderApp("/receiver");
+
+    const heading = await screen.findByText(/Lifetime statistics/);
+    const section = heading.closest("section");
+    expect(section).not.toBeNull();
+    expect(
+      within(section as HTMLElement).getByText("Common model"),
+    ).toBeInTheDocument();
+    expect(
+      within(section as HTMLElement).getByText(/Boeing 737-800/),
+    ).toBeInTheDocument();
+  });
+
+  it("explains 'T0' and shows the date on the scorecard's since-T0 tile (R3-14)", async () => {
+    installReceiverStatsApiMock({
+      receiver: {
+        site_name: "Test",
+        latitude: 0,
+        longitude: 0,
+        antenna_height_ft: 10,
+        timezone: "UTC",
+        units: "aviation",
+        display_radius_nm: 250,
+        alert_radius_nm: null,
+        demo_mode: false,
+        t0: "2026-01-15T00:00:00.000Z",
+      },
+    });
+
+    renderApp("/receiver");
+
+    const label = await screen.findByText("Unique aircraft since T0");
+    expect(label).toHaveAttribute(
+      "title",
+      "T0: the first observation this receiver ever persisted",
+    );
+    expect(screen.getByText(/Since Jan 15, 2026/)).toBeInTheDocument();
+  });
+
   it("formats the busiest day as a locale date, not the raw day key (R3-10)", async () => {
     installReceiverStatsApiMock({
       lifetime: lifetimeStats({
