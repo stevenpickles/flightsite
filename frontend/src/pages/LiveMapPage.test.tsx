@@ -16,7 +16,6 @@ import {
 } from "@/features/map/aircraft/aircraftLayers";
 import type { AircraftFeatureProperties } from "@/features/map/aircraft/geojson";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { DEFAULT_BASEMAP_ID } from "@/features/map/basemaps";
 import {
   AIRPORT_LAYER_IDS,
   AIRPORTS_SOURCE_ID,
@@ -27,18 +26,26 @@ import {
   AIRSPACE_SOURCE_ID,
 } from "@/features/map/overlays/airspaceLayers";
 import {
+  RANGE_RING_LINE_LAYER_ID,
+  RECEIVER_DOT_LAYER_ID,
+} from "@/features/map/overlayLayers";
+import {
   DEFAULT_OVERLAY_VISIBILITY,
   OVERLAY_VISIBILITY_STORAGE_KEY,
 } from "@/features/map/overlayVisibilityPersistence";
+import { getBasemapById } from "@/features/map/basemaps";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
+import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
 import { LiveMapPage } from "@/pages/LiveMapPage";
+import { useUiStore } from "@/store/useUiStore";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import {
   getLastMockMap,
   MapLibreMockMap,
   resetMapLibreMock,
 } from "@/test/maplibreGlMock";
+import { installNotificationMock } from "@/test/notificationMock";
 import {
   EMPTY_FEATURE_COLLECTION,
   installOverlaysApiMock,
@@ -96,7 +103,10 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
-  useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+  useBasemapStore.setState({ explicitBasemapId: null });
+  useUiStore.setState({ theme: "dark" });
+  useNotificationStore.getState().reset();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -417,6 +427,46 @@ describe("LiveMapPage", () => {
     expect(useLiveAircraftStore.getState().track).toBeNull();
   });
 
+  it("restores a selection from a deep link on load (R1-09)", async () => {
+    // Not yet in the live set at mount — the selection is still made
+    // (`useSelectionUrlSync`'s "keep the intent" case), so the detail panel
+    // opens honestly reporting nothing rather than staying closed.
+    renderPage("/?selected=aaaaaa");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("aaaaaa");
+    expect(screen.getByRole("dialog", { name: "AAAAAA" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/no live data for this aircraft/i),
+    ).toBeInTheDocument();
+
+    // Once the live picture actually supplies the aircraft, the same
+    // selection reactively picks it up — no extra wiring needed.
+    const map = getLastMockMap();
+    await act(async () => {
+      map.emit("load");
+    });
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [
+          makeAircraft({ icao: "aaaaaa", callsign: "RCH471" }),
+        ]),
+      );
+    });
+    expect(screen.getByRole("dialog", { name: "RCH471" })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no live data for this aircraft/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a selection made before the page's own URL sync mounted (notification click)", async () => {
+    // The scenario `features/notifications/lib/dispatch.ts` produces: a
+    // click selects the aircraft directly through the store before the Live
+    // Map (and its `useSelectionUrlSync`) exists at all.
+    useLiveAircraftStore.getState().selectAircraft("bbbbbb");
+    renderPage("/");
+    expect(useLiveAircraftStore.getState().selectedIcao).toBe("bbbbbb");
+    expect(screen.getByRole("dialog", { name: "BBBBBB" })).toBeInTheDocument();
+  });
+
   it("answers the server's keepalive so the connection survives", async () => {
     await renderLoadedMap();
     const socket = getLastWebSocket();
@@ -427,33 +477,237 @@ describe("LiveMapPage", () => {
     expect(socket.sent).toEqual([JSON.stringify({ type: "pong" })]);
   });
 
-  it("re-attaches the aircraft layers after a basemap switch", async () => {
-    // setStyle discards custom sources, layers and registered images.
+  it("keeps the whole FlightSite picture through a basemap switch", async () => {
+    // Issue R1-01, and the shape the regression actually had: one click on
+    // the basemap switcher removed every FlightSite layer and nothing put
+    // them back, while the connection chip went on reporting a live picture.
+    // Nothing is emitted by hand here — `setStyle` clears the style and
+    // fires `style.load` itself, exactly as maplibre-gl 6 does for an inline
+    // style object, so the assertions below fail against a `style.load`
+    // handler registered after the swap rather than before it.
+    const map = await renderLoadedMap();
+    await act(async () => {
+      getLastWebSocket().emitFrame(
+        snapshotFrame(1, [makeAircraft({ icao: "aaaaaa" })]),
+      );
+    });
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole("radio", { name: /openstreetmap/i }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Aircraft, range rings and the receiver marker — the three things the
+    // review found missing from an otherwise perfectly rendered OSM basemap.
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
+    expect(map.getSource(AIRCRAFT_SOURCE_ID)).toBeDefined();
+    expect(map.images.size).toBeGreaterThan(0);
+  });
+
+  it("follows the theme to a matching basemap when the user has picked none", async () => {
+    // Issue R1-14: the chrome switched themes correctly while the map pixel
+    // stayed `(10,14,26)` in both, so light-theme users got bright panels
+    // floating over the near-black default basemap.
+    const map = await renderLoadedMap();
+    expect(map.setStyle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useUiStore.setState({ theme: "light" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(map.setStyle).toHaveBeenCalledWith(
+      getBasemapById("light-aviation")!.style,
+    );
+    // And the picture survives the swap, like any other basemap change.
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
+  });
+
+  it("leaves an explicitly chosen basemap alone when the theme changes", async () => {
     const map = await renderLoadedMap();
     await act(async () => {
       await userEvent.click(
         screen.getByRole("radio", { name: /openstreetmap/i }),
       );
     });
-    map.layers.clear();
-    map.sources.clear();
-    map.images.clear();
+    map.setStyle.mockClear();
 
     await act(async () => {
-      map.emit("style.load");
+      useUiStore.setState({ theme: "light" });
+    });
+
+    expect(map.setStyle).not.toHaveBeenCalled();
+  });
+
+  it("restores the picture when switching back to the basemap it started on", async () => {
+    // The review's second observation: switching back did not recover the
+    // map either, because the same ordering ran again on the way home.
+    const map = await renderLoadedMap();
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole("radio", { name: /openstreetmap/i }),
+      );
+    });
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole("radio", { name: /dark aviation/i }),
+      );
     });
     await act(async () => {
       await Promise.resolve();
     });
 
     expect(map.layers.has(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(true);
-    expect(map.images.size).toBeGreaterThan(0);
+    expect(map.layers.has(RANGE_RING_LINE_LAYER_ID)).toBe(true);
+    expect(map.layers.has(RECEIVER_DOT_LAYER_ID)).toBe(true);
   });
 
   // Socket ownership moved to the app shell in ADR-0015, so "opens the socket
   // on the documented path" and "closes it on teardown" are asserted in
   // `components/shell/AppShell.test.tsx` and `features/live/`, and what the
   // *map* tears down on unmount in `features/map/aircraft/AircraftLayer.test.tsx`.
+});
+
+describe("heading structure, landmarks and skip link (R1-11)", () => {
+  it("gives every floating card its own heading, in one hierarchy under the page h1", () => {
+    renderPage();
+    const headings = screen.getAllByRole("heading").map((heading) => ({
+      level: Number(heading.tagName.slice(1)),
+      name: heading.textContent,
+    }));
+    expect(headings[0]).toEqual({ level: 1, name: "Live Map" });
+    // Every card gets exactly one h2; order follows the page's own
+    // panel-order fix (non-positioned/interesting last, see LiveMapPage's
+    // doc comment) rather than visual position.
+    expect(
+      headings.filter((heading) => heading.level === 2).map((h) => h.name),
+    ).toEqual([
+      "Today at a glance",
+      "Basemap",
+      "Map layers",
+      "Activity",
+      "Non-positioned aircraft",
+      "Interesting aircraft",
+    ]);
+  });
+
+  it("routes each card through a named landmark region", () => {
+    renderPage();
+    expect(
+      screen.getByRole("region", { name: "Interesting aircraft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Non-positioned aircraft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Activity" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Today at a glance" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Basemap" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Map layers" }),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the non-positioned region entirely once that list is hidden", () => {
+    renderPage("/?hide_np=1");
+    expect(
+      screen.queryByRole("region", { name: "Non-positioned aircraft" }),
+    ).not.toBeInTheDocument();
+    // The heading goes with it — no orphaned, empty landmark left behind.
+    expect(
+      screen.queryByRole("heading", { name: "Non-positioned aircraft" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("puts every other card ahead of the interesting-aircraft list in tab order", () => {
+    renderPage();
+    const focusables = document.querySelectorAll<HTMLElement>(
+      "a[href], button, input, [tabindex]",
+    );
+    const order = [...focusables].map((element) => element);
+    const interestingToggle = screen.getByRole("button", {
+      name: /^interesting/i,
+    });
+    const nonPositionedToggle = screen.getByRole("button", {
+      name: /^non-positioned/i,
+    });
+    const activityToggle = screen.getByRole("button", { name: /^activity/i });
+    const todayToggle = screen.getByRole("button", { name: /^today/i });
+    const filtersToggle = screen.getByRole("button", { name: /^filters/i });
+
+    const indexOf = (el: HTMLElement) => order.indexOf(el);
+    const interestingIndex = indexOf(interestingToggle);
+
+    // Every one of these used to sit *after* all ~76+ interesting rows;
+    // each must now come before the interesting toggle itself.
+    expect(indexOf(nonPositionedToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(activityToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(todayToggle)).toBeLessThan(interestingIndex);
+    expect(indexOf(filtersToggle)).toBeLessThan(interestingIndex);
+  });
+
+  it("offers a skip-aircraft-list link whose target exists in the document", () => {
+    renderPage();
+    const link = screen.getByRole("link", { name: /skip aircraft list/i });
+    const href = link.getAttribute("href");
+    expect(href).toMatch(/^#/);
+    const targetId = href?.slice(1) ?? "";
+    expect(document.getElementById(targetId)).not.toBeNull();
+  });
+
+  it("navigates the skip link to its target on activation", async () => {
+    // jsdom does not implement a real browser's "focus the fragment target"
+    // behavior on navigation, so the observable half here is the hash
+    // change every browser performs before doing exactly that; the target
+    // being a real, focusable (`tabIndex={-1}`) element in the document is
+    // asserted above.
+    renderPage();
+    const link = screen.getByRole("link", { name: /skip aircraft list/i });
+    const targetId = link.getAttribute("href")?.slice(1) ?? "";
+    expect(document.getElementById(targetId)).toHaveAttribute("tabindex", "-1");
+
+    link.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(window.location.hash).toBe(`#${targetId}`);
+  });
+});
+
+describe("notification status pill (R1-12)", () => {
+  it("stays off the page entirely once permission is granted", () => {
+    installNotificationMock({ permission: "granted" });
+    renderPage();
+    expect(
+      screen.queryByTestId("notification-status-pill"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a blocked permission on the map itself, with a link to Settings", () => {
+    // R1-12's evidence: an emergency-squawk match delivered with no browser
+    // notification and no hint anywhere on the page the user is watching.
+    installNotificationMock({ permission: "denied" });
+    renderPage();
+    expect(screen.getByTestId("notification-status-pill")).toHaveAttribute(
+      "data-permission",
+      "denied",
+    );
+    expect(screen.getByRole("link", { name: /settings/i })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+  });
 });
 
 describe("aviation overlays (roadmap slice 028)", () => {
@@ -468,19 +722,14 @@ describe("aviation overlays (roadmap slice 028)", () => {
   });
 
   it("re-attaches both overlays after a basemap switch", async () => {
-    // setStyle discards custom sources, layers and registered images.
+    // setStyle discards custom sources, layers and registered images, and
+    // fires `style.load` from inside the call (see the mock) — the overlays
+    // come back off that event or not at all.
     const map = await renderLoadedMap();
     await act(async () => {
       await userEvent.click(
         screen.getByRole("radio", { name: /openstreetmap/i }),
       );
-    });
-    map.layers.clear();
-    map.sources.clear();
-    map.images.clear();
-
-    await act(async () => {
-      map.emit("style.load");
     });
     await act(async () => {
       await Promise.resolve();

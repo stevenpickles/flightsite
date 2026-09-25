@@ -4,16 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
+import type { FlightSiteConfig } from "@/lib/api/config";
 import {
   defaultFlightSiteConfig,
   installConfigApiMock,
 } from "@/test/configApiMock";
 
-function renderSection() {
+function renderSection(config: FlightSiteConfig = defaultFlightSiteConfig()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const config = defaultFlightSiteConfig();
   return render(
     <QueryClientProvider client={queryClient}>
       <DisplaySection config={config} />
@@ -81,5 +81,80 @@ describe("DisplaySection", () => {
         range_ring_radii_nm: [50, 100, 150, 200],
       },
     });
+  });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/internal/config" && method === "GET") {
+          return new Response(
+            JSON.stringify({
+              first_run: false,
+              config: defaultFlightSiteConfig(),
+              secrets_set: { "enrichment.aerodatabox_api_key": false },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "/api/internal/config" && method === "PUT") {
+          return new Response(
+            JSON.stringify({
+              detail: [
+                {
+                  loc: ["display_radius_nm"],
+                  msg: "Input should be greater than 0",
+                  type: "greater_than",
+                },
+              ],
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw new Error(`Unhandled fetch in test: ${method} ${url}`);
+      }),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.clear(screen.getByLabelText(/display radius/i));
+    await user.type(screen.getByLabelText(/display radius/i), "300");
+    const saveButton = screen.getByRole("button", { name: /^save$/i });
+    expect(saveButton).toBeEnabled();
+
+    await user.click(saveButton);
+
+    expect(
+      await screen.findByText(/input should be greater than 0/i),
+    ).toBeInTheDocument();
+    // The server's rejection must not be the thing that disables Save —
+    // that would leave the section unsavable until a page reload.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.type(screen.getByLabelText(/display radius/i), "1");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
+
+  it("shows a metric conversion hint under nm fields when metric is preferred (R4-13)", async () => {
+    installConfigApiMock();
+    const user = userEvent.setup();
+    renderSection(defaultFlightSiteConfig({ units: "metric" }));
+
+    // Prefilled value (250 nm) already converts.
+    expect(await screen.findByText(/≈ 463 km/)).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText(/range ring radii/i));
+    await user.type(screen.getByLabelText(/range ring radii/i), "50, 100");
+
+    expect(await screen.findByText(/≈ 92.6, 185.2 km/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", () => {
+    installConfigApiMock();
+    renderSection(defaultFlightSiteConfig({ units: "aviation" }));
+
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 });

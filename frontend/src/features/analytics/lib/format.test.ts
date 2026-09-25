@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   convertDistance,
+  describeError,
   distanceUnitLabel,
   escapeHtml,
+  formatCalendarDay,
   formatCompactNumber,
   formatSightings,
   formatWindowLabel,
   humanizeSlug,
+  latestDataUpdatedAt,
+  pluralize,
   tooltipLines,
   truncateLabel,
 } from "@/features/analytics/lib/format";
@@ -50,8 +54,23 @@ describe("formatWindowLabel", () => {
       timezone: "America/Los_Angeles",
     });
     expect(label).toContain("Aug 31, 2026");
-    expect(label).toContain("America/Los_Angeles");
     expect(label).not.toContain("–");
+  });
+
+  // R3-11: the timezone used to be repeated on every card's window caption
+  // ("Aug 31, 2026 · America/Los_Angeles"). It is now stated once, on the
+  // page itself (`AnalyticsPage`'s "Data as of" line), so the per-card
+  // caption carries no timezone of its own.
+  it("carries no timezone (stated once per page instead of once per card)", () => {
+    const label = formatWindowLabel({
+      preset: "today",
+      from: "2026-08-31T00:00:00.000Z",
+      to: "2026-09-01T00:00:00.000Z",
+      first_day: "2026-08-31",
+      last_day: "2026-08-31",
+      timezone: "America/Los_Angeles",
+    });
+    expect(label).not.toContain("America/Los_Angeles");
   });
 
   it("renders a range when the window spans multiple days", () => {
@@ -127,5 +146,58 @@ describe("formatSightings", () => {
   it("pluralizes", () => {
     expect(formatSightings(1)).toBe("1 sighting");
     expect(formatSightings(12)).toBe("12 sightings");
+  });
+});
+
+describe("pluralize", () => {
+  it("keeps the singular noun for a count of exactly 1", () => {
+    expect(pluralize(1, "point")).toBe("point");
+  });
+
+  it("appends 's' for any other count, including 0", () => {
+    expect(pluralize(0, "point")).toBe("points");
+    expect(pluralize(2, "point")).toBe("points");
+  });
+});
+
+describe("formatCalendarDay", () => {
+  it("formats a YYYY-MM-DD day key without shifting it across a timezone", () => {
+    expect(formatCalendarDay("2026-07-04")).toBe("Jul 4, 2026");
+  });
+
+  it("falls back to the raw string for an unparseable day", () => {
+    expect(formatCalendarDay("not-a-day")).toBe("not-a-day");
+  });
+});
+
+describe("describeError", () => {
+  it("returns undefined when the query is not in error", () => {
+    expect(describeError(false, null, "fallback")).toBeUndefined();
+  });
+
+  it("always uses the human fallback as the message, never the raw error text", () => {
+    const described = describeError(true, new Error("boom"), "fallback");
+    expect(described?.message).toBe("fallback");
+    expect(described?.detail).toBe("boom");
+  });
+
+  it("has a null detail when the error carries no message", () => {
+    const described = describeError(true, new Error(""), "fallback");
+    expect(described?.detail).toBeNull();
+  });
+
+  it("has a null detail when there is no Error object at all", () => {
+    const described = describeError(true, null, "fallback");
+    expect(described?.detail).toBeNull();
+  });
+});
+
+describe("latestDataUpdatedAt", () => {
+  it("returns undefined when every timestamp is 0 (never succeeded)", () => {
+    expect(latestDataUpdatedAt([0, 0, 0])).toBeUndefined();
+  });
+
+  it("returns the maximum of the present (> 0) timestamps", () => {
+    expect(latestDataUpdatedAt([0, 200, 100])).toBe(200);
   });
 });

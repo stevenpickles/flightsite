@@ -1,4 +1,5 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -108,6 +109,58 @@ describe("SightingDetailPage", () => {
 
     await screen.findByText(/icao ae1463/i);
     expect(screen.getAllByText("Ongoing")).not.toHaveLength(0);
+  });
+
+  it("gives an open sighting a running duration and an open closure (R2-02)", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          ended_at: null,
+          duration_s: null,
+          elapsed_s: 964,
+          closure_reason: null,
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    await screen.findByText(/icao ae1463/i);
+    // A page that calls the sighting "Ongoing" must not then call its
+    // duration and its closure Unknown.
+    expect(
+      screen.getByText("Still open · running for 16m 04s"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Still open")).toBeInTheDocument();
+    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+  });
+
+  it("offers a retry for a load failure that is not a 404 (R2-04)", async () => {
+    let failing = true;
+    installSightingsApiMock({
+      detailStatus: () => (failing ? 500 : null),
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+      aircraft: {
+        ae1463: aircraftDetail({ icao: "ae1463", registration: "N302DN" }),
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/sightings/88213");
+
+    expect(
+      await screen.findByText(/could not load this sighting/i),
+    ).toBeInTheDocument();
+    // Distinct from the 404 state, which is an answer rather than a failure
+    // and therefore offers no retry.
+    const failure = screen.getByTestId("query-error-state");
+
+    failing = false;
+    await user.click(
+      within(failure).getByRole("button", { name: /try again/i }),
+    );
+
+    expect(await screen.findByText(/icao ae1463/i)).toBeInTheDocument();
   });
 
   it("renders the event timeline with plain-language labels", async () => {
@@ -276,6 +329,60 @@ describe("SightingDetailPage", () => {
     await waitFor(() => {
       expect(map.fitBounds).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("says the drawn path is a sample and how big a one (R2-12)", async () => {
+    installSightingsApiMock({
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+    });
+
+    renderApp("/sightings/88213");
+
+    // The fixture is a closed sighting with a two-point path and 2,210
+    // position reports — the contradiction the review found, now explained.
+    expect(await screen.findByText("Path (simplified)")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 points, simplified from 2,210 position reports."),
+    ).toBeInTheDocument();
+  });
+
+  it("names an open sighting's path a checkpoint tail, not a simplification", async () => {
+    installSightingsApiMock({
+      detail: {
+        88213: sightingDetail({
+          id: 88213,
+          ended_at: null,
+          duration_s: null,
+          closure_reason: null,
+        }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+
+    expect(await screen.findByText("Path (checkpointed)")).toBeInTheDocument();
+    expect(screen.getByText(/30 seconds/)).toBeInTheDocument();
+  });
+
+  it("gives its sections an H2 and keys the path's colours (R2-17)", async () => {
+    installSightingsApiMock({
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+    });
+
+    renderApp("/sightings/88213");
+
+    await screen.findByText(/icao ae1463/i);
+    // The review audited this route as H1 → H3 with no H2 anywhere, because
+    // `DetailSection` hard-coded `h3`.
+    const headings = screen.getAllByRole("heading", { level: 2 });
+    expect(headings.map((heading) => heading.textContent)).toContain("Events");
+
+    // The line is coloured by altitude and the endpoints are marked; before
+    // this, neither was explained anywhere on the page.
+    const legend = screen.getByTestId("path-legend");
+    expect(legend).toHaveTextContent("Start");
+    expect(legend).toHaveTextContent("End");
+    expect(legend).toHaveTextContent("FL450");
   });
 
   it("shows a no-path message instead of a map for a sighting with an empty path", async () => {

@@ -32,6 +32,8 @@ export interface TopAircraftCardProps {
   rows: AnalyticsAircraftRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 /** The registration, or the upper-cased hex when none is known — what the
@@ -80,6 +82,8 @@ export function TopAircraftCard({
   rows,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: TopAircraftCardProps) {
   const navigate = useNavigate();
 
@@ -115,6 +119,8 @@ export function TopAircraftCard({
         },
         xAxis: {
           type: "value" as const,
+          name: "sightings",
+          nameTextStyle: { color: theme.mutedInk },
           axisLabel: { color: theme.mutedInk },
           axisLine: { lineStyle: { color: theme.grid } },
           splitLine: { lineStyle: { color: theme.grid } },
@@ -139,6 +145,7 @@ export function TopAircraftCard({
         },
         series: [
           {
+            name: "Sightings",
             type: "bar" as const,
             data: ordered.map((row) => row.sightings),
             barMaxWidth: 18,
@@ -172,6 +179,8 @@ export function TopAircraftCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

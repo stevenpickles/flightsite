@@ -30,7 +30,7 @@
 #   - Documentation relevant to the slice is updated within the slice.
 
 version: 2  # v2: Phase 0 review-gate corrections (dependency completions, 009 split into 009/052/053, packed track storage, numeric perf criteria, licensing register)
-updated: "2026-09-04"
+updated: "2026-09-20"
 
 phases:
   - number: 0
@@ -124,6 +124,15 @@ releases:
       Top aircraft bar, the long-form description beside every Top types
       designator, richer tooltips on both; visual capture waits for a populated
       demo picture (slice 074). Recorded 2026-09-19."
+  - version: "v0.9.0"
+    after_phase: 8
+    theme: "Useful and robust on every page: the 2026-09-20 formal site review's
+      71 findings fixed (rollups keyed on the live receiver timezone with a
+      one-time repair, basemap switch keeps every layer, legible status text,
+      error boundaries, responsive shell, refresh/retry everywhere, honest
+      ordering and not-yet states), plus a metadata import that no longer
+      starves the live pipeline and per-consumer drop attribution (slices
+      075-076; migration 0016). Recorded 2026-09-25."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2197,6 +2206,93 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner request 2026-09-18: the Top aircraft ranking showed only a registration and Top types only a designator. Added by Fable outside the phase plan."
+
+  - id: "075"
+    title: "Metadata import off the live path & honest drop attribution"
+    phase: 8
+    branch: "075-import-live-path-isolation"
+    status: merged
+    depends_on: ["021", "024", "042", "071"]
+    objective: "Keep the 1 Hz live consumers fed while a full metadata import promotes, and report shed live events per subscriber instead of under the WebSocket (issue #185; tracking issue #203)."
+    scope:
+      - "resolution and classification are computed BEFORE the promotion transaction: the post-swap claim view (every other source's live rows plus this source's staged rows) is paged through read sessions, resolved and classified in a worker thread, and written to `aircraft_metadata_resolved_staging` / `aircraft_classification_staging` in short writer transactions (migration 0016)"
+      - "the promotion transaction becomes set-based only: swap the source's rows, swap the resolved and classification tables from their staging tables, replace the curated operator tables, record success — no Python per-row work under the writer lock"
+      - "`EventDispatcher` keeps a cumulative shed tally per subscriber name and exposes per-subscriber stats (dropped, pending, capacity, overflowed)"
+      - "`GET /api/v1/diagnostics` gains `live_events` (published, dropped, subscribers[]); `websocket.events_dropped` becomes the WebSocket subscriber's own drops; `counters.live_events_dropped` stays the process total"
+      - "Health page: a Live events card listing every subscriber's drops, backlog and capacity with an overflow marker; the WebSocket tile stops implying the drops are its own"
+      - "docs: DATA_MODEL §3.3/§3.4 staging tables, ARCHITECTURE import path, API.md §3.11"
+    out_of_scope:
+      - "importer priority relative to the persistence worker, or pausing consumers during an import (the measured fix is removing the long writer hold; revisit only if the Pi measurement still overflows)"
+      - "scheduled metadata updates; a resumable or incremental import"
+      - "resetting cumulative drop tallies from the UI"
+    acceptance_criteria:
+      - "`PrecedenceModel.resolve` and `classify` never execute while the writer lock is held during a promotion (tested by instrumentation)"
+      - "a failed promotion at any stage — including a failure while building resolution — leaves `aircraft_metadata`, `aircraft_metadata_resolved` and `aircraft_classification` byte for byte as they were (existing fault-injection tests extended to the new phase)"
+      - "the promotion transaction issues only set-based statements; a persistence-style writer acquires the lock between resolution pages"
+      - "migration 0016 upgrades and downgrades cleanly and is resumable; `Clear Metadata Cache` empties the new staging tables"
+      - "diagnostics reports a subscriber's drops under its own name; the websocket figure is the websocket subscriber's; the total still matches `counters.live_events_dropped`"
+      - "the Health page renders a subscriber that overflowed distinguishably from one that did not"
+      - "`Closes #185` in the PR body"
+    required_tests:
+      - "repository tests: resolution off the writer lock, per-phase fault injection, staging cleared on start/failure/clear_all, demo airframes still classify"
+      - "migration 0016 test; dispatcher per-name stats tests (cumulative across resubscribe); diagnostics service/API tests; HealthPage card tests"
+    expected_artifacts:
+      - backend/src/flightsite/db/migrations/versions/rev_0016_resolution_staging.py
+      - backend/src/flightsite/db/models.py
+      - backend/src/flightsite/metadata/repository.py
+      - backend/src/flightsite/live/events.py
+      - backend/src/flightsite/diagnostics/service.py
+      - backend/src/flightsite/api/schemas.py
+      - frontend/src/features/health/HealthPage.tsx
+      - frontend/src/lib/api/diagnostics.ts
+      - docs/DATA_MODEL.md
+      - docs/ARCHITECTURE.md
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner-observed on fermi.local 2026-09-05 (issue #185): five dataset promotions overflowed the persistence queue three times and the alerts queue twice because `promote` resolved ~900k airframes in Python inside the single writer transaction. Added by Fable outside the phase plan."
+
+  - id: "076"
+    title: "Site review remediation"
+    phase: 8
+    branch: "076-site-review-remediation"
+    status: merged
+    depends_on: ["075"]
+    objective: "Fix every finding of the 2026-09-20 formal site review (docs/reviews/2026-09-20-site-review.md) so each page provides useful information robustly before v0.9.0."
+    scope:
+      - "backend: rollup day keys resolved from the live receiver timezone with repair of mis-keyed rows and null-not-zero for uncomputed windows (R1-02, R3-01, R1-17, R3-02, R3-03); nulls-last ascending sorts and open-sighting durations (R2-01, R2-02); alert-match rows carry the aircraft snapshot and link to the sighting, history refreshes, plural wording (R4-08, R4-05, R4-20)"
+      - "app shell: route error boundaries and a not-found page; responsive sidebar (rail below md, overlay drawer); typed NetworkError with human messages (R0-01, R0-02, R1-06, R2-16, R3-04, R1-07, R2-08, R3-07, R4-06, R3-08, R4-19)"
+      - "Live Map: basemap switch keeps every layer; REST fallback and honest connection states; receiver-derived defaults on tile outage; severity-weighted attention; theme-affine basemap; notices; shown-of-total count; selection in the URL; keyboard reach; notification status; non-positioned formatting; chip live-region (R1-01..R1-16)"
+      - "history pages: per-query refresh and keep-table-on-error with retry; activity filter vocabulary and dates; focusable sighting rows; responsive column collapse; out-of-range page state; age; callsign tracker links; labelled path sample; timezone named; timeline fields; heading/table a11y (R2-03..R2-17)"
+      - "Analytics/Receiver: retry and refresh with an as-of line; polar labels; plurals; one date formatter; axis units; unsupported tiles hidden; T0 explained (R3-05..R3-14)"
+      - "Alerts/Settings/Health/Setup: success-on-surface token; server errors never disable Save; templates managed on the Alerts page only; Health keeps its cached payload; Alerts URL state; watchlist names; shared confirm dialog; honest metadata status; date formatter; unit hints; shared source labels; wizard draft persistence; copy; version tile; touched gates (R4-01..R4-21)"
+    out_of_scope:
+      - "aircraft age from a registry first-registered date; hover readout on the sighting path; bidirectional metric input; two-way template sync; WebSocket-driven /activity (review §5)"
+    acceptance_criteria:
+      - "every finding in docs/reviews/2026-09-20-site-review.md §3 is fixed or explicitly deferred in the PR body with a tracked follow-up"
+      - "on a fresh install whose timezone is set by the wizard, Today at a Glance, Analytics 'Today' and the Receiver scorecard agree with each other and with the rollup tables, without a restart"
+      - "switching the basemap keeps every FlightSite layer (unit test with a mock that fires style.load from setStyle)"
+      - "every healthy status pill and decoder-test success passes WCAG AA contrast in both themes (asserted)"
+      - "a render error or unknown URL shows an in-chrome error/not-found view; every page inside the shell is usable at 390 px with no horizontal scroll"
+      - "every list/chart surface refreshes or offers retry without a reload; a failed request never unmounts the controls that would retry it"
+      - "nothing in review §4 'What must not regress' regresses (checked in the self-review)"
+      - "`Closes #205` in the PR body"
+    required_tests:
+      - "backend: timezone-provider and repair tests, nulls-last sort tests, open-sighting duration tests, alert-match snapshot tests, describe() plural tests; migration test if a repair migration is added"
+      - "frontend: error boundary/not-found, sidebar breakpoint, NetworkError messages, basemap style.load, REST fallback and chip states, refresh/retry per page, contrast assertion, settings 422 re-enable, Health cached-payload banner, wizard draft persistence; visual baselines refreshed where layouts changed"
+    expected_artifacts:
+      - docs/reviews/2026-09-20-site-review.md
+      - backend/src/flightsite/analytics/
+      - backend/src/flightsite/receiver/
+      - backend/src/flightsite/api/
+      - backend/src/flightsite/alerts/model.py
+      - frontend/src/routes.tsx
+      - frontend/src/components/shell/
+      - frontend/src/lib/api/client.ts
+      - frontend/src/features/
+    preferred_agent: opus
+    risk_level: high
+    notes: "Owner request 2026-09-20: 'review each page and make sure it's providing useful information ... in a really robust way' before v0.9.0. Findings fixed by eight agents (Opus for backend/live/map/cross-page, Sonnet for contained UI) in isolated worktrees, one commit per finding group, integrated by Fable. Added by Fable outside the phase plan."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

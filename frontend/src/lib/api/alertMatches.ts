@@ -37,6 +37,26 @@ export interface AlertMatch {
   reason: string;
   icao: string;
   sighting_id: number;
+  /**
+   * The airframe in terms a person recognises, read through `sighting_id`
+   * (docs/API.md §3.10). SPEC §48 asks a notification to carry
+   * "callsign/tail, aircraft type ... altitude, distance", and the history
+   * is where someone looks when they missed the notification — a row
+   * identified only as `D25F97` does not answer that.
+   *
+   * `null` is §2.7's absence, not a placeholder: nothing transmitted a
+   * callsign, or no metadata source has heard of this address.
+   */
+  callsign: string | null;
+  registration: string | null;
+  aircraft_type: string | null;
+  /**
+   * The *sighting's* records, not a snapshot at the instant of the match —
+   * `alert_matches` stores no position of its own. On a sighting still open
+   * they keep moving between reads.
+   */
+  closest_approach_nm: number | null;
+  lowest_altitude_ft: number | null;
   /** `null` for a built-in emergency match. */
   rule: AlertMatchRuleRef | null;
   /** `null` for a rule match; a built-in detector's key (e.g.
@@ -168,15 +188,51 @@ export const alertMatchesQueryKeys = {
     ["alert-matches", "list", params] as const,
 };
 
-/** One page of the history. `placeholderData: keepPreviousData` keeps the
- * rows on screen while the next page loads, so paging or changing the
- * severity filter does not blank the table between answers. */
+/**
+ * How often the newest page of the history re-reads itself, in milliseconds.
+ *
+ * Ten seconds is the alert engine's own cadence seen from outside: matches
+ * are written as sightings are evaluated, so a slower poll would leave a
+ * visible gap between "an alert fired" and "the record of alerts shows it",
+ * and a faster one would query a Pi's SQLite for rows that cannot have
+ * changed. Polling pauses while the tab is hidden — React Query's default —
+ * which is the behaviour a self-hosted receiver wants from a page left open.
+ */
+export const ALERT_MATCHES_POLL_MS = 10_000;
+
+export interface AlertMatchesQueryOptions {
+  /**
+   * How often to re-read, or `false` for not at all.
+   *
+   * A parameter rather than a constant inside this hook because whether
+   * polling is *correct* depends on what the caller is showing. The newest
+   * page of an unfiltered history is a live record and should keep up with
+   * the alerts firing into it; page four of it is a fixed window into the
+   * past, and re-reading that would shuffle rows under a reader who paged
+   * back deliberately.
+   *
+   * Deliberately not a `queryClient` default either: §"nothing refreshes"
+   * in the 2026-09-20 review is a per-query policy, and a global interval
+   * would put every list on this page on a timer.
+   */
+  refetchInterval?: number | false;
+}
+
+/**
+ * One page of the history.
+ *
+ * `placeholderData: keepPreviousData` keeps the rows on screen while the
+ * next page loads, so paging, changing the severity filter, or a poll that
+ * lands mid-read never blanks the list between answers.
+ */
 export function useAlertMatchesQuery(
   params: AlertMatchListParams,
+  options: AlertMatchesQueryOptions = {},
 ): UseQueryResult<AlertMatchListResponse> {
   return useQuery({
     queryKey: alertMatchesQueryKeys.list(params),
     queryFn: () => getAlertMatches(params),
     placeholderData: keepPreviousData,
+    refetchInterval: options.refetchInterval ?? false,
   });
 }

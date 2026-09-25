@@ -32,6 +32,10 @@ export function deriveMapConfig(config: FlightSiteConfig): MapConfig | null {
 
   return {
     receiver: { lat: latitude, lon: longitude, label },
+    // The server answered with a configured location, which is the one
+    // thing that licenses the map to draw a receiver marker and range
+    // rings at all (issue R1-05).
+    receiverConfigured: true,
     ringRadiiNm,
     unit: config.units === "metric" ? "km" : "nm",
     displayRadiusNm: config.display_radius_nm,

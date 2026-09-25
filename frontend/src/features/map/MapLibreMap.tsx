@@ -9,7 +9,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 import type { BasemapDefinition } from "@/features/map/basemaps";
 import { MapInstanceContext } from "@/features/map/MapInstanceContext";
-import { ensureOverlayLayers } from "@/features/map/overlayLayers";
+import {
+  ensureOverlayLayers,
+  FLIGHTSITE_SOURCE_PREFIX,
+  RANGE_RING_LINE_LAYER_ID,
+} from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
 import { cn } from "@/lib/utils";
 
@@ -55,6 +59,25 @@ export interface MapLibreMapProps {
 /** Zoom level that keeps a receiver's full 250 nm default display radius
  * comfortably in view on first render. */
 const INITIAL_ZOOM = 6;
+
+/**
+ * Where a map-level notice goes, and why it is not a corner (issue R1-16).
+ *
+ * All four corners of the Live Map are claimed: the connection chip and the
+ * basemap switcher take the top two, the interesting/non-positioned column
+ * the bottom left, the activity panel and the display-radius indicator the
+ * bottom right. A notice placed in one of them is a notice behind a card —
+ * the review's screenshot of the degraded notice has exactly one word of it
+ * legible. The bottom centre is the one edge nothing floats over, and
+ * `bottom-10` clears MapLibre's own attribution bar.
+ *
+ * `z-30` puts it above every floating panel (`z-10`/`z-20`) deliberately,
+ * rather than leaving the order to DOM position: a degraded-mode notice is
+ * the one thing on this map that must be readable even when it is in the
+ * way. `pointer-events-none` keeps the map underneath clickable.
+ */
+const NOTICE_SLOT_CLASSES =
+  "pointer-events-none absolute inset-x-0 bottom-10 z-30 flex justify-center px-3";
 
 /**
  * Owns the MapLibre GL instance for the Live Map: basemap style, an
@@ -188,12 +211,30 @@ export function MapLibreMap({
       // has actually finished loading is the one the rings/marker should
       // reflect, not whatever `config` happened to be at construction time.
       ensureOverlayLayers(map, configRef.current);
-      setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     });
 
     map.on("error", () => {
       setTilesUnavailable(true);
+    });
+
+    // The degraded notice is cleared by evidence that tiles are arriving,
+    // never by `load` — issue R1-05. `load` fires on a map whose tile
+    // requests have already failed (that is the whole degraded case: the
+    // renderer is fine, the imagery is not), so clearing the flag there
+    // cancelled the notice the `error` listener had just raised, and the
+    // outage went unannounced. A `sourcedata` event reporting a fully
+    // loaded source is the positive signal; FlightSite's own client-drawn
+    // GeoJSON sources are excluded, since they load without a network at
+    // all and would clear the flag on a map with no basemap whatsoever.
+    map.on("sourcedata", (event) => {
+      if (
+        event.isSourceLoaded &&
+        typeof event.sourceId === "string" &&
+        !event.sourceId.startsWith(FLIGHTSITE_SOURCE_PREFIX)
+      ) {
+        setTilesUnavailable(false);
+      }
     });
 
     map.on("click", (event) => {
@@ -225,7 +266,21 @@ export function MapLibreMap({
   }, []);
 
   // Basemap switch: swap the style, then re-add the overlay layers once
-  // the new style finishes loading (setStyle discards custom layers).
+  // the new style is in place (setStyle discards custom layers).
+  //
+  // **The listener goes on before `setStyle`, not after** — issue R1-01,
+  // and the whole of it. `Map.setStyle` defaults to `diff: true`, which for
+  // an inline style object (every registry entry is one) runs
+  // `Style.setState` *synchronously* inside the call: it removes every layer
+  // and source the next style does not declare — which is all of ours, added
+  // imperatively — and then fires `style.load` before `setStyle` has
+  // returned (maplibre-gl 6.6.0, `Style.setState`). Registering the handler
+  // afterwards therefore registered it one instruction too late, every time:
+  // the only event that would ever fire had already fired, `ensureOverlayLayers`
+  // never ran, `styleEpoch` never bumped, and one click on the basemap
+  // switcher emptied the map of aircraft, rings, receiver marker, airports,
+  // airspace and the selected track until a reload. Switching back did not
+  // help — the same ordering ran again on the way back.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) {
@@ -235,13 +290,23 @@ export function MapLibreMap({
       isInitialBasemapRef.current = false;
       return undefined;
     }
-    map.setStyle(basemap.style);
     const handleStyleLoad = () => {
       ensureOverlayLayers(map, configRef.current);
-      setTilesUnavailable(false);
       setStyleEpoch((epoch) => epoch + 1);
     };
     map.once("style.load", handleStyleLoad);
+    map.setStyle(basemap.style);
+    // Self-healing second chance, for the paths that fire no event at all.
+    // `setState` fires `style.load` only when the diff produced at least one
+    // operation, and it throws out to a full `_updateStyle` reload when the
+    // diff hits something it cannot apply; a future MapLibre could move the
+    // dispatch again. Asking the map directly — style loaded, our layers
+    // gone — needs no assumption about which path ran. It cannot double up:
+    // the handler above adds that very layer, so a style.load that has
+    // already been handled fails this test.
+    if (map.isStyleLoaded() && !map.getLayer(RANGE_RING_LINE_LAYER_ID)) {
+      handleStyleLoad();
+    }
     return () => {
       map.off("style.load", handleStyleLoad);
     };
@@ -250,16 +315,32 @@ export function MapLibreMap({
   }, [basemap]);
 
   // Config change (receiver position/rings): refresh the overlay data in
-  // place when the style is already loaded; otherwise the pending style
-  // load (initial or from a basemap switch) will pick up the latest
-  // config when it calls ensureOverlayLayers itself.
+  // place.
+  //
+  // Keyed on `styleEpoch` as well as `config` — issue R1-05. The guard this
+  // replaces was `!map.isStyleLoaded()`, which asks a stricter question than
+  // this effect needs: `isStyleLoaded()` is `_loaded && every source loaded`,
+  // so a style whose *vector tiles* are failing reports false indefinitely
+  // even though its layers are perfectly editable. With the tile host
+  // blocked, the config effect therefore bailed on every run, its only
+  // dependency was `config`, and nothing ever retried — so whichever config
+  // happened to be current when `load` fired was the one the rings and the
+  // receiver marker kept forever. That was the placeholder whenever the
+  // style won the race against `GET /api/internal/config`, tile outage or
+  // not.
+  //
+  // `styleEpoch` is bumped exactly once per *completed* style load, so
+  // waiting for it to leave 0 is the same readiness check without the
+  // tile-loading half, and re-running on it covers the other direction: a
+  // basemap switch re-applies the current config rather than the one the
+  // switch's own handler closed over.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) {
+    if (!map || styleEpoch === 0) {
       return;
     }
     ensureOverlayLayers(map, config);
-  }, [config]);
+  }, [config, styleEpoch]);
 
   // One-time camera recenter, independent of the style/tile load above:
   // the map is constructed with whatever `config` the *first* render held
@@ -306,14 +387,33 @@ export function MapLibreMap({
           className="h-full w-full"
           data-testid="maplibre-container"
           role="application"
-          aria-label={`Live map centered on ${config.receiver.label}`}
+          aria-label={
+            config.receiverConfigured
+              ? `Live map centered on ${config.receiver.label}`
+              : "Live map — receiver location not configured"
+          }
         />
         {tilesUnavailable && !mapUnsupported && (
+          // Bottom-centre, above the attribution bar, and above the panels
+          // in the stacking order — issue R1-16. At `bottom-3 left-3` this
+          // shared a slot with the Live Map's interesting/non-positioned
+          // column, was the same `z-10` as it, and lost: the review's
+          // screenshot has one word of the notice legible behind the
+          // panels. The bottom centre is the one edge of the map no
+          // floating card claims, and `z-30` settles the order by intent
+          // rather than by DOM accident.
           <div
-            role="status"
-            className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm"
+            className={NOTICE_SLOT_CLASSES}
+            data-testid="map-degraded-notice"
           >
-            Basemap unavailable — rings and receiver position still shown.
+            <p
+              role="status"
+              className="max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-center text-xs text-muted-foreground shadow-sm backdrop-blur-sm"
+            >
+              {config.receiverConfigured
+                ? "Basemap unavailable — aircraft, range rings and receiver position are still shown."
+                : "Basemap unavailable — aircraft are still shown."}
+            </p>
           </div>
         )}
         {mapUnsupported && (

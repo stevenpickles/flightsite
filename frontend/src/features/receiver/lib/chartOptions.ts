@@ -19,6 +19,7 @@
 import type * as echarts from "echarts/core";
 
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
+import { pluralize } from "@/features/analytics/lib/format";
 import type { ReceiverSeriesResolution } from "@/lib/api/receiverStats";
 import {
   formatReceiverLocalDate,
@@ -89,10 +90,19 @@ export function buildTimeSeriesChart(
   const latestPresent = [...values].reverse().find((value) => value !== null);
   const peak = present.length > 0 ? Math.max(...present) : null;
 
+  const pointWord = pluralize(points.length, "point");
+  // A one-point series has the same category at both ends — stating that as
+  // a "from X to X" range read as a bug rather than the single-sample
+  // window it is.
+  const rangePhrase =
+    points.length === 1
+      ? `at ${categories[0]}`
+      : `from ${categories[0]} to ${categories[categories.length - 1]}`;
+
   const summary =
     present.length === 0
-      ? `${seriesName}: no readings across ${points.length} time points from ${categories[0]} to ${categories[categories.length - 1]}.`
-      : `${seriesName}: ${points.length} points from ${categories[0]} to ${categories[categories.length - 1]}. ` +
+      ? `${seriesName}: no readings across ${points.length} time ${pointWord} ${rangePhrase}.`
+      : `${seriesName}: ${points.length} ${pointWord} ${rangePhrase}. ` +
         `Latest ${formatValue(latestPresent as number)}, peak ${formatValue(peak as number)}.`;
 
   return {
@@ -177,7 +187,13 @@ export function buildSignalHistogramChart(params: {
       backgroundColor: "transparent",
       textStyle: { color: theme.mutedInk },
       grid: { left: 52, right: 16, top: 24, bottom: 56 },
-      tooltip: { trigger: "axis" },
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value: unknown) =>
+          typeof value === "number"
+            ? `${value} ${pluralize(value, "sighting")}`
+            : "no data",
+      },
       xAxis: {
         type: "category",
         name: "dB",
@@ -210,6 +226,15 @@ export interface BearingSectorPoint {
   value: number | null;
 }
 
+/** The category-axis index closest to `targetDeg` among `totalSectors` even
+ * slices of the compass (R3-09) — used to place exactly one "N"/"E"/"S"/"W"
+ * tick per cardinal rather than a rounded sector-midpoint label (`"3°"`,
+ * `"93°"`, …) at every tick, which read as a compass rose whose numbers
+ * simply missed 0/90/180/270 entirely. */
+function cardinalTickIndex(totalSectors: number, targetDeg: number): number {
+  return Math.round((targetDeg / 360) * totalSectors) % totalSectors;
+}
+
 /**
  * SPEC §62's maximum-range-by-bearing polar plot.
  *
@@ -229,13 +254,6 @@ export function buildRangeByBearingChart(params: {
 }): ChartResult {
   const { today, ever, unitLabel, formatValue } = params;
 
-  if (ever.length === 0) {
-    return {
-      buildOption: () => null,
-      summary: "No range-by-bearing data recorded yet.",
-    };
-  }
-
   const categories = ever.map((sector) => `${Math.round(sector.bearing_deg)}°`);
   const everValues = ever.map((sector) => sector.value);
   const todayValues = today.map((sector) => sector.value);
@@ -246,15 +264,29 @@ export function buildRangeByBearingChart(params: {
     (value): value is number => value !== null,
   );
 
+  // The backend always emits all 72 sectors for both series regardless of
+  // whether any of them actually recorded a range (`ever.length === 0` was
+  // therefore unreachable from the real API) — an install with no range
+  // records at all must still draw the empty-state, not 72 empty sectors.
+  if (everPresent.length === 0) {
+    return {
+      buildOption: () => null,
+      summary: "No range-by-bearing data recorded yet.",
+    };
+  }
+
+  const hasToday = todayPresent.length > 0;
   const summary =
-    everPresent.length === 0
-      ? "No range-by-bearing data recorded yet."
-      : `Lifetime maximum range ${formatValue(Math.max(...everPresent))} across ${ever.length} bearing sectors; ` +
-        `today's maximum is ${
-          todayPresent.length > 0
-            ? formatValue(Math.max(...todayPresent))
-            : "not set yet"
-        }.`;
+    `Lifetime maximum range ${formatValue(Math.max(...everPresent))} across ${ever.length} bearing sectors; ` +
+    `today's maximum is ${hasToday ? formatValue(Math.max(...todayPresent)) : "not set yet"}.`;
+
+  const totalSectors = categories.length;
+  const cardinalLabelByIndex: Record<number, string> = {
+    [cardinalTickIndex(totalSectors, 0)]: "N",
+    [cardinalTickIndex(totalSectors, 90)]: "E",
+    [cardinalTickIndex(totalSectors, 180)]: "S",
+    [cardinalTickIndex(totalSectors, 270)]: "W",
+  };
 
   return {
     summary,
@@ -262,7 +294,10 @@ export function buildRangeByBearingChart(params: {
       backgroundColor: "transparent",
       textStyle: { color: theme.mutedInk },
       legend: {
-        data: ["Ever", "Today"],
+        // A "Today" key with nothing drawn under it read as a dead legend
+        // entry — omit it (and the series below) rather than explain an
+        // empty line in the sr-only summary alone.
+        data: hasToday ? ["Ever", "Today"] : ["Ever"],
         top: 0,
         textStyle: { color: theme.mutedInk },
       },
@@ -277,15 +312,32 @@ export function buildRangeByBearingChart(params: {
         data: categories,
         startAngle: 90,
         clockwise: true,
-        axisLabel: { color: theme.mutedInk, interval: 5 },
+        // Sector 0's center sits exactly on `startAngle` (north) instead of
+        // half a sector clockwise of it, which `boundaryGap`'s default
+        // (`true` for a category axis) would otherwise leave it.
+        boundaryGap: false,
+        axisLabel: {
+          color: theme.mutedInk,
+          interval: 0,
+          // Every other tick around the rose was a rounded sector midpoint
+          // ("3°", "93°", …) that never lands on 0/90/180/270 and carried no
+          // N/E/S/W — a compass rose whose numbers miss every cardinal reads
+          // as broken. Only the four cardinal ticks are labelled now.
+          formatter: (_value: string, index: number) =>
+            cardinalLabelByIndex[index] ?? "",
+        },
         axisLine: { lineStyle: { color: theme.grid } },
         splitLine: { lineStyle: { color: theme.grid } },
       },
       radiusAxis: {
         type: "value",
-        name: unitLabel,
-        nameTextStyle: { color: theme.mutedInk },
-        axisLabel: { color: theme.mutedInk },
+        // No `name` here: it used to sit at the axis start, right where the
+        // north tick lives, and print as "nm" overlapping "3°". The unit is
+        // still stated — on every tick — instead of once, colliding.
+        axisLabel: {
+          color: theme.mutedInk,
+          formatter: (value: number) => `${value} ${unitLabel}`,
+        },
         splitLine: { lineStyle: { color: theme.grid } },
       },
       series: [
@@ -300,17 +352,25 @@ export function buildRangeByBearingChart(params: {
           symbolSize: 6,
           connectNulls: false,
         },
-        {
-          name: "Today",
-          type: "line",
-          coordinateSystem: "polar",
-          data: todayValues,
-          lineStyle: { width: 2, color: theme.series[1], type: "dashed" },
-          itemStyle: { color: theme.series[1] },
-          symbol: "diamond",
-          symbolSize: 7,
-          connectNulls: false,
-        },
+        ...(hasToday
+          ? [
+              {
+                name: "Today",
+                type: "line" as const,
+                coordinateSystem: "polar",
+                data: todayValues,
+                lineStyle: {
+                  width: 2,
+                  color: theme.series[1],
+                  type: "dashed" as const,
+                },
+                itemStyle: { color: theme.series[1] },
+                symbol: "diamond",
+                symbolSize: 7,
+                connectNulls: false,
+              },
+            ]
+          : []),
       ],
     }),
   };

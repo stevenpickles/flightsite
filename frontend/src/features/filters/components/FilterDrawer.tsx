@@ -34,11 +34,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { countActiveFilters } from "@/features/filters/lib/activeFilterCount";
+import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import type {
   ClassificationFlag,
   GroundTrafficMode,
 } from "@/features/filters/types";
+import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { useMetadataAvailable } from "@/lib/api/metadata";
@@ -101,10 +103,53 @@ function numberOrNull(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * "N of M aircraft" (R1-08): how many of the currently-live aircraft survive
+ * every active filter, right beside the controls that did the narrowing —
+ * `ConnectionStatusChip` reports the unfiltered total and never should, since
+ * a filter that matches nothing is otherwise indistinguishable from a
+ * receiver that has gone quiet.
+ */
+function FilterMatchCount({ shown, total }: { shown: number; total: number }) {
+  if (shown === total) {
+    return (
+      <p
+        data-testid="filter-match-count"
+        className="border-b border-border px-4 py-2 text-xs text-muted-foreground"
+      >
+        Showing all {total.toLocaleString()} aircraft.
+      </p>
+    );
+  }
+  if (shown === 0) {
+    return (
+      <p
+        data-testid="filter-match-count"
+        className="border-b border-border px-4 py-2 text-xs font-medium text-destructive"
+      >
+        No aircraft match these filters.
+      </p>
+    );
+  }
+  return (
+    <p
+      data-testid="filter-match-count"
+      className="border-b border-border px-4 py-2 text-xs text-muted-foreground"
+    >
+      Showing {shown.toLocaleString()} of {total.toLocaleString()} aircraft.
+    </p>
+  );
+}
+
 export function FilterDrawer() {
   const [isOpen, setIsOpen] = useState(false);
   const metadataAvailable = useMetadataAvailable();
   const filters = useFilterStore((state) => state.filters);
+  const total = useLiveAircraftStore(
+    (state) => Object.keys(state.aircraft).length,
+  );
+  const { aircraft: shownAircraft } = useFilteredLiveAircraft();
+  const shown = shownAircraft.length;
   const setAltitudeRange = useFilterStore((state) => state.setAltitudeRange);
   const setMaxDistanceNm = useFilterStore((state) => state.setMaxDistanceNm);
   const setCategoryText = useFilterStore((state) => state.setCategoryText);
@@ -236,6 +281,8 @@ export function FilterDrawer() {
               </button>
             </div>
           </header>
+
+          <FilterMatchCount shown={shown} total={total} />
 
           <div className="overflow-y-auto">
             <FilterSection title="Live set">

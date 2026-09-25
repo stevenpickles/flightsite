@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { RuleBuilderForm } from "@/features/alerts/components/RuleBuilderForm";
+import { ConfirmDangerDialog } from "@/features/settings/components/ConfirmDangerDialog";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
 import {
   useDeleteAlertRuleMutation,
@@ -9,12 +10,41 @@ import {
   type AlertRule,
   type AlertRuleWriteInput,
 } from "@/lib/api/alertRules";
+import { useWatchlistsQuery, type Watchlist } from "@/lib/api/watchlists";
 
 function errorMessage(error: unknown): string | null {
   if (!error) {
     return null;
   }
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+/**
+ * Substitutes a watchlist's name for its bare id in the backend's own
+ * `describes` prose (R4-09). The backend cannot do this itself —
+ * `RuleConditions.describe()` has no join to the watchlists table, only the
+ * id the condition stores — so this is client-side, matching the exact
+ * phrase `RuleConditions.describe()` produces
+ * (`backend/src/flightsite/alerts/model.py`: `f"on watchlist
+ * {self.watchlist_id}"`) rather than a loose regex over every digit in the
+ * list. A watchlist that no longer exists (deleted, or the query still
+ * loading) falls back to the id, exactly what the backend already shows. */
+function resolveWatchlistNames(
+  rule: AlertRule,
+  watchlists: readonly Watchlist[],
+): string[] {
+  const watchlistId = rule.conditions.watchlist_id;
+  if (watchlistId === null || watchlistId === undefined) {
+    return rule.describes;
+  }
+  const bare = `on watchlist ${watchlistId}`;
+  const watchlist = watchlists.find((entry) => entry.id === watchlistId);
+  if (watchlist === undefined) {
+    return rule.describes;
+  }
+  return rule.describes.map((phrase) =>
+    phrase === bare ? `on watchlist ${watchlist.name}` : phrase,
+  );
 }
 
 /** The whole of a rule as a write body — what "toggle enabled" and "save an
@@ -60,10 +90,22 @@ export interface RuleCardProps {
  */
 export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
   const [editing, setEditing] = useState(false);
+  // R4-10: a native `window.confirm` guarded this delete — unstyled,
+  // theme-ignoring, and some browsers let a user suppress it for the
+  // session, after which the button becomes a one-click irreversible
+  // delete that also removes every alert this rule has recorded.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const headingId = useId();
 
   const updateMutation = useUpdateAlertRuleMutation();
   const deleteMutation = useDeleteAlertRuleMutation();
+  // Already loaded by the rule builder whenever a watchlist condition is
+  // being edited, so this is a cached read, not a second request.
+  const watchlistsQuery = useWatchlistsQuery();
+  const describedPhrases = resolveWatchlistNames(
+    rule,
+    watchlistsQuery.data?.watchlists ?? [],
+  );
 
   const actionError =
     errorMessage(updateMutation.error) ?? errorMessage(deleteMutation.error);
@@ -75,13 +117,12 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
     });
   }
 
-  function handleDelete(): void {
-    const confirmed = window.confirm(
-      `Delete “${rule.name}”? The alerts it has already recorded are deleted with it.`,
-    );
-    if (confirmed) {
-      deleteMutation.mutate(rule.id);
-    }
+  function confirmDelete(): void {
+    deleteMutation.mutate(rule.id, {
+      onSuccess: () => {
+        setConfirmingDelete(false);
+      },
+    });
   }
 
   function handleSave(input: AlertRuleWriteInput): void {
@@ -172,7 +213,9 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
             size="sm"
             disabled={deleteMutation.isPending}
             aria-label={`Delete ${rule.name}`}
-            onClick={handleDelete}
+            onClick={() => {
+              setConfirmingDelete(true);
+            }}
           >
             Delete
           </Button>
@@ -184,7 +227,7 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
           Matches aircraft that are
         </h4>
         <ul className="flex flex-col gap-0.5 text-xs text-foreground">
-          {rule.describes.map((phrase) => (
+          {describedPhrases.map((phrase) => (
             <li key={phrase}>{phrase}</li>
           ))}
         </ul>
@@ -213,6 +256,20 @@ export function RuleCard({ rule, templateName, onShowMatches }: RuleCardProps) {
           }}
         />
       )}
+
+      <ConfirmDangerDialog
+        open={confirmingDelete}
+        onClose={() => {
+          setConfirmingDelete(false);
+        }}
+        title={`Delete "${rule.name}"?`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        isPending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
+      >
+        <p>The alerts it has already recorded are deleted with it.</p>
+      </ConfirmDangerDialog>
     </article>
   );
 }

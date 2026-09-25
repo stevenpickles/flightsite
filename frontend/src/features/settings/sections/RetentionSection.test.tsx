@@ -75,4 +75,40 @@ describe("RetentionSection", () => {
     const body = JSON.parse(String(putInit.body)) as Record<string, unknown>;
     expect(body).toEqual({ retention: { high_res_metric_days: 21 } });
   });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["retention", "high_res_metric_days"],
+                msg: "Input should be less than or equal to 30",
+                type: "less_than_equal",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.clear(screen.getByLabelText(/retention/i));
+    await user.type(screen.getByLabelText(/retention/i), "21");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/input should be less than or equal to 30/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.clear(screen.getByLabelText(/retention/i));
+    await user.type(screen.getByLabelText(/retention/i), "22");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
 });

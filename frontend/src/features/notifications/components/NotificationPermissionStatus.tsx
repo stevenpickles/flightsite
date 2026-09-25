@@ -80,7 +80,7 @@ function statusCopy(
 }
 
 const TONE_CLASS: Record<StatusCopy["tone"], string> = {
-  ok: "text-accent-foreground",
+  ok: "text-success-on-surface",
   warn: "text-destructive",
   muted: "text-muted-foreground",
 };

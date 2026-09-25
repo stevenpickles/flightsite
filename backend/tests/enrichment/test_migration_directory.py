@@ -100,11 +100,19 @@ def test_this_revision_sits_directly_on_the_previous_head() -> None:
     assert script.down_revision == PREVIOUS
 
 
-def test_it_is_the_only_head() -> None:
-    """One head, and it is this one — the rule a migration slice must leave true."""
-    assert [script.revision for script in migrate.script_directory().get_revisions("heads")] == [
-        REVISION
-    ]
+def test_the_graph_still_has_exactly_one_head() -> None:
+    """One head — the rule a migration slice must leave true.
+
+    Named the head itself until slice 075 added revision 0016 on top of this
+    one, which is the ordinary way a revision stops being the newest and not a
+    thing this test should fail over. *Which* revision is head is asserted
+    once, against the live graph, in ``tests/db/test_migrations.py``; what
+    matters here is that this revision left the history linear.
+    """
+    heads = [script.revision for script in migrate.script_directory().get_revisions("heads")]
+
+    assert len(heads) == 1, f"divergent Alembic heads: {heads}"
+    assert REVISION in {script.revision for script in migrate.script_directory().walk_revisions()}
 
 
 # ------------------------------------------------------------ the new tables

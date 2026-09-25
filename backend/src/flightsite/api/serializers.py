@@ -126,7 +126,7 @@ from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, Rare
 from flightsite.api.receiver_stats import CommonRecord, MostFrequentAircraft, SignalHistogram
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
-from flightsite.db.clock import from_epoch_ms
+from flightsite.db.clock import MS_PER_SECOND, from_epoch_ms, utc_now_ms
 from flightsite.ingest import Position
 from flightsite.live import LiveAircraft, LiveCounts
 from flightsite.metadata.cache import AircraftMetadataView
@@ -749,20 +749,47 @@ def _resolved_provenance_from_row(row: RowMapping) -> dict[str, str]:
     return found
 
 
-def lifetime_payload(row: RowMapping) -> dict[str, Any]:
+def lifetime_payload(row: RowMapping, *, now_ms: int | None = None) -> dict[str, Any]:
     """The SPEC §53 lifetime record block from a joined history row.
 
-    ``docs/API.md`` §3.5's documented shape, verbatim: every field here is a
+    ``docs/API.md`` §3.5's documented shape. All but one field is a
     denormalized column on :class:`~flightsite.db.models.Aircraft`
-    (``docs/DATA_MODEL.md`` §2.2), so this is a rename-and-convert, not a
-    computation — the persistence worker is what keeps the source columns
-    correct.
+    (``docs/DATA_MODEL.md`` §2.2) — a rename-and-convert, with the
+    persistence worker keeping the source columns correct.
+
+    ``cumulative_duration_s`` is the exception, and deliberately so.
+    ``aircraft.total_observed_ms`` sums *closed* sightings only
+    (:mod:`flightsite.sightings.repository` documents why: accruing it on
+    each flush of an open sighting would double-count), which is right for
+    the column and wrong for the reader. An airframe overhead for sixteen
+    minutes and still transmitting was being told its cumulative observed
+    time was ``0s``. SPEC §53 asks for "cumulative observation duration", and
+    the time this receiver has spent watching an aircraft plainly includes
+    the part it is spending right now — so the open sighting's elapsed time
+    is added here, and published separately as
+    ``open_sighting_elapsed_s`` so a client can say how much of the total is
+    still running rather than having to guess.
+
+    Args:
+        row: a row from
+            :meth:`~flightsite.api.history.AircraftHistoryRepository.get_aircraft`,
+            which selects ``open_sighting_started_ms`` for exactly this.
+        now_ms: the instant the open sighting is measured against — see
+            :func:`_resolve_now_ms`.
     """
+    open_started_ms = row["open_sighting_started_ms"]
+    open_elapsed_s = (
+        None
+        if open_started_ms is None
+        else _elapsed_s(int(open_started_ms), _resolve_now_ms(now_ms))
+    )
+    closed_duration_s = row["total_observed_ms"] // MS_PER_SECOND
     return {
         "first_seen": iso_utc(from_epoch_ms(row["first_seen_ms"])),
         "last_seen": iso_utc(from_epoch_ms(row["last_seen_ms"])),
         "sighting_count": row["sighting_count"],
-        "cumulative_duration_s": row["total_observed_ms"] // 1000,
+        "cumulative_duration_s": closed_duration_s + (open_elapsed_s or 0),
+        "open_sighting_elapsed_s": open_elapsed_s,
         "closest_approach_nm": row["closest_approach_nm"],
         "max_range_nm": row["max_range_nm"],
         "lowest_altitude_ft": row["lowest_alt_ft"],
@@ -800,7 +827,9 @@ def aircraft_history_row_payload(row: RowMapping) -> dict[str, Any]:
     }
 
 
-def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
+def aircraft_detail_payload(
+    row: RowMapping, *, live: bool, now_ms: int | None = None
+) -> dict[str, Any]:
     """One aircraft's full detail — ``docs/API.md`` §3.5: identity, metadata
     with provenance, classification, and the SPEC §53 lifetime block.
 
@@ -812,6 +841,8 @@ def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
             (:attr:`~flightsite.live.store.LiveStore` at read time), so the
             frontend can offer a jump to its Live Map selection instead of
             showing a live section it has no data for.
+        now_ms: the instant an open sighting's elapsed time is measured
+            against — see :func:`lifetime_payload`.
     """
     classification, classification_source = _classification_from_row(row)
     provenance = _resolved_provenance_from_row(row)
@@ -832,7 +863,7 @@ def aircraft_detail_payload(row: RowMapping, *, live: bool) -> dict[str, Any]:
         "owner": row["owner"],
         "classification": classification,
         "live": live,
-        "lifetime": lifetime_payload(row),
+        "lifetime": lifetime_payload(row, now_ms=now_ms),
         "provenance": provenance,
     }
 
@@ -874,7 +905,32 @@ def airport_feature_collection_payload(records: Sequence[AirportRecord]) -> dict
     return {"type": "FeatureCollection", "features": features}
 
 
-def sighting_row_payload(row: RowMapping) -> dict[str, Any]:
+def _open_block(row: RowMapping, now_ms: int | None) -> dict[str, Any]:
+    """``open``/``elapsed_s`` for a sighting row or detail — ``docs/API.md`` §3.7.
+
+    ``duration_s`` keeps meaning exactly what it stored: the *recorded*
+    duration of a finished sighting, and ``null`` until there is one. What
+    was missing is that ``null`` was being read as "Unknown" — the word this
+    API reserves for "the decoder never reported this" (§2.7) — on a
+    sighting the same page labels "Ongoing". "Not closed yet" is a different
+    fact, and both halves of it are known: ``started_at`` and the clock.
+
+    So the shape says it in two fields rather than by overloading one.
+    ``open`` is the flag (``ended_at is null``, said out loud so a client
+    never has to infer a state from an absence), and ``elapsed_s`` is
+    ``started_at`` to now — present only while open, because "time since
+    this started" applied to a finished sighting would be a number about the
+    age of the record rather than about the flight.
+    """
+    if row["ended_ms"] is not None:
+        return {"open": False, "elapsed_s": None}
+    return {
+        "open": True,
+        "elapsed_s": _elapsed_s(int(row["started_ms"]), _resolve_now_ms(now_ms)),
+    }
+
+
+def sighting_row_payload(row: RowMapping, *, now_ms: int | None = None) -> dict[str, Any]:
     """One Sightings page row — ``docs/API.md`` §3.6, SPEC §57's column list.
 
     Field names deliberately match :func:`aircraft_history_row_payload`
@@ -884,6 +940,13 @@ def sighting_row_payload(row: RowMapping) -> dict[str, Any]:
     ``callsign``/``registration`` are both published so the client can
     render SPEC §57's combined "tail/callsign" column, preferring whichever
     is known.
+
+    ``open`` and ``elapsed_s`` are the answer to "still running" — see
+    :func:`_open_block`.
+
+    Args:
+        now_ms: the instant an open sighting is measured against; one value
+            per page, so every row of that page agrees (:func:`_resolve_now_ms`).
     """
     classification, classification_source = _classification_from_row(row)
     provenance = _resolved_provenance_from_row(row)
@@ -901,7 +964,8 @@ def sighting_row_payload(row: RowMapping) -> dict[str, Any]:
         "classification": classification,
         "started_at": iso_utc(from_epoch_ms(row["started_ms"])),
         "ended_at": None if row["ended_ms"] is None else iso_utc(from_epoch_ms(row["ended_ms"])),
-        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // 1000,
+        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // MS_PER_SECOND,
+        **_open_block(row, now_ms),
         "closure_reason": row["closure_reason"],
         "closest_approach_nm": row["closest_approach_nm"],
         "max_range_nm": row["max_range_nm"],
@@ -946,6 +1010,7 @@ def sighting_detail_payload(
     events: Sequence[RowMapping],
     path: Sequence[TrackSample],
     airport_names: AirportNameLookup = no_airport_names,
+    now_ms: int | None = None,
 ) -> dict[str, Any]:
     """One sighting's full detail — ``docs/API.md`` §3.6.
 
@@ -959,6 +1024,10 @@ def sighting_detail_payload(
     ``airport_names`` is the same injected lookup :func:`aircraft_payload`
     takes, so a stored route ident is named here exactly as a live one is —
     one block shape, one source of names (slice 070).
+
+    ``open``/``elapsed_s`` carry the same meaning they carry on a list row
+    (:func:`_open_block`), so the Sightings table and the detail page answer
+    "how long has this been going?" from the same two fields.
     """
     return {
         "id": row["id"],
@@ -967,7 +1036,8 @@ def sighting_detail_payload(
         "squawk": row["squawk_last"],
         "started_at": iso_utc(from_epoch_ms(row["started_ms"])),
         "ended_at": None if row["ended_ms"] is None else iso_utc(from_epoch_ms(row["ended_ms"])),
-        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // 1000,
+        "duration_s": None if row["duration_ms"] is None else row["duration_ms"] // MS_PER_SECOND,
+        **_open_block(row, now_ms),
         "closure_reason": row["closure_reason"],
         "route": route_block(row["origin_ident"], row["destination_ident"], airport_names),
         "reception": {
@@ -1018,9 +1088,18 @@ def analytics_window_payload(
 
 
 def analytics_daily_row_payload(row: DailyRow) -> dict[str, Any]:
-    """One day of the §3.7 ``daily`` series, receiver activity included."""
+    """One day of the §3.7 ``daily`` series, receiver activity included.
+
+    ``complete`` is ``false`` for a day the rollup pipeline has not folded
+    yet, and every figure it governs is then ``null`` rather than ``0`` —
+    "not computed yet" and "nothing flew" are different statements and a card
+    that prints the first as the second is lying about a measurement (issue
+    #205, finding R3-02). ``new_aircraft`` is exempt: it is derived live, so
+    it is a measurement on a pending day too.
+    """
     return {
         "day": row.day,
+        "complete": row.complete,
         "unique_aircraft": row.unique_aircraft,
         "new_aircraft": row.new_aircraft,
         "sightings": row.sightings,
@@ -1038,8 +1117,15 @@ def analytics_daily_row_payload(row: DailyRow) -> dict[str, Any]:
 
 
 def analytics_summary_payload(summary: Summary) -> dict[str, Any]:
-    """SPEC §59's at-a-glance block."""
+    """SPEC §59's at-a-glance block.
+
+    ``complete`` is ``false`` when a day of the window has not been rolled up
+    yet. The totals stay numbers — see
+    :class:`~flightsite.analytics.queries.Summary` — so the flag is what a
+    card needs to say "as far as we have computed" rather than assert.
+    """
     return {
+        "complete": summary.complete,
         "unique_aircraft": summary.unique_aircraft,
         "new_aircraft": summary.new_aircraft,
         "sightings": summary.sightings,
@@ -1134,6 +1220,15 @@ def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
     it. The ``reason`` is the text recorded when the match happened, never
     recomposed from the rule as it stands today — so history keeps saying what
     the user was actually shown even after the rule behind it is renamed.
+
+    ``callsign``/``registration``/``aircraft_type`` and the two record fields
+    are the airframe this match was about, read through the sighting the row
+    already points at. SPEC §48 requires a notification to name the aircraft
+    in terms a person recognises, and the history is where someone looks when
+    they missed the notification — a row identifying its subject only as
+    ``D25F97`` does not answer that. The field names are the ones §3.5 and
+    §3.7 publish for the same facts, so one set of frontend field components
+    renders an alert row, a sighting row and a historical aircraft row.
     """
     return {
         "id": match.id,
@@ -1142,6 +1237,11 @@ def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
         "reason": match.reason,
         "icao": match.icao24,
         "sighting_id": match.sighting_id,
+        "callsign": match.callsign,
+        "registration": match.registration,
+        "aircraft_type": match.type_code,
+        "closest_approach_nm": match.closest_approach_nm,
+        "lowest_altitude_ft": match.lowest_alt_ft,
         "rule": (None if match.rule_id is None else {"id": match.rule_id, "name": match.rule_name}),
         "builtin_key": match.builtin_key,
         "notified": match.notified,
@@ -1151,6 +1251,31 @@ def alert_match_payload(match: StoredAlertMatch) -> dict[str, Any]:
 def _rounded(value: float | None) -> float | None:
     """A distance rounded to the API's documented precision, or ``None``."""
     return None if value is None else round(value, DISTANCE_DECIMALS)
+
+
+def _elapsed_s(started_ms: int, now_ms: int) -> int:
+    """Whole seconds from ``started_ms`` to ``now_ms``, never negative.
+
+    The clamp is not defensive noise: a receiver whose clock steps backwards
+    (an NTP correction on a Pi that booted without a battery-backed clock is
+    the ordinary case) would otherwise publish a negative duration for a
+    sighting that is plainly still running. Zero is the honest floor — "less
+    than a second so far" — where a negative number would be a new kind of
+    wrong answer.
+    """
+    return max(0, now_ms - started_ms) // MS_PER_SECOND
+
+
+def _resolve_now_ms(now_ms: int | None) -> int:
+    """The instant an open-ended duration is measured against.
+
+    Callers pass one value per *response* rather than letting each row read
+    the clock for itself: two rows of one page that disagree about "now" by a
+    few milliseconds would make a sorted duration column non-monotonic for no
+    reason a reader could see. ``None`` — the default, for a caller with no
+    page to keep consistent — reads the clock here.
+    """
+    return utc_now_ms() if now_ms is None else now_ms
 
 
 __all__ = [

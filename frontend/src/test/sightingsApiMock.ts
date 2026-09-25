@@ -10,6 +10,26 @@ import type {
 
 import { aircraftDetail, defaultReceiverInfo } from "@/test/aircraftApiMock";
 
+/**
+ * `open` / `elapsed_s` (§3.7) derived from whatever `ended_at` the test
+ * asked for, unless the test named them itself.
+ *
+ * Without this, `sightingRow({ ended_at: null })` would produce a row the
+ * server could never send — open by its `ended_at` and closed by its `open`
+ * flag — and every test of open-sighting rendering would be testing a shape
+ * that does not exist.
+ */
+function openFields(
+  endedAt: string | null,
+  overrides: { open?: boolean; elapsed_s?: number | null },
+): { open: boolean; elapsed_s: number | null } {
+  const open = overrides.open ?? endedAt === null;
+  return {
+    open,
+    elapsed_s: overrides.elapsed_s ?? (open ? 964 : null),
+  };
+}
+
 /** A `SightingRow`, defaulting to a fully-resolved, closed example —
  * override just the fields a test cares about. */
 export function sightingRow(overrides: Partial<SightingRow> = {}): SightingRow {
@@ -36,6 +56,12 @@ export function sightingRow(overrides: Partial<SightingRow> = {}): SightingRow {
     max_alert_severity: null,
     provenance: {},
     ...overrides,
+    ...openFields(
+      overrides.ended_at === undefined
+        ? "2026-08-30T22:41:55.000Z"
+        : overrides.ended_at,
+      overrides,
+    ),
   };
 }
 
@@ -98,6 +124,12 @@ export function sightingDetail(
     ],
     provenance: { route: "aerodatabox" },
     ...overrides,
+    ...openFields(
+      overrides.ended_at === undefined
+        ? "2026-08-30T22:41:55.000Z"
+        : overrides.ended_at,
+      overrides,
+    ),
   };
 }
 
@@ -113,6 +145,13 @@ export interface MockSightingsApiOptions {
    * function of the parsed request URL for tests that vary the result by
    * filter/sort/page. */
   list?: SightingListResponse | ((url: URL) => SightingListResponse);
+  /** Serve an error envelope from `GET /api/v1/sightings` instead — a fixed
+   * status, or a function of the request URL returning `null` to let the
+   * normal `list` response through, which is how a test fails a *refresh*
+   * rather than the first load (review R2-04). */
+  listStatus?: number | ((url: URL) => number | null);
+  /** The same, for `GET /api/v1/sightings/{id}`. */
+  detailStatus?: number | ((id: number) => number | null);
   /** `id -> SightingDetail`; an id with no entry 404s. */
   detail?: Record<number, SightingDetail>;
   /** Response `GET /api/v1/aircraft/{icao}/sightings` returns, keyed by icao. */
@@ -174,6 +213,22 @@ export function installSightingsApiMock(options: MockSightingsApiOptions = {}) {
       }
 
       if (url.pathname === "/api/v1/sightings" && method === "GET") {
+        const status =
+          typeof options.listStatus === "function"
+            ? options.listStatus(url)
+            : (options.listStatus ?? null);
+        if (status !== null) {
+          return jsonResponse(
+            {
+              error: {
+                code: "internal_error",
+                message: "The sightings log is unavailable",
+                detail: null,
+              },
+            },
+            status,
+          );
+        }
         const body =
           typeof options.list === "function"
             ? options.list(url)
@@ -184,6 +239,22 @@ export function installSightingsApiMock(options: MockSightingsApiOptions = {}) {
       const detailMatch = /^\/api\/v1\/sightings\/(\d+)$/.exec(url.pathname);
       if (detailMatch && method === "GET") {
         const id = Number(detailMatch[1]);
+        const detailStatus =
+          typeof options.detailStatus === "function"
+            ? options.detailStatus(id)
+            : (options.detailStatus ?? null);
+        if (detailStatus !== null) {
+          return jsonResponse(
+            {
+              error: {
+                code: "internal_error",
+                message: "This sighting is unavailable",
+                detail: null,
+              },
+            },
+            detailStatus,
+          );
+        }
         const detail = options.detail?.[id];
         if (detail === undefined) {
           return jsonResponse(

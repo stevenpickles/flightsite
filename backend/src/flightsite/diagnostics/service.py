@@ -68,6 +68,11 @@ _STATUS_SEVERITY: Final[dict[str, int]] = {STATUS_OK: 0, STATUS_DEGRADED: 1, STA
 #: retains more; the wire keeps the response small enough to poll.
 RECENT_ERROR_LIMIT: Final = 20
 
+#: The live-event subscriber name the WebSocket broadcaster registers under
+#: (``flightsite.api.ws``). The ``websocket`` section reports *that*
+#: subscriber's shedding, not the process total (slice 075, issue #185).
+_WEBSOCKET_SUBSCRIBER: Final = "websocket"
+
 #: Row counts worth showing (SPEC §67 "useful row counts"). Deliberately a
 #: curated list rather than every table: the point is to tell a user whether
 #: their data is accumulating, not to dump the schema.
@@ -239,6 +244,60 @@ def _live_section(app: FastAPI, now: datetime) -> dict[str, Any]:
         "positioned": counts.positioned,
         "non_positioned": counts.non_positioned,
         "stale": counts.stale,
+    }
+
+
+def _event_dispatcher(app: FastAPI) -> Any:
+    """The live store's event dispatcher, or ``None`` before there is a store.
+
+    Reached through ``app.state.live`` rather than a state slot of its own:
+    the dispatcher belongs to the store's lifetime, and diagnostics has to
+    survive a process that has not built one yet.
+    """
+    return getattr(_state(app, "live"), "events", None)
+
+
+def _subscriber_drops(app: FastAPI, name: str) -> int:
+    """Cumulative events shed from one subscriber, ``0`` when unknown.
+
+    ``0`` covers both "this consumer has never fallen behind" and "this
+    consumer has never subscribed" — a distinction the event stream itself
+    does not draw, and one that costs a reader nothing here.
+    """
+    dropped_for = getattr(_event_dispatcher(app), "dropped_for", None)
+    if not callable(dropped_for):
+        return 0
+    return int(dropped_for(name))
+
+
+def _live_events_section(app: FastAPI) -> dict[str, Any]:
+    """Slice 075: what the live event stream has carried, and shed, per consumer.
+
+    The point is attribution. A single process-wide drop total says the
+    receiver shed events but not *whose* queue overflowed, so an operator
+    looking at a large number could only guess between the persistence
+    worker, alert evaluation and the browser feed. Each attached subscriber is
+    listed with its cumulative drops — kept by name, so a service that
+    restarted still shows its history — alongside the backlog it is carrying
+    now and whether it is currently resyncing after an overflow.
+    """
+    dispatcher = _event_dispatcher(app)
+    stats = getattr(dispatcher, "stats", None)
+    if dispatcher is None or not callable(stats):
+        return {"published": 0, "dropped": 0, "subscribers": []}
+    return {
+        "published": int(getattr(dispatcher, "published", 0)),
+        "dropped": int(getattr(dispatcher, "dropped", 0)),
+        "subscribers": [
+            {
+                "name": subscriber.name,
+                "dropped": int(subscriber.dropped),
+                "pending": int(subscriber.pending),
+                "capacity": int(subscriber.capacity),
+                "overflowed": bool(subscriber.overflowed),
+            }
+            for subscriber in stats()
+        ],
     }
 
 
@@ -426,13 +485,22 @@ def _notifications_section(settings: Settings | None) -> dict[str, Any]:
 
 
 def _websocket_section(app: FastAPI, counter_values: Mapping[str, int]) -> dict[str, Any]:
-    """SPEC §67: WebSocket issues."""
+    """SPEC §67: WebSocket issues.
+
+    ``events_dropped`` is the WebSocket subscriber's **own** shedding since
+    slice 075. It used to be the process-wide ``live_events_dropped`` counter,
+    which reported every consumer's drops under this one name — on the owner's
+    Pi that put 18 061 events shed from the persistence and alerts queues
+    during a metadata import beside the WebSocket client count (issue #185).
+    The process total is still published, as ``counters.live_events_dropped``
+    and ``live_events.dropped``.
+    """
     broadcaster = _state(app, "broadcaster")
     return {
         "clients": 0 if broadcaster is None else int(getattr(broadcaster, "client_count", 0)),
         "running": bool(getattr(broadcaster, "running", False)),
         "disconnects": counter_values.get("ws_disconnects", 0),
-        "events_dropped": counter_values.get("live_events_dropped", 0),
+        "events_dropped": _subscriber_drops(app, _WEBSOCKET_SUBSCRIBER),
     }
 
 
@@ -631,6 +699,7 @@ async def collect_diagnostics(
         "uptime": _uptime(app, moment),
         "decoder": decoder,
         "live": _live_section(app, moment),
+        "live_events": _live_events_section(app),
         "database": {
             "status": database_status,
             "reachable": database_reachable,

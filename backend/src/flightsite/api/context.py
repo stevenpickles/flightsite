@@ -369,7 +369,9 @@ class LiveApiContext:
         row = await self.history.get_aircraft(icao24)
         if row is None:
             return None
-        return aircraft_detail_payload(row, live=self.live.get(icao24) is not None)
+        return aircraft_detail_payload(
+            row, live=self.live.get(icao24) is not None, now_ms=utc_now_ms()
+        )
 
     # ---------------------------------------------------------------- overlays
 
@@ -438,7 +440,12 @@ class LiveApiContext:
             interesting=interesting,
             open_only=open_only,
         )
-        return [sighting_row_payload(row) for row in rows]
+        # One clock reading for the whole page, not one per row: an open
+        # sighting's `elapsed_s` is measured against it, and two rows of one
+        # page disagreeing about "now" would make a duration column
+        # non-monotonic for a reason no reader could see.
+        now_ms = utc_now_ms()
+        return [sighting_row_payload(row, now_ms=now_ms) for row in rows]
 
     async def sighting_detail(self, sighting_id: int) -> dict[str, Any] | None:
         """One sighting's full detail, or ``None`` if it doesn't exist — §3.6."""
@@ -450,7 +457,11 @@ class LiveApiContext:
         events = await repository.get_events(sighting_id)
         path = await repository.get_path(sighting_id, is_open=is_open)
         return sighting_detail_payload(
-            row, events=events, path=path, airport_names=self.airports.name_for
+            row,
+            events=events,
+            path=path,
+            airport_names=self.airports.name_for,
+            now_ms=utc_now_ms(),
         )
 
     # ------------------------------------------------------------ analytics
@@ -694,14 +705,21 @@ class LiveApiContext:
         points: list[tuple[int, float | None]]
         if metric == "unique_aircraft":
             # Roadmap slice 031's daily rollups already answer this exactly —
-            # `daily()` returns one row per local day in the window, zero
-            # included (the same "the zero is the measurement" rule as every
-            # other analytics chart), so there is nothing left for this
-            # endpoint to compute from `sightings` itself.
+            # `daily()` returns one row per local day in the window — so there
+            # is nothing left for this endpoint to compute from `sightings`
+            # itself. A day the rollup has not folded yet carries `None`
+            # rather than a zero, and the point carries it through: the series
+            # payload already distinguishes an absent value from a measured
+            # one, so a young install draws a gap instead of a floor (issue
+            # #205, finding R3-02).
             window = explicit_window(start_ms, end_ms, zone=zone, t0_ms=await self._t0_ms())
             rows = await self.analytics.daily(window)
             points = [
-                (local_day_start_ms(row.day, zone), float(row.unique_aircraft)) for row in rows
+                (
+                    local_day_start_ms(row.day, zone),
+                    None if row.unique_aircraft is None else float(row.unique_aircraft),
+                )
+                for row in rows
             ]
         elif resolution == "high":
             samples = await metrics.samples_between(start_ms, end_ms + 1)

@@ -1,17 +1,22 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
+import { defaultFlightSiteConfig } from "@/test/configApiMock";
 import {
   database,
   decoder,
   diagnostics,
   errorEntry,
   installDiagnosticsApiMock,
+  liveEvents,
+  liveEventSubscriber,
   metadata,
   metadataSource,
 } from "@/test/diagnosticsApiMock";
 import { renderApp } from "@/test/test-utils";
+import { DIAGNOSTICS_POLL_MS } from "@/lib/api/diagnostics";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -38,14 +43,17 @@ describe("HealthPage", () => {
     // Backend uptime and version.
     expect(within(summary).getByText("1d 1h")).toBeInTheDocument();
     expect(within(summary).getByText("0.9.2")).toBeInTheDocument();
-    expect(within(summary).getByText("Schema 0012")).toBeInTheDocument();
+    // R4-18: the secondary now names all three, not just the schema.
+    expect(
+      within(summary).getByText("Frontend 0.9.2 · API v1 · Schema 0012"),
+    ).toBeInTheDocument();
     // Database size and free disk space.
     expect(within(summary).getByText("256 MB")).toBeInTheDocument();
     expect(within(summary).getByText("12 GB")).toBeInTheDocument();
     // Metadata age, and WebSocket state.
     expect(within(summary).getByText("2d 2h")).toBeInTheDocument();
     expect(
-      within(summary).getByText("0 dropped since start-up"),
+      within(summary).getByText("0 client disconnects since start-up"),
     ).toBeInTheDocument();
 
     // Useful row counts.
@@ -80,6 +88,88 @@ describe("HealthPage", () => {
     expect(within(card).getByText("12 / 100 used")).toBeInTheDocument();
     expect(within(card).getByText("88 left today")).toBeInTheDocument();
     expect(within(card).getByText("Routes learned")).toBeInTheDocument();
+  });
+
+  it("names the consumer that shed live events, not the WebSocket", async () => {
+    // Issue #185: the owner's Pi showed 18,061 drops beside "WebSocket
+    // clients" while the persistence queue had shed every one of them.
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        live_events: liveEvents({
+          dropped: 18_061,
+          subscribers: [
+            liveEventSubscriber({
+              name: "persistence",
+              dropped: 18_061,
+              pending: 4096,
+              overflowed: true,
+            }),
+            liveEventSubscriber({ name: "websocket" }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", { name: "Live events" });
+    // R4-17: the internal subscriber name is never shown — "History
+    // writer" / "Live map feed" are the owner-facing labels.
+    expect(within(card).queryByText("persistence")).toBeNull();
+    expect(within(card).queryByText("websocket")).toBeNull();
+    const persistence = within(card).getByText("History writer").closest("div");
+    const websocket = within(card).getByText("Live map feed").closest("div");
+
+    expect(persistence).not.toBeNull();
+    expect(websocket).not.toBeNull();
+    expect(within(persistence!).getByText("18,061 shed")).toBeInTheDocument();
+    expect(
+      within(persistence!).getByText("4,096 / 4,096 queued"),
+    ).toBeInTheDocument();
+    // A one-line consequence accompanies the shedding consumer only.
+    expect(
+      within(persistence!).getByText(/history may lag behind/i),
+    ).toBeInTheDocument();
+    // SPEC §80: the marker is a word and an icon, never colour alone.
+    expect(within(persistence!).getByText("Resyncing")).toBeInTheDocument();
+    expect(within(websocket!).getByText("0 shed")).toBeInTheDocument();
+    expect(within(websocket!).queryByText("Resyncing")).toBeNull();
+    expect(within(websocket!).queryByText(/positions/i)).toBeNull();
+
+    // And the WebSocket tile no longer wears the process-wide total.
+    const summary = screen.getByRole("group", { name: "Health summary" });
+    expect(within(summary).queryByText(/18,061/)).toBeNull();
+    expect(
+      within(summary).getByText("0 client disconnects since start-up"),
+    ).toBeInTheDocument();
+  });
+
+  it("collapses the per-consumer breakdown behind a disclosure while every consumer reads 0 (R4-17)", async () => {
+    const user = userEvent.setup();
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        live_events: liveEvents({
+          subscribers: [
+            liveEventSubscriber({ name: "websocket" }),
+            liveEventSubscriber({ name: "persistence" }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", { name: "Live events" });
+    // Collapsed: the per-consumer rows exist (a native `<details>`, not
+    // unmounted) but are not visible — jest-dom's `toBeVisible` understands
+    // a closed `<details>` the way a browser renders one.
+    expect(within(card).getByText("Live map feed")).not.toBeVisible();
+    expect(within(card).getByText("History writer")).not.toBeVisible();
+    const disclosure = within(card).getByText(/show every consumer/i);
+    expect(disclosure).toBeInTheDocument();
+
+    await user.click(disclosure);
+
+    expect(within(card).getByText("Live map feed")).toBeVisible();
+    expect(within(card).getByText("History writer")).toBeVisible();
   });
 
   it("shows the overall status as healthy when nothing is wrong", async () => {
@@ -237,6 +327,36 @@ describe("HealthPage degraded states", () => {
 
     expect(await screen.findByText("download timed out")).toBeInTheDocument();
     expect(screen.getByText("No successful import yet")).toBeInTheDocument();
+    // R4-14: the same source reads as the same name Settings uses, not the
+    // raw internal key.
+    expect(screen.getByText("FAA")).toBeInTheDocument();
+    expect(screen.queryByText("faa")).toBeNull();
+  });
+
+  it("names sources and their row noun the same way Settings does, and links there directly (R4-14)", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        metadata: metadata({
+          sources: [
+            metadataSource({
+              source: "airports",
+              status: "ok",
+              row_count: 74_112,
+            }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", {
+      name: "Metadata datasets",
+    });
+    expect(within(card).getByText("Airports")).toBeInTheDocument();
+    expect(within(card).getByText(/74,112 airports/)).toBeInTheDocument();
+    expect(
+      within(card).getByRole("link", { name: /update metadata in settings/i }),
+    ).toHaveAttribute("href", "/settings#settings-metadata");
   });
 
   it("renders recent errors with their detail", async () => {
@@ -300,6 +420,35 @@ describe("HealthPage degraded states", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
+  it("warns to reload when the cached frontend bundle is stale (R4-18)", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        versions: {
+          backend: "0.9.3",
+          frontend: "0.9.2",
+          api: "v1",
+          schema_revision: "0013",
+        },
+      }),
+    });
+    renderApp("/health");
+
+    // Backend renders as the value — the version this install actually is.
+    expect(await screen.findByText("0.9.3")).toBeInTheDocument();
+    expect(
+      screen.getByText("Frontend 0.9.2 · API v1 · Schema 0013"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Reload to update the page")).toBeInTheDocument();
+  });
+
+  it("shows no reload warning when the frontend and backend versions agree", async () => {
+    installDiagnosticsApiMock();
+    renderApp("/health");
+
+    await screen.findByText("0.9.2");
+    expect(screen.queryByText(/reload to update/i)).toBeNull();
+  });
+
   it("explains itself when diagnostics cannot be loaded at all", async () => {
     installDiagnosticsApiMock({ status: 503 });
     renderApp("/health");
@@ -308,6 +457,76 @@ describe("HealthPage degraded states", () => {
       await screen.findByText(/Could not load diagnostics/),
     ).toBeInTheDocument();
   });
+});
+
+describe("HealthPage R4-04: a failing poll keeps the last good payload", () => {
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it(
+    "keeps the cards on screen and shows a stale banner instead of blanking the page",
+    async () => {
+      let diagnosticsCalls = 0;
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const raw = typeof input === "string" ? input : input.toString();
+          const method = (init?.method ?? "GET").toUpperCase();
+          const url = new URL(raw, "http://localhost");
+
+          if (url.pathname === "/api/internal/config" && method === "GET") {
+            return jsonResponse({
+              first_run: false,
+              config: defaultFlightSiteConfig(),
+              secrets_set: {},
+            });
+          }
+          if (url.pathname === "/api/v1/diagnostics" && method === "GET") {
+            diagnosticsCalls += 1;
+            if (diagnosticsCalls === 1) {
+              return jsonResponse(diagnostics());
+            }
+            // Every poll after the first fails — a decoder unplugged, a
+            // reverse proxy blip, anything that outlives one 10s cycle.
+            return jsonResponse(
+              { error: { code: "unavailable", message: "Backend is down" } },
+              503,
+            );
+          }
+          throw new Error(`Unhandled fetch in test: ${method} ${raw}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+
+      renderApp("/health");
+
+      await screen.findByText("Healthy");
+
+      // The next scheduled poll (DIAGNOSTICS_POLL_MS) fails — the page must
+      // not discard the cards it already has.
+      await screen.findByText(/refreshing failed/i, undefined, {
+        timeout: DIAGNOSTICS_POLL_MS + 5000,
+      });
+      const banner = screen.getByRole("alert");
+      expect(
+        within(banner).getByRole("button", { name: /retry/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(
+        screen.getByRole("group", { name: "Health summary" }),
+      ).toBeInTheDocument();
+
+      // Retry is offered — and using it does not itself throw or blank
+      // the page even while still failing.
+      await user.click(within(banner).getByRole("button", { name: /retry/i }));
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+    },
+    DIAGNOSTICS_POLL_MS + 10_000,
+  );
 });
 
 describe("HealthPage notification status", () => {

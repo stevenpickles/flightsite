@@ -41,7 +41,6 @@ export function draftFromConfig(config: FlightSiteConfig): SettingsDraft {
 
     alertRadiusNm:
       config.alert_radius_nm !== null ? String(config.alert_radius_nm) : "",
-    enabledTemplateIds: [...config.alerts.enabled_templates],
 
     notifications: { ...config.notifications },
 
@@ -94,7 +93,6 @@ export function pickDisplay(draft: SettingsDraft) {
 export function pickAlerts(draft: SettingsDraft) {
   return {
     alertRadiusNm: draft.alertRadiusNm,
-    enabledTemplateIds: draft.enabledTemplateIds,
   };
 }
 
@@ -183,7 +181,6 @@ export function buildAlertsPatch(
       draft.alertRadiusNm.trim().length > 0
         ? parseNumber(draft.alertRadiusNm)
         : null,
-    alerts: { enabled_templates: draft.enabledTemplateIds },
   };
 }
 

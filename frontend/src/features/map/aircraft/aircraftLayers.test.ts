@@ -113,12 +113,16 @@ describe("ensureAircraftLayers", () => {
     }
   });
 
-  it("draws the attention ring only for aircraft with an active match", () => {
+  it("draws the attention ring only above the attention severity floor", () => {
+    // Issue R1-10: filtering on "matching at all" put a ring on 76 of 77
+    // aircraft on a stock install, because the default templates include
+    // `first_ever`. The severity decision is made in TypeScript
+    // (`geojson.ts`'s `attention` property) and read here as a flag.
     ensureAircraftLayers(map);
     expect(mock.layers.get(AIRCRAFT_ATTENTION_LAYER_ID)?.filter).toEqual([
-      "!=",
-      ["get", "severity"],
-      "",
+      "==",
+      ["get", "attention"],
+      true,
     ]);
   });
 
@@ -286,7 +290,10 @@ describe("ensureAircraftLayers", () => {
     expect(layout["text-justify"]).toBeUndefined();
   });
 
-  it("prioritizes interesting aircraft over ordinary ones in the label collision order", () => {
+  it("prioritizes attention-worthy aircraft over ordinary ones in the label collision order", () => {
+    // `attention`, not `interesting`, for the same reason the ring filters
+    // on it: a collision priority every aircraft holds ranks nothing, and on
+    // a stock install every aircraft held it (issue R1-10).
     ensureAircraftLayers(map);
     const layout = mock.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as Record<
       string,
@@ -294,7 +301,7 @@ describe("ensureAircraftLayers", () => {
     >;
     expect(layout["symbol-sort-key"]).toEqual([
       "case",
-      ["get", "interesting"],
+      ["get", "attention"],
       SORT_KEY_INTERESTING,
       SORT_KEY_DEFAULT,
     ]);

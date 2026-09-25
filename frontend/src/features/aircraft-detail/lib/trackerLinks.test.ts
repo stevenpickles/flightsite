@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTrackerLinks } from "@/features/aircraft-detail/lib/trackerLinks";
+import {
+  buildTrackerLinks,
+  isFlightScoped,
+} from "@/features/aircraft-detail/lib/trackerLinks";
 
 describe("buildTrackerLinks", () => {
   it("prefers registration for FlightRadar24 and FlightAware", () => {
@@ -50,6 +53,18 @@ describe("buildTrackerLinks", () => {
     expect(links.flightaware).toBeNull();
   });
 
+  it("gives a callsign-only airframe all three services (R2-11)", () => {
+    // The majority case on a receiver with no metadata imported: no
+    // registration, but a broadcast callsign the sightings log knows. The
+    // detail page used to hard-code `callsign: null` and offer one link.
+    const links = buildTrackerLinks({
+      icao: "b034be",
+      callsign: "AFR1641",
+      registration: null,
+    });
+    expect(Object.values(links).filter((url) => url !== null)).toHaveLength(3);
+  });
+
   it("treats blank strings the same as null", () => {
     const links = buildTrackerLinks({
       icao: "ae1463",
@@ -58,5 +73,23 @@ describe("buildTrackerLinks", () => {
     });
     expect(links.flightradar24).toBeNull();
     expect(links.flightaware).toBeNull();
+  });
+});
+
+describe("isFlightScoped", () => {
+  it("is true when only a callsign is available", () => {
+    expect(isFlightScoped({ callsign: "AFR1641", registration: null })).toBe(
+      true,
+    );
+  });
+
+  it("is false when a registration keys the link to the airframe", () => {
+    expect(isFlightScoped({ callsign: "RCH471", registration: "N302DN" })).toBe(
+      false,
+    );
+  });
+
+  it("is false when there is no identifier to be scoped by", () => {
+    expect(isFlightScoped({ callsign: "  ", registration: null })).toBe(false);
   });
 });

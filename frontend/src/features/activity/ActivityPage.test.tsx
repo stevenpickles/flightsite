@@ -53,6 +53,41 @@ describe("ActivityPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("dates the rows by grouping them under a receiver-local day (R2-06)", async () => {
+    installActivityApiMock({ list: page(3) });
+    renderApp("/activity");
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(3),
+    );
+    // The fixture's events are all on 2026-08-31 UTC, and the mock receiver
+    // is on UTC — so one header, carrying the day the bare `12:00` times
+    // belonged to and never said.
+    const headers = screen.getAllByRole("heading", { level: 2 });
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toHaveTextContent("2026-08-31");
+  });
+
+  it("offers Alerts and Emergencies, the feed's most common rows (R2-05)", async () => {
+    const { fetchMock } = installActivityApiMock({ list: page(2) });
+    const user = userEvent.setup();
+    renderApp("/activity");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(2),
+    );
+
+    const filter = screen.getByRole("group", { name: /filter by event type/i });
+    expect(
+      within(filter).getByRole("button", { name: "Emergencies" }),
+    ).toBeInTheDocument();
+    await user.click(within(filter).getByRole("button", { name: "Alerts" }));
+
+    await waitFor(() => {
+      const last = activityRequests(fetchMock).at(-1);
+      expect(last?.searchParams.getAll("type")).toEqual(["alert_triggered"]);
+    });
+  });
+
   it("sends one repeated type parameter per selected chip", async () => {
     const { fetchMock } = installActivityApiMock({ list: page(2) });
     const user = userEvent.setup();
@@ -156,5 +191,32 @@ describe("ActivityPage", () => {
         screen.getByText(/could not load the activity feed/i),
       ).toBeInTheDocument(),
     );
+    // Announced, and recoverable without a reload (review R2-04, R2-17) —
+    // before this the page offered no control at all except its filter
+    // chips, which recover only by silently changing the user's filter.
+    const failure = screen.getByTestId("query-error-state");
+    expect(failure).toHaveAttribute("role", "alert");
+    expect(
+      within(failure).getByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the rows and the filter when a refresh fails (R2-04)", async () => {
+    let failing = false;
+    installActivityApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: page(3),
+    });
+    const user = userEvent.setup();
+    renderApp("/activity");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("activity-row")).toHaveLength(3),
+    );
+
+    failing = true;
+    await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+
+    expect(await screen.findByTestId("query-error-banner")).toBeInTheDocument();
+    expect(screen.getAllByTestId("activity-row")).toHaveLength(3);
   });
 });

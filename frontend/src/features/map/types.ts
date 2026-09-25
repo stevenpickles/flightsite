@@ -20,6 +20,22 @@ export interface ReceiverPosition {
  */
 export interface MapConfig {
   receiver: ReceiverPosition;
+  /**
+   * Whether {@link receiver} is a *real* position somebody configured, as
+   * opposed to a centre to point the camera at before one exists.
+   *
+   * A map still needs a centre before the receiver location is known, so
+   * `receiver` is never null; what this says is whether that centre may be
+   * *drawn* as geography. The receiver marker and the range rings assert
+   * "the antenna is here, and it reaches this far", and asserting that at
+   * `DEV_PLACEHOLDER_MAP_CONFIG`'s Seattle placeholder is how issue R1-05
+   * put a receiver 1,400 nm from the actual site on a production install
+   * whose config fetch lost a race with the style load. When this is false
+   * {@link ensureOverlayLayers} draws neither: an empty picture is the
+   * honest one, and the layers are still in place to fill the instant a
+   * real location arrives.
+   */
+  receiverConfigured: boolean;
   /** Range ring radii, in nautical miles, smallest first. */
   ringRadiiNm: readonly number[];
   unit: DistanceUnit;

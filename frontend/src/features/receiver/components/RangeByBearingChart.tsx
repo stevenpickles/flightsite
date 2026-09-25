@@ -23,7 +23,8 @@ const POLAR_HEIGHT = 360;
 /** SPEC §62's polar max-range-by-bearing plot — today's coverage against the
  * receiver's lifetime record, in one chart. */
 export function RangeByBearingChart({ units }: { units: UnitSystem }) {
-  const { data, isLoading, isError } = useReceiverRangeByBearingQuery();
+  const { data, isLoading, isError, refetch } =
+    useReceiverRangeByBearingQuery();
 
   const ever: BearingSectorPoint[] = useMemo(
     () =>
@@ -76,6 +77,7 @@ export function RangeByBearingChart({ units }: { units: UnitSystem }) {
       title={TITLE}
       isLoading={isLoading}
       error={isError ? "Could not load this chart." : undefined}
+      onRetry={() => void refetch()}
     >
       <EChart
         buildOption={buildOption}

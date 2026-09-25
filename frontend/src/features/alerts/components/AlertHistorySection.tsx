@@ -8,9 +8,17 @@ import {
   builtinKeyLabel,
   SEVERITY_OPTIONS,
 } from "@/features/alerts/lib/vocabulary";
-import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
-import { useAlertMatchesQuery, type AlertMatch } from "@/lib/api/alertMatches";
-import { useConfigQuery } from "@/lib/api/config";
+import {
+  formatAltitude,
+  formatDistance,
+  formatReceiverLocalDateTime,
+} from "@/features/aircraft-detail/lib/format";
+import {
+  ALERT_MATCHES_POLL_MS,
+  useAlertMatchesQuery,
+  type AlertMatch,
+} from "@/lib/api/alertMatches";
+import { useConfigQuery, type UnitSystem } from "@/lib/api/config";
 import type { AlertSeverity } from "@/lib/api/sightings";
 
 const SELECT_CLASSES =
@@ -18,23 +26,57 @@ const SELECT_CLASSES =
 
 const PAGE_SIZE = 25;
 
-/** What produced a match, in one phrase: the rule's name, or the built-in
- * detector's meaning for a match no rule produced (SPEC §47). */
-function sourceLabel(match: AlertMatch): string {
-  if (match.rule !== null) {
-    return match.rule.name ?? `Rule ${match.rule.id}`;
-  }
+/**
+ * The detector behind a match that no rule produced (SPEC §47).
+ *
+ * Only ever rendered for a built-in. For a *rule* match the stored `reason`
+ * already is `"Rule: " + rule.name`, so printing the rule's name beside it
+ * put the same string on the row twice — two of the five things a row said
+ * were one thing said twice (R4-08). `match.rule` stays in the payload to
+ * link to and to survive a rename; it is not a second label.
+ */
+function builtinLabel(match: AlertMatch): string {
   return match.builtin_key !== null
     ? builtinKeyLabel(match.builtin_key)
     : "Built-in detector";
 }
 
+/**
+ * The aircraft in terms a person recognises — `"RCH492 · C17 · 05-5153"`.
+ *
+ * Whatever of callsign, type and registration is known, in that order: the
+ * callsign is what a listener heard, the type is what they looked up, the
+ * registration is what is painted on the tail. All three may be absent on a
+ * fresh install whose metadata import has not run, and `null` there means
+ * §2.7's absence — so the fallback is the ICAO address itself rather than
+ * the word "Unknown", which would name nothing at all.
+ */
+function identityLabel(match: AlertMatch): string {
+  const parts = [match.callsign, match.aircraft_type, match.registration];
+  // Non-empty string, not merely `!== null`: a recorded fixture or an older
+  // backend that predates these fields sends them as absent rather than as
+  // null, and `undefined` passing a null check would render the word
+  // "undefined" into the one line whose whole job is to be recognisable.
+  const known = parts.filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return known.length > 0 ? known.join(" · ") : match.icao.toUpperCase();
+}
+
 interface MatchRowProps {
   match: AlertMatch;
   timezone: string;
+  units: UnitSystem;
 }
 
-function MatchRow({ match, timezone }: MatchRowProps) {
+function MatchRow({ match, timezone, units }: MatchRowProps) {
+  const identity = identityLabel(match);
+  const address = match.icao.toUpperCase();
+  // `?? null` for the same reason `identityLabel` checks the type: a payload
+  // that predates these fields omits them, and the formatters answer `null`
+  // for a value they do not have rather than for one that is missing.
+  const closest = formatDistance(match.closest_approach_nm ?? null, units);
+  const lowest = formatAltitude(match.lowest_altitude_ft ?? null, units);
   return (
     <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border border-border bg-card px-3 py-2">
       <time
@@ -44,16 +86,39 @@ function MatchRow({ match, timezone }: MatchRowProps) {
         {formatReceiverLocalDateTime(match.at, timezone)}
       </time>
       <AlertSeverityBadge severity={match.severity} />
-      <span className="text-sm text-foreground">{match.reason}</span>
       <Link
         to={`/aircraft/${match.icao}`}
-        className="font-mono text-xs text-accent hover:underline"
+        className="text-sm font-medium text-accent hover:underline"
       >
-        {match.icao.toUpperCase()}
+        {identity}
       </Link>
-      <span className="text-xs text-muted-foreground">
-        {sourceLabel(match)}
-      </span>
+      {/* The address, once, and only when the identity is not already it. */}
+      {identity !== address && (
+        <span className="font-mono text-xs text-muted-foreground">
+          {address}
+        </span>
+      )}
+      <span className="text-sm text-foreground">{match.reason}</span>
+      {match.rule === null && (
+        <span className="text-xs text-muted-foreground">
+          {builtinLabel(match)}
+        </span>
+      )}
+      {/* The sighting's records, which is what they are: `alert_matches`
+          stores no position of its own, so these are not a snapshot of the
+          instant the rule fired. */}
+      {closest !== null && (
+        <span className="text-xs text-muted-foreground">Closest {closest}</span>
+      )}
+      {lowest !== null && (
+        <span className="text-xs text-muted-foreground">Lowest {lowest}</span>
+      )}
+      <Link
+        to={`/sightings/${String(match.sighting_id)}`}
+        className="text-xs text-accent hover:underline"
+      >
+        Sighting {match.sighting_id}
+      </Link>
       {match.notified && (
         <span className="text-xs text-muted-foreground">Notified</span>
       )}
@@ -112,6 +177,14 @@ export interface AlertHistorySectionProps {
  * rule has since been deleted is simply gone, because deleting a rule
  * deletes the matches it produced.
  *
+ * A record that keeps up with itself. The newest page re-reads every
+ * {@link ALERT_MATCHES_POLL_MS} while it is on screen, because a page whose
+ * subject is "every alert that has fired" and which cannot show an alert
+ * that fired a minute ago is not telling the truth about its own subject —
+ * it was possible to sit on this tab while five alerts reached the database
+ * and see none of them. Only the newest unfiltered page polls; see
+ * `isNewestPage` below for why paging back switches it off.
+ *
  * Paging is "older/newer" rather than numbered: the endpoint deliberately
  * reports no total, the history growing without bound over a multi-year
  * install, so a page count would be a number nobody can compute. A page
@@ -142,13 +215,25 @@ export function AlertHistorySection({
 
   const configQuery = useConfigQuery();
   const timezone = configQuery.data?.config.timezone ?? "UTC";
+  const units = configQuery.data?.config.units ?? "aviation";
 
-  const matchesQuery = useAlertMatchesQuery({
-    limit: PAGE_SIZE,
-    offset,
-    ...(severity === "" ? {} : { severity }),
-    ...(ruleFilter === null ? {} : { rule_id: ruleFilter.id }),
-  });
+  // The newest page of the history is a live record; anything else is a
+  // fixed window into the past. Polling only the former is what lets an
+  // alert that just fired appear without also shuffling rows under a reader
+  // who paged back or narrowed by severity deliberately. A rule filter is
+  // not an exclusion: "what is this rule catching" is just as live a
+  // question as "what is firing", and it is still page one.
+  const isNewestPage = offset === 0 && severity === "";
+
+  const matchesQuery = useAlertMatchesQuery(
+    {
+      limit: PAGE_SIZE,
+      offset,
+      ...(severity === "" ? {} : { severity }),
+      ...(ruleFilter === null ? {} : { rule_id: ruleFilter.id }),
+    },
+    { refetchInterval: isNewestPage ? ALERT_MATCHES_POLL_MS : false },
+  );
 
   const items = matchesQuery.data?.items ?? [];
   const hasOlder = items.length === PAGE_SIZE;
@@ -224,7 +309,12 @@ export function AlertHistorySection({
       {items.length > 0 && (
         <ul aria-label="Alert history" className="flex flex-col gap-2">
           {items.map((match) => (
-            <MatchRow key={match.id} match={match} timezone={timezone} />
+            <MatchRow
+              key={match.id}
+              match={match}
+              timezone={timezone}
+              units={units}
+            />
           ))}
         </ul>
       )}

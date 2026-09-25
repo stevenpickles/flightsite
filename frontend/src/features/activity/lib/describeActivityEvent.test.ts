@@ -26,6 +26,29 @@ describe("describeActivityEvent", () => {
     expect(detail).toBe("N302DN · Boeing 737-800 · Delta Air Lines · B738");
   });
 
+  it("names an airframe by its broadcast callsign before its address (R2-15)", () => {
+    // The fresh-install case: no metadata imported, so no registration — but
+    // the payload carries the callsign the aircraft is broadcasting, and the
+    // row used to read "First ever sighting · 1D1713" regardless.
+    const { detail } = describeActivityEvent(
+      event("first_ever_aircraft", { callsign: "N355MD" }, { icao: "1d1713" }),
+    );
+    // The address follows it rather than being replaced: a callsign names a
+    // flight, and the hex is what the row's own link goes to.
+    expect(detail).toBe("N355MD · 1D1713");
+  });
+
+  it("still prefers a registration over a callsign", () => {
+    const { detail } = describeActivityEvent(
+      event(
+        "first_ever_aircraft",
+        { registration: "N302DN", callsign: "DAL411" },
+        { icao: "ae1463" },
+      ),
+    );
+    expect(detail).toBe("N302DN");
+  });
+
   it("falls back to the ICAO address when no metadata resolved", () => {
     // §2.7: unknown is `null`, and a row about an unidentified airframe still
     // has to name it — the address is the identity that always exists.
@@ -223,7 +246,8 @@ describe("describeActivityEvent", () => {
         { icao: "ae1463" },
       ),
     );
-    expect(label).toBe("Alert: Rule: Military aircraft");
+    // One prefix, not the two the review found ("Alert: Rule: …", R2-05).
+    expect(label).toBe("Alert: Military aircraft");
     expect(detail).toContain("05-8153");
   });
 

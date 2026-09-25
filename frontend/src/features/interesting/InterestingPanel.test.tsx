@@ -118,7 +118,7 @@ describe("InterestingPanel", () => {
     expect(screen.getByText(/FL250/)).toBeInTheDocument();
   });
 
-  it("falls back to the tail number, then the ICAO hex, for identity", () => {
+  it("falls back to the tail number, then the ICAO hex, for identity", async () => {
     seed([
       makeAircraft({
         icao: "bbbbbb",
@@ -135,6 +135,9 @@ describe("InterestingPanel", () => {
       }),
     ]);
     render(<InterestingPanel />);
+    // Both matches are info-level, so they live under the count until it is
+    // opened — nothing is hidden, it is folded (issue R1-10).
+    await userEvent.click(screen.getByTestId("interesting-info-toggle"));
     expect(screen.getByText("05-8153")).toBeInTheDocument();
     expect(screen.getByText("DDDDDD")).toBeInTheDocument();
   });
@@ -205,6 +208,114 @@ describe("InterestingPanel", () => {
       screen.getByText("No interesting aircraft right now."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("interesting-count")).toHaveTextContent("0");
+  });
+
+  it("folds info-level matches under a count instead of burying the rest", async () => {
+    // Issue R1-10, as the review found it: 76 of 77 aircraft matching
+    // `first_ever`, so the panel was a three-row scroll window over the
+    // whole live set and the badge read the size of the sky.
+    const flood = Array.from({ length: 20 }, (_, i) =>
+      makeAircraft({
+        icao: `f0${i.toString(16).padStart(4, "0")}`,
+        distance_nm: i + 1,
+        interesting: { severity: "info", reasons: ["Rule: First ever"] },
+      }),
+    );
+    seed([...demoScenario(), ...flood]);
+    render(<InterestingPanel />);
+
+    // Only the two that merit attention, and the badge counts those.
+    expect(rowIcaos()).toEqual(["cccccc", "bbbbbb"]);
+    expect(screen.getByTestId("interesting-count")).toHaveTextContent("2");
+    const toggle = screen.getByTestId("interesting-info-toggle");
+    expect(toggle).toHaveTextContent("+20 info-level");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    // Folded, not dropped.
+    await userEvent.click(toggle);
+    expect(rowIcaos()).toHaveLength(22);
+    expect(screen.getByTestId("interesting-info-toggle")).toHaveTextContent(
+      "Hide 20 info-level",
+    );
+  });
+
+  it("says so when everything matching is only info-level", () => {
+    seed([
+      makeAircraft({
+        icao: "bbbbbb",
+        interesting: { severity: "info", reasons: ["Rule: First ever"] },
+      }),
+    ]);
+    render(<InterestingPanel />);
+
+    expect(screen.getByTestId("interesting-count")).toHaveTextContent("0");
+    expect(
+      screen.getByTestId("interesting-none-prominent"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("interesting-info-toggle")).toHaveTextContent(
+      "+1 info-level",
+    );
+  });
+
+  it("shows no info toggle at all when nothing is info-level", () => {
+    seed(demoScenario());
+    render(<InterestingPanel />);
+    expect(
+      screen.queryByTestId("interesting-info-toggle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never asserts an empty sky from a picture nobody is feeding", () => {
+    // Issue R1-03: on a socket drop the panel said "No interesting aircraft
+    // right now" — an assertion about the sky, made at exactly the moment
+    // it was least entitled to make one.
+    seed([makeAircraft({ icao: "aaaaaa" })]);
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+
+    const empty = screen.getByTestId("interesting-empty");
+    expect(empty).not.toHaveTextContent("No interesting aircraft right now.");
+    expect(empty).toHaveTextContent(/feed lost/i);
+    expect(empty).toHaveTextContent(/as of/i);
+  });
+
+  it("says it is waiting when no picture has ever arrived", () => {
+    // The blocked-upgrade case (R1-04), before the REST fallback answers.
+    render(<InterestingPanel />);
+    expect(screen.getByTestId("interesting-empty")).toHaveTextContent(
+      "Waiting for the live feed — no picture yet.",
+    );
+  });
+
+  it("dates a kept list rather than presenting it as current", () => {
+    seed(demoScenario());
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+
+    expect(rowIcaos()).toEqual(["cccccc", "bbbbbb"]);
+    expect(screen.getByTestId("interesting-stale-note")).toHaveTextContent(
+      /feed lost — as of/i,
+    );
+  });
+
+  it("drops the stale note once the fallback poll refreshes the picture", () => {
+    seed(demoScenario());
+    act(() => {
+      useLiveAircraftStore.getState().markPictureStale();
+    });
+    render(<InterestingPanel />);
+    expect(screen.getByTestId("interesting-stale-note")).toBeInTheDocument();
+
+    act(() => {
+      useLiveAircraftStore.getState().applyFallbackPicture(demoScenario());
+    });
+    expect(
+      screen.queryByTestId("interesting-stale-note"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps counting matches a filter has hidden, and says how many", () => {

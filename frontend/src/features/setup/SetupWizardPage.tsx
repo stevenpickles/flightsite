@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -12,6 +12,11 @@ import { WizardNav } from "@/features/setup/components/WizardNav";
 import { WizardProgress } from "@/features/setup/components/WizardProgress";
 import { buildConfigPatch, draftFromConfig } from "@/features/setup/lib/draft";
 import { applyServerConfigToMapStore } from "@/features/setup/lib/mapConfigSync";
+import {
+  clearWizardSession,
+  loadWizardSession,
+  saveWizardSession,
+} from "@/features/setup/lib/sessionDraft";
 import { isStepValid } from "@/features/setup/lib/stepValidation";
 import { AlertsStep } from "@/features/setup/steps/AlertsStep";
 import { DecoderStep } from "@/features/setup/steps/DecoderStep";
@@ -45,21 +50,57 @@ export function SetupWizardPage() {
   const navigate = useNavigate();
   const notificationPermission = useNotificationPermission();
 
+  // R4-15: read once, synchronously — `sessionStorage` needs no network
+  // round trip, unlike the server config `draft` below still has to wait
+  // for. `useMemo` with an empty dependency list (not a plain call in the
+  // render body) is what makes this "compute once for the component's
+  // lifetime" rather than "recompute, and silently ignore what changed,
+  // every render".
+  const restoredSession = useMemo(() => loadWizardSession(), []);
+
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   // The config query can refetch in the background (e.g. React Query's
   // window-refocus handling) while the user is mid-wizard; the draft must
   // only ever be seeded once, or their in-progress edits would vanish.
   const initializedRef = useRef(false);
 
-  useEffect(() => {
-    if (!initializedRef.current && configQuery.data) {
-      setDraft(draftFromConfig(configQuery.data));
-      initializedRef.current = true;
-    }
-  }, [configQuery.data]);
+  // Seeded synchronously from the restored session where there is one —
+  // these need no server round trip, so (unlike `draft`) they do not have
+  // to wait in an effect for `configQuery.data`.
+  const [stepIndex, setStepIndex] = useState(
+    () => restoredSession?.stepIndex ?? 0,
+  );
+  const [furthestStepIndex, setFurthestStepIndex] = useState(
+    () => restoredSession?.furthestStepIndex ?? 0,
+  );
 
-  const [stepIndex, setStepIndex] = useState(0);
-  const [furthestStepIndex, setFurthestStepIndex] = useState(0);
+  useEffect(() => {
+    if (initializedRef.current || !configQuery.data) {
+      return;
+    }
+    // A persisted session (this tab, mid-wizard, before a refresh) wins for
+    // the fields it carries; anything it does not — a field a later build
+    // added, or a session from before this fix shipped — falls back to the
+    // live server document, the same base a fresh visit uses. This also
+    // means a genuinely stale session (the wizard abandoned, then
+    // re-opened later as a deliberate edit-mode re-run) can resurface
+    // until `clearWizardSession()` runs on a successful finish; scoping
+    // this to `sessionStorage` bounds that to the current tab.
+    const base = draftFromConfig(configQuery.data);
+    setDraft(restoredSession ? { ...base, ...restoredSession.draft } : base);
+    initializedRef.current = true;
+  }, [configQuery.data, restoredSession]);
+
+  // Persists on every change, once initial seeding (above) has run — the
+  // guard stops this from firing on the render where `draft` is still
+  // `null` and from immediately re-saving a session the effect above just
+  // restored with a redundant, identical write.
+  useEffect(() => {
+    if (!initializedRef.current || !draft) {
+      return;
+    }
+    saveWizardSession(draft, stepIndex, furthestStepIndex);
+  }, [draft, stepIndex, furthestStepIndex]);
   const [decoderTestState, setDecoderTestState] = useState<DecoderTestState>(
     INITIAL_DECODER_TEST_STATE,
   );
@@ -126,6 +167,9 @@ export function SetupWizardPage() {
     putConfigMutation.mutate(buildConfigPatch(draft), {
       onSuccess: (response) => {
         applyServerConfigToMapStore(response.config);
+        // R4-15: setup finished — the next visit to `/setup` is a
+        // deliberate re-run, not a resumed attempt.
+        clearWizardSession();
         navigate(LIVE_MAP_PATH, { replace: true });
       },
       onError: (error) => {

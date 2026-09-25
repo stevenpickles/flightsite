@@ -2,9 +2,15 @@
 
 Slice 021's first acceptance criterion, and the reason the pipeline is built
 the way it is. Each stage gets its own test, and each asserts the strong form:
-``aircraft_metadata`` and ``aircraft_metadata_resolved`` come back row for row
-identical to a dump taken before the failing run — not "still has data", not
-"still has the right count", identical.
+every table a promotion writes (:data:`tests.metadata.conftest.DATASET_TABLES`)
+comes back row for row identical to a dump taken before the failing run — not
+"still has data", not "still has the right count", identical.
+
+Slice 075 split the promotion into a build phase and a swap, so the last stage
+is now two: a failure while resolution is being built into the scratch tables,
+and a failure inside the transaction that installs it. Both are tested here,
+and both against the same dump, because the guarantee did not change when the
+mechanism did.
 
 The dumps are taken with stdlib ``sqlite3`` against the file
 (:func:`tests.metadata.conftest.dump`), so nothing an ORM session might
@@ -19,11 +25,18 @@ import pytest
 
 from flightsite.db import Database
 from flightsite.metadata import MetadataImporter, SourceRegistry
+from flightsite.metadata import repository as repository_module
 from flightsite.metadata.importer import MAX_REJECT_RATIO, WORK_DIRNAME
 from flightsite.metadata.records import ValidationReport
 from flightsite.metadata.registry import ImportPhase, SourceStatus
 from flightsite.metadata.repository import MetadataRepository
-from tests.metadata.conftest import DATASET_TABLES, dump, record, resolved_rows
+from tests.metadata.conftest import (
+    DATASET_TABLES,
+    RESOLUTION_STAGING_TABLES,
+    dump,
+    record,
+    resolved_rows,
+)
 from tests.metadata.provider import InMemoryMetadataProvider, ProviderFailure
 
 GOOD = [
@@ -124,23 +137,123 @@ async def test_a_failure_inside_the_swap_rolls_the_whole_swap_back(
 ) -> None:
     """The last and hardest stage: the promotion transaction must be all-or-nothing.
 
-    The fault fires inside :meth:`MetadataRepository.rebuild_resolved`, i.e.
+    The fault fires inside :meth:`MetadataRepository._install_resolution`, i.e.
     *after* the source's old rows have been deleted and the staged ones
-    inserted. Only the transaction boundary can save the dataset here — and it
-    does, for both tables.
+    inserted, and after the resolved and classification tables have been
+    emptied. Only the transaction boundary can save the dataset here — and it
+    does, for all five tables.
     """
     registry.register("mictronics_v2", InMemoryMetadataProvider(REPLACEMENT))
 
-    async def explode(*args: object, **kwargs: object) -> int:
+    async def explode(*args: object, **kwargs: object) -> None:
         raise ProviderFailure("disk full mid-swap")
 
-    monkeypatch.setattr(MetadataRepository, "rebuild_resolved", explode)
+    monkeypatch.setattr(MetadataRepository, "_install_resolution", explode)
 
     run = await importer.run(["mictronics_v2"])
 
     assert run.failed == ("mictronics_v2",)
     assert run.results[0].phase is ImportPhase.SWAP
     assert dump(db_path, DATASET_TABLES) == baseline
+
+
+async def test_a_failure_while_building_resolution_never_reaches_the_dataset(
+    baseline: dict[str, list[tuple[object, ...]]],
+    importer: MetadataImporter,
+    registry: SourceRegistry,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase one writes only scratch, so there is nothing to roll back (slice 075).
+
+    The fault fires in the worker thread that resolves a page — the most
+    expensive place a promotion can now fail, and the one the transaction
+    boundary does *not* cover, because this work happens before the
+    transaction opens.
+    """
+    registry.register("mictronics_v2", InMemoryMetadataProvider(REPLACEMENT))
+
+    def explode(*args: object, **kwargs: object) -> object:
+        raise ProviderFailure("the resolver fell over")
+
+    monkeypatch.setattr(repository_module, "_resolve_claims", explode)
+
+    run = await importer.run(["mictronics_v2"])
+
+    assert run.failed == ("mictronics_v2",)
+    assert dump(db_path, DATASET_TABLES) == baseline
+
+
+async def test_a_failure_writing_a_resolution_page_leaves_the_dataset_alone(
+    baseline: dict[str, list[tuple[object, ...]]],
+    importer: MetadataImporter,
+    registry: SourceRegistry,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of phase one: the short writer transactions that store it."""
+    registry.register("mictronics_v2", InMemoryMetadataProvider(REPLACEMENT))
+
+    async def explode(*args: object, **kwargs: object) -> None:
+        raise ProviderFailure("disk full building resolution")
+
+    monkeypatch.setattr(repository_module, "_insert_rows", explode)
+
+    run = await importer.run(["mictronics_v2"])
+
+    assert run.failed == ("mictronics_v2",)
+    assert dump(db_path, DATASET_TABLES) == baseline
+
+
+@pytest.mark.parametrize("broken", ["_resolve_claims", "_insert_rows"])
+async def test_the_next_promotion_succeeds_after_a_failed_build(
+    baseline: dict[str, list[tuple[object, ...]]],
+    importer: MetadataImporter,
+    registry: SourceRegistry,
+    repository: MetadataRepository,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    broken: str,
+) -> None:
+    """Whatever a failed build left in the scratch tables must not leak forward.
+
+    A build clears them on the way in, so the rows a half-finished run wrote
+    are scratch in the strong sense: they neither survive nor corrupt the next
+    run's resolution.
+    """
+    registry.register("mictronics_v2", InMemoryMetadataProvider(REPLACEMENT))
+
+    async def explode_async(*args: object, **kwargs: object) -> None:
+        raise ProviderFailure("interrupted")
+
+    def explode(*args: object, **kwargs: object) -> object:
+        raise ProviderFailure("interrupted")
+
+    monkeypatch.setattr(
+        repository_module, broken, explode_async if broken == "_insert_rows" else explode
+    )
+    assert (await importer.run(["mictronics_v2"])).failed == ("mictronics_v2",)
+    monkeypatch.undo()
+
+    run = await importer.run(["mictronics_v2"])
+
+    assert run.succeeded == ("mictronics_v2",)
+    resolved = await resolved_rows(repository, ["a00009"])
+    assert resolved["a00009"].registration == "N9ZZ"
+    assert dump(db_path, RESOLUTION_STAGING_TABLES) == {
+        table: [] for table in RESOLUTION_STAGING_TABLES
+    }
+
+
+async def test_a_promotion_leaves_its_scratch_tables_empty(
+    importer: MetadataImporter, registry: SourceRegistry, db_path: Path
+) -> None:
+    """The swap consumes them; nothing carries over to the next import."""
+    await install_baseline(importer, registry)
+
+    assert dump(db_path, RESOLUTION_STAGING_TABLES) == {
+        table: [] for table in RESOLUTION_STAGING_TABLES
+    }
 
 
 async def test_a_failed_run_leaves_no_staged_rows_behind(

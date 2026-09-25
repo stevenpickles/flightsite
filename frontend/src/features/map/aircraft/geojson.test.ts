@@ -266,6 +266,69 @@ describe("buildAircraftFeatureCollection", () => {
       expect(properties.bbbbbb?.interesting).toBe(true);
     });
 
+    it("reserves the attention flag for matches above info level", () => {
+      // Issue R1-10: a stock install's `first_ever` template matches every
+      // airframe the receiver has not heard before, so "is matching at all"
+      // selected 76 of 77 aircraft for the ring and the label priority. The
+      // indicator glyph still goes on every match — SPEC §35 asks the label
+      // for presence, not rank.
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records(
+            { icao: "aaaaaa", interesting: null },
+            {
+              icao: "bbbbbb",
+              interesting: { severity: "info", reasons: ["Rule: First ever"] },
+            },
+            {
+              icao: "cccccc",
+              interesting: {
+                severity: "interesting",
+                reasons: ["Rule: Rare type"],
+              },
+            },
+            {
+              icao: "dddddd",
+              interesting: { severity: "critical", reasons: ["Emergency"] },
+            },
+          ),
+          zoom: ZOOM_LABELS_FULL,
+        }),
+      );
+      const properties = propertiesByIcao(collection);
+      expect(properties.aaaaaa?.attention).toBe(false);
+      expect(properties.bbbbbb?.attention).toBe(false);
+      expect(properties.cccccc?.attention).toBe(true);
+      expect(properties.dddddd?.attention).toBe(true);
+      // The star is unchanged for the info match.
+      expect(properties.bbbbbb?.interesting).toBe(true);
+      expect(properties.bbbbbb?.label.startsWith("★")).toBe(true);
+    });
+
+    it("does not let an info match override the density declutter", () => {
+      // The same override, seen from the label tier: `first_ever` matching
+      // everything meant every aircraft claimed the full stack, which is
+      // the declutter switched off rather than overridden.
+      const dense = records(
+        {
+          icao: "aaaaaa",
+          callsign: "BAW123",
+          altitude_ft: 35000,
+          interesting: { severity: "info", reasons: ["Rule: First ever"] },
+        },
+        ...Array.from({ length: DENSITY_CALLSIGN_ENTER }, (_, i) => ({
+          icao: (i + 1).toString(16).padStart(6, "0"),
+          callsign: `AA${i}`,
+        })),
+      );
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: dense, zoom: ZOOM_LABELS_FULL }),
+      );
+      const properties = propertiesByIcao(collection);
+      // Callsign tier, star and all — no altitude line.
+      expect(properties.aaaaaa?.label).toBe("★ BAW123");
+    });
+
     it("carries the match severity for the attention ring, empty when nothing matches", () => {
       const collection = buildAircraftFeatureCollection(
         input({

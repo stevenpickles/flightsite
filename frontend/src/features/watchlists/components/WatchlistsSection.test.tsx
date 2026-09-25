@@ -237,16 +237,26 @@ describe("WatchlistsSection", () => {
     expect(screen.getByText("Second")).toBeInTheDocument();
   });
 
-  it("deletes a watchlist after confirming", async () => {
+  it("deletes a watchlist once the confirmation dialog is accepted (R4-10)", async () => {
     installWatchlistsApiMock({
       watchlists: [watchlist({ id: 1, name: "Gone Soon" })],
+      entriesByWatchlistId: {
+        1: [watchlistEntry({ id: 1, watchlist_id: 1, value: "AAAAAA" })],
+      },
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderWithProviders(<WatchlistsSection />);
 
     await screen.findByText("Gone Soon");
     await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    // No typed phrase for this variant — a single watchlist, not every row
+    // FlightSite has ever recorded — just a dialog to confirm on.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/its one entry is deleted/i),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() =>
       expect(screen.queryByText("Gone Soon")).not.toBeInTheDocument(),
@@ -254,17 +264,20 @@ describe("WatchlistsSection", () => {
     expect(await screen.findByText(/no watchlists yet/i)).toBeInTheDocument();
   });
 
-  it("keeps a watchlist when the delete confirmation is declined", async () => {
+  it("keeps a watchlist when the confirmation dialog is cancelled (R4-10)", async () => {
     installWatchlistsApiMock({
       watchlists: [watchlist({ id: 1, name: "Staying Put" })],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     renderWithProviders(<WatchlistsSection />);
 
     await screen.findByText("Staying Put");
     await user.click(screen.getByRole("button", { name: /delete/i }));
 
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("Staying Put")).toBeInTheDocument();
   });
 

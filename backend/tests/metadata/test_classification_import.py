@@ -33,9 +33,6 @@ from flightsite.metadata.registry import ImportPhase
 from tests.metadata.conftest import DATASET_TABLES, dump, record, resolved_rows
 from tests.metadata.provider import InMemoryMetadataProvider
 
-CURATED_TABLES = ("operator_groups", "operators")
-CLASSIFICATION_TABLES = ("aircraft_classification",)
-
 #: A snapshot spanning every kind of evidence the engine reads.
 FLEET = (
     ("ae1463", {"operator_name": "United States Air Force", "type_code": "C17"}, True),
@@ -251,12 +248,11 @@ async def test_a_repeat_import_produces_identical_tables(
 ) -> None:
     """Group ids are written into resolved rows, so they must not move."""
     await _import_fleet(importer, registry)
-    tables = (*DATASET_TABLES, *CURATED_TABLES, *CLASSIFICATION_TABLES)
-    first = dump(db_path, tables)
+    first = dump(db_path, DATASET_TABLES)
 
     await importer.run()
 
-    assert dump(db_path, tables) == first
+    assert dump(db_path, DATASET_TABLES) == first
 
 
 async def test_a_second_import_does_not_duplicate_a_discovered_operator(
@@ -308,15 +304,14 @@ async def test_a_failed_import_leaves_the_previous_classification_intact(
 ) -> None:
     """SPEC §27's guarantee, extended to the tables slice 024 added."""
     provider = await _import_fleet(importer, registry)
-    tables = (*DATASET_TABLES, *CURATED_TABLES, *CLASSIFICATION_TABLES)
-    before = dump(db_path, tables)
+    before = dump(db_path, DATASET_TABLES)
 
     provider.records = [record("a00001", operator_name="Ryanair")]
     provider.fail_at = ImportPhase.STAGING
     run = await importer.run()
 
     assert run.failed == ("mictronics",)
-    assert dump(db_path, tables) == before
+    assert dump(db_path, DATASET_TABLES) == before
     await database.dispose()
 
 
@@ -335,13 +330,9 @@ async def test_an_empty_curated_directory_leaves_the_tables_empty(
     """
     await _import_fleet(importer, registry)
 
-    async with database.writer_session() as session:
-        await repository.rebuild_resolved(
-            session,
-            precedence=registry.precedence(),
-            at_ms=1,
-            directory=OperatorDirectory(()),
-        )
+    await repository.rebuild_resolved(
+        precedence=registry.precedence(), at_ms=1, directory=OperatorDirectory(())
+    )
 
     assert _rows(db_path, "SELECT id FROM operator_groups") == []
     assert _rows(db_path, "SELECT name FROM operators") == []

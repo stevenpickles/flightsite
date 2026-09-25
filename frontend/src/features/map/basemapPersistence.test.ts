@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_BASEMAP_ID } from "@/features/map/basemaps";
 import {
   BASEMAP_STORAGE_KEY,
   readStoredBasemapId,
@@ -12,8 +11,11 @@ afterEach(() => {
 });
 
 describe("basemap persistence", () => {
-  it("returns the default when nothing is stored", () => {
-    expect(readStoredBasemapId()).toBe(DEFAULT_BASEMAP_ID);
+  it("reports no explicit choice when nothing is stored", () => {
+    // Not the registry default (issue R1-14): substituting one here made
+    // "chose dark aviation" and "chose nothing" the same value, and the
+    // theme could then never pick for a user who had not picked.
+    expect(readStoredBasemapId()).toBeNull();
   });
 
   it("round-trips a valid selection", () => {
@@ -22,18 +24,18 @@ describe("basemap persistence", () => {
     expect(window.localStorage.getItem(BASEMAP_STORAGE_KEY)).toBe("osm-raster");
   });
 
-  it("falls back to the default for an unrecognized stored id", () => {
+  it("reports no choice for an unrecognized stored id", () => {
     window.localStorage.setItem(BASEMAP_STORAGE_KEY, "some-removed-basemap");
-    expect(readStoredBasemapId()).toBe(DEFAULT_BASEMAP_ID);
+    expect(readStoredBasemapId()).toBeNull();
   });
 
-  it("falls back to the default when localStorage.getItem throws", () => {
+  it("reports no choice when localStorage.getItem throws", () => {
     const spy = vi
       .spyOn(window.localStorage, "getItem")
       .mockImplementation(() => {
         throw new Error("storage disabled");
       });
-    expect(readStoredBasemapId()).toBe(DEFAULT_BASEMAP_ID);
+    expect(readStoredBasemapId()).toBeNull();
     spy.mockRestore();
   });
 

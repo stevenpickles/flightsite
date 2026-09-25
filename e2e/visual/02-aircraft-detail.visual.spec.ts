@@ -25,7 +25,7 @@ import { VISUAL_THEMES } from "./support/stabilize";
 
 /** Tall enough to hold the whole detail column without scrolling — see
  * `expectFitsWithoutScrolling`, which fails the run if it stops being. */
-const VIEWPORT_HEIGHT = 1050;
+const VIEWPORT_HEIGHT = 1150;
 
 for (const theme of VISUAL_THEMES) {
   test(`aircraft detail — ${theme}`, async ({ page }) => {

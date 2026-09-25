@@ -1,4 +1,5 @@
-import { useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { requireNavItem } from "@/components/shell/nav-items";
 import { AlertHistorySection } from "@/features/alerts/components/AlertHistorySection";
@@ -6,6 +7,7 @@ import { AlertRulesSection } from "@/features/alerts/components/AlertRulesSectio
 import { TemplateGallery } from "@/features/alerts/components/TemplateGallery";
 import { WatchlistsSection } from "@/features/watchlists/components/WatchlistsSection";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
+import { useAlertRulesQuery, type AlertRule } from "@/lib/api/alertRules";
 
 const item = requireNavItem("/alerts");
 
@@ -27,28 +29,91 @@ const WATCHLISTS_TAB: AlertsTab = {
 
 const HISTORY_TAB_ID = "history";
 
+/** Every tab id this page knows, used to reject a stray/typo'd `?tab=`
+ * value from the address bar rather than rendering nothing. */
+const TAB_IDS = [WATCHLISTS_TAB.id, "rules", "templates", HISTORY_TAB_ID];
+
+/** Parses `?rule_id=` into a positive integer, or `null` for anything else
+ * (absent, blank, negative, non-numeric) — the URL is untrusted input. */
+function parseRuleId(raw: string | null): number | null {
+  if (raw === null || !/^\d+$/.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  return value > 0 ? value : null;
+}
+
 /**
  * The Alerts page (SPEC §42 to §48): watchlists, the rule builder, the
  * shipped-template gallery, and the history of every alert that has fired.
+ *
+ * R4-07: the selected tab (`?tab=`) and the History area's per-rule filter
+ * (`?rule_id=`, issue #98) live in the URL via `useSearchParams`, so a link
+ * to `/alerts?tab=history&rule_id=3` lands on that exact view, and refresh
+ * and Back/Forward preserve it — the deep link and round-trip the rubric
+ * asks for on every route in scope. The rule's *name* is not stored (only
+ * its id is meaningful state); it is resolved each render from the rule
+ * list `AlertRulesSection`/`TemplateGallery` already load, via
+ * `useAlertRulesQuery` — one cached read regardless of how many callers ask
+ * for it — falling back to "Rule {id}" while that query is still loading or
+ * for a rule since deleted.
  *
  * The per-rule drill-down (issue #98) is why this page holds the history's
  * rule filter rather than the history holding it: "Show matches" is offered
  * on a rule card in the Rules area and answered in the History area, so the
  * only component that can carry the choice across is the one that owns both.
- * The filter is not in the URL because none of this page's state is — the
- * selected tab is `useState` too, and putting one of the pair in the address
- * bar and not the other would make a shared link land somewhere its filter
- * is invisible.
  */
 export function AlertsPage() {
-  const [activeTabId, setActiveTabId] = useState(WATCHLISTS_TAB.id);
-  /** The rule the History area is narrowed to, or `null` for every rule. The
-   * name is kept alongside the id so the history's heading can say which
-   * rule it is showing without a second lookup. */
-  const [historyRule, setHistoryRule] = useState<{
-    id: number;
-    name: string;
-  } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rulesQuery = useAlertRulesQuery();
+
+  const tabParam = searchParams.get("tab");
+  const ruleId = parseRuleId(searchParams.get("rule_id"));
+  // An explicit `?tab=` wins; otherwise a `?rule_id=` with no tab implies
+  // History (there is nowhere else that parameter means anything), and the
+  // default is the first tab, same as before this page had any URL state.
+  const activeTabId =
+    tabParam !== null && TAB_IDS.includes(tabParam)
+      ? tabParam
+      : ruleId !== null
+        ? HISTORY_TAB_ID
+        : WATCHLISTS_TAB.id;
+
+  /** The rule the History area is narrowed to, or `null` for every rule. */
+  const historyRule =
+    ruleId === null
+      ? null
+      : {
+          id: ruleId,
+          name:
+            rulesQuery.data?.rules.find((rule) => rule.id === ruleId)?.name ??
+            `Rule ${ruleId}`,
+        };
+
+  function setActiveTab(id: string) {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", id);
+      return next;
+    });
+  }
+
+  function showMatchesFor(rule: AlertRule) {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", HISTORY_TAB_ID);
+      next.set("rule_id", String(rule.id));
+      return next;
+    });
+  }
+
+  function clearHistoryRuleFilter() {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete("rule_id");
+      return next;
+    });
+  }
 
   /**
    * The page's areas, in tab order. Roadmap slice 037 landed watchlists;
@@ -64,14 +129,7 @@ export function AlertsPage() {
     {
       id: "rules",
       label: "Rules",
-      render: () => (
-        <AlertRulesSection
-          onShowMatches={(rule) => {
-            setHistoryRule({ id: rule.id, name: rule.name });
-            setActiveTabId(HISTORY_TAB_ID);
-          }}
-        />
-      ),
+      render: () => <AlertRulesSection onShowMatches={showMatchesFor} />,
     },
     { id: "templates", label: "Templates", render: () => <TemplateGallery /> },
     {
@@ -80,9 +138,7 @@ export function AlertsPage() {
       render: () => (
         <AlertHistorySection
           ruleFilter={historyRule}
-          onClearRuleFilter={() => {
-            setHistoryRule(null);
-          }}
+          onClearRuleFilter={clearHistoryRuleFilter}
         />
       ),
     },
@@ -126,7 +182,7 @@ export function AlertsPage() {
                   selected ? `alerts-tabpanel-${tab.id}` : undefined
                 }
                 tabIndex={selected ? 0 : -1}
-                onClick={() => setActiveTabId(tab.id)}
+                onClick={() => setActiveTab(tab.id)}
                 className={
                   selected
                     ? "border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground"

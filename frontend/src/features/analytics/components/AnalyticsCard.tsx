@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 
 import type { AnalyticsWindow } from "@/lib/api/analytics";
 
+import { Button } from "@/components/ui/button";
 import { formatWindowLabel } from "@/features/analytics/lib/format";
 
 export interface AnalyticsCardProps {
@@ -17,8 +18,19 @@ export interface AnalyticsCardProps {
    * simply omitted until it arrives, rather than showing a stale one. */
   window?: AnalyticsWindow;
   isLoading: boolean;
-  /** The query's error message, if any — shown in place of `children`. */
+  /** The human-written fallback message, if the query is in error — shown in
+   * place of `children` (R3-08: never the backend's raw error text). */
   error?: string;
+  /** The backend's raw error text, if any — attached as a hover/inspect
+   * `title` on the message rather than shown as text of its own, so it
+   * never becomes a second, more alarming line for an ordinary user to read
+   * (R3-08) while still being one right-click/inspect away for whoever is
+   * actually debugging the failure. */
+  errorDetail?: string;
+  /** Refetches the query behind this card (R3-05) — omitted for a card whose
+   * failure is already explained and retried by a page-level banner instead
+   * of its own button (R3-08's daily-backed cards). */
+  onRetry?: () => void;
   children: ReactNode;
 }
 
@@ -27,6 +39,8 @@ export function AnalyticsCard({
   window,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
   children,
 }: AnalyticsCardProps) {
   return (
@@ -51,7 +65,20 @@ export function AnalyticsCard({
           Loading…
         </p>
       ) : error !== undefined ? (
-        <p className="py-8 text-center text-sm text-destructive">{error}</p>
+        <div className="flex flex-col items-center gap-2 py-8 text-center">
+          <p
+            role="alert"
+            className="text-sm text-destructive"
+            title={errorDetail}
+          >
+            {error}
+          </p>
+          {onRetry !== undefined && (
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          )}
+        </div>
       ) : (
         children
       )}

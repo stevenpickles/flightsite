@@ -287,6 +287,125 @@ export function formatReceiverLocalDateTime(
   }
 }
 
+/**
+ * The short name of a timezone at a given instant — `"EDT"`, `"GMT+9"` —
+ * for naming whose clock a page's timestamps are on (review R2-14).
+ *
+ * At an instant, not in general, because the answer changes twice a year:
+ * `America/New_York` is EST in January and EDT in July, and a page that
+ * says only "America/New_York" leaves a repeated hour around a DST
+ * transition undecidable. Falls back to the IANA name itself, which is
+ * always true if less short.
+ */
+export function receiverZoneAbbreviation(
+  timezone: string,
+  at: Date = new Date(),
+): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "short",
+    }).formatToParts(at);
+    return (
+      parts.find((part) => part.type === "timeZoneName")?.value ?? timezone
+    );
+  } catch {
+    return timezone;
+  }
+}
+
+/** `"America/New_York (EDT)"` — the zone named in full and in short, for the
+ * one line per page that says whose clock these times are (review R2-14). */
+export function receiverZoneLabel(
+  timezone: string,
+  at: Date = new Date(),
+): string {
+  const abbreviation = receiverZoneAbbreviation(timezone, at);
+  return abbreviation === timezone ? timezone : `${timezone} (${abbreviation})`;
+}
+
+/**
+ * What a timestamp's `title` says: the receiver-local datetime with its zone
+ * named, then the UTC instant it was stored as — e.g.
+ * `"2026-08-31 10:03 EDT · 2026-08-31T14:03:22.418Z"`.
+ *
+ * Both halves earn their place. The local half is what the cell shows, now
+ * unambiguous about whose clock it is; the UTC half is the instant itself,
+ * which is what a reader correlating FlightSite with any other log actually
+ * needs. The review found no `title` on any timestamp on any of the five
+ * routes (`main [title]` returned `[]`).
+ */
+export function formatReceiverLocalTitle(
+  iso: string,
+  timezone: string,
+): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  const local = formatReceiverLocalDateTime(iso, timezone);
+  return `${local} ${receiverZoneAbbreviation(timezone, when)} · ${iso}`;
+}
+
+/**
+ * Aircraft age from its manufacture year — `"18 years (built 2008)"` (SPEC
+ * §23/§50, PRODUCT §4.3; review R2-10 found it implemented nowhere).
+ *
+ * Whole calendar years, and the built year is carried along so the
+ * approximation is visible rather than implied: a registry's manufacture
+ * *year* cannot say whether an airframe rolled out in January or December,
+ * so "18 years" means "in its eighteenth calendar year", not eighteen years
+ * to the day. That is exactly what SPEC §23 asks for and no more, which is
+ * why this is `derived` provenance rather than a value from a source.
+ *
+ * `null` for an absent year (the caller renders `Unknown`, §2.7) and also
+ * for a year in the future — a registry typo must not print "-3 years".
+ */
+export function formatAircraftAge(
+  manufactureYear: number | null,
+  now: Date = new Date(),
+): string | null {
+  if (manufactureYear === null || !Number.isFinite(manufactureYear)) {
+    return null;
+  }
+  const years = now.getFullYear() - manufactureYear;
+  if (years < 0) {
+    return null;
+  }
+  const built = `built ${manufactureYear}`;
+  if (years === 0) {
+    return `Under a year (${built})`;
+  }
+  return `${years} ${years === 1 ? "year" : "years"} (${built})`;
+}
+
+/** The receiver-local calendar day an ISO instant falls on, as
+ * `"YYYY-MM-DD"` — the key the activity feed groups its rows by (review
+ * R2-06). Built from `formatToParts` rather than a locale pattern so the
+ * key is the same string whatever locale the browser is set to; falls back
+ * to the first ten characters of the ISO instant (its UTC day) if the
+ * timezone is unusable, which is wrong by at most one day and never throws
+ * mid-render. */
+export function receiverLocalDayKey(iso: string, timezone: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(when);
+    const get = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    return when.toISOString().slice(0, 10);
+  }
+}
+
 /** `"3m 12s"` for a track-duration span; used by the current-track mini
  * stats (accumulated points since selection, not a stored duration). */
 export function formatDurationShort(ms: number): string {

@@ -9,7 +9,7 @@ import {
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
+import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
@@ -33,6 +33,9 @@ import {
   type MetadataSourceStatus,
   type MetadataSourceStatusEntry,
 } from "@/lib/api/metadata";
+// R4-14: shared with the Health page's Metadata datasets card, so the same
+// source reads as the same name ("FAA", not "faa") on both pages.
+import { rowNoun, sourceLabel } from "@/lib/metadata/sources";
 
 export interface MetadataSectionProps {
   /** IANA timezone "last updated" times render in — `config.timezone`
@@ -40,36 +43,6 @@ export interface MetadataSectionProps {
   timezone: string;
   /** The full config, for the opt-in OpenSky source's toggle. */
   config: FlightSiteConfig;
-}
-
-/** Display names for sources whose own name does not read as one.
- *
- * `airports` is deliberately absent: capitalising it gives "Airports", which
- * is exactly right, and a map entry restating that would be one more thing to
- * keep in step. `routes` cannot fall through the same way — "Routes" would not
- * say whose routes these are, and slice 071 makes the answer part of the
- * point: they come from an offline directory this install holds, not from the
- * online provider configured under Enrichment. */
-const SOURCE_LABELS: Record<string, string> = {
-  mictronics: "Mictronics",
-  faa: "FAA",
-  opensky: "OpenSky",
-  routes: "Flight routes (VRS)",
-};
-
-function sourceLabel(name: string): string {
-  return SOURCE_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-/** What a source's `row_count` counts. Sources not named here count
- * airframes, which is what every source counted before slice 027. */
-const SOURCE_ROW_NOUNS: Record<string, string> = {
-  airports: "airports",
-  routes: "routes",
-};
-
-function rowNoun(name: string): string {
-  return SOURCE_ROW_NOUNS[name] ?? "aircraft";
 }
 
 /** Attribution for the datasets whose *contents* FlightSite serves back.
@@ -162,7 +135,10 @@ function SourceCard({ source, timezone }: SourceCardProps) {
         <p className="text-xs text-muted-foreground">Never updated.</p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Last updated {formatReceiverLocalTime(lastSuccessIso, timezone)}
+          {/* R4-12: metadata is imported manually and is routinely weeks
+              old, at which point a bare wall-clock time names a day nobody
+              can identify. */}
+          Last updated {formatReceiverLocalDateTime(lastSuccessIso, timezone)}
           {relativeAge ? ` · ${relativeAge}` : ""}
         </p>
       )}
@@ -206,9 +182,20 @@ function SourceCard({ source, timezone }: SourceCardProps) {
 function MetadataAgeLine({
   sources,
   timezone,
+  isPending,
+  isError,
 }: {
   sources: MetadataSourceStatusEntry[];
   timezone: string;
+  /** Whether `GET /metadata/status` has never resolved yet — §2.7 draws a
+   * line between "no source has ever succeeded" (a fact, rendered `never`)
+   * and "the status is not known yet" (R4-11: this must never print the
+   * same word as the fact). */
+  isPending: boolean;
+  /** Whether the last attempt to read the status failed. Distinct from
+   * `isPending`: this is "it has never run" said with no evidence at all,
+   * not even stale evidence. */
+  isError: boolean;
 }) {
   const ageMs = overallMetadataAge(sources);
   const ageIso = ageMs === null ? null : epochMsToIso(ageMs);
@@ -220,15 +207,40 @@ function MetadataAgeLine({
       className="text-sm text-muted-foreground"
     >
       Metadata last updated:{" "}
-      {ageIso === null ? (
+      {isPending ? (
+        <span className="font-medium text-foreground">Checking…</span>
+      ) : isError ? (
+        <span className="font-medium text-foreground">
+          Unknown — could not read source status
+        </span>
+      ) : ageIso === null ? (
         <span className="font-medium text-foreground">never</span>
       ) : (
         <span className="font-medium text-foreground">
-          {formatReceiverLocalTime(ageIso, timezone)}
+          {formatReceiverLocalDateTime(ageIso, timezone)}
           {relativeAge ? ` (${relativeAge})` : ""}
         </span>
       )}
     </p>
+  );
+}
+
+/** A source card's shape with none of its content known yet — rendered
+ * while the status is still loading, so the first paint is not indistinguishable
+ * from "no sources are registered" (R4-11). Not a `SourceCard` with dummy
+ * data: nothing here is a source name or a status this build recognizes. */
+function SourceCardSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      className="flex animate-pulse flex-col gap-2 rounded-lg border border-border bg-background p-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="h-4 w-24 rounded bg-muted" />
+        <div className="h-4 w-16 rounded bg-muted" />
+      </div>
+      <div className="h-3 w-40 rounded bg-muted" />
+    </div>
   );
 }
 
@@ -333,7 +345,14 @@ export function MetadataSection({ timezone, config }: MetadataSectionProps) {
 
   const sources = statusQuery.data?.sources ?? [];
   const anyRunning = sources.some((source) => source.status === "running");
-  const isBusy = anyRunning || triggerMutation.isPending;
+  const updateInProgress = anyRunning || triggerMutation.isPending;
+  // R4-11: while the status is unknown — still loading, or the read
+  // failed — "Update Aircraft Metadata" must not read as available. Before
+  // this, `isBusy` only ever considered the (empty, because unknown)
+  // `sources` array, so the button stayed clickable while the section had
+  // no idea whether anything was already running.
+  const statusUnknown = statusQuery.isPending || statusQuery.isError;
+  const updateDisabled = updateInProgress || statusUnknown;
 
   function handleUpdate() {
     triggerMutation.mutate();
@@ -346,7 +365,12 @@ export function MetadataSection({ timezone, config }: MetadataSectionProps) {
       description="Registration, type, and operator data merged from Mictronics and the FAA registry."
     >
       <div className="flex flex-col gap-3">
-        <MetadataAgeLine sources={sources} timezone={timezone} />
+        <MetadataAgeLine
+          sources={sources}
+          timezone={timezone}
+          isPending={statusQuery.isPending}
+          isError={statusQuery.isError}
+        />
 
         <div className="flex flex-wrap items-center gap-3">
           <Button
@@ -358,9 +382,9 @@ export function MetadataSection({ timezone, config }: MetadataSectionProps) {
             // on to this button, so it carries a name that does not move.
             data-testid="metadata-update-button"
             onClick={handleUpdate}
-            disabled={isBusy}
+            disabled={updateDisabled}
           >
-            {isBusy ? "Updating…" : "Update Aircraft Metadata"}
+            {updateInProgress ? "Updating…" : "Update Aircraft Metadata"}
           </Button>
           {triggerMutation.isSuccess &&
             triggerMutation.data.already_running && (
@@ -383,7 +407,17 @@ export function MetadataSection({ timezone, config }: MetadataSectionProps) {
           </p>
         )}
 
-        {sources.length > 0 && (
+        {statusQuery.isPending && (
+          <div
+            className="grid gap-3 sm:grid-cols-2"
+            aria-label="Loading metadata sources"
+          >
+            <SourceCardSkeleton />
+            <SourceCardSkeleton />
+          </div>
+        )}
+
+        {!statusQuery.isPending && sources.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2">
             {sources.map((source) => (
               <SourceCard

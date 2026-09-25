@@ -21,24 +21,42 @@
  * page came back" as the signal there is a next one.
  */
 
+import { Fragment } from "react";
+
 import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPaginationControls";
 import { ActivityRow } from "@/features/activity/components/ActivityRow";
+import { groupActivityByDay } from "@/features/activity/lib/dayGroups";
 import { ActivityTypeFilter } from "@/features/activity/components/ActivityTypeFilter";
 import { useActivityPageState } from "@/features/activity/hooks/useActivityPageState";
 import { PAGE_SIZE } from "@/features/activity/lib/urlState";
+import {
+  QueryErrorBanner,
+  QueryErrorState,
+} from "@/features/history/components/QueryError";
+import { EmptyResult } from "@/features/history/components/EmptyResult";
+import { RefreshStatus } from "@/features/history/components/RefreshStatus";
+import { TimezoneNote } from "@/features/history/components/TimezoneNote";
+import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
 
 export function ActivityPage() {
   const { state, setState } = useActivityPageState();
   const receiverQuery = useReceiverQuery();
-  const listQuery = useActivityQuery({
-    limit: PAGE_SIZE,
-    offset: (state.page - 1) * PAGE_SIZE,
-    // Omitted entirely when empty, so an unfiltered feed sends no `type` at
-    // all rather than a parameter meaning "everything".
-    types: state.types.length === 0 ? undefined : state.types,
-  });
+  // The feed's whole promise is "what happened while you weren't watching",
+  // so page 1 polls — the fastest of the three cadences, and still REST only:
+  // the live socket stays the Live Map's (`features/history/lib/refresh.ts`).
+  const refetchInterval = state.page === 1 ? ACTIVITY_REFRESH_MS : false;
+  const listQuery = useActivityQuery(
+    {
+      limit: PAGE_SIZE,
+      offset: (state.page - 1) * PAGE_SIZE,
+      // Omitted entirely when empty, so an unfiltered feed sends no `type` at
+      // all rather than a parameter meaning "everything".
+      types: state.types.length === 0 ? undefined : state.types,
+    },
+    { refetchInterval },
+  );
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
 
@@ -50,6 +68,14 @@ export function ActivityPage() {
           Firsts, records and milestones — what happened while you weren&rsquo;t
           watching.
         </p>
+        <TimezoneNote className="mt-1" timezone={timezone} />
+        <RefreshStatus
+          className="mt-1"
+          updatedAt={listQuery.dataUpdatedAt}
+          isFetching={listQuery.isFetching}
+          onRefresh={() => void listQuery.refetch()}
+          intervalMs={refetchInterval === false ? null : refetchInterval}
+        />
       </header>
 
       <ActivityTypeFilter
@@ -58,33 +84,78 @@ export function ActivityPage() {
       />
 
       {listQuery.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading activity…</p>
-      ) : listQuery.isError ? (
-        <p className="text-sm text-destructive">
-          Could not load the activity feed: {listQuery.error.message}
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading activity…
         </p>
-      ) : listQuery.data.items.length === 0 && state.page === 1 ? (
-        <p className="text-sm text-muted-foreground">
-          {state.types.length === 0
-            ? "Nothing has happened yet."
-            : "No activity matches these filters."}
-        </p>
+      ) : listQuery.data === undefined ? (
+        <QueryErrorState
+          message={`Could not load the activity feed: ${listQuery.error?.message ?? "the request failed"}`}
+          onRetry={() => void listQuery.refetch()}
+          isRetrying={listQuery.isFetching}
+        />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <ul className="divide-y divide-border/60">
-            {listQuery.data.items.map((event) => (
-              <ActivityRow key={event.id} event={event} timezone={timezone} />
-            ))}
-          </ul>
-          <AircraftPaginationControls
-            page={state.page}
-            pageSize={PAGE_SIZE}
-            rowCount={listQuery.data.items.length}
-            total={listQuery.data.total}
-            noun={{ singular: "event", plural: "events" }}
-            onPageChange={(page) => setState({ page })}
-          />
-        </div>
+        <>
+          {/* Before this, recovering meant clicking a filter chip — which
+           * worked only because it made a new query key, and silently
+           * changed what the user had asked for (review R2-04). */}
+          {listQuery.isError && (
+            <QueryErrorBanner
+              message={`Could not refresh the activity feed: ${listQuery.error.message}.`}
+              onRetry={() => void listQuery.refetch()}
+              isRetrying={listQuery.isFetching}
+            />
+          )}
+          {listQuery.data.items.length === 0 ? (
+            <EmptyResult
+              message={
+                state.types.length === 0
+                  ? "Nothing has happened yet."
+                  : "No activity matches these filters."
+              }
+              page={state.page}
+              onBackToFirstPage={() => setState({ page: 1 })}
+            />
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <ul className="divide-y divide-border/60">
+                {groupActivityByDay(listQuery.data.items, timezone).map(
+                  (group, index) => (
+                    // `index` in the key as well as the day: an unordered
+                    // page would produce the same day twice, and a duplicate
+                    // React key would be a second bug on top of the first.
+                    <Fragment key={`${group.key}-${index}`}>
+                      <li className="bg-secondary/40 px-4 py-1.5">
+                        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {group.label}
+                          {group.label !== group.key && (
+                            <span className="ml-2 font-normal normal-case tracking-normal">
+                              {group.key}
+                            </span>
+                          )}
+                        </h2>
+                      </li>
+                      {group.events.map((event) => (
+                        <ActivityRow
+                          key={event.id}
+                          event={event}
+                          timezone={timezone}
+                        />
+                      ))}
+                    </Fragment>
+                  ),
+                )}
+              </ul>
+              <AircraftPaginationControls
+                page={state.page}
+                pageSize={PAGE_SIZE}
+                rowCount={listQuery.data.items.length}
+                total={listQuery.data.total}
+                noun={{ singular: "event", plural: "events" }}
+                onPageChange={(page) => setState({ page })}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );

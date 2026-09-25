@@ -237,4 +237,20 @@ describe("TopAircraftCard", () => {
 
     expect(screen.getByText("Detail for ae1463")).toBeInTheDocument();
   });
+
+  it("names the value axis and the bar series (R3-12)", () => {
+    const rows = [aircraftRow({ sightings: 12 })];
+    render(
+      <MemoryRouter>
+        <TopAircraftCard rows={rows} isLoading={false} />
+      </MemoryRouter>,
+    );
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      xAxis: { name: string };
+      series: Array<{ name: string }>;
+    };
+    expect(option.xAxis.name).toBe("sightings");
+    expect(option.series[0]?.name).toBe("Sightings");
+  });
 });

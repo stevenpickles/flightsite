@@ -1,7 +1,7 @@
 import { DetailRow, HealthCard } from "@/features/health/components/HealthCard";
 import { StatusPill } from "@/features/health/components/StatusPill";
 import { errorCountPresentation } from "@/features/health/lib/status";
-import { formatReceiverLocalTime } from "@/features/receiver/lib/format";
+import { formatReceiverLocalDateTime } from "@/features/receiver/lib/format";
 import type { DiagnosticsErrorEntry } from "@/lib/api/diagnostics";
 
 /** SPEC §67 names four error kinds; `other` catches anything outside a named
@@ -54,7 +54,9 @@ function ErrorList({
           <div className="flex items-baseline justify-between gap-3">
             <span className="font-medium break-all">{entry.event}</span>
             <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {formatReceiverLocalTime(entry.at, timezone)}
+              {/* R4-12: on a long-uptime Pi an error can be days old, and a
+                  bare wall-clock time then names a day nobody can identify. */}
+              {formatReceiverLocalDateTime(entry.at, timezone)}
             </span>
           </div>
           {entry.detail !== null && (

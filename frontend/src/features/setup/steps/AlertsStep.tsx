@@ -7,9 +7,13 @@ export interface AlertsStepProps {
 }
 
 /**
- * Step (g): initial alert template selection (SPEC §45). Templates only
- * activate once the rule engine ships (phase 6) — this step just records
- * which ones the user wants enabled by then, into `alerts.enabled_templates`.
+ * Step (g): initial alert template selection (SPEC §45). Each template
+ * ticked here becomes a real, editable rule the moment setup finishes —
+ * `alerts.enabled_templates` is read exactly once, as this install's
+ * first-run seed, by `AlertService.apply_enabled_templates`. After that the
+ * Alerts page's Templates gallery is the only place templates are managed
+ * (R4-03): this step's selection has no further effect once setup
+ * completes, so re-running the wizard does not re-add or remove anything.
  * Any selection, including none, is valid: SPEC §45 is explicit that
  * nothing is silently enabled, so declining every template is a legitimate
  * choice, not an error.
@@ -30,8 +34,9 @@ export function AlertsStep({ draft, onChange }: AlertsStepProps) {
         </h2>
         <p className="text-sm text-muted-foreground">
           Choose which of the built-in interesting-aircraft templates to start
-          with. These take effect once the alert rule engine arrives; you can
-          change this anytime from Settings.
+          with. Each one you tick becomes a rule you can retune or switch off on
+          the Alerts page after setup — this is only the starting point, not an
+          ongoing setting.
         </p>
       </div>
 

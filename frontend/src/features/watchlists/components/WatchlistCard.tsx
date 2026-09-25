@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldError } from "@/features/setup/components/FieldError";
+import { ConfirmDangerDialog } from "@/features/settings/components/ConfirmDangerDialog";
 import { EntryForm } from "@/features/watchlists/components/EntryForm";
 import { entryKindMeta } from "@/features/watchlists/lib/vocabulary";
 import {
@@ -50,6 +51,9 @@ export function WatchlistCard({
     watchlist.description ?? "",
   );
   const [nameTouched, setNameTouched] = useState(false);
+  // R4-10: replaces a native `window.confirm` with the app's own dialog —
+  // see the matching note in `RuleCard.tsx`.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const entriesQuery = useWatchlistEntriesQuery(expanded ? watchlist.id : null);
   const updateMutation = useUpdateWatchlistMutation();
@@ -95,13 +99,12 @@ export function WatchlistCard({
     );
   }
 
-  function handleDelete() {
-    const confirmed = window.confirm(
-      `Delete "${watchlist.name}" and all ${watchlist.entry_count} of its entries? This cannot be undone.`,
-    );
-    if (confirmed) {
-      deleteMutation.mutate(watchlist.id);
-    }
+  function confirmDelete() {
+    deleteMutation.mutate(watchlist.id, {
+      onSuccess: () => {
+        setConfirmingDelete(false);
+      },
+    });
   }
 
   const entries = entriesQuery.data?.entries ?? [];
@@ -202,7 +205,9 @@ export function WatchlistCard({
               variant="outline"
               size="sm"
               className="text-destructive"
-              onClick={handleDelete}
+              onClick={() => {
+                setConfirmingDelete(true);
+              }}
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? "Deleting…" : "Delete"}
@@ -291,6 +296,25 @@ export function WatchlistCard({
           />
         </div>
       )}
+
+      <ConfirmDangerDialog
+        open={confirmingDelete}
+        onClose={() => {
+          setConfirmingDelete(false);
+        }}
+        title={`Delete "${watchlist.name}"?`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        isPending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
+      >
+        <p>
+          {watchlist.entry_count === 1
+            ? "Its one entry is deleted with it."
+            : `All ${watchlist.entry_count} of its entries are deleted with it.`}{" "}
+          This cannot be undone.
+        </p>
+      </ConfirmDangerDialog>
     </article>
   );
 }

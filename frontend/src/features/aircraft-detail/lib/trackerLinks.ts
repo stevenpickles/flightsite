@@ -61,3 +61,23 @@ export function buildTrackerLinks(
 
   return { flightradar24, flightaware, adsbExchange };
 }
+
+/**
+ * True when the FlightRadar24 / FlightAware links were built from a callsign
+ * rather than from a registration.
+ *
+ * The distinction matters to the reader, not to the URL: a registration link
+ * opens *this airframe*, while a callsign link opens *a flight* — today's
+ * AFR1641, which tomorrow is a different aircraft. The UI says so in a
+ * `title` rather than withholding the link, because a flight-scoped link is
+ * still the best answer available for an airframe with no registration
+ * (SPEC §24: "the best available identifier").
+ */
+export function isFlightScoped(
+  aircraft: Pick<LiveAircraft, "callsign" | "registration">,
+): boolean {
+  return (
+    cleaned(aircraft.registration) === null &&
+    cleaned(aircraft.callsign) !== null
+  );
+}

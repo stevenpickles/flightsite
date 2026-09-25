@@ -7,8 +7,49 @@
  * looks exactly like a sky with no traffic in it. That distinction — "nothing
  * is flying" versus "we have lost the feed" — is the whole reason the chip
  * exists, so it is never hidden entirely.
+ *
+ * Four things it can say, in escalating order (issues R1-03, R1-04):
+ *
+ * 1. **Connecting** — the first attempt, and only briefly.
+ * 2. **Reconnecting** — a stream that was working has dropped. The attempt
+ *    number rides along so a watcher can see retries happening rather than
+ *    guess.
+ * 3. **Live feed unavailable — retrying** — past {@link ESCALATE_AFTER_ATTEMPTS}
+ *    failures, whichever of the two states we are in. This is the wording the
+ *    review found missing: a socket whose upgrade a reverse proxy does not
+ *    forward never leaves `connecting`, so the chip said "Connecting" for as
+ *    long as the tab was open, over a map with no aircraft on it, and the two
+ *    most important cases in the product were indistinguishable.
+ * 4. **· last update 12s ago** — appended whenever the picture on screen is
+ *    no longer being fed by anything, socket or REST fallback. A kept picture
+ *    is only honest if its age is on screen beside it.
+ *
+ * While live it also says how much of the picture is actually drawn. With no
+ * filter on that is one number — `· 77 aircraft` — but with one on the map
+ * shows fewer than it holds and nothing anywhere said so (issue R1-08): a
+ * user who narrowed to military traffic saw "Live · 77 aircraft" over a map
+ * with four icons on it, unable to tell a filter from a quiet sky. It then
+ * reads `· 12 of 77 aircraft`. The shown count comes from
+ * `useFilteredLiveAircraft`, the same `FilterResult` the map itself just
+ * drew, so the chip cannot report a picture different from the one beside it.
+ *
+ * What is announced, and what is only shown (issue R1-15). The status word
+ * is the whole of what this live region says. The aircraft count, the
+ * attempt number and the age are all readings that change on their own — the
+ * count went 43 → 56 → 64 → 72 → 77 over twenty minutes of the review — and
+ * a `role="status"` region containing any of them re-announces the entire
+ * chip on every tick, burying the one announcement that matters: the feed
+ * dropping. All three are therefore `aria-hidden`, so a screen reader hears
+ * "Live", "Reconnecting" and "Live feed unavailable — retrying" once each,
+ * at the moment each becomes true, and nothing else.
  */
 
+import { useEffect, useState } from "react";
+
+import { formatRelativeAge } from "@/features/aircraft-detail/lib/format";
+import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
+import { countActiveFilters } from "@/features/filters/lib/activeFilterCount";
+import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { ConnectionStatus } from "@/lib/ws/liveSocket";
 import { cn } from "@/lib/utils";
@@ -19,43 +60,126 @@ const LABELS: Record<ConnectionStatus, string> = {
   reconnecting: "Reconnecting",
 };
 
+/** What the chip says once retrying has stopped being a formality. */
+const UNAVAILABLE_LABEL = "Live feed unavailable — retrying";
+
+/**
+ * Consecutive failed attempts before the chip stops being reassuring.
+ *
+ * Three, which `lib/ws/backoff.ts`'s 500 ms base puts at roughly 3-4 s in:
+ * long enough that an ordinary backend restart or a laptop waking up has
+ * already succeeded and nothing alarming has been said, short enough that a
+ * blocked upgrade is named as a problem while the user is still looking at
+ * the page rather than after they have concluded the sky is empty.
+ */
+export const ESCALATE_AFTER_ATTEMPTS = 3;
+
 const DOT_CLASSES: Record<ConnectionStatus, string> = {
   connecting: "bg-muted-foreground",
   live: "bg-emerald-500",
   reconnecting: "bg-amber-500",
 };
 
+/** How often the "last update" age is recomputed while it is on screen.
+ * One second, the resolution `formatRelativeAge` reports below a minute;
+ * the interval runs only while the picture is stale, so a healthy map
+ * schedules nothing. */
+const AGE_TICK_MS = 1_000;
+
 export function ConnectionStatusChip() {
   const status = useLiveAircraftStore((state) => state.connection);
+  const attempt = useLiveAircraftStore((state) => state.connectionAttempt);
+  const stale = useLiveAircraftStore((state) => state.stale);
+  const lastUpdate = useLiveAircraftStore((state) => state.lastUpdate);
   // Only read while live: a count next to "Connecting"/"Reconnecting" would
   // imply a picture the socket has not actually delivered yet.
   const aircraftCount = useLiveAircraftStore((state) =>
     status === "live" ? Object.keys(state.aircraft).length : 0,
   );
+  // What the map is *drawing*, which is not the same number as soon as any
+  // filter is on (issue R1-08). Read through the same hook every other panel
+  // uses, so the chip cannot disagree with the picture beside it.
+  const shownCount = useFilteredLiveAircraft().aircraft.length;
+  const filtered = useFilterStore(
+    (state) => countActiveFilters(state.filters) > 0,
+  );
+
+  const showAge = stale && lastUpdate !== null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!showAge) {
+      return undefined;
+    }
+    const tick = () => {
+      setNow(Date.now());
+    };
+    // The zero-delay timer, rather than a direct call, is what keeps the
+    // first reading current without a setState in the effect body: `now` is
+    // otherwise whatever it was when the chip mounted, which for a tab that
+    // has been open a while would render one frame of nonsense before the
+    // first interval tick corrected it.
+    const first = setTimeout(tick, 0);
+    const timer = setInterval(tick, AGE_TICK_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [showAge]);
+
+  const escalated = status !== "live" && attempt >= ESCALATE_AFTER_ATTEMPTS;
+  const label = escalated ? UNAVAILABLE_LABEL : LABELS[status];
 
   return (
     <div
       role="status"
       aria-live="polite"
       data-status={status}
+      data-stale={stale ? "true" : "false"}
+      data-escalated={escalated ? "true" : "false"}
       className={cn(
         "pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-1.5",
         "rounded-full border border-border bg-card/90 px-2.5 py-1",
         "text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-sm",
+        escalated && "text-amber-600 dark:text-amber-400",
       )}
     >
       <span
         aria-hidden="true"
-        className={cn("size-1.5 rounded-full", DOT_CLASSES[status])}
+        className={cn(
+          "size-1.5 rounded-full",
+          escalated ? "bg-amber-500" : DOT_CLASSES[status],
+        )}
       />
-      {LABELS[status]}
+      {label}
+      {status !== "live" && attempt > 0 && (
+        <span aria-hidden="true" data-testid="connection-attempt">
+          (attempt {attempt})
+        </span>
+      )}
       {status === "live" && (
         // A quiet, user-visible confirmation that the live picture is
         // non-empty — not just that the socket connected. Also gives the
-        // E2E live-map flow (roadmap slice 020) a stable, accessible signal
-        // for "aircraft have actually arrived" beyond the connection state.
-        <span data-testid="live-aircraft-count">
-          · {aircraftCount} aircraft
+        // E2E live-map flow (roadmap slice 020) a stable signal for
+        // "aircraft have actually arrived" beyond the connection state.
+        //
+        // `aria-hidden` for the same reason the attempt number and the age
+        // are (issue R1-15): the count is a telemetry reading that changes
+        // whenever anything enters or leaves the picture — the review
+        // watched it go 43 → 56 → 64 → 72 → 77 over twenty minutes — and
+        // inside a `role="status"` live region every one of those changes
+        // re-announced the whole chip. A live region should announce state
+        // changes, not count aircraft, and the announcement it would bury
+        // is the one that matters: the feed dropping.
+        <span aria-hidden="true" data-testid="live-aircraft-count">
+          ·{" "}
+          {filtered
+            ? `${shownCount} of ${aircraftCount} aircraft`
+            : `${aircraftCount} aircraft`}
+        </span>
+      )}
+      {showAge && (
+        <span aria-hidden="true" data-testid="connection-last-update">
+          · last update {formatRelativeAge(Math.max(0, now - lastUpdate))}
         </span>
       )}
     </div>

@@ -63,6 +63,18 @@ temporary B-tree "for last term of order by", because ``Sighting.id`` breaks
 ties ascending in *both* directions and a reverse walk hands ``id`` back
 descending; that sorts only within groups of equal ranges, not the table.
 
+Nulls sort last in both directions, exactly as
+:func:`flightsite.api.history._direction` orders the Aircraft page and for
+the same §2.7 reason. Three of this endpoint's four sort keys are nullable,
+and ``duration_s`` is the one that made the defect unmissable: an *open*
+sighting has no recorded duration yet, so SQLite's ``NULL``-first ``ASC``
+answered "shortest sighting first" with nothing but open sightings, page
+after page, and put the shortest closed sighting out of reach of the sort
+entirely. It costs ``ix_sightings_max_range`` nothing: SQLite plans
+``max_range_nm ASC NULLS LAST`` as the same covering index scan it plans for
+plain ``ASC``, skipping the index's ``NULL`` prefix rather than sorting, and
+the descending plan is unchanged.
+
 ``duration_s`` and ``closest_approach_nm`` sorts, and the ``interesting``
 filter, still carry no index and fall back to SQLite scanning the filtered
 result. That is a write-cost decision rather than an oversight: every index on
@@ -79,7 +91,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, select
 from sqlalchemy.engine import RowMapping
 
 from flightsite.db import Database
@@ -173,6 +185,18 @@ _DETAIL_COLUMNS: Final[tuple[Any, ...]] = (
 )
 
 
+def _direction(column: Any, order: str) -> UnaryExpression[Any]:
+    """One sort key as an ``ORDER BY`` term, with nulls last either way.
+
+    :func:`flightsite.api.history._direction` verbatim, deliberately not
+    imported: the two endpoints publish the same ordering contract but not a
+    shared one, and a private helper reached across module boundaries would
+    make one page's sort a hostage to the other page's next change.
+    """
+    ordered: UnaryExpression[Any] = column.asc() if order == "asc" else column.desc()
+    return ordered.nulls_last()
+
+
 def _joined_query() -> Select[Any]:
     """The shared ``sightings`` → aircraft → resolved metadata → classification join.
 
@@ -251,8 +275,7 @@ class SightingsRepository:
         conditions = _filters(
             icao=icao, from_ms=from_ms, to_ms=to_ms, interesting=interesting, open_only=open_only
         )
-        column = SORT_COLUMNS[sort]
-        direction = column.asc() if order == "asc" else column.desc()
+        direction = _direction(SORT_COLUMNS[sort], order)
 
         filtered = _joined_query().where(*conditions) if conditions else _joined_query()
         # A stable tiebreaker, exactly as `flightsite.api.history` uses

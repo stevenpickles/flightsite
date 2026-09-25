@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import { DailyCountsCard } from "@/features/analytics/components/cards/DailyCountsCard";
 import type { AnalyticsDailyRow } from "@/lib/api/analytics";
+import { getLastMockChart } from "@/test/echartsMock";
 
 function dailyRow(
   overrides: Partial<AnalyticsDailyRow> = {},
 ): AnalyticsDailyRow {
   return {
     day: "2026-08-31",
+    complete: true,
     unique_aircraft: 10,
     new_aircraft: 1,
     sightings: 15,
@@ -42,11 +44,47 @@ describe("DailyCountsCard", () => {
     expect(
       screen.getByRole("img", { name: /daily aircraft and sighting counts/i }),
     ).toBeInTheDocument();
+    // R3-11: the day key is rendered through formatCalendarDay, not as the
+    // raw "2026-08-30" string.
     expect(
-      screen.getByText(/2026-08-30 — 8 aircraft, 11 sightings/),
+      screen.getByText(/Aug 30, 2026 — 8 aircraft, 11 sightings/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/2026-08-31 — 10 aircraft, 15 sightings/),
+      screen.getByText(/Aug 31, 2026 — 10 aircraft, 15 sightings/),
     ).toBeInTheDocument();
+  });
+
+  it("names the value axis (R3-12)", () => {
+    const items = [dailyRow({ day: "2026-08-31" })];
+    render(<DailyCountsCard items={items} isLoading={false} />);
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      yAxis: { name: string };
+    };
+    expect(option.yAxis.name).toBe("count");
+  });
+
+  it("renders a day not computed yet as 'not computed yet', never a fabricated zero (R3-02)", () => {
+    const items = [
+      dailyRow({
+        day: "2026-09-20",
+        complete: false,
+        unique_aircraft: null,
+        sightings: null,
+      }),
+    ];
+    render(<DailyCountsCard items={items} isLoading={false} />);
+
+    expect(
+      screen.getByText(/Sep 20, 2026 — not computed yet/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      series: Array<{ data: Array<number | null>; connectNulls: boolean }>;
+    };
+    // A gap in the line, not a false zero.
+    expect(option.series[0]?.data).toEqual([null]);
+    expect(option.series[0]?.connectNulls).toBe(false);
   });
 });

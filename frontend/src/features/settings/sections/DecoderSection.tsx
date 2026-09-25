@@ -24,6 +24,7 @@ import {
 } from "@/features/settings/lib/draft";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -51,17 +52,32 @@ export function DecoderSection({ config }: DecoderSectionProps) {
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
 
-  const hostError =
-    validateHost(draft.receiverHost) ?? fieldErrors["receiver.host"] ?? null;
-  const portError =
-    validatePort(draft.receiverPort) ?? fieldErrors["receiver.port"] ?? null;
-  const pathError =
-    validatePath(draft.receiverPath) ?? fieldErrors["receiver.path"] ?? null;
-  const pollError =
-    validatePollInterval(draft.pollIntervalS) ??
-    fieldErrors["receiver.poll_interval_s"] ??
-    null;
-  const fieldsValid = !hostError && !portError && !pathError && !pollError;
+  // R4-02: `fieldsValid` (which gates both Save and Test connection) is
+  // derived from the client-side validators only — a server rejection is
+  // still shown next to its field, but never leaves the section unsavable
+  // until an unrelated edit or a page reload.
+  const host = fieldMessage(
+    validateHost(draft.receiverHost),
+    fieldErrors["receiver.host"],
+  );
+  const port = fieldMessage(
+    validatePort(draft.receiverPort),
+    fieldErrors["receiver.port"],
+  );
+  const path = fieldMessage(
+    validatePath(draft.receiverPath),
+    fieldErrors["receiver.path"],
+  );
+  const poll = fieldMessage(
+    validatePollInterval(draft.pollIntervalS),
+    fieldErrors["receiver.poll_interval_s"],
+  );
+  const hostError = host.message;
+  const portError = port.message;
+  const pathError = path.message;
+  const pollError = poll.message;
+  const fieldsValid =
+    !host.blocking && !port.blocking && !path.blocking && !poll.blocking;
 
   function updateField(patch: Partial<typeof draft>) {
     setDraft({ ...draft, ...patch });
@@ -186,7 +202,7 @@ export function DecoderSection({ config }: DecoderSectionProps) {
           {testMutation.isSuccess && testResult && (
             <p
               className={
-                testResult.ok ? "text-accent-foreground" : "text-destructive"
+                testResult.ok ? "text-success-on-surface" : "text-destructive"
               }
             >
               {testResult.ok

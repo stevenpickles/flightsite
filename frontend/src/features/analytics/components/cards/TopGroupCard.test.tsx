@@ -138,4 +138,15 @@ describe("TopGroupCard", () => {
       "{ident|Delta Air Lines}",
     );
   });
+
+  it("names the value axis and the bar series (R3-12)", () => {
+    renderTypes([groupRow()]);
+
+    const option = getLastMockChart().optionCalls.at(-1) as {
+      xAxis: { name: string };
+      series: Array<{ name: string }>;
+    };
+    expect(option.xAxis.name).toBe("sightings");
+    expect(option.series[0]?.name).toBe("Sightings");
+  });
 });

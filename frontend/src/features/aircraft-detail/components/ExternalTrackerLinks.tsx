@@ -9,7 +9,10 @@
 
 import { ExternalLink } from "lucide-react";
 
-import { buildTrackerLinks } from "@/features/aircraft-detail/lib/trackerLinks";
+import {
+  buildTrackerLinks,
+  isFlightScoped,
+} from "@/features/aircraft-detail/lib/trackerLinks";
 import type { LiveAircraft } from "@/lib/api/live";
 
 export interface ExternalTrackerLinksProps {
@@ -19,15 +22,21 @@ export interface ExternalTrackerLinksProps {
 const SERVICES: {
   key: keyof ReturnType<typeof buildTrackerLinks>;
   label: string;
+  /** Whether this service's link can be keyed off a callsign, and so may be
+   * flight-scoped rather than airframe-scoped. */
+  callsignKeyed: boolean;
 }[] = [
-  { key: "flightradar24", label: "FlightRadar24" },
-  { key: "flightaware", label: "FlightAware" },
-  { key: "adsbExchange", label: "ADS-B Exchange" },
+  { key: "flightradar24", label: "FlightRadar24", callsignKeyed: true },
+  { key: "flightaware", label: "FlightAware", callsignKeyed: true },
+  { key: "adsbExchange", label: "ADS-B Exchange", callsignKeyed: false },
 ];
 
 export function ExternalTrackerLinks({ aircraft }: ExternalTrackerLinksProps) {
   const links = buildTrackerLinks(aircraft);
   const available = SERVICES.filter((service) => links[service.key] !== null);
+  // Said once, in a title: a callsign link opens today's flight, not this
+  // airframe (review R2-11).
+  const flightScoped = isFlightScoped(aircraft);
 
   if (available.length === 0) {
     return (
@@ -45,6 +54,11 @@ export function ExternalTrackerLinks({ aircraft }: ExternalTrackerLinksProps) {
             href={links[service.key] ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
+            title={
+              flightScoped && service.callsignKeyed
+                ? `Opens flight ${aircraft.callsign?.trim()} — the flight this callsign is flying now, not this airframe.`
+                : undefined
+            }
             className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline"
           >
             {service.label}

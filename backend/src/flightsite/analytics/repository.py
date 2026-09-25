@@ -83,6 +83,15 @@ from flightsite.db import (
 #: is for — and because §6.5's table list is closed.
 META_KEY_ROLLUP_THROUGH_DAY: Final = "analytics_rollup_through_day"
 
+#: ``meta`` key naming the IANA zone the stored rollups are keyed in.
+#:
+#: Day keys are receiver-local (§10), so every row is a claim about a zone as
+#: well as about a date. Recording which zone lets a boot notice that the
+#: receiver's timezone has changed since the rows were written — the defect
+#: behind issue #205 — and rebuild them under the new one. Absent on an
+#: install upgrading into this key, which is read as "unknown, rebuild once".
+META_KEY_ROLLUP_ZONE: Final = "analytics_rollup_zone"
+
 #: Columns of a ``daily_stats`` row, in §6.5's order.
 _DAY_FIELDS: Final[tuple[str, ...]] = (
     "unique_aircraft",
@@ -202,6 +211,40 @@ class AnalyticsRepository:
         """Replace several days, one transaction each (see the module docstring)."""
         for rollup in rollups:
             await self.replace_day(rollup)
+
+    async def delete_days_outside(self, first_day: str, last_day: str) -> int:
+        """Drop every day row outside ``[first_day, last_day]``; returns the count.
+
+        The cleanup half of a re-key (issue #205). Rows written under a zone
+        the receiver has since left are keyed at most one day away from where
+        they belong, so re-keying leaves orphans on either side of the range
+        the rebuild covers: a receiver behind UTC accumulates a *tomorrow* row
+        holding this evening's traffic, and one ahead of it a row before its
+        own first day. Both are days the rebuild will never visit, so nothing
+        else would ever overwrite them.
+
+        One transaction, and bounded by the orphans rather than by history:
+        the range handed in is the whole of the receiver's own history, so a
+        correctly keyed install deletes nothing.
+
+        Returns:
+            How many ``daily_stats`` days were removed — counted by
+            ``RETURNING`` rather than by a driver rowcount, the same choice
+            :meth:`flightsite.db.meta.MetaRepository.set_if_absent` makes.
+        """
+        async with self.database.writer_session() as session:
+            for child in (DailyTypeStats, DailyOperatorStats):
+                await session.execute(
+                    delete(child).where((child.day < first_day) | (child.day > last_day))
+                )
+            removed = (
+                await session.scalars(
+                    delete(DailyStats)
+                    .where((DailyStats.day < first_day) | (DailyStats.day > last_day))
+                    .returning(DailyStats.day)
+                )
+            ).all()
+        return len(removed)
 
     @staticmethod
     async def _write_day(session: AsyncSession, rollup: DayRollup) -> None:
@@ -351,4 +394,4 @@ class AnalyticsRepository:
             }
 
 
-__all__ = ["META_KEY_ROLLUP_THROUGH_DAY", "AnalyticsRepository"]
+__all__ = ["META_KEY_ROLLUP_THROUGH_DAY", "META_KEY_ROLLUP_ZONE", "AnalyticsRepository"]

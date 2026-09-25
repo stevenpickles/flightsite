@@ -41,6 +41,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.6.1 | 8 | Same-day hotfix superseding v0.6.0: migration 0015's sightings rebuild runs with foreign keys off and checked, resumable from a failed v0.6.0 attempt (slice 072; recorded 2026-09-05) |
 | v0.7.0 | 8 | Empty tracker: per-rule alert history, metadata URL overrides, demo classification airframes, true-cadence consumer follow-ups, labelled-count density tier, kill-drill and style-spec test hardening (slice 073; recorded 2026-09-06) |
 | v0.8.0 | 8 | Self-explanatory Analytics rankings: tail number and type on every Top aircraft bar, the long-form description beside every Top types designator, richer tooltips on both; visual capture waits for a populated demo picture (slice 074; recorded 2026-09-19) |
+| v0.9.0 | 8 | Useful and robust on every page: the 2026-09-20 formal site review's 71 findings fixed (rollups keyed on the live receiver timezone with a one-time repair, basemap switch keeps every layer, legible status text, error boundaries, responsive shell, refresh/retry everywhere, honest ordering and not-yet states), plus a metadata import that no longer starves the live pipeline and per-consumer drop attribution (slices 075–076; migration 0016; recorded 2026-09-25) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -161,6 +162,8 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 072 | Migration 0015 rebuild fix | 071 | opus | high | Hotfix: run the `sightings` rebuild with foreign keys off and checked afterwards, resumable from the v0.6.0 partial state, with migration tests that seed every child table (issue #178; v0.6.1) |
 | 073 | Low-severity bundle | 039, 041, 046, 053, 062, 063 | opus | low | Six single-concern commits: rule_id match filter + Alerts drill-down (#98), MapLibre expression validation in tests (#96), kill-drill load flake (#100), metadata URL overrides + demo classification metadata (#112), post-#134 consumer follow-ups (#138), label-density count + anchor-thrash decision (#147); tracking issue #182 |
 | 074 | Analytics ranking detail | 031, 032 | opus | low | Tail number plus type on every Top aircraft bar, the long-form description beside every Top types designator (derived from the imported metadata as the majority model per type, exposed as `description` on top-types rows), richer tooltips on both cards (issue #198) |
+| 075 | Metadata import off the live path & honest drop attribution | 021, 024, 042, 071 | opus | medium | Resolve and classify airframes before the promotion transaction (staging tables, migration 0016) so a full import no longer holds the writer for minutes and overflows the persistence/alert queues; report shed live events per subscriber in diagnostics and on the Health page instead of under the WebSocket (issue #185) |
+| 076 | Site review remediation | 075 | opus | high | Fix every finding of the 2026-09-20 formal site review (`docs/reviews/2026-09-20-site-review.md`): rollup day keys from the live timezone, basemap layer loss, invisible status text, error boundaries, responsive shell, refresh/retry on every page, ordering and 'not yet' semantics, raw strings, and the per-page usefulness gaps |
 
 ## Parallelization Guide
 

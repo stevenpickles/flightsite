@@ -51,6 +51,19 @@
    * card — a text failure — so this promotes the shade to a real token,
    * fixing the contrast (5.01:1) and the fork in one move. */
   --warning: oklch(0.54 0.14 65);
+  /* Slice 076 (R4-01): every "healthy" state — the Health page's overall
+   * verdict pill, its per-item "Connected"/"Intact"/"Imported"/"Keeping up"
+   * pills, and the decoder connection test's success line — used
+   * `text-accent-foreground` directly on a card. That token is the
+   * *on-fill* colour for `bg-accent` (line 42 below), not an on-surface
+   * text colour, so on a plain card it rendered within 0.04 lightness of
+   * the card itself: invisible, icon included. This is the on-surface
+   * pair `--accent`/`--accent-foreground` never had — measured 5.58:1 on
+   * the light card (oklch(0.995 …)) and 7.37:1 on the dark card
+   * (oklch(0.185 …)), both comfortably over the 4.5:1 floor;
+   * `src/lib/a11y/successToken.contrast.test.ts` recomputes both pairs from
+   * this file so they cannot drift back under it. */
+  --success-on-surface: oklch(0.5 0.12 155);
   /* `--border` stays low-contrast on purpose: it draws decorative card
    * edges and dividers, which WCAG 1.4.11 exempts. `--input` is split off
    * from it here because it draws the *boundary that identifies a form
@@ -102,6 +115,9 @@
   /* The dark theme's amber was already comfortable (amber-400 ≈ 11:1); this
    * keeps that value's character while routing it through the token. */
   --warning: oklch(0.82 0.15 80);
+  /* Slice 076 (R4-01): see the light block above. 7.37:1 on the dark card,
+   * 7.83:1 on the dark background. */
+  --success-on-surface: oklch(0.7 0.13 155);
   --border: oklch(0.27 0.02 250);
   /* Split from `--border` for the same reason as the light theme: this one
    * outlines form controls, so it must clear 3:1 (3.31:1). */
@@ -137,6 +153,7 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-warning: var(--warning);
+  --color-success-on-surface: var(--success-on-surface);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

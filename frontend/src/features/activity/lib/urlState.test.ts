@@ -31,6 +31,13 @@ describe("parseActivityPageState", () => {
     );
   });
 
+  it("reads the two alert types the filter used to hide (R2-05)", () => {
+    expect(parse("type=alert_triggered&type=emergency_squawk").types).toEqual([
+      "alert_triggered",
+      "emergency_squawk",
+    ]);
+  });
+
   it("drops a type this build does not know rather than failing the URL", () => {
     // A link from a newer build degrades to a narrower filter, never an error.
     expect(parse("type=new_type&type=warp_drive").types).toEqual(["new_type"]);

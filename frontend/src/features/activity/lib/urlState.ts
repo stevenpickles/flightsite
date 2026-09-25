@@ -18,15 +18,19 @@ import type { ActivityEventType } from "@/lib/api/activity";
 
 export const PAGE_SIZE = 50;
 
-/** The vocabulary the filter offers, in the order the chips appear.
+/** The vocabulary the filter offers, in the order the chips appear — the
+ * whole of §3.9's event vocabulary, with nothing held back.
  *
- * The two phase-6 types (`alert_triggered`, `emergency_squawk`) are
- * deliberately absent: nothing emits them until roadmap slice 039, and a chip
- * that can only ever return an empty page is a worse answer than no chip.
- * They still parse from a URL and still render in a row — only the filter
- * control omits them, which is the one place where "no producer yet" is
- * visible to a user. */
+ * Alerts and emergencies lead because they are what the feed is mostly made
+ * of once slice 038's engine is running: the review found "Alert: …" on six
+ * of the first thirteen rows while the filter offered no way to isolate them
+ * *or* to filter them out and see the firsts and records underneath (R2-05).
+ * They were gated out before slice 039 shipped a producer for them, on the
+ * reasoning that a chip which can only return an empty page is worse than no
+ * chip; that slice is merged, so the premise is gone. */
 export const FILTERABLE_TYPES: readonly ActivityEventType[] = [
+  "alert_triggered",
+  "emergency_squawk",
   "first_ever_aircraft",
   "new_type",
   "milestone",
@@ -37,12 +41,10 @@ export const FILTERABLE_TYPES: readonly ActivityEventType[] = [
   "metadata_updated",
 ];
 
-/** Every type a URL may name, including the phase-6 pair. */
-const KNOWN_TYPES: readonly ActivityEventType[] = [
-  ...FILTERABLE_TYPES,
-  "alert_triggered",
-  "emergency_squawk",
-];
+/** Every type a URL may name. Identical to {@link FILTERABLE_TYPES} today,
+ * and kept as its own name because the two answer different questions: what
+ * a link is allowed to say, and what the chip row offers. */
+const KNOWN_TYPES: readonly ActivityEventType[] = FILTERABLE_TYPES;
 
 const KEYS = {
   page: "page",

@@ -10,6 +10,7 @@ import {
 } from "@/features/alerts/lib/conditions";
 import { MISSION_OPTIONS } from "@/features/alerts/lib/vocabulary";
 import type { AlertMissionCategory } from "@/lib/api/alertRules";
+import { useConfigQuery } from "@/lib/api/config";
 import type { Watchlist } from "@/lib/api/watchlists";
 
 /** Shared with `EntryForm` in the watchlists feature — a native `<select>`
@@ -20,6 +21,29 @@ const SELECT_CLASSES =
 
 const CHECKBOX_CLASSES =
   "size-4 rounded border-input accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+
+const NM_TO_KM = 1.852;
+const FT_TO_M = 1 / 3.28084;
+
+/**
+ * A live "≈ metric" readout for a distance or altitude field (R4-13): the
+ * builder's inputs are always nm/ft (`CLAUDE.md` — storage and the API
+ * never change), but a receiver configured for metric display should not
+ * have to convert "within 250 nm" by hand to know what it means. `null` for
+ * anything that is not a plain number yet (blank, mid-edit, "Any").
+ */
+function metricConversionHint(
+  raw: string,
+  kind: "distance" | "altitude",
+): string | null {
+  const value = Number(raw);
+  if (raw.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  return kind === "distance"
+    ? `≈ ${(value * NM_TO_KM).toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
+    : `≈ ${(value * FT_TO_M).toLocaleString(undefined, { maximumFractionDigits: 1 })} m`;
+}
 
 export interface ConditionEditorProps {
   draft: ConditionDraft;
@@ -55,6 +79,8 @@ export function ConditionEditor({
   const meta = conditionKindMeta(draft.kind);
   const errorId = `${fieldId}-error`;
   const describedBy = error ? errorId : undefined;
+  const configQuery = useConfigQuery();
+  const showMetricHints = configQuery.data?.config.units === "metric";
 
   return (
     <fieldset className="flex flex-col gap-3 rounded-md border border-border bg-background p-3">
@@ -225,6 +251,11 @@ export function ConditionEditor({
                 onChange({ ...draft, min: event.target.value });
               }}
             />
+            {showMetricHints && metricConversionHint(draft.min, draft.kind) && (
+              <p className="text-xs text-muted-foreground">
+                {metricConversionHint(draft.min, draft.kind)}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${fieldId}-max`}>
@@ -241,6 +272,11 @@ export function ConditionEditor({
                 onChange({ ...draft, max: event.target.value });
               }}
             />
+            {showMetricHints && metricConversionHint(draft.max, draft.kind) && (
+              <p className="text-xs text-muted-foreground">
+                {metricConversionHint(draft.max, draft.kind)}
+              </p>
+            )}
           </div>
         </div>
       )}

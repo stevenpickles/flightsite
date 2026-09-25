@@ -46,6 +46,83 @@ describe("TodayPanel", () => {
     expect(screen.queryByText("Unique aircraft")).not.toBeInTheDocument();
   });
 
+  it("keeps unique aircraft and interesting visible beside sightings while collapsed", async () => {
+    installAnalyticsApiMock({
+      summary: analyticsSummaryResponse({
+        unique_aircraft: 12,
+        sightings: 18,
+        interesting: 5,
+      }),
+    });
+    renderPanel();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("today-sightings-badge")).toBeInTheDocument(),
+    );
+    const header = screen.getByRole("button", { name: /today/i });
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("today-unique-badge")).toHaveTextContent(
+      "12 aircraft",
+    );
+    expect(screen.getByTestId("today-sightings-badge")).toHaveTextContent(
+      "18 sightings",
+    );
+    expect(screen.getByTestId("today-interesting-badge")).toHaveTextContent(
+      "5 interesting",
+    );
+  });
+
+  it("names when the figures were fetched once expanded", async () => {
+    installAnalyticsApiMock({ summary: analyticsSummaryResponse() });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("today-sightings-badge")).toBeInTheDocument(),
+    );
+
+    await expand();
+
+    // `analyticsWindow()`'s fixture receiver timezone is America/Los_Angeles;
+    // the exact clock value is `dataUpdatedAt` (when the mocked fetch
+    // resolved), so this only pins the format, not a specific instant.
+    expect(screen.getByTestId("today-as-of")).toHaveTextContent(
+      /^As of \d{2}:\d{2}:\d{2}$/,
+    );
+  });
+
+  it("shows a muted rollup-pending hint, collapsed and expanded, when the day's rollup has not caught up", async () => {
+    installAnalyticsApiMock({
+      summary: analyticsSummaryResponse({ complete: false }),
+    });
+    renderPanel();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("today-pending-badge")).toHaveTextContent(
+        /rollup pending/i,
+      ),
+    );
+
+    await expand();
+    expect(screen.getByTestId("today-rollup-pending-hint")).toHaveTextContent(
+      /rollup pending.*today's figures may still change/i,
+    );
+  });
+
+  it("shows no pending hint once the rollup has caught up", async () => {
+    installAnalyticsApiMock({
+      summary: analyticsSummaryResponse({ complete: true }),
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("today-sightings-badge")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("today-pending-badge")).not.toBeInTheDocument();
+
+    await expand();
+    expect(
+      screen.queryByTestId("today-rollup-pending-hint"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders every §59 stat tile once expanded", async () => {
     installAnalyticsApiMock({
       summary: analyticsSummaryResponse({

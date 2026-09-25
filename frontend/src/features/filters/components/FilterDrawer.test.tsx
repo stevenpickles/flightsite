@@ -3,9 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilterDrawer } from "@/features/filters/components/FilterDrawer";
+import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
+import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { MetadataStatusResponse } from "@/lib/api/metadata";
+import { makeAircraft } from "@/test/liveAircraftFixtures";
 import { installMetadataApiMock, metadataSource } from "@/test/metadataApiMock";
 import { renderWithProviders } from "@/test/test-utils";
 
@@ -25,6 +28,8 @@ const IMPORTED: MetadataStatusResponse = {
 
 beforeEach(() => {
   useFilterStore.setState({ filters: DEFAULT_FILTERS });
+  resetFilteredLiveAircraftCache();
+  useLiveAircraftStore.getState().reset();
   // Default: a stock install with nothing imported, so the metadata-import
   // notes are present unless a test says otherwise.
   installMetadataApiMock({
@@ -231,5 +236,51 @@ describe("FilterDrawer", () => {
     );
     expect(useFilterStore.getState().filters.hideStale).toBe(true);
     expect(useFilterStore.getState().filters.hideNonPositioned).toBe(true);
+  });
+
+  describe("shown-of-total count (R1-08)", () => {
+    /** Three aircraft at distinct altitudes, so a floor can split them into
+     * a genuine "some, not all" match rather than an all-or-nothing one. */
+    function seed() {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [5000, 15000, 25000].map((altitude_ft, index) =>
+          makeAircraft({
+            icao: index.toString(16).padStart(6, "0"),
+            altitude_ft,
+          }),
+        ),
+        receiver: null,
+      });
+    }
+
+    it("says how many aircraft are shown when nothing is filtered", async () => {
+      seed();
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+      expect(screen.getByTestId("filter-match-count")).toHaveTextContent(
+        "Showing all 3 aircraft.",
+      );
+    });
+
+    it("narrows the count as an altitude filter excludes some aircraft", async () => {
+      seed();
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+      // Only the 15,000 and 25,000 ft aircraft clear a 10,000 ft floor.
+      await userEvent.type(screen.getByLabelText(/minimum altitude/i), "10000");
+      expect(screen.getByTestId("filter-match-count")).toHaveTextContent(
+        "Showing 2 of 3 aircraft.",
+      );
+    });
+
+    it("says explicitly that nothing matches once every aircraft is filtered out", async () => {
+      seed();
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+      await userEvent.type(screen.getByLabelText(/minimum altitude/i), "30000");
+      const line = screen.getByTestId("filter-match-count");
+      expect(line).toHaveTextContent("No aircraft match these filters.");
+      expect(line).toHaveClass("text-destructive");
+    });
   });
 });

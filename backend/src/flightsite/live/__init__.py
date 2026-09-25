@@ -41,6 +41,7 @@ from flightsite.live.events import (
     EventDispatcher,
     EventSubscription,
     LiveEvent,
+    SubscriberStats,
 )
 from flightsite.live.geo import EARTH_RADIUS_NM, bearing_deg, distance_and_bearing, distance_nm
 from flightsite.live.store import (
@@ -77,6 +78,7 @@ __all__ = [
     "LiveStore",
     "MonotonicClock",
     "Provenance",
+    "SubscriberStats",
     "TrackPoint",
     "appear",
     "bearing_deg",

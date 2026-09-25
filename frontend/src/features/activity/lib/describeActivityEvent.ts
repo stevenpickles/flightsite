@@ -86,17 +86,36 @@ function humanize(slug: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/** The airframe identity line every aircraft-scoped event shares: whichever
+/**
+ * The airframe identity line every aircraft-scoped event shares: whichever
  * of registration / model / operator the metadata actually resolved, falling
  * back to the ICAO address so a row about an unknown airframe still names it
- * (`docs/API.md` §2.7 — unknown is `null`, not a blank). */
+ * (`docs/API.md` §2.7 — unknown is `null`, not a blank).
+ *
+ * The callsign sits between the two (review R2-15). It is not metadata, it
+ * is broadcast, so it is present on a fresh install with nothing imported —
+ * exactly the state in which this function used to fall all the way through
+ * to the hex and make every feed row read "First ever sighting · 1D1713"
+ * while the payload carried `"callsign": "N355MD"`. SPEC §49's sibling
+ * surface asks for "callsign/tail" precisely because a hex address is not
+ * how a human identifies an aircraft.
+ *
+ * When the callsign stands in for the address, the address follows it: a
+ * callsign names a flight, and the hex is what the rest of the app — the
+ * row's own link included — identifies the airframe by.
+ */
 function airframe(payload: Payload, icao: string | null): string | null {
-  const identity =
-    str(payload, "registration") ??
-    (icao === null ? null : icao.toUpperCase()) ??
-    str(payload, "icao")?.toUpperCase() ??
-    null;
-  return join([identity, str(payload, "model"), str(payload, "operator")]);
+  const hex = (icao ?? str(payload, "icao"))?.toUpperCase() ?? null;
+  const registration = str(payload, "registration");
+  const callsign = str(payload, "callsign");
+  const identity = registration ?? callsign ?? hex;
+  const address = registration === null && callsign !== null ? hex : null;
+  return join([
+    identity,
+    address,
+    str(payload, "model"),
+    str(payload, "operator"),
+  ]);
 }
 
 /** `"412.8 nm (previous 401.2 nm)"`, or just the value when there is no
@@ -287,7 +306,14 @@ export function describeActivityEvent(
     case "alert_triggered": {
       const reason = str(payload, "reason") ?? str(payload, "rule_name");
       return {
-        label: reason === null ? "Alert triggered" : `Alert: ${reason}`,
+        // One prefix, not two: the engine's own `reason` already reads
+        // "Rule: Military aircraft", and "Alert: Rule: Military aircraft"
+        // was the result (review R2-05). The engine's wording is left alone
+        // otherwise — it names a rule the *user* wrote.
+        label:
+          reason === null
+            ? "Alert triggered"
+            : `Alert: ${reason.replace(/^Rule:\s*/, "")}`,
         detail: airframe(payload, icao),
       };
     }

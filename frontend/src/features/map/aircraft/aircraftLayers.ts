@@ -357,10 +357,16 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
       id: AIRCRAFT_ATTENTION_LAYER_ID,
       type: "circle",
       source: AIRCRAFT_SOURCE_ID,
-      // `severity` is `""` for everything that is not currently matching,
-      // which is most of the sky — so this layer draws nothing at all on a
-      // quiet picture rather than drawing 500 invisible circles.
-      filter: ["!=", ["get", "severity"], ""],
+      // `attention` is the severity-resolved flag, not bare "is matching"
+      // — issue R1-10. A stock install's default templates include
+      // `first_ever`, which matches every airframe the receiver has not
+      // heard before, so filtering on "matching at all" drew a ring on 76
+      // of 77 aircraft and SPEC §36's "distinct attention styling" marked
+      // out nothing. `info` matches keep the label's indicator glyph and
+      // their place in the panel; the ring is reserved for severities that
+      // actually want looking at. Still draws nothing at all on a quiet
+      // picture, rather than 500 invisible circles.
+      filter: ["==", ["get", "attention"], true],
       paint: {
         "circle-radius": ATTENTION_RADIUS,
         "circle-color": ATTENTION_COLOR,
@@ -461,12 +467,15 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
         // neighbour.
         "text-allow-overlap": false,
         "text-optional": true,
-        // Interesting aircraft win a collision against an ordinary one;
-        // selected is excluded by the filter above. Mirrors
+        // Aircraft that merit attention win a collision against an ordinary
+        // one; selected is excluded by the filter above. Reads `attention`
+        // rather than `interesting` for the reason that property exists
+        // (issue R1-10): a priority every aircraft holds is no priority, and
+        // on a new install every aircraft held it. Mirrors
         // `labels/priority.ts`'s `deriveLabelSortKey`.
         "symbol-sort-key": [
           "case",
-          ["get", "interesting"],
+          ["get", "attention"],
           SORT_KEY_INTERESTING,
           SORT_KEY_DEFAULT,
         ],

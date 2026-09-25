@@ -66,6 +66,21 @@ describe("ActivityRow", () => {
     expect(screen.getByText("10:03")).toBeInTheDocument();
   });
 
+  it("carries the day, the zone and the underlying instant (R2-06, R2-14)", () => {
+    renderRow(
+      activityEvent({ at: "2026-08-31T14:03:22.418Z" }),
+      "America/New_York",
+    );
+
+    const stamp = screen.getByText("10:03");
+    expect(stamp.tagName).toBe("TIME");
+    expect(stamp).toHaveAttribute("datetime", "2026-08-31T14:03:22.418Z");
+    expect(stamp).toHaveAttribute(
+      "title",
+      "2026-08-31 10:03 EDT · 2026-08-31T14:03:22.418Z",
+    );
+  });
+
   it("omits the detail line when the event has nothing to add", () => {
     const { container } = renderRow(
       activityEvent({

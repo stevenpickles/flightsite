@@ -64,6 +64,15 @@ export function alertMatch(overrides: Partial<AlertMatch> = {}): AlertMatch {
     reason: "Rule: Military aircraft",
     icao: "ae1463",
     sighting_id: 42,
+    // The airframe identity §3.10 carries through `sighting_id`. Defaulted
+    // to "nothing is known" — the state of a fresh install before any
+    // metadata import — so a test that cares about the identity line has to
+    // say so, and every other test keeps exercising the null path.
+    callsign: null,
+    registration: null,
+    aircraft_type: null,
+    closest_approach_nm: null,
+    lowest_altitude_ft: null,
     rule: { id: 1, name: "Military aircraft" },
     builtin_key: null,
     notified: false,
@@ -146,13 +155,19 @@ function describeConditions(conditions: AlertRuleConditions): string[] {
     phrases.push("on any watchlist");
   }
   if (conditions.rare_aircraft) {
+    // R4-20: worded, not templated — "1 time(s)" was a string that was
+    // never finished. Mirrors the backend's `_times()`
+    // (`backend/src/flightsite/alerts/model.py`).
+    const count = conditions.rare_aircraft.max_sightings;
     phrases.push(
-      `seen at most ${conditions.rare_aircraft.max_sightings} time(s) here`,
+      `seen at most ${count === 1 ? "once" : `${count} times`} here`,
     );
   }
   if (conditions.rare_type) {
+    // Mirrors the backend's `_plural(count, "airframe")`.
+    const count = conditions.rare_type.max_sightings;
     phrases.push(
-      `type seen on at most ${conditions.rare_type.max_sightings} airframe(s) here`,
+      `type seen on at most ${count} airframe${count === 1 ? "" : "s"} here`,
     );
   }
   if (conditions.min_distance_nm != null) {
@@ -202,6 +217,9 @@ export interface InstallAlertsApiMockOptions {
    * to offer a "on a watchlist" condition its choices. */
   watchlists?: Watchlist[];
   timezone?: string;
+  /** R4-13: the display-units preference `ConditionEditor` reads to decide
+   * whether to show a metric conversion hint. */
+  units?: "aviation" | "metric";
 }
 
 /**
@@ -227,6 +245,7 @@ export function installAlertsApiMock(
   const matches = [...(options.matches ?? [])];
   const watchlists = [...(options.watchlists ?? [])];
   const timezone = options.timezone ?? "UTC";
+  const units = options.units ?? "aviation";
   let nextRuleId = Math.max(0, ...rules.map((rule) => rule.id)) + 1;
 
   function ruleFromBody(
@@ -260,7 +279,7 @@ export function installAlertsApiMock(
       if (path === "/api/internal/config" && method === "GET") {
         return jsonResponse({
           first_run: false,
-          config: defaultFlightSiteConfig({ timezone }),
+          config: defaultFlightSiteConfig({ timezone, units }),
           secrets_set: {},
         });
       }

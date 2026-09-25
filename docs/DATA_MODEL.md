@@ -312,8 +312,8 @@ Field-level precedence is resolved **at import time** into one row per icao24, w
 source tag beside every resolved field. Rationale: the Aircraft page sorts and filters
 on resolved type/operator in SQL, so resolution must be materialized; a generic
 per-field EAV provenance table was rejected as slow and unqueryable at this scale.
-Rebuilt inside the import transaction; also refreshed for a single aircraft when a
-better source arrives.
+Built before the import transaction and installed by it (below); also refreshed for a
+single aircraft when a better source arrives.
 
 ```sql
 CREATE TABLE aircraft_metadata_resolved (
@@ -331,6 +331,26 @@ CREATE INDEX ix_amr_registration ON aircraft_metadata_resolved(registration);
 CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
 ```
+
+Rebuilt whole on every metadata import — but **not** inside the promotion transaction.
+Resolving an airframe is Python work, and doing it for a million of them under the single
+writer stalled everything else that writes (issue #185). Since slice 075 the new resolution
+is built first, page by page, into
+
+```sql
+CREATE TABLE aircraft_metadata_resolved_staging (  -- identical columns to the above
+  icao24            TEXT PRIMARY KEY,
+  ...                                              -- no FK, no indexes
+  updated_ms        INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+and the promotion then installs it with one `INSERT … SELECT`. The scratch table carries
+**no** `operator_groups` foreign key — its group ids belong to the curated directory the
+same transaction is about to install, so the reference would be checked against the
+outgoing one — and **no** secondary indexes, since nothing queries it. Rows in it are
+scratch in the same sense as `aircraft_metadata_staging`'s: cleared when a build starts,
+consumed by the promotion, and emptied by `Clear Metadata Cache`.
 
 `*_src` values: `mictronics | faa`, plus `opensky` on installs that enabled the
 opt-in OpenSky source (ADR-0013) — and there only in `model_src`, `year_src`,
@@ -372,6 +392,20 @@ CREATE INDEX ix_class_gov ON aircraft_classification(government) WHERE governmen
 CREATE INDEX ix_class_law ON aircraft_classification(law_enforcement) WHERE law_enforcement = 1;
 CREATE INDEX ix_class_mission ON aircraft_classification(mission_category);
 ```
+
+Built beside the resolved rows and by the same pass, into the same kind of scratch table:
+
+```sql
+CREATE TABLE aircraft_classification_staging (  -- identical columns to the above
+  icao24            TEXT PRIMARY KEY,
+  ...                                           -- no CHECK, no indexes
+  updated_ms        INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+No `CHECK` on `mission_category` and no partial indexes: the vocabulary is enforced where
+the rows come to rest, one `INSERT … SELECT` later, and nothing reads this table in
+between (slice 075).
 
 `*_src` values: `mictronics | faa | heuristic`.
 
@@ -597,6 +631,12 @@ CREATE TABLE receiver_metrics_daily (
 ) WITHOUT ROWID;
 ```
 
+Hourly is keyed on a UTC hour boundary and is unaffected by the receiver's timezone;
+daily is receiver-local (§10). A timezone change therefore re-keys the daily tier for
+the days `receiver_metrics_raw` still retains — the maintenance pass deletes those
+rows and folds them again under the new zone — and leaves older ones alone, because
+the samples they were folded from are gone and nothing could re-derive them (§10).
+
 Hourly retained indefinitely (~8.8k rows/yr), daily indefinitely (365/yr). The signal
 *distribution* chart (SPEC §62) is **not** derived from these tables: a histogram of
 sample-averaged receiver RSSI is not a signal-strength distribution. It is computed
@@ -692,6 +732,25 @@ Since-T0 variant reads `aircraft.sighting_count`.
 **in-progress day's** busiest hour — needed by Today-at-a-Glance (slice 036) — is
 served from slice 033's hourly metric table (`receiver_metrics_hourly.aircraft_max` /
 counts for today's hours), since rollups for the current day are not yet final.
+
+**The day key carries a zone, and `meta.analytics_rollup_zone` names it** (issue
+#205). Every row here is a claim about a receiver-local date, which means nothing
+without the zone it was computed in. Recording the zone is what lets a boot notice
+that the receiver's timezone has changed since the rows were written and rebuild
+them under the new one — see §10 for the rule and for why this is a repair rather
+than a migration. The marker is claimed *before* the rebuild it triggers: the
+watermark (`meta.analytics_rollup_through_day`) is the resumption state, so an
+interrupted repair continues on the next boot instead of restarting.
+
+**`new_aircraft` is stored but read live.** The column is the fold's own count of
+airframes whose first-ever observation fell on the day. The API derives the same
+figure from `aircraft.first_seen_ms` instead (`ix_aircraft_first_seen`), because
+`GET /analytics/rarity`'s "never seen before" is defined that way and two visible
+numbers for one quantity is worse than either alone (issue #205, finding R3-03).
+The two agree by construction — `aircraft.first_seen_ms` is the minimum
+`sightings.started_ms` for that airframe — and the live form is additionally exact
+for an explicit mid-day window and available before the day's rollup has been
+computed.
 
 ---
 
@@ -953,9 +1012,26 @@ storage remedy.
 - `day`-keyed rollup tables use the **receiver-local calendar date** computed with the
   configured IANA timezone at write time — day boundaries are DST-correct (a 23- or
   25-hour local day rolls up as such; tested with DST fixtures in slice 031).
-- Changing the configured timezone applies to new rollups only; historical buckets are
-  not rewritten (documented behavior; a rebuild job is possible later since sightings
-  retain full UTC timestamps).
+- **The zone is resolved per pass, never captured** (issue #205). A writer that read
+  `settings.timezone` once at construction kept the `UTC` default for the life of a
+  process on every fresh install, because the setup wizard writes the real zone a
+  minute *after* the backend boots — while every read resolved the live value, so
+  "today" asked for a day nothing had been written under. Both rollup writers
+  (`AnalyticsService`, `ReceiverMetricsService`) now take a zone *probe* over live
+  settings and evaluate it on each pass, so a timezone change applies without a
+  restart and needs no entry in `_apply_live_settings`.
+- **Changing the timezone re-keys what can be re-derived, and only that.** The
+  analytics rollups (§6.5) are a pure function of `sightings`, so a zone change is
+  repaired rather than migrated: `meta.analytics_rollup_zone` records the zone the
+  rows were built under, and a boot (or a flush pass) that finds it stale drops the
+  watermark, rebuilds the receiver's whole history from ground truth one day per
+  transaction, and deletes the day rows that fall outside it. A migration could not
+  do this — the correct day for a sighting depends on the configured zone and on the
+  sightings themselves, and the fold that produces a row is Python, not SQL. Daily
+  receiver summaries (§6.2) are re-derived for the days the raw tier still retains;
+  older ones, and `range_by_bearing_daily` (§6.3), keep the key they were written
+  under, because their source rows no longer exist and a guessed shift would be
+  worse than an honest one-day seam.
 - "Today at a Glance" and analytics presets resolve their ranges in receiver-local
   time, then query UTC columns via computed boundaries.
 
@@ -1008,3 +1084,4 @@ field names; ingest normalizes before anything is persisted.
 | 038 | `alert_rules`, `alert_matches` |
 | 070 | `route_cache` gains `confirmations` / `first_fetched_ms` and the `restricted` status (rev 0014, a table rebuild) |
 | 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |
+| 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |

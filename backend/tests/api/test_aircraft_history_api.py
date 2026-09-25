@@ -13,13 +13,16 @@ import pytest
 from httpx import AsyncClient
 
 from flightsite.api.schemas import AircraftDetail, AircraftHistoryRow
+from flightsite.db.clock import utc_now_ms
 
 from ..live.conftest import make_update
 from .aircraft_history_fixtures import SeedAircraft, seed_aircraft, seed_operator_groups
 from .conftest import LiveApp
+from .sighting_fixtures import SeedSighting, seed_sightings
 
 BASE_MS = 1_756_000_000_000
 DAY_MS = 86_400_000
+MINUTE_MS = 60_000
 
 
 def icaos(body: dict[str, Any]) -> list[str]:
@@ -184,8 +187,7 @@ async def test_a_classification_sort_places_never_classified_aircraft_together(
         live_app,
         # Neither has any classification claim, so neither gets a row in
         # `aircraft_classification` at all (`_classification_populated`) —
-        # the LEFT JOIN reads `mission_category` as SQL NULL for both, which
-        # SQLite sorts before any non-NULL value in ascending order.
+        # the LEFT JOIN reads `mission_category` as SQL NULL for both.
         SeedAircraft(icao24="aaaaaa", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
         SeedAircraft(icao24="bbbbbb", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS),
         SeedAircraft(
@@ -199,11 +201,137 @@ async def test_a_classification_sort_places_never_classified_aircraft_together(
 
     body = (await rest.get("/api/v1/aircraft?sort=classification&order=asc")).json()
 
-    # Both unclassified rows sort first (tied, broken by the icao
-    # tiebreaker); the classified row sorts last.
-    assert icaos(body) == ["aaaaaa", "bbbbbb", "cccccc"]
-    unclassified = {item["icao"]: item["classification"] for item in body["items"][:2]}
+    # The one classified row sorts first; both unclassified rows land after
+    # it, together, tied and broken by the icao tiebreaker. "Unclassified" is
+    # the absence of an answer, not an answer that sorts before "military".
+    assert icaos(body) == ["cccccc", "aaaaaa", "bbbbbb"]
+    unclassified = {item["icao"]: item["classification"] for item in body["items"][1:]}
     assert unclassified == {"aaaaaa": None, "bbbbbb": None}
+
+
+# ----------------------------------------------------------------- null sorts
+
+
+#: Three airframes covering every §3.5 sort key at once: ``aaaaaa`` holds the
+#: low end of each, ``bbbbbb`` the high end, and ``cccccc`` has *none* of the
+#: nullable values — no metadata row and no classification row at all, so the
+#: LEFT JOINs read those columns as SQL NULL — while sitting in the *middle*
+#: of every non-nullable one. That middle placement is what makes "last" a
+#: real assertion: a row that sorted last on ``first_seen`` by holding the
+#: largest value would prove nothing about nulls.
+_NULL_SORT_FIXTURE = (
+    SeedAircraft(
+        icao24="aaaaaa",
+        first_seen_ms=BASE_MS,
+        last_seen_ms=BASE_MS,
+        sighting_count=1,
+        closest_approach_nm=1.0,
+        max_range_nm=50.0,
+        registration="N1AAA",
+        type_code="A320",
+        operator_name="Alpha Airlines",
+        military=True,
+        mission_category="military",
+    ),
+    SeedAircraft(
+        icao24="bbbbbb",
+        first_seen_ms=BASE_MS + 2 * DAY_MS,
+        last_seen_ms=BASE_MS + 2 * DAY_MS,
+        sighting_count=9,
+        closest_approach_nm=9.0,
+        max_range_nm=900.0,
+        registration="N9ZZZ",
+        type_code="Z999",
+        operator_name="Zulu Charters",
+        government=True,
+        mission_category="government",
+    ),
+    SeedAircraft(
+        icao24="cccccc",
+        first_seen_ms=BASE_MS + DAY_MS,
+        last_seen_ms=BASE_MS + DAY_MS,
+        sighting_count=5,
+    ),
+)
+
+#: Every §3.5 sort key, in both directions, with the order each one must
+#: produce over :data:`_NULL_SORT_FIXTURE`. The six nullable keys end in
+#: ``cccccc`` *whichever way they are read*; the four non-nullable ones
+#: (``icao``, ``first_seen``, ``last_seen``, ``sighting_count``) keep it in
+#: the middle, which is the check that nulls-last did not disturb them.
+_SORT_EXPECTATIONS: list[tuple[str, str, list[str]]] = [
+    ("icao", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("icao", "desc", ["cccccc", "bbbbbb", "aaaaaa"]),
+    ("registration", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("registration", "desc", ["bbbbbb", "aaaaaa", "cccccc"]),
+    ("type", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("type", "desc", ["bbbbbb", "aaaaaa", "cccccc"]),
+    ("operator", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("operator", "desc", ["bbbbbb", "aaaaaa", "cccccc"]),
+    ("classification", "asc", ["bbbbbb", "aaaaaa", "cccccc"]),
+    ("classification", "desc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("first_seen", "asc", ["aaaaaa", "cccccc", "bbbbbb"]),
+    ("first_seen", "desc", ["bbbbbb", "cccccc", "aaaaaa"]),
+    ("last_seen", "asc", ["aaaaaa", "cccccc", "bbbbbb"]),
+    ("last_seen", "desc", ["bbbbbb", "cccccc", "aaaaaa"]),
+    ("sighting_count", "asc", ["aaaaaa", "cccccc", "bbbbbb"]),
+    ("sighting_count", "desc", ["bbbbbb", "cccccc", "aaaaaa"]),
+    ("closest_approach_nm", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("closest_approach_nm", "desc", ["bbbbbb", "aaaaaa", "cccccc"]),
+    ("max_range_nm", "asc", ["aaaaaa", "bbbbbb", "cccccc"]),
+    ("max_range_nm", "desc", ["bbbbbb", "aaaaaa", "cccccc"]),
+]
+
+
+@pytest.mark.parametrize(("sort", "order", "expected"), _SORT_EXPECTATIONS)
+async def test_every_sort_key_places_unknown_values_last_in_both_directions(
+    live_app: LiveApp, rest: AsyncClient, sort: str, order: str, expected: list[str]
+) -> None:
+    """§2.7 in the ORDER BY: "Unknown" is no answer, not the smallest one.
+
+    SQLite sorts ``NULL`` first on ``ASC``, which made
+    ``?sort=closest_approach_nm&order=asc`` — "which aircraft came closest?"
+    — answer with the aircraft that have no closest approach at all, ranking
+    the genuinely closest one below them.
+    """
+    await seed(live_app, *_NULL_SORT_FIXTURE)
+
+    body = (await rest.get(f"/api/v1/aircraft?sort={sort}&order={order}")).json()
+
+    assert icaos(body) == expected
+
+
+@pytest.mark.parametrize("order", ["asc", "desc"])
+async def test_the_first_page_of_a_sort_is_never_spent_on_unknowns(
+    live_app: LiveApp, rest: AsyncClient, order: str
+) -> None:
+    """Paging, not only ordering: the answer has to be *reachable*.
+
+    With nulls first, an install whose metadata import has not run yet fills
+    page after page with ``Unknown`` before the first real value — so the
+    defect was not only that the ranking was wrong but that the right answer
+    sat past the end of the page the user was looking at.
+    """
+    await seed(
+        live_app,
+        *(
+            SeedAircraft(icao24=f"{index:06x}", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS)
+            for index in range(5)
+        ),
+        SeedAircraft(
+            icao24="ffffff",
+            first_seen_ms=BASE_MS,
+            last_seen_ms=BASE_MS,
+            closest_approach_nm=0.8,
+        ),
+    )
+
+    page = (
+        await rest.get(f"/api/v1/aircraft?sort=closest_approach_nm&order={order}&limit=1")
+    ).json()
+
+    assert icaos(page) == ["ffffff"]
+    assert page["items"][0]["closest_approach_nm"] == 0.8
 
 
 async def test_ties_break_on_icao_ascending_regardless_of_sort_direction(
@@ -464,6 +592,73 @@ async def test_detail_reports_the_documented_lifetime_block(
     assert detail.lifetime.lowest_altitude_ft == 1250
     assert detail.lifetime.highest_altitude_ft == 41000
     assert detail.live is False
+
+
+async def test_cumulative_observed_time_includes_the_sighting_still_running(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """R2-02 on the airframe: SPEC §53 asks how long this receiver has watched.
+
+    `aircraft.total_observed_ms` is a sum over *closed* sightings — correct
+    for the column, because accruing it on each flush of an open sighting
+    would double-count at close. Published raw it told the owner of an
+    aircraft overhead right now that their cumulative observed time was
+    `0s`. The time spent watching plainly includes the part being spent now.
+    """
+    started_ms = utc_now_ms() - 16 * MINUTE_MS
+    await seed_sightings(
+        live_app.app.state.database,
+        [
+            SeedAircraft(
+                icao24="ae1463",
+                first_seen_ms=BASE_MS,
+                last_seen_ms=started_ms,
+                sighting_count=2,
+                total_observed_ms=600_000,
+            )
+        ],
+        [SeedSighting(icao24="ae1463", started_ms=started_ms)],
+    )
+
+    lifetime = (await rest.get("/api/v1/aircraft/ae1463")).json()["lifetime"]
+
+    open_elapsed_s = lifetime["open_sighting_elapsed_s"]
+    assert 16 * 60 <= open_elapsed_s < 16 * 60 + 30
+    # The closed 600 s, plus what is still accruing — and the running part
+    # published on its own, so a client can say how much of the total is
+    # still moving rather than inferring it from a number that changes.
+    assert lifetime["cumulative_duration_s"] == 600 + open_elapsed_s
+
+
+async def test_an_airframe_with_nothing_open_reports_only_its_closed_total(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """`null`, not `0`: "no sighting is open" is not "an open sighting of
+    zero length", and §2.7 keeps those two apart everywhere else too."""
+    await seed_sightings(
+        live_app.app.state.database,
+        [
+            SeedAircraft(
+                icao24="ae1463",
+                first_seen_ms=BASE_MS,
+                last_seen_ms=BASE_MS + DAY_MS,
+                total_observed_ms=600_000,
+            )
+        ],
+        [
+            SeedSighting(
+                icao24="ae1463",
+                started_ms=BASE_MS,
+                ended_ms=BASE_MS + 600_000,
+                duration_ms=600_000,
+            )
+        ],
+    )
+
+    lifetime = (await rest.get("/api/v1/aircraft/ae1463")).json()["lifetime"]
+
+    assert lifetime["open_sighting_elapsed_s"] is None
+    assert lifetime["cumulative_duration_s"] == 600
 
 
 async def test_detail_reports_manufacture_year_and_owner_with_provenance(

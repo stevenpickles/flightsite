@@ -1,4 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -9,10 +16,15 @@ import {
   AlertHistorySection,
   type AlertHistorySectionProps,
 } from "@/features/alerts/components/AlertHistorySection";
-import type { AlertMatch } from "@/lib/api/alertMatches";
+import { ALERT_MATCHES_POLL_MS, type AlertMatch } from "@/lib/api/alertMatches";
 import { alertMatch, installAlertsApiMock } from "@/test/alertsApiMock";
 
 afterEach(() => {
+  // Restored here rather than only in the tests that install them: a test
+  // that times out never reaches its own cleanup, and fake timers left
+  // installed would hang every test after it for reasons that have nothing
+  // to do with what those tests check.
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -91,10 +103,98 @@ describe("AlertHistorySection", () => {
       within(row).getByText("Rule: Military aircraft"),
     ).toBeInTheDocument();
     expect(within(row).getByText("High")).toBeInTheDocument();
+    // Nothing is known about this airframe beyond its address, so the
+    // address is what the link names — "Unknown" would name nothing.
     expect(within(row).getByRole("link", { name: "AE1463" })).toHaveAttribute(
       "href",
       "/aircraft/ae1463",
     );
+  });
+
+  it("names the aircraft the way a person would recognise it", async () => {
+    // R4-08: the row used to read `Rule: Military aircraft | D25F97 |
+    // Military aircraft` — the rule twice, and the aircraft as a bare hex.
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          icao: "d25f97",
+          callsign: "RCH492",
+          aircraft_type: "C17",
+          registration: "05-5153",
+          reason: "Rule: Military aircraft",
+          rule: { id: 1, name: "Military aircraft" },
+        }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const row = within(list).getByRole("listitem");
+    expect(
+      within(row).getByRole("link", { name: "RCH492 · C17 · 05-5153" }),
+    ).toHaveAttribute("href", "/aircraft/d25f97");
+    // The address stays reachable, once, beside the name it belongs to.
+    expect(within(row).getByText("D25F97")).toBeInTheDocument();
+  });
+
+  it("names the rule once, not twice", async () => {
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          reason: "Rule: Military aircraft",
+          rule: { id: 1, name: "Military aircraft" },
+        }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const row = within(list).getByRole("listitem");
+    // The stored reason *is* "Rule: " + the rule's name, so rendering the
+    // name beside it said one thing twice.
+    expect(within(row).queryByText("Military aircraft")).toBeNull();
+    expect(
+      within(row).getByText("Rule: Military aircraft"),
+    ).toBeInTheDocument();
+  });
+
+  it("links the row to the sighting it happened during", async () => {
+    installAlertsApiMock({ matches: [alertMatch({ sighting_id: 70 })] });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    expect(
+      within(list).getByRole("link", { name: "Sighting 70" }),
+    ).toHaveAttribute("href", "/sightings/70");
+  });
+
+  it("shows what was true of the sighting, and omits what was not known", async () => {
+    installAlertsApiMock({
+      matches: [
+        alertMatch({
+          id: 1,
+          closest_approach_nm: 11.2,
+          lowest_altitude_ft: 21000,
+        }),
+        alertMatch({ id: 2, reason: "Rule: Second" }),
+      ],
+    });
+
+    renderHistory();
+
+    const list = await screen.findByRole("list", { name: "Alert history" });
+    const [withRecords, withoutRecords] = within(list).getAllByRole("listitem");
+    expect(within(withRecords!).getByText("Closest 11.2 nm")).toBeVisible();
+    expect(
+      within(withRecords!).getByText("Lowest FL210 · 21,000 ft"),
+    ).toBeVisible();
+    // A sighting that never had a position publishes null for both, and
+    // §2.7's absence is rendered as absence rather than as a zero.
+    expect(within(withoutRecords!).queryByText(/^Closest/)).toBeNull();
+    expect(within(withoutRecords!).queryByText(/^Lowest/)).toBeNull();
   });
 
   it("names the built-in detector behind a match that has no rule", async () => {
@@ -280,6 +380,131 @@ describe("AlertHistorySection", () => {
 
     await screen.findByRole("list", { name: "Alert history" });
     expect(screen.queryByRole("button", { name: "Show all rules" })).toBeNull();
+  });
+
+  /**
+   * A `fetch` whose match history answers differently each time it is
+   * asked, so a re-read is visible as a change on screen rather than only
+   * as a second entry in a call log.
+   *
+   * Local to these two tests rather than grown into the shared alerts mock:
+   * that mock is deliberately a stateful store several suites share, and
+   * "the answer changes between identical requests" is the one thing a
+   * store must not do to its other readers.
+   */
+  function installChangingHistory(pages: AlertMatch[][]) {
+    let call = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/internal/config")) {
+        return new Response(
+          JSON.stringify({
+            first_run: false,
+            config: { timezone: "UTC", units: "aviation" },
+            secrets_set: {},
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const items = pages[Math.min(call, pages.length - 1)] ?? [];
+      call += 1;
+      return new Response(
+        JSON.stringify({ items, total: null, limit: 25, offset: 0 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function historyRequests(fetchMock: ReturnType<typeof vi.fn>): string[] {
+    return fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.startsWith("/api/v1/alerts/matches"));
+  }
+
+  /**
+   * Advances the fake clock and lets everything it started finish.
+   *
+   * Several turns rather than one: a poll's answer travels `fetch` →
+   * `Response.json()` → the query cache → a React render, and each of those
+   * is its own microtask, so a single flush leaves the screen one or two
+   * steps behind the request that has demonstrably already been made.
+   */
+  async function tick(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    for (let turn = 0; turn < 5; turn += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+  }
+
+  it("re-reads the newest page while it is on screen", async () => {
+    // R4-05: five alerts reached the database while the History tab was
+    // open and the screen showed none of them. A page whose subject is
+    // "every alert that has fired" has to be able to show one that just did.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = installChangingHistory([
+        [alertMatch({ id: 1, reason: "Rule: First" })],
+        [
+          alertMatch({ id: 2, reason: "Rule: Second" }),
+          alertMatch({ id: 1, reason: "Rule: First" }),
+        ],
+      ]);
+
+      renderHistory();
+      await tick(0);
+      expect(historyRequests(fetchMock)).toHaveLength(1);
+      expect(screen.getByText("Rule: First")).toBeInTheDocument();
+
+      await tick(ALERT_MATCHES_POLL_MS);
+
+      // The endpoint is asked again, which is precisely what the review
+      // measured as false: five alerts reached the database and the page
+      // never asked. That the answer then renders is
+      // `useAlertMatchesQuery`'s job, and `lib/api/alertMatches.test.ts`
+      // is where it is checked against a real clock.
+      expect(historyRequests(fetchMock)).toHaveLength(2);
+      // `keepPreviousData` means the poll never blanks the list on its way
+      // to the next answer.
+      expect(screen.getByText("Rule: First")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops re-reading once you have paged back into the past", async () => {
+    // Page four of the history is a fixed window, not a live record.
+    // Re-reading it would shuffle rows under a reader who paged there on
+    // purpose — and every row it could add belongs on page one anyway.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = installChangingHistory([
+        Array.from({ length: 25 }, (_entry, index) =>
+          alertMatch({ id: 100 - index, reason: `Rule: Number ${index}` }),
+        ),
+      ]);
+      // A full page, so "Older" is enabled and paging really moves.
+      renderHistory();
+      await tick(0);
+      // `fireEvent`, not `userEvent`: the latter schedules its own work on
+      // the clock this test has frozen, and one click is all that is needed
+      // here — the paging behaviour itself is exercised elsewhere in this
+      // file against a real one.
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      await tick(0);
+      const afterPaging = historyRequests(fetchMock).length;
+
+      await tick(3 * ALERT_MATCHES_POLL_MS);
+
+      expect(historyRequests(fetchMock)).toHaveLength(afterPaging);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a failure to load the history", async () => {

@@ -10,13 +10,18 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
-import { formatCompactNumber } from "@/features/analytics/lib/format";
+import {
+  formatCalendarDay,
+  formatCompactNumber,
+} from "@/features/analytics/lib/format";
 
 export interface DailyCountsCardProps {
   window?: AnalyticsWindow;
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 export function DailyCountsCard({
@@ -24,6 +29,8 @@ export function DailyCountsCard({
   items,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: DailyCountsCardProps) {
   const buildOption = useCallback(
     (theme: ChartTheme) => {
@@ -51,6 +58,8 @@ export function DailyCountsCard({
         },
         yAxis: {
           type: "value" as const,
+          name: "count",
+          nameTextStyle: { color: theme.mutedInk },
           axisLabel: {
             ...axisStyle.axisLabel,
             formatter: (value: number) => formatCompactNumber(value),
@@ -62,7 +71,11 @@ export function DailyCountsCard({
           {
             name: "Aircraft",
             type: "line" as const,
+            // A day not computed yet (R3-02/A1) is `null`, not a real zero
+            // — a gap in the line, the same convention `MaxDistanceCard`
+            // already uses for its own nullable field.
             data: items.map((row) => row.unique_aircraft),
+            connectNulls: false,
             smooth: true,
             showSymbol: false,
           },
@@ -70,6 +83,7 @@ export function DailyCountsCard({
             name: "Sightings",
             type: "line" as const,
             data: items.map((row) => row.sightings),
+            connectNulls: false,
             smooth: true,
             showSymbol: false,
           },
@@ -84,9 +98,12 @@ export function DailyCountsCard({
       ? "No traffic recorded in this window."
       : `Daily aircraft and sighting counts across ${items.length} days: ` +
         `${items
-          .map(
-            (row) =>
-              `${row.day} — ${row.unique_aircraft} aircraft, ${row.sightings} sightings`,
+          .map((row) =>
+            // R3-02/A1: `complete: false` means every count below is `null`
+            // ("not computed yet"), never a fabricated zero.
+            row.complete
+              ? `${formatCalendarDay(row.day)} — ${row.unique_aircraft} aircraft, ${row.sightings} sightings`
+              : `${formatCalendarDay(row.day)} — not computed yet`,
           )
           .join("; ")}.`;
 
@@ -96,6 +113,8 @@ export function DailyCountsCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

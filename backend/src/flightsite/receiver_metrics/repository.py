@@ -263,6 +263,33 @@ class MetricsRepository:
         async with self.database.read_session() as session:
             return {str(value) for value in (await session.scalars(statement)).all()}
 
+    async def delete_daily_from(self, from_day: str) -> int:
+        """Drop every daily summary at or after ``from_day``; returns the count.
+
+        The re-key half of a timezone change (issue #205). A daily row's key
+        is a receiver-local date, so a zone change leaves every row written
+        under the old one naming the wrong day — including, for a receiver
+        behind UTC, a row for *tomorrow*. Deleting the range the maintenance
+        pass is about to recompute is what lets it rewrite those days under
+        the new zone, since a recomputation deliberately declines to overwrite
+        a summary that already exists (see
+        :meth:`~flightsite.receiver_metrics.service.ReceiverMetricsService._recompute`).
+
+        Unbounded above on purpose, and bounded below by the caller at the
+        oldest day the raw tier can still re-derive: a row no sample survives
+        for is one nothing could rewrite, so deleting it would be data loss
+        rather than a repair.
+        """
+        async with self.database.writer_session() as session:
+            removed = (
+                await session.scalars(
+                    delete(ReceiverMetricDaily)
+                    .where(ReceiverMetricDaily.day >= from_day)
+                    .returning(ReceiverMetricDaily.day)
+                )
+            ).all()
+        return len(removed)
+
     async def hourly_between(self, start_ms: int, end_ms: int) -> dict[int, MetricSummary]:
         """Hourly summaries in ``[start_ms, end_ms)``."""
         statement = (

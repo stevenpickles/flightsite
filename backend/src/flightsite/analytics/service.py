@@ -39,6 +39,38 @@ that the incremental path and the backfill path are the same code, so
 construction and the convergence test is a regression guard rather than a
 proof obligation.
 
+Which day a row is keyed under
+------------------------------
+
+The receiver-local day, resolved from the **live** settings on every pass
+rather than captured at construction. The captured form was a real defect
+(issue #205, findings R1-02 / R3-01): a fresh install boots before the setup
+wizard writes ``config.yaml``, so the writer held the ``UTC`` default for the
+life of the process while :class:`~flightsite.api.context.LiveApiContext`
+resolved the receiver's real zone per request — every "today" read asked for a
+day nothing had ever been written under, and a later timezone change in
+Settings re-broke it without a restart. The zone now arrives as a
+:data:`~flightsite.db.clock.TimezoneSource` probe, which is the same shape
+``flightsite.app._alert_radius`` uses for the same reason, so the timezone
+needs no entry in ``_apply_live_settings``: nothing has captured it to update.
+
+Rows written under a zone that has since changed are **repaired, not
+migrated**. A migration could not do this work: the correct day for a sighting
+is a function of the receiver's configured zone and of the sightings
+themselves, neither of which Alembic has, and the fold that produces a row is
+Python. What the rollups have instead is the property this module is built on
+— every row is a pure function of the sightings in its day — so re-keying is
+just a rebuild over a wider range. :class:`~flightsite.analytics.backfill.
+AnalyticsBackfill` records the zone its rows were built under in ``meta`` and,
+when the live zone differs, drops the watermark so the next repair pass
+rebuilds the whole history from ground truth and deletes the day rows that
+fall outside it. It is idempotent (a rebuild is a replacement), resumable (the
+watermark advances contiguously, so a pass interrupted by a crash continues on
+the next boot), and it never holds the writer lock for more than one day's
+transaction (slice 075's lesson, and the reason
+:meth:`~flightsite.analytics.backfill.AnalyticsBackfill.rebuild_days` has
+always been one transaction per day).
+
 Day rollover
 ------------
 
@@ -83,7 +115,7 @@ from flightsite.analytics.bucketing import days_in_range, local_day, previous_da
 from flightsite.analytics.repository import AnalyticsRepository
 from flightsite.counters import CounterRegistry
 from flightsite.counters import counters as default_counters
-from flightsite.db.clock import utc_now_ms
+from flightsite.db.clock import TimezoneSource, resolve_zone, utc_now_ms
 from flightsite.db.engine import Database
 from flightsite.db.meta import MetaRepository
 from flightsite.db.startup import DB_ERRORS_COUNTER
@@ -134,9 +166,10 @@ class AnalyticsService:
             set. ``None`` is supported and means "nothing marks days dirty" —
             the periodic pass still maintains today, which is what a test or a
             read-only process wants.
-        timezone: IANA zone the day buckets are keyed in (``docs/DATA_MODEL.md``
-            §10). Read once at construction, matching §10's rule that a changed
-            timezone applies to new rollups only.
+        timezone: where to get the IANA zone the day buckets are keyed in
+            (``docs/DATA_MODEL.md`` §10) — a name, or a probe resolved on
+            every pass. It is deliberately *not* captured: see "Which day a
+            row is keyed under" above.
         flush_interval_s: how often dirty days are rebuilt.
         max_backfill_days: bound on one startup repair pass.
         clock: UTC epoch-millisecond source.
@@ -156,7 +189,8 @@ class AnalyticsService:
         "_sleep",
         "_startup",
         "_task",
-        "_zone",
+        "_timezone",
+        "_zone_key",
     )
 
     def __init__(
@@ -164,7 +198,7 @@ class AnalyticsService:
         *,
         database: Database,
         persistence: PersistenceWorker | None = None,
-        timezone: str = "UTC",
+        timezone: TimezoneSource = "UTC",
         flush_interval_s: float = DEFAULT_FLUSH_INTERVAL_S,
         max_backfill_days: int | None = None,
         clock: EpochClock = utc_now_ms,
@@ -175,11 +209,13 @@ class AnalyticsService:
             raise ValueError("flush_interval_s must be greater than zero")
 
         self._repository = AnalyticsRepository(database)
-        self._zone = ZoneInfo(timezone)
+        self._timezone = timezone
         self._backfill = AnalyticsBackfill(
             repository=self._repository,
             meta=MetaRepository(database),
-            zone=self._zone,
+            # The source, not the resolved zone: the backfill re-resolves it
+            # per pass for the same reason this service does.
+            zone=timezone,
             **({} if max_backfill_days is None else {"max_days": max_backfill_days}),
         )
         self._persistence = persistence
@@ -190,10 +226,16 @@ class AnalyticsService:
 
         self._dirty: set[str] = set()
         self._current_day: str | None = None
+        self._zone_key: str | None = None
         self._task: asyncio.Task[None] | None = None
         self._startup = BackfillResult()
 
     # ------------------------------------------------------------ inspection
+
+    @property
+    def _zone(self) -> ZoneInfo:
+        """The receiver's zone *now* — never a value captured at construction."""
+        return resolve_zone(self._timezone)
 
     @property
     def running(self) -> bool:
@@ -237,7 +279,9 @@ class AnalyticsService:
 
         self._dirty.clear()
         now_ms = self._clock()
-        self._current_day = local_day(now_ms, self._zone)
+        zone = self._zone
+        self._zone_key = str(zone)
+        self._current_day = local_day(now_ms, zone)
         self._startup = await self._repair(now_ms)
 
         if self._persistence is not None:
@@ -245,7 +289,7 @@ class AnalyticsService:
         self._task = asyncio.create_task(self._loop(), name="flightsite-analytics")
         logger.info(
             "analytics_started",
-            timezone=str(self._zone),
+            timezone=self._zone_key,
             flush_interval_s=self._flush_interval_s,
             repaired_days=self._startup.rebuilt,
             through_day=self._startup.through_day,
@@ -304,14 +348,41 @@ class AnalyticsService:
         final ``max_range_nm`` into that day's row even when the aircraft was
         overhead across midnight.
         """
+        zone = self._zone
         for reference in (*event.opened, *event.closed):
-            self._dirty.add(local_day(reference.started_ms, self._zone))
+            self._dirty.add(local_day(reference.started_ms, zone))
 
     def mark_dirty(self, day: str) -> None:
         """Queue ``day`` for the next rebuild. For tests and later slices."""
         self._dirty.add(day)
 
     # ------------------------------------------------------------ the passes
+
+    async def _rekey(self, zone: ZoneInfo, now_ms: int) -> FlushResult | None:
+        """Rebuild everything if the receiver's timezone changed under us.
+
+        ``None`` — the ordinary answer — means the zone is the one the last
+        pass used and this pass should proceed normally.
+
+        A timezone change makes every day key in the dirty set a statement in
+        the old zone, so the set is discarded rather than rebuilt: the repair
+        it defers to covers the receiver's whole history, which is a superset
+        of anything a flush was holding. This is why ``PUT
+        /api/internal/config`` needs no analytics entry in
+        ``flightsite.api.internal._apply_live_settings`` — the change is
+        noticed by the pass that next needs a day key, and applied by the
+        repair that already exists.
+        """
+        key = str(zone)
+        previous, self._zone_key = self._zone_key, key
+        if previous is None or previous == key:
+            return None
+
+        logger.info("analytics_timezone_changed", previous=previous, timezone=key)
+        self._dirty.clear()
+        self._current_day = local_day(now_ms, zone)
+        result = await self._repair(now_ms)
+        return FlushResult(days=result.days, sightings=result.sightings)
 
     async def _repair(self, now_ms: int) -> BackfillResult:
         """One startup repair pass, never raising."""
@@ -335,9 +406,18 @@ class AnalyticsService:
         The dirty set is drained *before* the rebuild and restored on failure,
         so a day marked dirty by a cycle that commits mid-pass is rebuilt by the
         next pass rather than being lost to this one.
+
+        A pass that finds the receiver's timezone changed under it re-keys
+        instead: every stored day is rebuilt under the new zone and this pass
+        does nothing else, because the repair has already covered every day
+        this pass could have been holding.
         """
         now_ms = self._clock()
-        today = local_day(now_ms, self._zone)
+        zone = self._zone
+        rekeyed = await self._rekey(zone, now_ms)
+        if rekeyed is not None:
+            return rekeyed
+        today = local_day(now_ms, zone)
         closed, complete = self._rollover(today)
 
         due = self._dirty | set(closed)

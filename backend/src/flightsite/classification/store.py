@@ -4,8 +4,8 @@ Every statement here runs **inside a caller's transaction** — in practice the
 metadata import's promotion (:meth:`flightsite.metadata.repository.
 MetadataRepository.promote`), which is one transaction covering the whole
 visible swap. None of these functions opens a session of its own, and that is
-deliberate: a classification rebuild that committed separately from the
-resolved rebuild would leave a window in which an aircraft's metadata and its
+deliberate: a classification swap that committed separately from the resolved
+one would leave a window in which an aircraft's metadata and its
 classification described different datasets.
 
 Order matters, and it is dictated by ``foreign_keys=ON`` (ADR-0001).
@@ -32,8 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from flightsite.classification.operators import OperatorDirectory
 from flightsite.db.models import AircraftClassification, Operator, OperatorGroup
 
-#: Rows per ``INSERT``. The curated tables never approach this; the
-#: classification rebuild streams a whole metadata database through it.
+#: Rows per ``INSERT``. The curated tables never approach it — a hundred
+#: groups and a few hundred names — and the operator names an import
+#: discovers, which is the only caller that can produce more, are one row per
+#: distinct name rather than one per airframe.
 INSERT_BATCH_ROWS = 1_000
 
 
@@ -70,32 +72,24 @@ async def add_operators(session: AsyncSession, rows: Sequence[Mapping[str, str |
 
 
 async def clear_classifications(session: AsyncSession) -> None:
-    """Drop every classification row, ahead of a rebuild.
+    """Drop every classification row, ahead of a swap.
 
     Cleared rather than upserted because a rebuild is authoritative: an airframe
     whose evidence changed from "military" to "nothing known" must lose its
     claim, and an upsert over the new rows alone would leave the old assertion
     standing. Honesty about *withdrawn* evidence is the same property as honesty
     about weak evidence.
+
+    The rows that replace them arrive from
+    ``aircraft_classification_staging`` in one ``INSERT ... SELECT`` issued by
+    :meth:`~flightsite.metadata.repository.MetadataRepository._install_resolution`
+    (slice 075), which is why there is no row-by-row insert here to match.
     """
     await session.execute(delete(AircraftClassification))
 
 
-async def add_classifications(
-    session: AsyncSession, rows: Sequence[Mapping[str, str | int | float | None]]
-) -> int:
-    """Insert ``aircraft_classification`` rows. Returns how many were written."""
-    written = 0
-    for start in range(0, len(rows), INSERT_BATCH_ROWS):
-        chunk = rows[start : start + INSERT_BATCH_ROWS]
-        await session.execute(insert(AircraftClassification), list(chunk))
-        written += len(chunk)
-    return written
-
-
 __all__ = [
     "INSERT_BATCH_ROWS",
-    "add_classifications",
     "add_operators",
     "clear_classifications",
     "sync_operator_directory",

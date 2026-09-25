@@ -52,6 +52,42 @@ export function fieldErrorsFrom(error: unknown): FieldErrors {
   return errors;
 }
 
+/** A field's message plus whether it should gate Save.
+ *
+ * `blocking` is only ever true for a client-side check: a server rejection
+ * is real information ("the backend said no") but never a reason to disable
+ * the one control that could fix it. Without this split, a section that
+ * folded a server message into the same variable that gates Save (R4-02,
+ * `docs/reviews/2026-09-20-site-review.md`) left six of nine Settings
+ * sections permanently unsavable after one 422 — `mutation.error` is only
+ * cleared by the next `mutate()`, which a disabled button makes
+ * impossible. */
+export interface FieldMessage {
+  message: string | null;
+  blocking: boolean;
+}
+
+/**
+ * Combines a client-side validator's result with a server-side field
+ * message for the same field, the way `EnrichmentSection.tsx` first worked
+ * out by hand (`budgetBoundsError` / `budgetError`, see its comment): the
+ * client error wins when present (it is why Save is disabled), otherwise the
+ * server's message is shown but never blocks — a save the user can retry the
+ * moment they change anything, rather than a dead end until a page reload.
+ */
+export function fieldMessage(
+  clientError: string | null,
+  serverError: string | null | undefined,
+): FieldMessage {
+  if (clientError !== null) {
+    return { message: clientError, blocking: true };
+  }
+  if (serverError) {
+    return { message: serverError, blocking: false };
+  }
+  return { message: null, blocking: false };
+}
+
 /** A single readable message for anything a `FieldErrors` map didn't
  * already explain next to a field — a plain-string `ConfigError` detail
  * (e.g. an unknown key), a network failure, or the validation errors

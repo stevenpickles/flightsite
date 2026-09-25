@@ -120,6 +120,31 @@ export function formatReceiverLocalTime(iso: string, timezone: string): string {
   }
 }
 
+/** The receiver-local wall-clock time, with seconds, for an ISO instant —
+ * e.g. `"14:03:22"`. Used for the "Data as of" freshness caption (R3-06),
+ * where `formatReceiverLocalTime`'s minute resolution would make every
+ * refresh within the same minute look like no refresh happened at all. */
+export function formatReceiverLocalClock(
+  iso: string,
+  timezone: string,
+): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) {
+    return iso;
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(when);
+  } catch {
+    return when.toISOString();
+  }
+}
+
 /** The receiver-local calendar date and wall-clock time for an ISO instant —
  * e.g. `"2026-04-02 18:11"` — for chart tooltips and axis labels spanning
  * more than a day. Falls back to the bare ISO string on any error. */
@@ -149,9 +174,14 @@ export function formatReceiverLocalDateTime(
   }
 }
 
-/** The receiver-local calendar date for an ISO instant — e.g. `"2026-04-02"`
- * — for daily-bucketed chart axis labels. Falls back to the bare ISO string
- * on any error. */
+/** The receiver-local calendar date for an ISO instant — e.g. `"Apr 2, 2026"`
+ * — for daily-bucketed chart summaries/axis labels and the lifetime
+ * section's "since" line. Falls back to the bare ISO string on any error.
+ * Deliberately the same `month: "short", day: "numeric", year: "numeric"`
+ * shape `features/analytics/lib/format.ts`'s `formatCalendarDay` renders a
+ * `YYYY-MM-DD` day-key string in — R3-11 found five different date
+ * renderings across the two pages (this one used to be `MM/DD/YYYY`) and
+ * asked for one. */
 export function formatReceiverLocalDate(iso: string, timezone: string): string {
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) {
@@ -160,9 +190,9 @@ export function formatReceiverLocalDate(iso: string, timezone: string): string {
   try {
     return new Intl.DateTimeFormat(undefined, {
       timeZone: timezone,
+      month: "short",
+      day: "numeric",
       year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
     }).format(when);
   } catch {
     return when.toISOString();
