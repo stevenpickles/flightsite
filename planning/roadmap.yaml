@@ -124,6 +124,15 @@ releases:
       Top aircraft bar, the long-form description beside every Top types
       designator, richer tooltips on both; visual capture waits for a populated
       demo picture (slice 074). Recorded 2026-09-19."
+  - version: "v0.9.0"
+    after_phase: 8
+    theme: "Useful and robust on every page: the 2026-09-20 formal site review's
+      71 findings fixed (rollups keyed on the live receiver timezone with a
+      one-time repair, basemap switch keeps every layer, legible status text,
+      error boundaries, responsive shell, refresh/retry everywhere, honest
+      ordering and not-yet states), plus a metadata import that no longer
+      starves the live pipeline and per-consumer drop attribution (slices
+      075-076; migration 0016). Recorded 2026-09-25."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
