@@ -43,8 +43,17 @@ import { expect, expectNoLoadFailures, openView, test } from "./support/replay";
  */
 async function hideMapCanvas(page: Parameters<typeof browserHasWebGl>[0]) {
   await page.addStyleTag({
-    content:
+    content: [
       '[data-testid="maplibre-container"] canvas { visibility: hidden !important; }',
+      // The replay aborts every tile request (support/replay.ts), and since
+      // slice 076 (R1-05) the map keeps its "Basemap unavailable" notice up
+      // while that is true. Whether the first tile failure has landed by the
+      // time the frames above are asserted differs between renderers and
+      // runs, so the notice is masked like the canvas: it is a consequence
+      // of the suite's own tile blocking, not a state of the view under
+      // test, and its wording has a unit test of its own.
+      '[data-testid="map-degraded-notice"] { visibility: hidden !important; }',
+    ].join("\n"),
   });
 }
 
