@@ -95,7 +95,7 @@ export function ReceiverPage() {
           />
         ))}
         <RangeByBearingChart units={units} />
-        <SignalDistributionChart />
+        <SignalDistributionChart timezone={timezone} />
         {dailyCharts.map((config) => (
           <ReceiverSeriesChart
             key={config.metric}

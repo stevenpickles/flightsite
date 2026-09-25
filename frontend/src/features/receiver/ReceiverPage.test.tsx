@@ -49,6 +49,42 @@ describe("ReceiverPage", () => {
     expect(await screen.findByText("No decoder stats")).toBeInTheDocument();
   });
 
+  it("hides the decoder-dependent tiles and names them when the decoder reports no stats (R3-13)", async () => {
+    installReceiverStatsApiMock({
+      scorecard: scorecard({
+        health: "no_stats",
+        messages_per_sec: null,
+        positions_per_sec: null,
+        decoder_uptime_s: null,
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(await screen.findByText("No decoder stats")).toBeInTheDocument();
+    expect(screen.queryByText("Messages/sec")).not.toBeInTheDocument();
+    expect(screen.queryByText("Positions/sec")).not.toBeInTheDocument();
+    expect(screen.queryByText("Decoder uptime")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This decoder does not report messages/sec, positions/sec, or decoder uptime.",
+      ),
+    ).toBeInTheDocument();
+    // A metric this decoder does supply still renders normally.
+    expect(screen.getByText("FlightSite uptime")).toBeInTheDocument();
+  });
+
+  it("shows every scorecard tile when the decoder reports stats normally", async () => {
+    installReceiverStatsApiMock({ scorecard: scorecard({ health: "ok" }) });
+
+    renderApp("/receiver");
+
+    expect(await screen.findByText("Messages/sec")).toBeInTheDocument();
+    expect(screen.getByText("Positions/sec")).toBeInTheDocument();
+    expect(screen.getByText("Decoder uptime")).toBeInTheDocument();
+    expect(screen.queryByText(/does not report/)).not.toBeInTheDocument();
+  });
+
   it("shows an unavailable-scorecard message when the request fails", async () => {
     const { fetchMock: baseline } = installReceiverStatsApiMock();
     vi.stubGlobal(
@@ -261,6 +297,41 @@ describe("ReceiverPage", () => {
 
     expect(
       await screen.findByText(/Signal strength distribution over 58 sightings/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the signal-distribution chart's own window and stats caption (R3-13)", async () => {
+    installReceiverStatsApiMock({
+      signalDistribution: signalDistribution({
+        from_ts: "2026-09-19T00:00:00.000Z",
+        to_ts: "2026-09-20T00:00:00.000Z",
+        sample_count: 58,
+        avg_db: -25.6,
+        min_db: -29.1,
+        max_db: -22.3,
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText(/58 samples, average -25.6 dB/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/-29.1 dB to -22.3 dB/)).toBeInTheDocument();
+  });
+
+  it("names the signal-distribution window as the whole history when unbounded", async () => {
+    installReceiverStatsApiMock({
+      signalDistribution: signalDistribution({
+        from_ts: null,
+        to_ts: null,
+      }),
+    });
+
+    renderApp("/receiver");
+
+    expect(
+      await screen.findByText(/Window: receiver's whole history/),
     ).toBeInTheDocument();
   });
 

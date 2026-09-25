@@ -103,6 +103,14 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
     );
   }
 
+  // R3-13/SPEC §60: "no_stats" is the backend's existing signal that this
+  // decoder serves no `stats.json` at all (`HEALTH_PRESENTATION`'s own
+  // "No decoder stats" label) — the same condition that permanently nulls
+  // messages/sec, positions/sec and decoder uptime, per
+  // `docs/API.md` §3.8. Rather than three tiles reading `—` forever with no
+  // explanation beyond the separate Health tile, hide them and say so once.
+  const decoderStatsUnsupported = data.health === "no_stats";
+
   return (
     <div
       role="group"
@@ -114,14 +122,18 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
         value={formatCount(data.current_visible)}
         secondary={`${formatCount(data.current_positioned)} positioned`}
       />
-      <StatTile
-        label="Messages/sec"
-        value={formatRatePerSec(data.messages_per_sec, "msg")}
-      />
-      <StatTile
-        label="Positions/sec"
-        value={formatRatePerSec(data.positions_per_sec, "pos")}
-      />
+      {!decoderStatsUnsupported && (
+        <>
+          <StatTile
+            label="Messages/sec"
+            value={formatRatePerSec(data.messages_per_sec, "msg")}
+          />
+          <StatTile
+            label="Positions/sec"
+            value={formatRatePerSec(data.positions_per_sec, "pos")}
+          />
+        </>
+      )}
       <StatTile
         label="Max range today"
         value={
@@ -149,15 +161,23 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
         label="Unique aircraft since T0"
         value={formatCount(data.unique_aircraft_since_t0)}
       />
-      <StatTile
-        label="Decoder uptime"
-        value={formatDurationCompact(data.decoder_uptime_s)}
-      />
+      {!decoderStatsUnsupported && (
+        <StatTile
+          label="Decoder uptime"
+          value={formatDurationCompact(data.decoder_uptime_s)}
+        />
+      )}
       <StatTile
         label="FlightSite uptime"
         value={formatDurationCompact(data.flightsite_uptime_s)}
       />
       <HealthTile health={data.health} />
+      {decoderStatsUnsupported && (
+        <p className="col-span-full text-xs text-muted-foreground">
+          This decoder does not report messages/sec, positions/sec, or decoder
+          uptime.
+        </p>
+      )}
     </div>
   );
 }
