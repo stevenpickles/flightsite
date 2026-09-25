@@ -21,6 +21,7 @@ import {
 import {
   decoderPresentation,
   integrityPresentation,
+  liveEventConsumerPresentation,
   maintenancePresentation,
   metadataSourcePresentation,
   overallPresentation,
@@ -131,6 +132,13 @@ export function HealthPage() {
   const liveEvents = data.live_events;
   const resyncing =
     liveEvents?.subscribers.some((subscriber) => subscriber.overflowed) ??
+    false;
+  // R4-17: six near-identical zero rows are noise on a healthy install —
+  // the per-consumer breakdown collapses behind a disclosure while every
+  // consumer reads 0, and opens by itself (and stays open) the moment one
+  // has something to say.
+  const anyConsumerShedding =
+    liveEvents?.subscribers.some((subscriber) => subscriber.dropped > 0) ??
     false;
   const vacuumRefusal =
     data.database.maintenance.vacuum_refusal === null
@@ -259,10 +267,14 @@ export function HealthPage() {
         <StatTile
           label="WebSocket clients"
           value={data.websocket.clients}
-          // Disconnects, not shed events: until slice 075 the live-event drop
-          // total sat here under the word "dropped", which read as the browser
-          // feed having lost them when the persistence queue had (issue #185).
-          secondary={`${formatCount(data.websocket.disconnects)} clients shed since start-up`}
+          // R4-17: "disconnects", never "shed" — the Live events card below
+          // uses "shed" for a different thing (events dropped from a
+          // consumer's queue), and reusing the word here is exactly the
+          // ambiguity issue #185 already burned this tile once for (until
+          // slice 075 this secondary showed the live-event drop total under
+          // the same word, which read as the browser feed having lost
+          // clients when the persistence queue had).
+          secondary={`${formatCount(data.websocket.disconnects)} client disconnects since start-up`}
         />
       </div>
 
@@ -466,31 +478,60 @@ export function HealthPage() {
               label="Shed in total"
               value={formatCount(liveEvents.dropped)}
             />
-            {/* One row per consumer, because the total alone never said whose
-                queue overflowed — the question the card exists to answer. */}
-            {liveEvents.subscribers.map((subscriber) => (
-              <DetailRow
-                key={subscriber.name}
-                label={subscriber.name}
-                value={
-                  <span className="flex flex-col items-end gap-1">
-                    <span>{`${formatCount(subscriber.dropped)} shed`}</span>
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {`${formatCount(subscriber.pending)} / ${formatCount(
-                        subscriber.capacity,
-                      )} queued`}
-                    </span>
-                    {subscriber.overflowed && (
-                      <StatusPill
-                        tone="warn"
-                        label="Resyncing"
-                        className="font-normal"
-                      />
-                    )}
-                  </span>
-                }
-              />
-            ))}
+            {/* R4-17: six near-identical rows are noise on a healthy
+                install, so they collapse behind a disclosure unless one has
+                something to say — open by itself the moment it does. Each
+                row names the consumer the way the rest of the app does
+                ("Live map feed", not "websocket") and adds the one-line
+                consequence only while it is actually shedding. */}
+            <details
+              open={anyConsumerShedding}
+              className="group mt-1 border-t border-border pt-1"
+            >
+              <summary className="cursor-pointer list-none text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
+                <span className="group-open:hidden">
+                  Show every consumer ({liveEvents.subscribers.length})
+                </span>
+                <span className="hidden group-open:inline">
+                  Hide the per-consumer breakdown
+                </span>
+              </summary>
+              <div className="mt-1 flex flex-col">
+                {liveEvents.subscribers.map((subscriber) => {
+                  const presentation = liveEventConsumerPresentation(
+                    subscriber.name,
+                  );
+                  return (
+                    <DetailRow
+                      key={subscriber.name}
+                      label={presentation.label}
+                      value={
+                        <span className="flex flex-col items-end gap-1">
+                          <span>{`${formatCount(subscriber.dropped)} shed`}</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {`${formatCount(subscriber.pending)} / ${formatCount(
+                              subscriber.capacity,
+                            )} queued`}
+                          </span>
+                          {subscriber.dropped > 0 && (
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {presentation.consequence}
+                            </span>
+                          )}
+                          {subscriber.overflowed && (
+                            <StatusPill
+                              tone="warn"
+                              label="Resyncing"
+                              className="font-normal"
+                            />
+                          )}
+                        </span>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </details>
           </HealthCard>
         )}
 

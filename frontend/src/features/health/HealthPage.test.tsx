@@ -50,7 +50,7 @@ describe("HealthPage", () => {
     // Metadata age, and WebSocket state.
     expect(within(summary).getByText("2d 2h")).toBeInTheDocument();
     expect(
-      within(summary).getByText("0 clients shed since start-up"),
+      within(summary).getByText("0 client disconnects since start-up"),
     ).toBeInTheDocument();
 
     // Useful row counts.
@@ -109,8 +109,12 @@ describe("HealthPage", () => {
     renderApp("/health");
 
     const card = await screen.findByRole("region", { name: "Live events" });
-    const persistence = within(card).getByText("persistence").closest("div");
-    const websocket = within(card).getByText("websocket").closest("div");
+    // R4-17: the internal subscriber name is never shown — "History
+    // writer" / "Live map feed" are the owner-facing labels.
+    expect(within(card).queryByText("persistence")).toBeNull();
+    expect(within(card).queryByText("websocket")).toBeNull();
+    const persistence = within(card).getByText("History writer").closest("div");
+    const websocket = within(card).getByText("Live map feed").closest("div");
 
     expect(persistence).not.toBeNull();
     expect(websocket).not.toBeNull();
@@ -118,17 +122,51 @@ describe("HealthPage", () => {
     expect(
       within(persistence!).getByText("4,096 / 4,096 queued"),
     ).toBeInTheDocument();
+    // A one-line consequence accompanies the shedding consumer only.
+    expect(
+      within(persistence!).getByText(/history may lag behind/i),
+    ).toBeInTheDocument();
     // SPEC §80: the marker is a word and an icon, never colour alone.
     expect(within(persistence!).getByText("Resyncing")).toBeInTheDocument();
     expect(within(websocket!).getByText("0 shed")).toBeInTheDocument();
     expect(within(websocket!).queryByText("Resyncing")).toBeNull();
+    expect(within(websocket!).queryByText(/positions/i)).toBeNull();
 
     // And the WebSocket tile no longer wears the process-wide total.
     const summary = screen.getByRole("group", { name: "Health summary" });
     expect(within(summary).queryByText(/18,061/)).toBeNull();
     expect(
-      within(summary).getByText("0 clients shed since start-up"),
+      within(summary).getByText("0 client disconnects since start-up"),
     ).toBeInTheDocument();
+  });
+
+  it("collapses the per-consumer breakdown behind a disclosure while every consumer reads 0 (R4-17)", async () => {
+    const user = userEvent.setup();
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        live_events: liveEvents({
+          subscribers: [
+            liveEventSubscriber({ name: "websocket" }),
+            liveEventSubscriber({ name: "persistence" }),
+          ],
+        }),
+      }),
+    });
+    renderApp("/health");
+
+    const card = await screen.findByRole("region", { name: "Live events" });
+    // Collapsed: the per-consumer rows exist (a native `<details>`, not
+    // unmounted) but are not visible — jest-dom's `toBeVisible` understands
+    // a closed `<details>` the way a browser renders one.
+    expect(within(card).getByText("Live map feed")).not.toBeVisible();
+    expect(within(card).getByText("History writer")).not.toBeVisible();
+    const disclosure = within(card).getByText(/show every consumer/i);
+    expect(disclosure).toBeInTheDocument();
+
+    await user.click(disclosure);
+
+    expect(within(card).getByText("Live map feed")).toBeVisible();
+    expect(within(card).getByText("History writer")).toBeVisible();
   });
 
   it("shows the overall status as healthy when nothing is wrong", async () => {
