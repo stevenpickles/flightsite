@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,17 +32,40 @@ const FALLBACK_CENTER = DEV_PLACEHOLDER_MAP_CONFIG.receiver;
  * client-drawn marker still updates — even if basemap tiles fail to load.
  */
 export function LocationStep({ draft, onChange }: LocationStepProps) {
-  const latitudeError = validateLatitude(draft.latitude);
-  const longitudeError = validateLongitude(draft.longitude);
-  const antennaError = validateAntennaHeight(draft.antennaHeightFt);
+  // R4-21: a genuine first run has no stored coordinates, so the raw
+  // validators fire on the very first render — "Enter a latitude between
+  // -90 and 90." before the user has typed a character. The rule builder
+  // already argues the fix for this shape of problem: "a form that argues
+  // while it is being filled in is worse than one that answers when
+  // asked" (`RuleBuilderForm.tsx`). `touched` gates *display* only — the
+  // raw validators below still drive `mapConfig` and `isStepValid`
+  // (Next stays disabled until the values are actually valid), so nothing
+  // about validity itself changes, only when the message appears.
+  const [latitudeTouched, setLatitudeTouched] = useState(false);
+  const [longitudeTouched, setLongitudeTouched] = useState(false);
+  const [antennaTouched, setAntennaTouched] = useState(false);
+
+  const rawLatitudeError = validateLatitude(draft.latitude);
+  const rawLongitudeError = validateLongitude(draft.longitude);
+  const rawAntennaError = validateAntennaHeight(draft.antennaHeightFt);
+
+  const latitudeError = latitudeTouched ? rawLatitudeError : null;
+  const longitudeError = longitudeTouched ? rawLongitudeError : null;
+  const antennaError = antennaTouched ? rawAntennaError : null;
 
   const basemap = getDefaultBasemap();
 
   const mapConfig: MapConfig = useMemo(() => {
+    // Actual validity, not gated by `touched` — the map should center on a
+    // just-typed valid coordinate immediately, and fall back to the
+    // placeholder for an invalid one, whether or not the field has been
+    // blurred yet.
     const lat =
-      latitudeError === null ? Number(draft.latitude) : FALLBACK_CENTER.lat;
+      rawLatitudeError === null ? Number(draft.latitude) : FALLBACK_CENTER.lat;
     const lon =
-      longitudeError === null ? Number(draft.longitude) : FALLBACK_CENTER.lon;
+      rawLongitudeError === null
+        ? Number(draft.longitude)
+        : FALLBACK_CENTER.lon;
     return {
       receiver: {
         lat,
@@ -67,8 +90,8 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
     draft.latitude,
     draft.longitude,
     draft.siteName,
-    latitudeError,
-    longitudeError,
+    rawLatitudeError,
+    rawLongitudeError,
   ]);
 
   function handleMapClick({ lat, lon }: { lat: number; lon: number }) {
@@ -102,6 +125,9 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
             onChange={(event) => {
               onChange({ latitude: event.target.value });
             }}
+            onBlur={() => {
+              setLatitudeTouched(true);
+            }}
           />
           <FieldError id="setup-latitude-error" message={latitudeError} />
         </div>
@@ -119,6 +145,9 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
             }
             onChange={(event) => {
               onChange({ longitude: event.target.value });
+            }}
+            onBlur={() => {
+              setLongitudeTouched(true);
             }}
           />
           <FieldError id="setup-longitude-error" message={longitudeError} />
@@ -139,6 +168,9 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
             }
             onChange={(event) => {
               onChange({ antennaHeightFt: event.target.value });
+            }}
+            onBlur={() => {
+              setAntennaTouched(true);
             }}
           />
           <FieldError id="setup-antenna-height-error" message={antennaError} />

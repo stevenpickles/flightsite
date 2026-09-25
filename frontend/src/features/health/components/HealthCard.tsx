@@ -58,7 +58,15 @@ export function StatTile({ label, value, secondary }: StatTileProps) {
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
       {secondary !== undefined && (
-        <p className="mt-0.5 text-xs text-muted-foreground">{secondary}</p>
+        // R4-21: a realistic decoder error is long and has nowhere natural
+        // to break — `break-all` wraps it inside the tile instead of
+        // overflowing the card's edge (`HealthCard`'s own error rendering
+        // already uses `break-all` for the same reason); `line-clamp-3`
+        // caps how much of it a scorecard tile spends on one secondary
+        // line rather than growing to fit an arbitrarily long message.
+        <p className="mt-0.5 line-clamp-3 text-xs break-all text-muted-foreground">
+          {secondary}
+        </p>
       )}
     </div>
   );
