@@ -38,10 +38,10 @@ for (const theme of VISUAL_THEMES) {
         page.getByRole("heading", { level: 1, name: "Alerts" }),
       ).toBeVisible();
 
-      // The tabs are client-side state, not routes, so the tab has to be
-      // clicked rather than linked to. `watchlists` is already active on
-      // load; clicking it anyway keeps the two cases on one path and
-      // asserts the selected state either way.
+      // The tab is also reachable by deep link now (R4-07, `?tab=`), but
+      // clicking it here keeps `watchlists` (already active on load) and
+      // every other tab on one path and asserts the selected state either
+      // way.
       const trigger = page.locator(`#alerts-tab-${tab}`);
       await trigger.click();
       await expect(trigger).toHaveAttribute("aria-selected", "true");

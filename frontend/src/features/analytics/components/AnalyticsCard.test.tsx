@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 
@@ -21,7 +22,7 @@ describe("AnalyticsCard", () => {
     );
 
     expect(screen.getByText("Loading…")).toBeInTheDocument();
-    expect(screen.queryByText(/UTC/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aug 31, 2026/)).not.toBeInTheDocument();
   });
 
   it("shows an error message in place of children", () => {
@@ -41,7 +42,41 @@ describe("AnalyticsCard", () => {
     expect(screen.queryByText("content")).not.toBeInTheDocument();
   });
 
-  it("renders children and the echoed window once loaded", () => {
+  it("shows no Retry button in the error state when onRetry is omitted (R3-08's page-banner cards)", () => {
+    render(
+      <AnalyticsCard
+        title="Top aircraft"
+        isLoading={false}
+        error="Could not load top aircraft."
+      >
+        <p>content</p>
+      </AnalyticsCard>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a Retry button in the error state that calls onRetry (R3-05)", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <AnalyticsCard
+        title="Top aircraft"
+        isLoading={false}
+        error="Could not load top aircraft."
+        onRetry={onRetry}
+      >
+        <p>content</p>
+      </AnalyticsCard>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders children and the echoed window once loaded, with no timezone of its own (R3-11)", () => {
     render(
       <AnalyticsCard title="Top aircraft" isLoading={false} window={WINDOW}>
         <p>content</p>
@@ -50,6 +85,9 @@ describe("AnalyticsCard", () => {
 
     expect(screen.getByText("content")).toBeInTheDocument();
     expect(screen.getByText("Top aircraft")).toBeInTheDocument();
-    expect(screen.getByText(/UTC/)).toBeInTheDocument();
+    expect(screen.getByText("Aug 31, 2026")).toBeInTheDocument();
+    // The timezone is stated once per page (AnalyticsPage's "Data as of"
+    // line), not once per card.
+    expect(screen.queryByText(/UTC/)).not.toBeInTheDocument();
   });
 });

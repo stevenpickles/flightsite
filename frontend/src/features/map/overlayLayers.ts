@@ -8,6 +8,11 @@ import {
 } from "@/features/map/geo/rings";
 import type { MapConfig } from "@/features/map/types";
 
+/** Every source and layer this app adds to a style is named with this
+ * prefix, which is what lets map-level event handling tell FlightSite's own
+ * client-drawn GeoJSON apart from the basemap's network-backed sources. */
+export const FLIGHTSITE_SOURCE_PREFIX = "flightsite-";
+
 export const RANGE_RINGS_SOURCE_ID = "flightsite-range-rings";
 export const RANGE_RING_LABELS_SOURCE_ID = "flightsite-range-ring-labels";
 export const RECEIVER_SOURCE_ID = "flightsite-receiver";
@@ -31,6 +36,11 @@ const RECEIVER_COLOR = "#ff5a5f";
  * usable during a tile outage (roadmap slice 013 acceptance criteria).
  * Idempotent: safe to call again, including after a basemap switch
  * replaces the underlying style and clears its layers.
+ *
+ * Both overlays draw nothing at all while `config.receiverConfigured` is
+ * false — see that field. Rendering regardless of the tiles is the point;
+ * rendering regardless of whether the position is real is how issue R1-05
+ * drew a Seattle placeholder on an install in Kansas.
  */
 export function ensureOverlayLayers(
   map: MapLibreGlMap,
@@ -53,16 +63,31 @@ function upsertGeoJsonSource(
   }
 }
 
+/** Nothing to draw — the shape an overlay source takes when the receiver
+ * position it would be generated from is not a real one (issue R1-05). */
+const EMPTY_FEATURES: FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
+
 function ensureRangeRingLayers(map: MapLibreGlMap, config: MapConfig): void {
+  // Rings are a claim about how far *this receiver* reaches, so they are
+  // drawn only around a receiver that exists. The layers are still added
+  // either way: the config that finally carries a real location arrives as
+  // a `setData` on a source already on the map, not as a fresh style edit.
   upsertGeoJsonSource(
     map,
     RANGE_RINGS_SOURCE_ID,
-    generateRangeRingsGeoJSON(config),
+    config.receiverConfigured
+      ? generateRangeRingsGeoJSON(config)
+      : EMPTY_FEATURES,
   );
   upsertGeoJsonSource(
     map,
     RANGE_RING_LABELS_SOURCE_ID,
-    generateRangeRingLabelsGeoJSON(config),
+    config.receiverConfigured
+      ? generateRangeRingLabelsGeoJSON(config)
+      : EMPTY_FEATURES,
   );
 
   if (!map.getLayer(RANGE_RING_LINE_LAYER_ID)) {
@@ -100,11 +125,16 @@ function ensureRangeRingLayers(map: MapLibreGlMap, config: MapConfig): void {
 }
 
 function ensureReceiverLayers(map: MapLibreGlMap, config: MapConfig): void {
-  const point = generateReceiverPointGeoJSON(config.receiver);
-  upsertGeoJsonSource(map, RECEIVER_SOURCE_ID, {
-    type: "FeatureCollection",
-    features: [point],
-  });
+  upsertGeoJsonSource(
+    map,
+    RECEIVER_SOURCE_ID,
+    config.receiverConfigured
+      ? {
+          type: "FeatureCollection",
+          features: [generateReceiverPointGeoJSON(config.receiver)],
+        }
+      : EMPTY_FEATURES,
+  );
 
   if (!map.getLayer(RECEIVER_HALO_LAYER_ID)) {
     map.addLayer({

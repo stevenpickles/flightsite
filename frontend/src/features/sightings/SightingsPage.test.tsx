@@ -86,6 +86,33 @@ describe("SightingsPage", () => {
     expect(await screen.findAllByText("Ongoing")).not.toHaveLength(0);
   });
 
+  it("says how long an open sighting has been running, not Unknown (R2-02)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [
+          sightingRow({
+            id: 1,
+            ended_at: null,
+            duration_s: null,
+            elapsed_s: 964,
+          }),
+        ],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+
+    // `Unknown` means "the decoder never reported this". A sighting the same
+    // row calls "Ongoing" two columns to the left is a different fact.
+    const duration = await screen.findByText(
+      "Still open · running for 16m 04s",
+    );
+    expect(duration.closest("td")).not.toHaveTextContent("Unknown");
+  });
+
   it("sorts by a clicked sortable column, descending first, and toggles on a second click", async () => {
     const { fetchMock } = installSightingsApiMock({
       list: {
@@ -224,6 +251,99 @@ describe("SightingsPage", () => {
     );
     // A short (< limit) page means there is no next page.
     expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
+  });
+
+  it("keeps the log on screen and offers a retry when a refresh fails (R2-04)", async () => {
+    let failing = false;
+    installSightingsApiMock({
+      listStatus: () => (failing ? 500 : null),
+      list: {
+        items: [sightingRow()],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/sightings");
+    await screen.findByText("N302DN");
+
+    failing = true;
+    await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+
+    const banner = await screen.findByTestId("query-error-banner");
+    expect(banner).toHaveAttribute("role", "alert");
+    expect(screen.getByText("N302DN")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Duration" }),
+    ).toBeInTheDocument();
+
+    failing = false;
+    await user.click(
+      within(banner).getByRole("button", { name: /try again/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("query-error-banner"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps Status on screen and defers the columns that crowded it out (R2-08, R2-13)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [sightingRow({ id: 1 })],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+    await screen.findByText("N302DN");
+
+    const header = (label: string) =>
+      screen.getByRole("columnheader", { name: label });
+
+    // §57's alert/interesting column is essential — it is the one a
+    // 1440x900 desktop could not see at all.
+    expect(header("Status").className).not.toContain("hidden");
+    expect(header("Start").className).not.toContain("hidden");
+    // The four that were costing it that width wait for a wide window, and
+    // their header and body cell agree about it.
+    for (const label of ["Classification", "Lowest alt.", "Positions"]) {
+      expect(header(label).className).toContain("2xl:table-cell");
+    }
+    const row = screen.getByTestId("sighting-row");
+    expect(within(row).getByText("2210").className).toContain("2xl:table-cell");
+  });
+
+  it("gives every row a keyboard route into its sighting (R2-07)", async () => {
+    installSightingsApiMock({
+      list: {
+        items: [sightingRow({ id: 42 }), sightingRow({ id: 43 })],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+
+    renderApp("/sightings");
+    await screen.findAllByText("N302DN");
+
+    // The review audited fifty rendered rows and found zero anchors, zero
+    // buttons and zero `[tabindex]` — no keyboard or screen-reader user
+    // could open any sighting from the log at all.
+    const rows = screen.getAllByTestId("sighting-row");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const link = within(row).getByRole("link");
+      expect(link).toHaveAttribute(
+        "href",
+        `/sightings/${row.getAttribute("data-sighting-id")}`,
+      );
+    }
   });
 
   it("opens the sighting detail route when a row is clicked", async () => {

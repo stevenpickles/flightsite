@@ -22,14 +22,27 @@
  * same wall-clock moment for a viewer in another timezone — forces a fresh
  * fetch instead of the card quietly showing yesterday's figures past
  * midnight.
+ *
+ * **Freshness (R1-02 frontend follow-up).** `useAnalyticsSummaryQuery` now
+ * polls every 60 s on its own (`refetchInterval`), not only on mount or a
+ * window-focus round-trip, since this card sits on screen for hours at a
+ * time. The header always shows unique aircraft, sightings and interesting
+ * together — not sightings alone — collapsed or not, and the expanded body
+ * names the receiver-local wall-clock time the figures were actually
+ * fetched (`summaryQuery.dataUpdatedAt`), so a viewer can tell a quietly
+ * stale card from one that just refreshed. `summary.complete` (A1's backend
+ * half of R1-02) is `false` while the day's rollup has not yet caught up
+ * with "now" — the numbers themselves are still real, never a placeholder
+ * `0`, but the card says so rather than implying they are final.
  */
 
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { StatTile } from "@/features/today/components/StatTile";
 import {
+  formatAsOfTime,
   formatCount,
   formatDistance,
   formatHourRange,
@@ -37,6 +50,26 @@ import {
 import { useReceiverLocalDate } from "@/features/today/lib/localDay";
 import { useAnalyticsSummaryQuery } from "@/lib/api/analytics";
 import { useReceiverQuery } from "@/lib/api/receiver";
+
+/** One collapsed-header badge — reused for unique aircraft, sightings and
+ * interesting so the three read as one family rather than the single
+ * sightings-only badge this card used to show collapsed. */
+function HeaderBadge({
+  testId,
+  children,
+}: {
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      data-testid={testId}
+      className="inline-flex min-w-4 items-center justify-center rounded-full bg-secondary px-1.5 text-[10px] font-semibold text-secondary-foreground"
+    >
+      {children}
+    </span>
+  );
+}
 
 export function TodayPanel() {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -46,6 +79,10 @@ export function TodayPanel() {
   const localDate = useReceiverLocalDate(timezone);
   const summaryQuery = useAnalyticsSummaryQuery({ preset: "today" }, localDate);
   const summary = summaryQuery.data?.summary;
+  const asOf =
+    summary !== undefined && summaryQuery.dataUpdatedAt > 0
+      ? formatAsOfTime(summaryQuery.dataUpdatedAt, timezone)
+      : null;
 
   return (
     <div
@@ -58,15 +95,28 @@ export function TodayPanel() {
         onClick={() => setIsExpanded((expanded) => !expanded)}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-xs font-medium"
       >
-        <span className="flex items-center gap-1.5">
+        <span className="flex flex-wrap items-center gap-1.5">
           Today
           {summary !== undefined && (
-            <span
-              data-testid="today-sightings-badge"
-              className="inline-flex min-w-4 items-center justify-center rounded-full bg-secondary px-1.5 text-[10px] font-semibold text-secondary-foreground"
-            >
-              {formatCount(summary.sightings)} sightings
-            </span>
+            <>
+              <HeaderBadge testId="today-unique-badge">
+                {formatCount(summary.unique_aircraft)} aircraft
+              </HeaderBadge>
+              <HeaderBadge testId="today-sightings-badge">
+                {formatCount(summary.sightings)} sightings
+              </HeaderBadge>
+              <HeaderBadge testId="today-interesting-badge">
+                {formatCount(summary.interesting)} interesting
+              </HeaderBadge>
+              {!summary.complete && (
+                <span
+                  data-testid="today-pending-badge"
+                  className="inline-flex items-center rounded-full border border-border px-1.5 text-[10px] font-medium text-muted-foreground"
+                >
+                  Rollup pending
+                </span>
+              )}
+            </>
           )}
         </span>
         {isExpanded ? (
@@ -87,52 +137,70 @@ export function TodayPanel() {
               Could not load today&apos;s summary: {summaryQuery.error.message}
             </p>
           ) : summary === undefined ? null : (
-            <div
-              role="group"
-              aria-label="Today at a glance"
-              className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-            >
-              <StatTile
-                label="Unique aircraft"
-                value={formatCount(summary.unique_aircraft)}
-              />
-              <StatTile
-                label="Sightings"
-                value={formatCount(summary.sightings)}
-              />
-              <StatTile
-                label="Interesting"
-                value={formatCount(summary.interesting)}
-              />
-              <StatTile
-                label="Mil / gov / police"
-                value={`${summary.military} / ${summary.government} / ${summary.law_enforcement}`}
-              />
-              <StatTile
-                label="Max range"
-                value={formatDistance(summary.max_range_nm, units) ?? "—"}
-              />
-              <StatTile
-                label="Busiest hour"
-                value={formatHourRange(summary.busiest_hour)}
-              />
-              <StatTile
-                label="New aircraft"
-                value={formatCount(summary.new_aircraft)}
-              />
-              <Link
-                to="/activity"
-                data-testid="today-milestones-link"
-                className="rounded-md border border-border bg-card p-2.5 text-card-foreground outline-none transition-colors hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            <>
+              {asOf !== null && (
+                <p
+                  data-testid="today-as-of"
+                  className="px-0.5 pb-2 text-[11px] text-muted-foreground"
+                >
+                  As of {asOf}
+                </p>
+              )}
+              {!summary.complete && (
+                <p
+                  data-testid="today-rollup-pending-hint"
+                  className="px-0.5 pb-2 text-[11px] text-muted-foreground"
+                >
+                  Rollup pending — today&apos;s figures may still change.
+                </p>
+              )}
+              <div
+                role="group"
+                aria-label="Today at a glance"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
               >
-                <p className="text-[11px] text-muted-foreground">
-                  New milestones
-                </p>
-                <p className="mt-0.5 text-lg font-semibold tabular-nums">
-                  {formatCount(summary.new_milestones)}
-                </p>
-              </Link>
-            </div>
+                <StatTile
+                  label="Unique aircraft"
+                  value={formatCount(summary.unique_aircraft)}
+                />
+                <StatTile
+                  label="Sightings"
+                  value={formatCount(summary.sightings)}
+                />
+                <StatTile
+                  label="Interesting"
+                  value={formatCount(summary.interesting)}
+                />
+                <StatTile
+                  label="Mil / gov / police"
+                  value={`${summary.military} / ${summary.government} / ${summary.law_enforcement}`}
+                />
+                <StatTile
+                  label="Max range"
+                  value={formatDistance(summary.max_range_nm, units) ?? "—"}
+                />
+                <StatTile
+                  label="Busiest hour"
+                  value={formatHourRange(summary.busiest_hour)}
+                />
+                <StatTile
+                  label="New aircraft"
+                  value={formatCount(summary.new_aircraft)}
+                />
+                <Link
+                  to="/activity"
+                  data-testid="today-milestones-link"
+                  className="rounded-md border border-border bg-card p-2.5 text-card-foreground outline-none transition-colors hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <p className="text-[11px] text-muted-foreground">
+                    New milestones
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {formatCount(summary.new_milestones)}
+                  </p>
+                </Link>
+              </div>
+            </>
           )}
         </div>
       )}

@@ -14,11 +14,14 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useActivityFeedStore } from "@/features/activity/store/useActivityFeedStore";
-import { useLiveConnection } from "@/features/live/useLiveConnection";
+import {
+  LIVE_FALLBACK_POLL_MS,
+  useLiveConnection,
+} from "@/features/live/useLiveConnection";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { resetNotificationDedupe } from "@/features/notifications/lib/dedupe";
 import { useNotificationStore } from "@/features/notifications/store/useNotificationStore";
-import type { ReceiverInfo } from "@/lib/api/live";
+import { CURRENT_AIRCRAFT_PATH, type ReceiverInfo } from "@/lib/api/live";
 import { alertTriggeredEvent } from "@/test/activityApiMock";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import {
@@ -224,7 +227,11 @@ function connectedPicture(): { unmount: () => void } {
 }
 
 describe("useLiveConnection teardown (ADR-0015)", () => {
-  it("drops the picture and the activity tail when the connection is lost", () => {
+  it("keeps the picture and marks it stale when the connection is lost", () => {
+    // Issue R1-03: the picture used to be cleared here, so every panel
+    // downstream asserted an empty sky for the 1-30 s a reconnect takes.
+    // An outage is not a fact about the sky; it is a fact about the feed,
+    // and `stale` plus `lastUpdate` is how the panels say so.
     connectedPicture();
     expect(Object.keys(useLiveAircraftStore.getState().aircraft)).toHaveLength(
       1,
@@ -235,12 +242,16 @@ describe("useLiveConnection teardown (ADR-0015)", () => {
     });
 
     const state = useLiveAircraftStore.getState();
-    expect(state.aircraft).toEqual({});
-    expect(state.departing).toEqual({});
+    expect(Object.keys(state.aircraft)).toEqual(["ae1463"]);
+    expect(state.stale).toBe(true);
+    expect(state.lastUpdate).not.toBeNull();
+    // The activity tail still goes: activity frames have no replay, so one
+    // kept across the gap would read as a continuous list with a hole.
     expect(useActivityFeedStore.getState().events).toEqual([]);
     // Reported as an outage, not as a fresh start: the chip has to be able to
     // tell "we have lost the feed" from "we have not connected yet".
     expect(state.connection).toBe("reconnecting");
+    expect(state.connectionAttempt).toBe(1);
   });
 
   it("keeps the selection, its track and the receiver block across the outage", () => {
@@ -310,5 +321,228 @@ describe("useLiveConnection teardown (ADR-0015)", () => {
     expect(socket.closed).toBe(true);
     expect(useLiveAircraftStore.getState().selectedIcao).toBeNull();
     expect(useActivityFeedStore.getState().events).toEqual([]);
+  });
+});
+
+describe("REST fallback while the socket is down (R1-03, R1-04)", () => {
+  /** A `GET /api/v1/aircraft/current` stub answering the §2.4 envelope. */
+  function stubCurrentAircraft(icaos: string[]) {
+    const fetchMock = vi.fn((input: unknown) => {
+      if (String(input) === CURRENT_AIRCRAFT_PATH) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: icaos.map((icao) => makeAircraft({ icao })),
+              total: icaos.length,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** Lets the poll's own promise chain settle under fake timers. */
+  async function settle() {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function currentAircraftCalls(fetchMock: ReturnType<typeof vi.fn>): number {
+    return fetchMock.mock.calls.filter(
+      (call) => String(call[0]) === CURRENT_AIRCRAFT_PATH,
+    ).length;
+  }
+
+  function emitSnapshot(icao: string | null): void {
+    getLastWebSocket().emitFrame({
+      type: "snapshot",
+      seq: 1,
+      data: {
+        aircraft: icao === null ? [] : [makeAircraft({ icao })],
+        receiver: null,
+      },
+    });
+  }
+
+  it("issues no poll at all while the socket is healthy", async () => {
+    const fetchMock = stubCurrentAircraft(["aaaaaa"]);
+    vi.useFakeTimers();
+    try {
+      renderHook(() => {
+        useLiveConnection();
+      });
+      act(() => {
+        emitSnapshot("ae1463");
+      });
+      act(() => {
+        vi.advanceTimersByTime(LIVE_FALLBACK_POLL_MS * 4);
+      });
+      await settle();
+
+      expect(currentAircraftCalls(fetchMock)).toBe(0);
+      expect(useLiveAircraftStore.getState().stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes the picture over REST the moment the socket drops", async () => {
+    const fetchMock = stubCurrentAircraft(["bbbbbb"]);
+    vi.useFakeTimers();
+    try {
+      renderHook(() => {
+        useLiveConnection();
+      });
+      act(() => {
+        emitSnapshot("ae1463");
+      });
+      act(() => {
+        getLastWebSocket().emitClose();
+      });
+      // Stale for exactly as long as it takes the fallback to answer — and
+      // the aircraft are still there throughout, which is the whole point.
+      expect(useLiveAircraftStore.getState().stale).toBe(true);
+      expect(
+        Object.keys(useLiveAircraftStore.getState().aircraft),
+      ).toHaveLength(1);
+      await settle();
+
+      const state = useLiveAircraftStore.getState();
+      expect(currentAircraftCalls(fetchMock)).toBe(1);
+      expect(Object.keys(state.aircraft)).toEqual(["bbbbbb"]);
+      // A poll that answered is as current as a frame that arrived.
+      expect(state.stale).toBe(false);
+      expect(state.connection).toBe("reconnecting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling on the interval, and stops once the socket returns", async () => {
+    const fetchMock = stubCurrentAircraft(["bbbbbb"]);
+    vi.useFakeTimers();
+    try {
+      renderHook(() => {
+        useLiveConnection();
+      });
+      act(() => {
+        emitSnapshot(null);
+      });
+      act(() => {
+        getLastWebSocket().emitClose();
+      });
+      await settle();
+      expect(currentAircraftCalls(fetchMock)).toBe(1);
+
+      act(() => {
+        vi.advanceTimersByTime(LIVE_FALLBACK_POLL_MS);
+      });
+      await settle();
+      expect(currentAircraftCalls(fetchMock)).toBe(2);
+
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      act(() => {
+        emitSnapshot("ae1463");
+      });
+      const afterReconnect = currentAircraftCalls(fetchMock);
+      act(() => {
+        vi.advanceTimersByTime(LIVE_FALLBACK_POLL_MS * 3);
+      });
+      await settle();
+
+      expect(currentAircraftCalls(fetchMock)).toBe(afterReconnect);
+      expect(useLiveAircraftStore.getState().connection).toBe("live");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a blocked WebSocket upgrade a picture anyway", async () => {
+    // Issue R1-04's scenario: the upgrade never completes, so the socket
+    // never leaves `connecting`. Before the fallback the map stayed empty
+    // and the chip said "Connecting" indefinitely — indistinguishable from
+    // an empty sky. The first poll is scheduled rather than immediate here,
+    // so an ordinary page load does not race its own socket to the data.
+    const fetchMock = stubCurrentAircraft(["cccccc", "dddddd"]);
+    vi.useFakeTimers();
+    try {
+      renderHook(() => {
+        useLiveConnection();
+      });
+      expect(currentAircraftCalls(fetchMock)).toBe(0);
+
+      act(() => {
+        getLastWebSocket().emitClose();
+      });
+      act(() => {
+        vi.advanceTimersByTime(LIVE_FALLBACK_POLL_MS);
+      });
+      await settle();
+
+      const state = useLiveAircraftStore.getState();
+      expect(Object.keys(state.aircraft).sort()).toEqual(["cccccc", "dddddd"]);
+      expect(state.connection).toBe("connecting");
+      expect(state.connectionAttempt).toBeGreaterThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the picture stale, not empty, when the fallback fails too", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(null, { status: 503 }))),
+    );
+    vi.useFakeTimers();
+    try {
+      renderHook(() => {
+        useLiveConnection();
+      });
+      act(() => {
+        emitSnapshot("ae1463");
+      });
+      act(() => {
+        getLastWebSocket().emitClose();
+      });
+      await settle();
+
+      const state = useLiveAircraftStore.getState();
+      expect(Object.keys(state.aircraft)).toEqual(["ae1463"]);
+      expect(state.stale).toBe(true);
+      expect(state.lastUpdate).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling when the shell unmounts", async () => {
+    const fetchMock = stubCurrentAircraft(["bbbbbb"]);
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => {
+        useLiveConnection();
+      });
+      act(() => {
+        getLastWebSocket().emitClose();
+      });
+      unmount();
+      const afterUnmount = currentAircraftCalls(fetchMock);
+      act(() => {
+        vi.advanceTimersByTime(LIVE_FALLBACK_POLL_MS * 3);
+      });
+      await settle();
+
+      expect(currentAircraftCalls(fetchMock)).toBe(afterUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

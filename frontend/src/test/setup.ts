@@ -128,4 +128,10 @@ afterEach(() => {
   // remembers the previous frame, so one test's crowded picture would
   // otherwise decide the next test's label tier.
   resetDensityLatch();
+  // jsdom's `sessionStorage` (unlike `localStorage` above) needs no
+  // polyfill, but it is real storage that outlives the test that wrote to
+  // it — without this, one test's setup-wizard session (R4-15,
+  // `features/setup/lib/sessionDraft.ts`) would resurface in the next test
+  // in the same file and skip its Welcome step.
+  window.sessionStorage.clear();
 });

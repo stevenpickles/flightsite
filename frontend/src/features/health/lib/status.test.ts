@@ -5,6 +5,7 @@ import {
   enrichmentBudgetPresentation,
   errorCountPresentation,
   integrityPresentation,
+  liveEventConsumerPresentation,
   maintenancePresentation,
   metadataSourcePresentation,
   notificationPresentation,
@@ -162,5 +163,48 @@ describe("enrichmentBudgetPresentation", () => {
 
   it("has nothing to present for a backend that does not report a budget", () => {
     expect(enrichmentBudgetPresentation(undefined)).toBeNull();
+  });
+});
+
+describe("liveEventConsumerPresentation", () => {
+  it("names every known consumer by an owner-facing label (R4-17)", () => {
+    expect(liveEventConsumerPresentation("websocket").label).toBe(
+      "Live map feed",
+    );
+    expect(liveEventConsumerPresentation("alerts").label).toBe("Alert engine");
+    expect(liveEventConsumerPresentation("persistence").label).toBe(
+      "History writer",
+    );
+    expect(liveEventConsumerPresentation("enrichment").label).toBe(
+      "Route enrichment",
+    );
+    expect(liveEventConsumerPresentation("metadata-cache").label).toBe(
+      "Aircraft metadata",
+    );
+    expect(liveEventConsumerPresentation("airports").label).toBe(
+      "Airport lookups",
+    );
+  });
+
+  it("gives every known consumer a one-line consequence", () => {
+    for (const name of [
+      "websocket",
+      "alerts",
+      "persistence",
+      "enrichment",
+      "metadata-cache",
+      "airports",
+    ]) {
+      expect(
+        liveEventConsumerPresentation(name).consequence.length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("humanizes rather than hides a consumer this build does not recognize", () => {
+    expect(liveEventConsumerPresentation("future_consumer")).toEqual({
+      label: "Future Consumer",
+      consequence: "It may fall behind.",
+    });
   });
 });

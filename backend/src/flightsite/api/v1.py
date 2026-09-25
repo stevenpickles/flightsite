@@ -901,6 +901,7 @@ async def analytics_classification_activity(
     activity = await _context(request).analytics.classification_activity(window.window)
     return {
         "window": window.block,
+        "complete": activity.complete,
         "military": activity.military,
         "government": activity.government,
         "law_enforcement": activity.law_enforcement,

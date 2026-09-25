@@ -37,6 +37,25 @@ describe("ReviewStep", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText(/military.*watchlist/i)).toBeInTheDocument();
+    // R4-16: says what a selected template actually becomes, rather than
+    // implying the selection is itself the ongoing setting.
+    expect(
+      screen.getByText(/becomes a rule on the alerts page/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about templates becoming rules when none are selected (R4-16)", () => {
+    const noTemplates = { ...draft, enabledTemplateIds: [] };
+    render(
+      <ReviewStep
+        draft={noTemplates}
+        testState={INITIAL_DECODER_TEST_STATE}
+        hasStoredKey={false}
+        submitError={null}
+      />,
+    );
+    expect(screen.getByText("None")).toBeInTheDocument();
+    expect(screen.queryByText(/becomes a rule on the alerts page/i)).toBeNull();
   });
 
   it("shows Skipped/Not tested/Failed decoder status appropriately", () => {

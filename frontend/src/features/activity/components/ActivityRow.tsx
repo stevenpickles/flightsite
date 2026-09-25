@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 
 import { describeActivityEvent } from "@/features/activity/lib/describeActivityEvent";
 import { ACTIVITY_ICONS, toneForSeverity } from "@/features/activity/lib/icons";
+import { formatReceiverLocalTitle } from "@/features/aircraft-detail/lib/format";
 import { formatReceiverLocalTime } from "@/features/receiver/lib/format";
 import type { ActivityEvent } from "@/lib/api/activity";
 import { cn } from "@/lib/utils";
@@ -87,14 +88,22 @@ export function ActivityRow({ event, timezone, compact }: ActivityRowProps) {
           </p>
         )}
       </div>
-      <span
+      {/* A machine-readable instant and a human one. The visible text stays
+       * the time of day — the page groups rows under a receiver-local day
+       * header, and the panel shows only the last few minutes — while the
+       * `title` carries the full local datetime and the UTC instant behind
+       * it, so no row is ambiguous about which day or which clock it means
+       * (review R2-06, R2-14). */}
+      <time
+        dateTime={event.at}
+        title={formatReceiverLocalTitle(event.at, timezone)}
         className={cn(
           "ml-auto shrink-0 whitespace-nowrap text-muted-foreground",
           compact ? "text-[11px]" : "text-xs",
         )}
       >
         {formatReceiverLocalTime(event.at, timezone)}
-      </span>
+      </time>
     </li>
   );
 }

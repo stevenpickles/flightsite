@@ -631,6 +631,12 @@ CREATE TABLE receiver_metrics_daily (
 ) WITHOUT ROWID;
 ```
 
+Hourly is keyed on a UTC hour boundary and is unaffected by the receiver's timezone;
+daily is receiver-local (§10). A timezone change therefore re-keys the daily tier for
+the days `receiver_metrics_raw` still retains — the maintenance pass deletes those
+rows and folds them again under the new zone — and leaves older ones alone, because
+the samples they were folded from are gone and nothing could re-derive them (§10).
+
 Hourly retained indefinitely (~8.8k rows/yr), daily indefinitely (365/yr). The signal
 *distribution* chart (SPEC §62) is **not** derived from these tables: a histogram of
 sample-averaged receiver RSSI is not a signal-strength distribution. It is computed
@@ -726,6 +732,25 @@ Since-T0 variant reads `aircraft.sighting_count`.
 **in-progress day's** busiest hour — needed by Today-at-a-Glance (slice 036) — is
 served from slice 033's hourly metric table (`receiver_metrics_hourly.aircraft_max` /
 counts for today's hours), since rollups for the current day are not yet final.
+
+**The day key carries a zone, and `meta.analytics_rollup_zone` names it** (issue
+#205). Every row here is a claim about a receiver-local date, which means nothing
+without the zone it was computed in. Recording the zone is what lets a boot notice
+that the receiver's timezone has changed since the rows were written and rebuild
+them under the new one — see §10 for the rule and for why this is a repair rather
+than a migration. The marker is claimed *before* the rebuild it triggers: the
+watermark (`meta.analytics_rollup_through_day`) is the resumption state, so an
+interrupted repair continues on the next boot instead of restarting.
+
+**`new_aircraft` is stored but read live.** The column is the fold's own count of
+airframes whose first-ever observation fell on the day. The API derives the same
+figure from `aircraft.first_seen_ms` instead (`ix_aircraft_first_seen`), because
+`GET /analytics/rarity`'s "never seen before" is defined that way and two visible
+numbers for one quantity is worse than either alone (issue #205, finding R3-03).
+The two agree by construction — `aircraft.first_seen_ms` is the minimum
+`sightings.started_ms` for that airframe — and the live form is additionally exact
+for an explicit mid-day window and available before the day's rollup has been
+computed.
 
 ---
 
@@ -987,9 +1012,26 @@ storage remedy.
 - `day`-keyed rollup tables use the **receiver-local calendar date** computed with the
   configured IANA timezone at write time — day boundaries are DST-correct (a 23- or
   25-hour local day rolls up as such; tested with DST fixtures in slice 031).
-- Changing the configured timezone applies to new rollups only; historical buckets are
-  not rewritten (documented behavior; a rebuild job is possible later since sightings
-  retain full UTC timestamps).
+- **The zone is resolved per pass, never captured** (issue #205). A writer that read
+  `settings.timezone` once at construction kept the `UTC` default for the life of a
+  process on every fresh install, because the setup wizard writes the real zone a
+  minute *after* the backend boots — while every read resolved the live value, so
+  "today" asked for a day nothing had been written under. Both rollup writers
+  (`AnalyticsService`, `ReceiverMetricsService`) now take a zone *probe* over live
+  settings and evaluate it on each pass, so a timezone change applies without a
+  restart and needs no entry in `_apply_live_settings`.
+- **Changing the timezone re-keys what can be re-derived, and only that.** The
+  analytics rollups (§6.5) are a pure function of `sightings`, so a zone change is
+  repaired rather than migrated: `meta.analytics_rollup_zone` records the zone the
+  rows were built under, and a boot (or a flush pass) that finds it stale drops the
+  watermark, rebuilds the receiver's whole history from ground truth one day per
+  transaction, and deletes the day rows that fall outside it. A migration could not
+  do this — the correct day for a sighting depends on the configured zone and on the
+  sightings themselves, and the fold that produces a row is Python, not SQL. Daily
+  receiver summaries (§6.2) are re-derived for the days the raw tier still retains;
+  older ones, and `range_by_bearing_daily` (§6.3), keep the key they were written
+  under, because their source rows no longer exist and a guessed shift would be
+  worse than an honest one-day seam.
 - "Today at a Glance" and analytics presets resolve their ranges in receiver-local
   time, then query UTC columns via computed boundaries.
 

@@ -25,6 +25,7 @@ from flightsite.analytics import AnalyticsService
 from flightsite.analytics.bucketing import local_day
 from flightsite.analytics.repository import AnalyticsRepository
 from flightsite.app import create_app
+from flightsite.config import Settings
 from flightsite.db import Database
 from flightsite.db.clock import utc_now_ms
 
@@ -63,6 +64,27 @@ def test_the_configured_timezone_reaches_the_service(isolated_data_dir: Path) ->
     service: AnalyticsService = create_app(isolated_data_dir).state.analytics
 
     assert str(service._zone) == TIMEZONE
+
+
+def test_the_timezone_is_read_late_rather_than_captured(isolated_data_dir: Path) -> None:
+    """Issue #205: the wizard writes the timezone *after* the backend boots.
+
+    A captured zone kept every rollup keyed under the ``UTC`` default for the
+    life of the process while the read path resolved the real one, so "today"
+    read a day nothing had ever been written under — and a later Settings
+    change re-broke it without a restart. Swapping ``app.state.settings`` is
+    the whole of applying it, which is why ``_apply_live_settings`` has no
+    analytics entry.
+    """
+    app = create_app(isolated_data_dir)
+    settings: Settings = app.state.settings
+    service: AnalyticsService = app.state.analytics
+    assert str(service._zone) == "UTC"
+
+    app.state.settings = settings.model_copy(update={"timezone": TIMEZONE})
+
+    assert str(service._zone) == TIMEZONE
+    assert str(app.state.receiver_metrics._zone) == TIMEZONE
 
 
 def test_the_service_runs_across_the_lifespan(isolated_data_dir: Path) -> None:

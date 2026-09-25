@@ -44,7 +44,13 @@ export interface SettingsDraft {
   // Alerts.
   /** Blank means unlimited (`alert_radius_nm: null`). */
   alertRadiusNm: string;
-  enabledTemplateIds: string[];
+  // `enabled_templates` is deliberately absent here (R4-03): the Alerts
+  // page's Templates gallery is the single control surface for shipped
+  // templates (it resolves "added" from real rule provenance, which
+  // `config.alerts.enabled_templates` cannot — see
+  // `docs/reviews/2026-09-20-site-review.md` R4-03). The config key still
+  // exists and is still read once, by the setup wizard, as the first-run
+  // seed for which templates to instantiate.
 
   // Notifications.
   notifications: NotificationConfig;

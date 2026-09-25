@@ -25,15 +25,42 @@ describe("LocationStep", () => {
     expect(screen.getByLabelText(/longitude/i)).toBeInTheDocument();
   });
 
-  it("shows validation errors for out-of-range coordinates", () => {
+  it("shows no validation errors before either field is touched, even with out-of-range values (R4-21)", () => {
+    // A genuine first run has no stored coordinates — this pins that
+    // landing on the step does not immediately argue about it.
     render(
       <LocationStep
         draft={{ ...draft, latitude: "200", longitude: "-200" }}
         onChange={vi.fn()}
       />,
     );
-    const alerts = screen.getAllByRole("alert");
-    expect(alerts.length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  });
+
+  it("shows a coordinate's error only once that field has been touched (R4-21)", async () => {
+    const user = userEvent.setup();
+    render(
+      <LocationStep
+        draft={{ ...draft, latitude: "200", longitude: "-200" }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByLabelText(/latitude/i));
+    await user.tab();
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(
+      screen.getByText(/enter a latitude between -90 and 90/i),
+    ).toBeInTheDocument();
+
+    // Longitude is still untouched.
+    expect(
+      screen.queryByText(/enter a longitude between -180 and 180/i),
+    ).not.toBeInTheDocument();
+
+    await user.tab();
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
   });
 
   it("reports manual latitude/longitude edits via onChange", async () => {
@@ -63,13 +90,21 @@ describe("LocationStep", () => {
     });
   });
 
-  it("validates the optional antenna height", () => {
+  it("validates the optional antenna height once touched", async () => {
+    const user = userEvent.setup();
     render(
       <LocationStep
         draft={{ ...draft, antennaHeightFt: "50000" }}
         onChange={vi.fn()}
       />,
     );
+    expect(
+      screen.queryByText(/between -1400 and 30000/i),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/antenna height/i));
+    await user.tab();
+
     expect(screen.getByText(/between -1400 and 30000/i)).toBeInTheDocument();
   });
 

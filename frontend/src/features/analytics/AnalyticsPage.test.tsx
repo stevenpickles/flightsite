@@ -112,15 +112,33 @@ describe("AnalyticsPage", () => {
     );
   });
 
-  it("shows a per-card error message when a query fails", async () => {
+  it("shows a page-level 'Data as of ... refreshes every 60 s' caption once loaded (R3-06)", async () => {
+    installAnalyticsApiMock();
+    renderAnalyticsPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Analytics" });
+
+    expect(
+      await screen.findByText(
+        /Data as of \d{2}:\d{2}:\d{2} UTC · refreshes every 60 s/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /** A `global.fetch` stub answering every analytics/receiver endpoint with
+   * an empty-but-successful body except the ones named in `failing`, which
+   * answer with the given status and a raw `{"error":{"message":...}}` body
+   * — the shape a real backend 500 carries. */
+  function stubAnalyticsFetch(failing: Record<string, string>) {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), "http://localhost");
-        if (url.pathname === "/api/v1/analytics/top-aircraft") {
+        const rawMessage = failing[url.pathname];
+        if (rawMessage !== undefined) {
           return new Response(
             JSON.stringify({
-              error: { code: "internal_error", message: "boom" },
+              error: { code: "internal_error", message: rawMessage },
             }),
             { status: 500 },
           );
@@ -142,14 +160,71 @@ describe("AnalyticsPage", () => {
             { status: 200 },
           );
         }
+        if (url.pathname === "/api/v1/analytics/rarity") {
+          return new Response(
+            JSON.stringify({
+              window: analyticsWindow(),
+              never_seen_before: 0,
+              rare_max_sightings: 0,
+              rare_max_type_aircraft: 0,
+              rare_aircraft: [],
+              rare_types: [],
+            }),
+            { status: 200 },
+          );
+        }
         return new Response(
           JSON.stringify({ window: analyticsWindow(), items: [] }),
           { status: 200 },
         );
       }),
     );
+  }
+
+  it("shows the human fallback, never the backend's raw error text, with a Retry button (R3-08)", async () => {
+    stubAnalyticsFetch({ "/api/v1/analytics/top-aircraft": "boom" });
     renderAnalyticsPage();
 
-    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Could not load top aircraft."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("dedupes a shared /analytics/daily failure into one page banner instead of four card errors (R3-08)", async () => {
+    stubAnalyticsFetch({ "/api/v1/analytics/daily": "daily exploded" });
+    renderAnalyticsPage();
+
+    // One banner, not four repetitions of the raw string.
+    expect(
+      await screen.findByText("Could not load daily activity data."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("daily exploded")).not.toBeInTheDocument();
+
+    const pointers = await screen.findAllByText(
+      "Could not load — see notice above.",
+    );
+    // Daily counts, max distance, receiver activity, never seen before.
+    expect(pointers.length).toBe(4);
+  });
+
+  it("shows one 'can't reach the API' banner when every analytics query fails (R3-08)", async () => {
+    stubAnalyticsFetch({
+      "/api/v1/analytics/daily": "boom",
+      "/api/v1/analytics/classification-activity": "boom",
+      "/api/v1/analytics/top-aircraft": "boom",
+      "/api/v1/analytics/top-types": "boom",
+      "/api/v1/analytics/top-operators": "boom",
+      "/api/v1/analytics/rarity": "boom",
+    });
+    renderAnalyticsPage();
+
+    expect(
+      await screen.findByText("FlightSite can't reach the API."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+    // Only the banner's Retry — no per-card Retry buttons duplicating it.
+    expect(screen.getAllByRole("button", { name: "Retry" }).length).toBe(1);
   });
 });

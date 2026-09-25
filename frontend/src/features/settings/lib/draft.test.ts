@@ -53,7 +53,6 @@ describe("draftFromConfig", () => {
           range_ring_radii_nm: [25, 75],
         },
         retention: { high_res_metric_days: 21 },
-        alerts: { enabled_templates: ["watchlist"] },
       }),
     );
 
@@ -73,7 +72,6 @@ describe("draftFromConfig", () => {
     expect(draft.rangeRingsEnabled).toBe(false);
     expect(draft.rangeRingRadiiNm).toBe("25, 75");
     expect(draft.highResMetricDays).toBe("21");
-    expect(draft.enabledTemplateIds).toEqual(["watchlist"]);
   });
 
   it("leaves alert radius blank when unlimited (null)", () => {
@@ -187,6 +185,15 @@ describe("buildAlertsPatch", () => {
     const draft = pickAlerts(draftFromConfig(defaultFlightSiteConfig()));
     const patch = buildAlertsPatch({ ...draft, alertRadiusNm: "200" });
     expect(patch.alert_radius_nm).toBe(200);
+  });
+
+  it("never touches alerts.enabled_templates (R4-03)", () => {
+    // The Templates gallery on the Alerts page is the single surface that
+    // manages shipped templates; Settings only ever seeded it, and now does
+    // not even do that, so a Settings save must never carry this key.
+    const draft = pickAlerts(draftFromConfig(defaultFlightSiteConfig()));
+    const patch = buildAlertsPatch(draft);
+    expect(patch.alerts).toBeUndefined();
   });
 });
 

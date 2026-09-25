@@ -9,7 +9,9 @@ import {
   installConfigApiMock,
 } from "@/test/configApiMock";
 
-function renderSection() {
+function renderSection(
+  overrides: Parameters<typeof defaultFlightSiteConfig>[0] = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -20,6 +22,7 @@ function renderSection() {
       site_name: "Home Roof",
       antenna_height_ft: 30,
     },
+    ...overrides,
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -131,5 +134,53 @@ describe("ReceiverSection", () => {
     expect(
       await screen.findByText(/input should be less than or equal to 90/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["location", "latitude"],
+                msg: "Input should be less than or equal to 90",
+                type: "less_than_equal",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.type(screen.getByLabelText(/site name/i), " Edited");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/input should be less than or equal to 90/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.type(screen.getByLabelText(/site name/i), " Again");
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
+
+  it("shows a metric conversion hint under antenna height when metric is preferred (R4-13)", async () => {
+    installConfigApiMock();
+    renderSection({ units: "metric" });
+
+    expect(await screen.findByText(/≈ 9.1 m/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", () => {
+    installConfigApiMock();
+    renderSection({ units: "aviation" });
+
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 });

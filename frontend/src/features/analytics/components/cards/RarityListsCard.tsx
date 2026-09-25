@@ -26,6 +26,8 @@ export interface RarityListsCardProps {
   rareTypes: AnalyticsRareType[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 export function RarityListsCard({
@@ -36,6 +38,8 @@ export function RarityListsCard({
   rareTypes,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: RarityListsCardProps) {
   return (
     <AnalyticsCard
@@ -43,6 +47,8 @@ export function RarityListsCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <div className="flex flex-col gap-4">
         <p className="text-sm text-foreground">

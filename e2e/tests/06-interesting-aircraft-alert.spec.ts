@@ -154,7 +154,9 @@ test.describe("interesting-aircraft alert", () => {
 
     const detail = page.getByTestId("aircraft-detail-panel");
     await expect(detail).toBeVisible();
-    await expect(detail.getByText(new RegExp(`ICAO ${icao}`, "i"))).toBeVisible();
+    await expect(
+      detail.getByText(new RegExp(`ICAO ${icao}`, "i")),
+    ).toBeVisible();
 
     // The same verdict, reached through a different component: the detail
     // panel's Interesting section (`InterestingSection.tsx`).
@@ -237,21 +239,25 @@ test.describe("interesting-aircraft alert", () => {
     const match = await waitForAlertMatch(api, probe, icao);
     expect(match.severity).toBe(PROBE_SEVERITY);
 
-    await page.goto("/alerts");
+    // R4-07: the History tab is deep-linkable via ?tab=history now, so this
+    // goes straight there instead of loading the page and clicking a tab.
+    await page.goto("/alerts?tab=history");
     await expect(
       page.getByRole("heading", { level: 1, name: "Alerts" }),
     ).toBeVisible();
-
-    // History is a tab, and the tab state is local rather than URL-persisted,
-    // so it has to be clicked rather than deep-linked.
-    await page.getByRole("tab", { name: "History" }).click();
+    await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
 
     const history = page.getByRole("list", { name: "Alert history" });
     await expect(history).toBeVisible();
     await expect(history).toContainText(`Rule: ${PROBE_RULE_NAME}`);
-    // The entry links back to the aircraft it fired for.
+    // The entry links back to the aircraft it fired for. Since slice 076
+    // (R4-08) the link is named by callsign/type/registration where known,
+    // so it is found by its target rather than by the hex it may not show.
     await expect(
-      history.getByRole("link", { name: icao.toUpperCase() }).first(),
+      history.locator(`a[href="/aircraft/${icao.toLowerCase()}"]`).first(),
     ).toBeVisible();
   });
 

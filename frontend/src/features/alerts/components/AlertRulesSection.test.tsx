@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AlertRulesSection } from "@/features/alerts/components/AlertRulesSection";
 import { alertRule, installAlertsApiMock } from "@/test/alertsApiMock";
+import { watchlist } from "@/test/watchlistsApiMock";
 import { renderWithProviders } from "@/test/test-utils";
 
 afterEach(() => {
@@ -77,6 +78,49 @@ describe("AlertRulesSection", () => {
     expect(within(card).getByText("military")).toBeInTheDocument();
   });
 
+  it("names the watchlist a rule matches, not its bare id (R4-09)", async () => {
+    installAlertsApiMock({
+      rules: [
+        alertRule({
+          name: "R4 watchlist rule",
+          conditions: { version: 1, watchlist_id: 42 },
+        }),
+      ],
+      watchlists: [watchlist({ id: 42, name: "R4 probe list" })],
+    });
+
+    renderWithProviders(<AlertRulesSection />);
+
+    const card = await screen.findByRole("article", {
+      name: "R4 watchlist rule",
+    });
+    expect(
+      await within(card).findByText("on watchlist R4 probe list"),
+    ).toBeInTheDocument();
+    expect(within(card).queryByText("on watchlist 42")).toBeNull();
+  });
+
+  it("falls back to the bare id for a watchlist that no longer exists (R4-09)", async () => {
+    installAlertsApiMock({
+      rules: [
+        alertRule({
+          name: "Orphaned watchlist rule",
+          conditions: { version: 1, watchlist_id: 99 },
+        }),
+      ],
+      watchlists: [],
+    });
+
+    renderWithProviders(<AlertRulesSection />);
+
+    const card = await screen.findByRole("article", {
+      name: "Orphaned watchlist rule",
+    });
+    expect(
+      await within(card).findByText("on watchlist 99"),
+    ).toBeInTheDocument();
+  });
+
   it("names the template a shipped rule came from", async () => {
     installAlertsApiMock({
       rules: [
@@ -115,7 +159,7 @@ describe("AlertRulesSection", () => {
     // the API stored, described back in the API's own words.
     const card = await screen.findByRole("article", { name: "Rare visitors" });
     expect(
-      within(card).getByText("seen at most 2 time(s) here"),
+      within(card).getByText("seen at most 2 times here"),
     ).toBeInTheDocument();
     // The builder closes once the rule exists.
     expect(
@@ -168,17 +212,16 @@ describe("AlertRulesSection", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(
-      await screen.findByText("seen at most 5 time(s) here"),
+      await screen.findByText("seen at most 5 times here"),
     ).toBeInTheDocument();
     // SPEC §45's "enable, then customize": tuning does not erase where the
     // rule came from.
     expect(screen.getByText(/from template/i)).toBeInTheDocument();
   });
 
-  it("deletes a rule once the warning is accepted", async () => {
+  it("deletes a rule once the confirmation dialog is accepted (R4-10)", async () => {
     const user = userEvent.setup();
     installAlertsApiMock({ rules: [alertRule({ name: "Military aircraft" })] });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderWithProviders(<AlertRulesSection />);
     await screen.findByRole("article", { name: "Military aircraft" });
@@ -186,6 +229,13 @@ describe("AlertRulesSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Delete Military aircraft" }),
     );
+    // No typed phrase for this variant — a single rule, not every row
+    // FlightSite has ever recorded — just a dialog to confirm on.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/alerts it has already recorded/i),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(
@@ -194,10 +244,9 @@ describe("AlertRulesSection", () => {
     });
   });
 
-  it("keeps a rule when the deletion warning is declined", async () => {
+  it("keeps a rule when the confirmation dialog is cancelled (R4-10)", async () => {
     const user = userEvent.setup();
     installAlertsApiMock({ rules: [alertRule({ name: "Military aircraft" })] });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     renderWithProviders(<AlertRulesSection />);
     await screen.findByRole("article", { name: "Military aircraft" });
@@ -205,7 +254,10 @@ describe("AlertRulesSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Delete Military aircraft" }),
     );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("article", { name: "Military aircraft" }),
     ).toBeInTheDocument();

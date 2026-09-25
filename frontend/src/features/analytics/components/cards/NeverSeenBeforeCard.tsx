@@ -12,12 +12,15 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
+import { formatCalendarDay } from "@/features/analytics/lib/format";
 
 export interface NeverSeenBeforeCardProps {
   window?: AnalyticsWindow;
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 export function NeverSeenBeforeCard({
@@ -25,6 +28,8 @@ export function NeverSeenBeforeCard({
   items,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: NeverSeenBeforeCardProps) {
   const total = items.reduce((sum, row) => sum + row.new_aircraft, 0);
 
@@ -44,15 +49,24 @@ export function NeverSeenBeforeCard({
         tooltip: {
           trigger: "axis" as const,
           axisPointer: { type: "shadow" as const },
+          // "aircraft" is its own plural — no pluralize() needed here.
+          valueFormatter: (value: unknown) =>
+            typeof value === "number" ? `${value} aircraft` : "no data",
         },
         xAxis: {
           type: "category" as const,
           data: items.map((row) => row.day),
           ...axisStyle,
         },
-        yAxis: { type: "value" as const, ...axisStyle },
+        yAxis: {
+          type: "value" as const,
+          name: "aircraft",
+          nameTextStyle: { color: theme.mutedInk },
+          ...axisStyle,
+        },
         series: [
           {
+            name: "New aircraft",
             type: "bar" as const,
             data: items.map((row) => row.new_aircraft),
             barMaxWidth: 24,
@@ -67,7 +81,7 @@ export function NeverSeenBeforeCard({
     items.length === 0
       ? "No new aircraft in this window."
       : `New (never-seen-before) aircraft by day, ${total} total: ${items
-          .map((row) => `${row.day} — ${row.new_aircraft}`)
+          .map((row) => `${formatCalendarDay(row.day)} — ${row.new_aircraft}`)
           .join("; ")}.`;
 
   return (
@@ -76,6 +90,8 @@ export function NeverSeenBeforeCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

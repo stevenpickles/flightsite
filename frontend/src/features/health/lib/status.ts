@@ -195,3 +195,61 @@ export function enrichmentBudgetPresentation(
   }
   return { tone: "ok", label: `${budget.remaining ?? 0} left today` };
 }
+
+/** An owner-facing name for one Live events consumer, and what it means for
+ * the install if that consumer is the one shedding (R4-17). The internal
+ * subscriber identifiers (`"persistence"`, `"metadata-cache"`, …) are
+ * `backend/src/flightsite/live/broadcaster.py` implementation names, not
+ * words an owner who has never SSH'd in has any reason to know. */
+export interface LiveEventConsumerPresentation {
+  label: string;
+  /** What falls behind while this consumer is shedding — every consumer
+   * resyncs from a snapshot once it catches up (the card's own
+   * description already says so), so this names the interim effect, not a
+   * lasting one. */
+  consequence: string;
+}
+
+const LIVE_EVENT_CONSUMERS: Record<string, LiveEventConsumerPresentation> = {
+  websocket: {
+    label: "Live map feed",
+    consequence: "The map may show stale aircraft positions.",
+  },
+  alerts: {
+    label: "Alert engine",
+    consequence: "New alerts may be delayed.",
+  },
+  persistence: {
+    label: "History writer",
+    consequence: "Sighting and analytics history may lag behind.",
+  },
+  enrichment: {
+    label: "Route enrichment",
+    consequence: "Flight route lookups may lag behind.",
+  },
+  "metadata-cache": {
+    label: "Aircraft metadata",
+    consequence: "Aircraft metadata updates may lag behind.",
+  },
+  airports: {
+    label: "Airport lookups",
+    consequence: "Airport data updates may lag behind.",
+  },
+};
+
+/** Falls back to a humanized version of the raw name for a consumer this
+ * build does not recognize yet, rather than hiding it — a new consumer a
+ * future slice adds is still worth showing, just without a tailored
+ * consequence sentence until this map catches up. */
+export function liveEventConsumerPresentation(
+  name: string,
+): LiveEventConsumerPresentation {
+  return (
+    LIVE_EVENT_CONSUMERS[name] ?? {
+      label: name
+        .replace(/[-_]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
+      consequence: "It may fall behind.",
+    }
+  );
+}

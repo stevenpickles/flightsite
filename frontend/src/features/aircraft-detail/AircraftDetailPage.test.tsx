@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { aircraftDetail, installAircraftApiMock } from "@/test/aircraftApiMock";
+import { sightingRow } from "@/test/sightingsApiMock";
 import { renderApp } from "@/test/test-utils";
 
 beforeEach(() => {
@@ -51,6 +52,7 @@ describe("AircraftDetailPage", () => {
             last_seen: "2026-08-30T22:41:55.000Z",
             sighting_count: 41,
             cumulative_duration_s: 51_840,
+            open_sighting_elapsed_s: null,
             closest_approach_nm: 2.1,
             max_range_nm: 141.8,
             lowest_altitude_ft: 1250,
@@ -70,6 +72,8 @@ describe("AircraftDetailPage", () => {
     // Both "Operator" and "Operator group" show the same string here.
     expect(screen.getAllByText("Delta Air Lines")).toHaveLength(2);
     expect(screen.getByText("2018")).toBeInTheDocument();
+    // SPEC §23's second item, derived from the first (review R2-10).
+    expect(screen.getByText(/^\d+ years \(built 2018\)$/)).toBeInTheDocument();
     expect(screen.getByText("Some Owner LLC")).toBeInTheDocument();
     // Mission renders through MISSION_LABELS, never the raw slug.
     expect(
@@ -85,6 +89,89 @@ describe("AircraftDetailPage", () => {
     expect(
       screen.queryByRole("button", { name: /live now/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("builds tracker links from the airframe's last callsign when it has no registration (R2-11)", async () => {
+    installAircraftApiMock({
+      detail: {
+        b034be: aircraftDetail({ icao: "b034be", registration: null }),
+      },
+      aircraftSightings: {
+        b034be: {
+          items: [
+            sightingRow({ id: 2, icao: "b034be", callsign: "AFR1641" }),
+            sightingRow({ id: 1, icao: "b034be", callsign: "AFR990" }),
+          ],
+          total: null,
+          limit: 5,
+          offset: 0,
+        },
+      },
+    });
+
+    renderApp("/aircraft/b034be");
+
+    // All three of SPEC §24's services, not the one ADS-B Exchange link a
+    // hard-coded `callsign: null` left behind.
+    const fr24 = await screen.findByRole("link", { name: /flightradar24/i });
+    expect(fr24).toHaveAttribute(
+      "href",
+      "https://www.flightradar24.com/AFR1641",
+    );
+    expect(
+      screen.getByRole("link", { name: /flightaware/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /ads-b exchange/i }),
+    ).toBeInTheDocument();
+    // And it says what a callsign link actually opens.
+    expect(fr24.getAttribute("title")).toMatch(/not this airframe/i);
+  });
+
+  it("counts a sighting still in progress in the cumulative time, and says so (R2-02)", async () => {
+    installAircraftApiMock({
+      detail: {
+        ae1463: aircraftDetail({
+          icao: "ae1463",
+          lifetime: {
+            first_seen: "2026-09-21T01:33:24.000Z",
+            last_seen: "2026-09-21T01:49:30.000Z",
+            sighting_count: 1,
+            // The review's case: overhead since T0 and reported as `0s`,
+            // because the total summed closed sightings only.
+            cumulative_duration_s: 964,
+            open_sighting_elapsed_s: 964,
+            closest_approach_nm: null,
+            max_range_nm: null,
+            lowest_altitude_ft: null,
+            highest_altitude_ft: null,
+          },
+        }),
+      },
+    });
+
+    renderApp("/aircraft/ae1463");
+
+    await screen.findByText(/ICAO AE1463/);
+    const row = screen.getByText("Cumulative observed time").closest("div");
+    expect(row).toHaveTextContent("16m 4s");
+    expect(row).toHaveTextContent("still running");
+  });
+
+  it("puts its sections at H2, under the page's H1 (R2-17)", async () => {
+    installAircraftApiMock({
+      detail: { ae1463: aircraftDetail({ icao: "ae1463" }) },
+    });
+
+    renderApp("/aircraft/ae1463");
+
+    await screen.findByText(/ICAO AE1463/);
+    // The review audited this route as H1 → H3 with no H2 anywhere.
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(headings).toContain("Identity & metadata");
+    expect(headings).toContain("Manufacture & ownership");
   });
 
   it("shows a not-found message for a valid-format icao this receiver never sighted", async () => {

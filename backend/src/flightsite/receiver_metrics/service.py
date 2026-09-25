@@ -45,6 +45,38 @@ The two cadences
   Always in that order — a row must be summarized before it can be discarded,
   and ADR-0009's whole structure depends on it.
 
+Which day a daily row is keyed under
+------------------------------------
+
+The receiver-local day, resolved from the **live** settings on every sample
+and every maintenance pass rather than captured at construction. The captured
+form was a real defect (issue #205, findings R3-01 / R1-17): a fresh install
+boots before the setup wizard writes ``config.yaml``, so this service kept the
+``UTC`` default for the life of the process while the read path resolved the
+receiver's real zone per request — ``Max range today`` read a day nothing had
+been written under, and the busiest-day record named a UTC date. The zone now
+arrives as a :data:`~flightsite.db.clock.TimezoneSource` probe.
+
+What a zone change repairs, and what it cannot
+----------------------------------------------
+
+* ``receiver_metrics_hourly`` is keyed on a UTC hour boundary and is not
+  affected by a zone at all.
+* ``receiver_metrics_daily`` is re-derived from the raw samples ADR-0009 still
+  retains: the pass that notices the change recomputes every recomputable
+  bucket under the new zone and deletes the rows it is replacing, so the days
+  inside the high-resolution window are exact. Daily rows *older* than that
+  window keep the key they were written under — their raw samples are gone, so
+  nothing can re-derive them, and inventing a shift would be a guess. This is
+  the honest half of ``docs/DATA_MODEL.md`` §10's "applies to new rollups
+  only": the analytics rollups can be rebuilt from ``sightings`` and are; a
+  summary of counters that no longer exist cannot be.
+* ``range_by_bearing_daily`` records the furthest detection per compass sector
+  per day and has no source table to rebuild from either, so its existing rows
+  stand. Today's ring refills from live samples within one sample interval and
+  the "ever" ring is keyed on nothing but the bearing, so neither is wrong for
+  longer than that.
+
 Degradation
 -----------
 
@@ -78,7 +110,7 @@ import structlog
 
 from flightsite.counters import CounterRegistry
 from flightsite.counters import counters as default_counters
-from flightsite.db.clock import MS_PER_SECOND, utc_now_ms
+from flightsite.db.clock import MS_PER_SECOND, TimezoneSource, resolve_zone, utc_now_ms
 from flightsite.db.engine import Database
 from flightsite.db.startup import DB_ERRORS_COUNTER
 from flightsite.live.store import LiveStore
@@ -170,9 +202,10 @@ class ReceiverMetricsService:
         poller: the decoder statistics poller, or ``None`` when no decoder is
             configured (a first-run install, or demo mode). ``None`` is a fully
             supported state: every FlightSite-computed metric is still recorded.
-        timezone: IANA zone the daily buckets are keyed in (``docs/DATA_MODEL.md``
-            §10). Read once at construction, matching §10's rule that a changed
-            timezone applies to new rollups only.
+        timezone: where to get the IANA zone the daily buckets are keyed in
+            (``docs/DATA_MODEL.md`` §10) — a name, or a probe resolved on every
+            pass. It is deliberately *not* captured: see "Which day a daily row
+            is keyed under" above.
         high_res_days: the ADR-0009 window, 7 to 30 days.
         sample_interval_s: raw sample spacing.
         flush_interval_s: how often buffered samples are written.
@@ -204,8 +237,9 @@ class ReceiverMetricsService:
         "_sleep",
         "_stats_supported",
         "_summary_floor_ms",
+        "_timezone",
         "_window_ms",
-        "_zone",
+        "_zone_key",
     )
 
     def __init__(
@@ -214,7 +248,7 @@ class ReceiverMetricsService:
         database: Database,
         live: LiveStore,
         poller: StatsJsonPoller | None = None,
-        timezone: str = "UTC",
+        timezone: TimezoneSource = "UTC",
         high_res_days: int = DEFAULT_HIGH_RES_DAYS,
         sample_interval_s: float = DEFAULT_SAMPLE_INTERVAL_S,
         flush_interval_s: float = DEFAULT_FLUSH_INTERVAL_S,
@@ -235,7 +269,8 @@ class ReceiverMetricsService:
         self._repository = MetricsRepository(database)
         self._live = live
         self._poller = poller
-        self._zone = ZoneInfo(timezone)
+        self._timezone = timezone
+        self._zone_key: str | None = None
         self._window_ms = high_res_days * MS_PER_DAY
         self._sample_interval_s = sample_interval_s
         self._flush_interval_ms = int(flush_interval_s * MS_PER_SECOND)
@@ -258,6 +293,11 @@ class ReceiverMetricsService:
         self._maintenance_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------ inspection
+
+    @property
+    def _zone(self) -> ZoneInfo:
+        """The receiver's zone *now* — never a value captured at construction."""
+        return resolve_zone(self._timezone)
 
     @property
     def running(self) -> bool:
@@ -353,6 +393,9 @@ class ReceiverMetricsService:
         self._sampler.reset()
         self._previous_sample = None
         self._summary_floor_ms = None
+        # The zone this process began with, so that a setup wizard writing the
+        # timezone a minute after boot reads as the change it is (issue #205).
+        self._zone_key = str(self._zone)
         if self._poller is not None:
             await self._poller.start()
         self._sample_task = asyncio.create_task(self._sample_loop(), name="flightsite-stats-poller")
@@ -363,7 +406,7 @@ class ReceiverMetricsService:
             "receiver_metrics_started",
             sample_interval_s=self._sample_interval_s,
             high_res_days=self._window_ms // MS_PER_DAY,
-            timezone=str(self._zone),
+            timezone=self._zone_key,
             decoder_stats=self._poller is not None,
         )
 
@@ -539,18 +582,25 @@ class ReceiverMetricsService:
         so running this twice over the same data writes the same rows twice —
         which is the idempotence ADR-0009 requires of a pass that a crash may
         have interrupted.
+
+        A pass that finds the receiver's timezone changed under it re-keys
+        first — see :meth:`_adopt_zone` — and then runs exactly as it always
+        does, because re-keying is only ever "recompute these buckets again".
         """
         now_ms = self._clock()
+        zone = self._zone
         span = await self._repository.raw_span()
         if span is None:
+            self._zone_key = str(zone)
             return MaintenanceResult()
 
         prune_before_ms = hour_start_ms(now_ms - self._window_ms)
         frozen_before_ms = prune_before_ms + RECOMPUTE_MARGIN_MS
-        start_ms = self._reprocess_from(span[0], now_ms)
+        await self._adopt_zone(zone, frozen_before_ms)
+        start_ms = self._reprocess_from(span[0], now_ms, zone)
 
         try:
-            hours, days = await self._recompute(start_ms, now_ms, frozen_before_ms)
+            hours, days = await self._recompute(start_ms, now_ms, frozen_before_ms, zone)
             await self._repository.write_summaries(hours, days, at_ms=now_ms)
         except Exception as exc:
             # The watermark is not advanced, so the next pass covers this
@@ -565,7 +615,7 @@ class ReceiverMetricsService:
             )
             return MaintenanceResult(failed=True)
 
-        self._summary_floor_ms = self._recent_floor(now_ms)
+        self._summary_floor_ms = self._recent_floor(now_ms, zone)
 
         try:
             pruned = await self._repository.prune_raw(prune_before_ms)
@@ -580,7 +630,43 @@ class ReceiverMetricsService:
             logger.info("receiver_metrics_pruned", rows=pruned, before_ms=prune_before_ms)
         return MaintenanceResult(hours_written=len(hours), days_written=len(days), pruned=pruned)
 
-    def _recent_floor(self, now_ms: int) -> int:
+    async def _adopt_zone(self, zone: ZoneInfo, frozen_before_ms: int) -> bool:
+        """Re-key the daily tier when the receiver's timezone has changed.
+
+        True when this pass found a change and prepared the repair. The repair
+        itself is the pass that follows: the recomputation floor is dropped so
+        every retained bucket is folded again under the new zone, and the
+        daily rows that would otherwise be left alone — a recomputation
+        declines to overwrite a summary that exists — are deleted so they can
+        be rewritten. Both halves are idempotent, and the delete is one short
+        transaction over at most a fortnight of rows.
+
+        ``frozen_before_ms`` is the boundary below which a bucket is no longer
+        recomputable, and nothing below it is touched: those rows are all the
+        install has left of days whose raw samples are pruned. See the module
+        docstring for what that costs and why it is the honest answer.
+
+        Nothing is done on the first pass of a process, which has no previous
+        zone to have changed *from*; :meth:`start` records the zone the
+        process began with, so a wizard that writes the timezone a minute
+        after boot is a change like any other.
+        """
+        key = str(zone)
+        previous, self._zone_key = self._zone_key, key
+        if previous is None or previous == key:
+            return False
+
+        self._summary_floor_ms = None
+        removed = await self._repository.delete_daily_from(local_day(frozen_before_ms, zone))
+        logger.info(
+            "receiver_metrics_timezone_changed",
+            previous=previous,
+            timezone=key,
+            rekeyed_days=removed,
+        )
+        return True
+
+    def _recent_floor(self, now_ms: int, zone: ZoneInfo) -> int:
         """Local midnight opening the day before ``now_ms``.
 
         The steady-state reprocessing floor. Yesterday rather than today so
@@ -590,9 +676,9 @@ class ReceiverMetricsService:
         what keeps the daily tier exact in zones whose offset is not a whole
         number of hours.
         """
-        return local_day_start_ms(local_day(now_ms - MS_PER_DAY, self._zone), self._zone)
+        return local_day_start_ms(local_day(now_ms - MS_PER_DAY, zone), zone)
 
-    def _reprocess_from(self, earliest_ms: int, now_ms: int) -> int:
+    def _reprocess_from(self, earliest_ms: int, now_ms: int, zone: ZoneInfo) -> int:
         """The instant this pass recomputes from.
 
         The first pass of a process covers everything still retained, because
@@ -603,19 +689,24 @@ class ReceiverMetricsService:
         floor = self._summary_floor_ms
         if floor is None:
             return earliest_ms
-        return max(earliest_ms, min(floor, self._recent_floor(now_ms)))
+        return max(earliest_ms, min(floor, self._recent_floor(now_ms, zone)))
 
     async def _recompute(
-        self, start_ms: int, now_ms: int, frozen_before_ms: int
+        self, start_ms: int, now_ms: int, frozen_before_ms: int, zone: ZoneInfo
     ) -> tuple[dict[int, MetricSummary], dict[str, MetricSummary]]:
-        """Summaries for every bucket in range that may still be written."""
+        """Summaries for every bucket in range that may still be written.
+
+        The zone is the caller's, resolved once for the whole pass: a pass
+        that folded some of its days in one zone and the rest in another
+        would write exactly the inconsistency this argument exists to prevent.
+        """
         samples = await self._repository.samples_between(start_ms, now_ms + 1)
         if not samples:
             return {}, {}
         previous = await self._repository.sample_before(start_ms)
 
         existing_hours = await self._repository.existing_hours(hour_start_ms(start_ms))
-        existing_days = await self._repository.existing_days(local_day(start_ms, self._zone))
+        existing_days = await self._repository.existing_days(local_day(start_ms, zone))
 
         hours = {
             hour: summary
@@ -624,8 +715,8 @@ class ReceiverMetricsService:
         }
         days = {
             day: summary
-            for day, summary in daily(samples, self._zone, previous=previous).items()
-            if local_day_start_ms(day, self._zone) >= frozen_before_ms or day not in existing_days
+            for day, summary in daily(samples, zone, previous=previous).items()
+            if local_day_start_ms(day, zone) >= frozen_before_ms or day not in existing_days
         }
         return hours, days
 

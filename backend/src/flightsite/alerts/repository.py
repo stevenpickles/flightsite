@@ -62,7 +62,13 @@ Query costs
 * :meth:`open_sighting_match_keys` is keyed on the ids of the *open* sightings,
   which the partial index ``ix_sightings_open`` already bounds to the live set;
   it is called once per boot to rehydrate the engine's dedupe state.
-* :meth:`list_matches` is newest-first over ``ix_amatch_matched``.
+* :meth:`list_matches` is newest-first over ``ix_amatch_matched``. It joins
+  the sighting the match points at, plus that airframe's resolved metadata,
+  to carry the identity SPEC §48 wants on a notification (see
+  :class:`~flightsite.alerts.model.StoredAlertMatch`). Both are point lookups
+  on a primary key or a unique index, bounded by the page size rather than by
+  history — ``alert_matches.sighting_id`` is a foreign key, and
+  ``aircraft_metadata_resolved`` is keyed on ``icao24``.
 """
 
 from __future__ import annotations
@@ -77,6 +83,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from flightsite.alerts.model import AlertRuleRecord, RuleConditions, StoredAlertMatch
 from flightsite.alerts.vocabulary import AlertSeverity
 from flightsite.db import Aircraft, AlertMatch, AlertRule, Database, Sighting
+from flightsite.db.models import AircraftMetadataResolved
 
 logger = structlog.get_logger(__name__)
 
@@ -424,6 +431,13 @@ class AlertRepository:
         so a client that deleted a rule and still holds its id gets an empty
         page rather than a 404 it would have to special-case. Built-in matches
         carry no ``rule_id`` at all, so any value excludes them.
+
+        ``Sighting`` is INNER JOINed — ``alert_matches.sighting_id`` is
+        ``NOT NULL`` and a match is written only once its sighting exists, so
+        there is nothing an outer join could preserve. The resolved metadata
+        is LEFT JOINed, exactly as the history pages join it: an airframe no
+        import has ever heard of still has an alert history, with ``null``
+        identity fields (§2.7), rather than dropping out of it.
         """
         statement = (
             select(
@@ -438,9 +452,19 @@ class AlertRepository:
                 AlertMatch.notified,
                 Aircraft.icao24,
                 AlertRule.name,
+                Sighting.callsign_last,
+                Sighting.closest_approach_nm,
+                Sighting.lowest_alt_ft,
+                AircraftMetadataResolved.registration,
+                AircraftMetadataResolved.type_code,
             )
             .select_from(AlertMatch)
             .join(Aircraft, Aircraft.id == AlertMatch.aircraft_id)
+            .join(Sighting, Sighting.id == AlertMatch.sighting_id)
+            .outerjoin(
+                AircraftMetadataResolved,
+                AircraftMetadataResolved.icao24 == Aircraft.icao24,
+            )
             .outerjoin(AlertRule, AlertRule.id == AlertMatch.rule_id)
             .order_by(AlertMatch.matched_ms.desc(), AlertMatch.id.desc())
             .limit(limit)
@@ -471,6 +495,11 @@ class AlertRepository:
                 notified=bool(row[8]),
                 icao24=str(row[9]),
                 rule_name=row[10],
+                callsign=row[11],
+                closest_approach_nm=None if row[12] is None else float(row[12]),
+                lowest_alt_ft=None if row[13] is None else int(row[13]),
+                registration=row[14],
+                type_code=row[15],
             )
             for row in rows
         )

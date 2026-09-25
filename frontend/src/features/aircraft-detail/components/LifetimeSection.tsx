@@ -8,11 +8,11 @@
 
 import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
+import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
 import {
   formatAltitude,
   formatDistance,
   formatDurationShort,
-  formatReceiverLocalDateTime,
 } from "@/features/aircraft-detail/lib/format";
 import type { LifetimeRecord } from "@/lib/api/aircraft";
 import type { UnitSystem } from "@/lib/api/config";
@@ -32,19 +32,37 @@ export function LifetimeSection({
     <DetailSection title="History">
       <FieldRow
         label="First seen"
-        value={formatReceiverLocalDateTime(lifetime.first_seen, timezone)}
+        value={<ReceiverTime iso={lifetime.first_seen} timezone={timezone} />}
       />
       <FieldRow
         label="Last seen"
-        value={formatReceiverLocalDateTime(lifetime.last_seen, timezone)}
+        value={<ReceiverTime iso={lifetime.last_seen} timezone={timezone} />}
       />
       <FieldRow
         label="Sighting count"
         value={String(lifetime.sighting_count)}
       />
+      {/* The total now includes a sighting still in progress, so it no
+       * longer reads `0s` for an aircraft that has been overhead for
+       * sixteen minutes (review R2-02). When part of it is still accruing,
+       * the row says how much — otherwise the number would quietly change
+       * under a reader with no explanation. */}
       <FieldRow
         label="Cumulative observed time"
-        value={formatDurationShort(lifetime.cumulative_duration_s * 1000)}
+        value={
+          <span>
+            {formatDurationShort(lifetime.cumulative_duration_s * 1000)}
+            {lifetime.open_sighting_elapsed_s !== null && (
+              <span className="font-normal text-muted-foreground">
+                {" · "}
+                {formatDurationShort(
+                  lifetime.open_sighting_elapsed_s * 1000,
+                )}{" "}
+                still running
+              </span>
+            )}
+          </span>
+        }
       />
       <FieldRow
         label="Closest approach"

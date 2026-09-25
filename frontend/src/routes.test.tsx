@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -52,5 +52,28 @@ describe("routing", () => {
       screen.getByRole("heading", { level: 1, name: "Activity" }),
     ).toBeInTheDocument();
     expect(NAV_ITEMS.some((item) => item.to === "/activity")).toBe(false);
+  });
+
+  it("renders NotFoundPage inside the shell for a path matching no route (R0-02, R2-16)", () => {
+    renderApp("/nope-not-a-route");
+
+    // Inside the shell, not React Router's raw developer screen: the
+    // sidebar is still there.
+    expect(
+      screen.getByRole("navigation", { name: /primary/i }),
+    ).toBeInTheDocument();
+
+    const main = screen.getByRole("main");
+    expect(
+      within(main).getByRole("heading", { name: /page not found/i }),
+    ).toBeInTheDocument();
+    expect(within(main).getByText("/nope-not-a-route")).toBeInTheDocument();
+
+    // Lists all seven sections as a way back, not just the Live Map.
+    for (const item of NAV_ITEMS) {
+      expect(
+        within(main).getByRole("link", { name: item.label }),
+      ).toBeInTheDocument();
+    }
   });
 });

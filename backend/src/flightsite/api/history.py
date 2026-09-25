@@ -34,6 +34,15 @@ is not guaranteed stable across two reads with different ``LIMIT``/``OFFSET``
 values, and an unstable tiebreak would let the same row appear on two pages
 or vanish from both.
 
+Nulls sort last in **both** directions (:func:`_direction`). Seven of the ten
+documented sort keys are nullable — an airframe no metadata import has ever
+heard of has no registration, type, operator or classification, and one never
+seen with a position has no closest approach or maximum range — and SQLite's
+default puts ``NULL`` first on ``ASC``. That made "closest approach,
+ascending" answer with the aircraft that have *no* closest approach: §2.7
+says a missing value is the absence of an answer, not the smallest one, so it
+belongs after every real answer whichever way the column is read.
+
 Total is computed, not omitted
 -------------------------------
 
@@ -46,6 +55,23 @@ years of history keep it in the thousands, not the millions that make
 join is cheap at that scale, so it is computed exactly rather than omitted;
 :mod:`tests.api.test_aircraft_history_perf` is the sanity check that this
 premise still holds against a several-thousand-row fixture.
+
+The open sighting, on the detail read only
+-------------------------------------------
+
+``aircraft.total_observed_ms`` counts *closed* sightings — by design; see
+:mod:`flightsite.sightings.repository`. That makes it the wrong number to
+publish on its own as SPEC §53's "cumulative observation duration" for an
+airframe that is overhead right now, so :meth:`
+AircraftHistoryRepository.get_aircraft` also selects
+:data:`_OPEN_SIGHTING_STARTED_MS`, and the serializer adds the elapsed time
+of the sighting still running.
+
+It is on the detail query alone, not on :func:`_joined_query`. The list
+payload has no cumulative-duration field to correct, and a correlated
+subquery in the shared join would be evaluated once per row of every page —
+a cost the Aircraft page would pay on every read for a column it never
+renders.
 
 Existing indexes only
 ----------------------
@@ -64,7 +90,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, func, select
 from sqlalchemy.engine import RowMapping
 
 from flightsite.db import Database
@@ -73,6 +99,7 @@ from flightsite.db.models import (
     AircraftClassification,
     AircraftMetadataResolved,
     OperatorGroup,
+    Sighting,
 )
 
 #: §3.5's documented sort keys, mapped to the column each one orders by.
@@ -141,6 +168,40 @@ _COLUMNS: Final[tuple[Any, ...]] = (
     AircraftClassification.mission_conf,
     AircraftClassification.icon_category,
 )
+
+
+#: How long the airframe's currently-open sighting, if any, has been
+#: running — as the ``started_ms`` of that sighting, for the caller to
+#: measure against its own "now".
+#:
+#: ``MIN`` rather than a bare column because a scalar subquery must yield at
+#: most one row and SQL has no way to promise that from the shape of the
+#: table alone. SPEC §18 gives an airframe at most one open sighting at a
+#: time, so in practice the aggregate reduces to that one row; where it is
+#: load-bearing is the case the invariant does not cover — a crash-recovery
+#: window that left two rows open — in which the *earliest* start is the
+#: honest "how long have I been watching this", and a plain column reference
+#: would have made the query fail instead.
+_OPEN_SIGHTING_STARTED_MS: Final[Any] = (
+    select(func.min(Sighting.started_ms))
+    .where(Sighting.aircraft_id == Aircraft.id, Sighting.ended_ms.is_(None))
+    .correlate(Aircraft)
+    .scalar_subquery()
+    .label("open_sighting_started_ms")
+)
+
+
+def _direction(column: Any, order: str) -> UnaryExpression[Any]:
+    """One sort key as an ``ORDER BY`` term, with nulls last either way.
+
+    ``nulls_last()`` on the descending branch too, not only the ascending
+    one: SQLite happens to sort ``NULL`` last on ``DESC`` already, but that
+    is a property of one engine's default, not of the contract this endpoint
+    publishes — saying it explicitly is what keeps "unknown is not an answer"
+    true of both directions rather than true of one by accident.
+    """
+    ordered: UnaryExpression[Any] = column.asc() if order == "asc" else column.desc()
+    return ordered.nulls_last()
 
 
 def _joined_query() -> Select[Any]:
@@ -217,8 +278,7 @@ class AircraftHistoryRepository:
         conditions = _filters(
             classification=classification, operator_group=operator_group, type_code=type_code
         )
-        column = SORT_COLUMNS[sort]
-        direction = column.asc() if order == "asc" else column.desc()
+        direction = _direction(SORT_COLUMNS[sort], order)
 
         filtered = _joined_query().where(*conditions) if conditions else _joined_query()
         query = filtered.order_by(direction, Aircraft.icao24.asc()).limit(limit).offset(offset)
@@ -233,8 +293,15 @@ class AircraftHistoryRepository:
         return rows, int(total or 0)
 
     async def get_aircraft(self, icao24: str) -> RowMapping | None:
-        """The joined row for one airframe, or ``None`` if never sighted."""
-        query = _joined_query().where(Aircraft.icao24 == icao24)
+        """The joined row for one airframe, or ``None`` if never sighted.
+
+        Carries ``open_sighting_started_ms`` beyond the shared join's columns
+        — see :data:`_OPEN_SIGHTING_STARTED_MS` and the module docstring for
+        why the list query does not.
+        """
+        query = (
+            _joined_query().add_columns(_OPEN_SIGHTING_STARTED_MS).where(Aircraft.icao24 == icao24)
+        )
         async with self._database.read_session() as session:
             return (await session.execute(query)).mappings().first()
 

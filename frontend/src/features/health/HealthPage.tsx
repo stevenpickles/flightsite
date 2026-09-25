@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Button } from "@/components/ui/button";
 import {
   DetailRow,
   HealthCard,
@@ -19,6 +21,7 @@ import {
 import {
   decoderPresentation,
   integrityPresentation,
+  liveEventConsumerPresentation,
   maintenancePresentation,
   metadataSourcePresentation,
   overallPresentation,
@@ -32,6 +35,9 @@ import {
 } from "@/features/receiver/lib/format";
 import { useConfigQuery } from "@/lib/api/config";
 import { useDiagnosticsQuery } from "@/lib/api/diagnostics";
+// R4-14: shared with Settings' Aircraft Metadata section, so the same
+// source reads as the same name ("FAA", not "faa") on both pages.
+import { rowNoun, sourceLabel } from "@/lib/metadata/sources";
 
 /**
  * The health and diagnostics area — SPEC §67, roadmap slice 042.
@@ -47,10 +53,33 @@ import { useDiagnosticsQuery } from "@/lib/api/diagnostics";
  * §10 fixes that at seven sections, so this follows the `/activity`
  * precedent of a route inside the shell with no `NAV_ITEMS` entry.
  */
+
+/** The current time, re-read every `intervalMs` — the same lazy-initial-state
+ * plus `setInterval` shape `useRelativeAge` uses, which keeps every
+ * `Date.now()` read out of the render body itself (`react-hooks/purity`):
+ * the only call at render time is the `useState` lazy initializer, which
+ * only ever runs once, and the periodic call lives in a timer callback. Used
+ * for the R4-04 "generated N ago" readouts, which would otherwise freeze at
+ * whatever age was true on the render that received the payload. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function HealthPage() {
-  const { data, isLoading, isError, error } = useDiagnosticsQuery();
+  const { data, isLoading, isError, error, refetch, isRefetching } =
+    useDiagnosticsQuery();
   const { data: config } = useConfigQuery();
   const timezone = config?.config.timezone ?? "UTC";
+  // Called unconditionally, before either early return, so the age readouts
+  // below stay live without breaking the Rules of Hooks.
+  const now = useNow(15_000);
 
   if (isLoading) {
     return (
@@ -63,7 +92,13 @@ export function HealthPage() {
     );
   }
 
-  if (isError || data === undefined) {
+  // R4-04: this page exists to be readable *while* things are going wrong,
+  // so a full-page error is reserved for "never loaded" — the one state
+  // with nothing else to show. A poll that starts failing after a good
+  // load keeps rendering the last payload (`data` stays populated; React
+  // Query does not clear it on a background refetch error) with a warning
+  // banner below, rather than replacing every card with a red line.
+  if (data === undefined) {
     return (
       <div className="p-8">
         <h1 className="text-2xl font-semibold">Health</h1>
@@ -77,6 +112,11 @@ export function HealthPage() {
       </div>
     );
   }
+
+  const generatedAgeS = Math.max(
+    0,
+    (now - new Date(data.generated_at).getTime()) / 1000,
+  );
 
   const overall = overallPresentation(data.status);
   const decoder = decoderPresentation(data.decoder.state);
@@ -92,6 +132,13 @@ export function HealthPage() {
   const liveEvents = data.live_events;
   const resyncing =
     liveEvents?.subscribers.some((subscriber) => subscriber.overflowed) ??
+    false;
+  // R4-17: six near-identical zero rows are noise on a healthy install —
+  // the per-consumer breakdown collapses behind a disclosure while every
+  // consumer reads 0, and opens by itself (and stays open) the moment one
+  // has something to say.
+  const anyConsumerShedding =
+    liveEvents?.subscribers.some((subscriber) => subscriber.dropped > 0) ??
     false;
   const vacuumRefusal =
     data.database.maintenance.vacuum_refusal === null
@@ -123,6 +170,30 @@ export function HealthPage() {
           </Link>
         </div>
       </header>
+
+      {isError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/50 bg-warning/10 p-3 text-sm"
+        >
+          <p className="text-warning">
+            Refreshing failed — showing the state from{" "}
+            {formatAgeAgo(generatedAgeS)}.
+            {error instanceof Error ? ` (${error.message})` : ""}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isRefetching}
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            {isRefetching ? "Retrying…" : "Retry"}
+          </Button>
+        </div>
+      )}
 
       {/* SPEC §67's headline figures, in one scan. */}
       <div
@@ -160,10 +231,26 @@ export function HealthPage() {
         <StatTile
           label="Version"
           value={data.versions.backend}
+          // R4-18: SPEC §67 asks for both the frontend and backend
+          // versions — the payload always carried all four, only the
+          // backend's ever reached the tile. The case this matters most is
+          // exactly the one that was invisible: a browser holding a stale
+          // cached bundle against an already-upgraded backend, where the
+          // two now differ and a single unlabelled number could not say
+          // which one it was even looking at.
           secondary={
-            data.versions.schema_revision !== null
-              ? `Schema ${data.versions.schema_revision}`
-              : undefined
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span>
+                {`Frontend ${data.versions.frontend} · API ${data.versions.api} · Schema ${data.versions.schema_revision ?? "—"}`}
+              </span>
+              {data.versions.frontend !== data.versions.backend && (
+                <StatusPill
+                  tone="warn"
+                  label="Reload to update the page"
+                  className="font-normal"
+                />
+              )}
+            </span>
           }
         />
         <StatTile
@@ -196,10 +283,14 @@ export function HealthPage() {
         <StatTile
           label="WebSocket clients"
           value={data.websocket.clients}
-          // Disconnects, not shed events: until slice 075 the live-event drop
-          // total sat here under the word "dropped", which read as the browser
-          // feed having lost them when the persistence queue had (issue #185).
-          secondary={`${formatCount(data.websocket.disconnects)} clients shed since start-up`}
+          // R4-17: "disconnects", never "shed" — the Live events card below
+          // uses "shed" for a different thing (events dropped from a
+          // consumer's queue), and reusing the word here is exactly the
+          // ambiguity issue #185 already burned this tile once for (until
+          // slice 075 this secondary showed the live-event drop total under
+          // the same word, which read as the browser feed having lost
+          // clients when the persistence queue had).
+          secondary={`${formatCount(data.websocket.disconnects)} client disconnects since start-up`}
         />
       </div>
 
@@ -354,7 +445,9 @@ export function HealthPage() {
                 className="border-b border-border py-2 last:border-0"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium">{source.source}</span>
+                  <span className="text-sm font-medium">
+                    {sourceLabel(source.source)}
+                  </span>
                   <StatusPill
                     tone={presentation.tone}
                     label={presentation.label}
@@ -362,7 +455,7 @@ export function HealthPage() {
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {source.last_success_at !== null
-                    ? `Imported ${formatAgeAgo(source.age_s)} · ${formatCount(source.row_count)} rows`
+                    ? `Imported ${formatAgeAgo(source.age_s)} · ${formatCount(source.row_count)} ${rowNoun(source.source)}`
                     : "No successful import yet"}
                 </p>
                 {source.last_error !== null && (
@@ -374,7 +467,7 @@ export function HealthPage() {
             );
           })}
           <Link
-            to="/settings"
+            to="/settings#settings-metadata"
             className="mt-3 inline-block text-xs text-muted-foreground underline-offset-4 hover:underline"
           >
             Update metadata in Settings
@@ -401,31 +494,60 @@ export function HealthPage() {
               label="Shed in total"
               value={formatCount(liveEvents.dropped)}
             />
-            {/* One row per consumer, because the total alone never said whose
-                queue overflowed — the question the card exists to answer. */}
-            {liveEvents.subscribers.map((subscriber) => (
-              <DetailRow
-                key={subscriber.name}
-                label={subscriber.name}
-                value={
-                  <span className="flex flex-col items-end gap-1">
-                    <span>{`${formatCount(subscriber.dropped)} shed`}</span>
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {`${formatCount(subscriber.pending)} / ${formatCount(
-                        subscriber.capacity,
-                      )} queued`}
-                    </span>
-                    {subscriber.overflowed && (
-                      <StatusPill
-                        tone="warn"
-                        label="Resyncing"
-                        className="font-normal"
-                      />
-                    )}
-                  </span>
-                }
-              />
-            ))}
+            {/* R4-17: six near-identical rows are noise on a healthy
+                install, so they collapse behind a disclosure unless one has
+                something to say — open by itself the moment it does. Each
+                row names the consumer the way the rest of the app does
+                ("Live map feed", not "websocket") and adds the one-line
+                consequence only while it is actually shedding. */}
+            <details
+              open={anyConsumerShedding}
+              className="group mt-1 border-t border-border pt-1"
+            >
+              <summary className="cursor-pointer list-none text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
+                <span className="group-open:hidden">
+                  Show every consumer ({liveEvents.subscribers.length})
+                </span>
+                <span className="hidden group-open:inline">
+                  Hide the per-consumer breakdown
+                </span>
+              </summary>
+              <div className="mt-1 flex flex-col">
+                {liveEvents.subscribers.map((subscriber) => {
+                  const presentation = liveEventConsumerPresentation(
+                    subscriber.name,
+                  );
+                  return (
+                    <DetailRow
+                      key={subscriber.name}
+                      label={presentation.label}
+                      value={
+                        <span className="flex flex-col items-end gap-1">
+                          <span>{`${formatCount(subscriber.dropped)} shed`}</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {`${formatCount(subscriber.pending)} / ${formatCount(
+                              subscriber.capacity,
+                            )} queued`}
+                          </span>
+                          {subscriber.dropped > 0 && (
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {presentation.consequence}
+                            </span>
+                          )}
+                          {subscriber.overflowed && (
+                            <StatusPill
+                              tone="warn"
+                              label="Resyncing"
+                              className="font-normal"
+                            />
+                          )}
+                        </span>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </details>
           </HealthCard>
         )}
 
@@ -452,8 +574,11 @@ export function HealthPage() {
       </section>
 
       <p className="text-xs text-muted-foreground">
-        Generated {formatReceiverLocalDateTime(data.generated_at, timezone)} ·
-        refreshes automatically.
+        {/* R4-04: states the age rather than a blanket "refreshes
+            automatically" — the banner above already says so when that claim
+            has stopped being true. */}
+        Generated {formatReceiverLocalDateTime(data.generated_at, timezone)} (
+        {formatAgeAgo(generatedAgeS)}).
       </p>
     </div>
   );

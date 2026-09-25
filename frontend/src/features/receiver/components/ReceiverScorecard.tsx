@@ -24,23 +24,37 @@ import {
   useReceiverScorecardQuery,
   type ReceiverHealth,
 } from "@/lib/api/receiverStats";
+import { Button } from "@/components/ui/button";
 import {
   formatCount,
   formatDistance,
   formatDurationCompact,
   formatRatePerSec,
+  formatReceiverLocalDate,
 } from "@/features/receiver/lib/format";
 
 interface StatTileProps {
   label: string;
   value: ReactNode;
   secondary?: ReactNode;
+  /** An `abbr`-style tooltip on the label, for jargon like "T0" that means
+   * nothing at the point of use without it (R3-14). */
+  labelTitle?: string;
 }
 
-function StatTile({ label, value, secondary }: StatTileProps) {
+function StatTile({ label, value, secondary, labelTitle }: StatTileProps) {
   return (
     <div className="rounded-lg border border-border bg-card p-3 text-card-foreground">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={
+          labelTitle !== undefined
+            ? "text-xs text-muted-foreground underline decoration-dotted"
+            : "text-xs text-muted-foreground"
+        }
+        title={labelTitle}
+      >
+        {label}
+      </p>
       <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
       {secondary !== undefined && (
         <p className="mt-0.5 text-xs text-muted-foreground">{secondary}</p>
@@ -75,10 +89,20 @@ function HealthTile({ health }: { health: ReceiverHealth }) {
 
 export interface ReceiverScorecardProps {
   units: UnitSystem;
+  /** `ReceiverInfo.t0` — the receiver's first-ever persisted observation,
+   * already fetched by `ReceiverPage` and previously unused here (R3-14):
+   * the tile below said "since T0" with no date and no explanation of what
+   * "T0" means. `null` before setup records one. */
+  t0: string | null;
+  timezone: string;
 }
 
-export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
-  const { data, isLoading, isError } = useReceiverScorecardQuery();
+export function ReceiverScorecard({
+  units,
+  t0,
+  timezone,
+}: ReceiverScorecardProps) {
+  const { data, isLoading, isError, refetch } = useReceiverScorecardQuery();
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading scorecard…</p>;
@@ -86,9 +110,29 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
 
   if (isError || data === undefined) {
     return (
-      <p className="text-sm text-destructive">Could not load the scorecard.</p>
+      <div className="flex items-center gap-3">
+        <p role="alert" className="text-sm text-destructive">
+          Could not load the scorecard.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void refetch()}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
+
+  // R3-13/SPEC §60: "no_stats" is the backend's existing signal that this
+  // decoder serves no `stats.json` at all (`HEALTH_PRESENTATION`'s own
+  // "No decoder stats" label) — the same condition that permanently nulls
+  // messages/sec, positions/sec and decoder uptime, per
+  // `docs/API.md` §3.8. Rather than three tiles reading `—` forever with no
+  // explanation beyond the separate Health tile, hide them and say so once.
+  const decoderStatsUnsupported = data.health === "no_stats";
 
   return (
     <div
@@ -101,17 +145,32 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
         value={formatCount(data.current_visible)}
         secondary={`${formatCount(data.current_positioned)} positioned`}
       />
-      <StatTile
-        label="Messages/sec"
-        value={formatRatePerSec(data.messages_per_sec, "msg")}
-      />
-      <StatTile
-        label="Positions/sec"
-        value={formatRatePerSec(data.positions_per_sec, "pos")}
-      />
+      {!decoderStatsUnsupported && (
+        <>
+          <StatTile
+            label="Messages/sec"
+            value={formatRatePerSec(data.messages_per_sec, "msg")}
+          />
+          <StatTile
+            label="Positions/sec"
+            value={formatRatePerSec(data.positions_per_sec, "pos")}
+          />
+        </>
+      )}
       <StatTile
         label="Max range today"
-        value={formatDistance(data.max_range_today_nm, units) ?? "—"}
+        value={
+          // R3-02: `null` here means the day's rollup has not been computed
+          // yet, not "genuinely zero" — worded and muted differently from
+          // "Max range ever"'s `—`, which means a real, permanent absence.
+          data.max_range_today_nm === null ? (
+            <span className="text-sm font-normal text-muted-foreground">
+              Not computed yet
+            </span>
+          ) : (
+            formatDistance(data.max_range_today_nm, units)
+          )
+        }
       />
       <StatTile
         label="Max range ever"
@@ -123,17 +182,31 @@ export function ReceiverScorecard({ units }: ReceiverScorecardProps) {
       />
       <StatTile
         label="Unique aircraft since T0"
+        labelTitle="T0: the first observation this receiver ever persisted"
         value={formatCount(data.unique_aircraft_since_t0)}
+        secondary={
+          t0 !== null
+            ? `Since ${formatReceiverLocalDate(t0, timezone)}`
+            : undefined
+        }
       />
-      <StatTile
-        label="Decoder uptime"
-        value={formatDurationCompact(data.decoder_uptime_s)}
-      />
+      {!decoderStatsUnsupported && (
+        <StatTile
+          label="Decoder uptime"
+          value={formatDurationCompact(data.decoder_uptime_s)}
+        />
+      )}
       <StatTile
         label="FlightSite uptime"
         value={formatDurationCompact(data.flightsite_uptime_s)}
       />
       <HealthTile health={data.health} />
+      {decoderStatsUnsupported && (
+        <p className="col-span-full text-xs text-muted-foreground">
+          This decoder does not report messages/sec, positions/sec, or decoder
+          uptime.
+        </p>
+      )}
     </div>
   );
 }

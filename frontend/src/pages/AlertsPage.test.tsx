@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useSearchParams } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +27,27 @@ function renderPage() {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <AlertsPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** A sibling of `AlertsPage` reading the same router's search params, so a
+ * test can assert on what the page wrote to the URL. */
+function SearchParamsProbe() {
+  const [searchParams] = useSearchParams();
+  return <div data-testid="url-query">{searchParams.toString()}</div>;
+}
+
+function renderPageAt(initialPath: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <AlertsPage />
+        <SearchParamsProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -162,5 +183,124 @@ describe("AlertsPage", () => {
     expect(
       await screen.findByText("Rule: Military aircraft"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("AlertsPage URL state (R4-07)", () => {
+  it("puts the selected tab into ?tab= and reads it back", async () => {
+    const user = userEvent.setup();
+    installAlertsApiMock();
+
+    renderPageAt("/alerts");
+    await user.click(screen.getByRole("tab", { name: "Templates" }));
+
+    expect(screen.getByTestId("url-query").textContent).toBe("tab=templates");
+    expect(screen.getByRole("tab", { name: "Templates" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("deep-links to a tab from ?tab=", async () => {
+    installAlertsApiMock({
+      matches: [alertMatch({ reason: "Rule: Military aircraft" })],
+    });
+
+    renderPageAt("/alerts?tab=history");
+
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByText("Rule: Military aircraft"),
+    ).toBeInTheDocument();
+  });
+
+  it("deep-links to a filtered rule's history from ?rule_id= alone", async () => {
+    // Evidence from the review: visiting ?rule_id=1 with no ?tab= left the
+    // page on Watchlists, showing a filter nothing on screen explained.
+    installAlertsApiMock({
+      rules: [alertRule({ id: 3, name: "Rare types" })],
+      matches: [
+        alertMatch({
+          reason: "Rule: Rare types",
+          rule: { id: 3, name: "Rare types" },
+        }),
+      ],
+    });
+
+    renderPageAt("/alerts?rule_id=3");
+
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Alert history: Rare types",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("writes tab=history and rule_id= when drilling into a rule's matches", async () => {
+    const user = userEvent.setup();
+    installAlertsApiMock({
+      rules: [alertRule({ id: 7, name: "Rare types" })],
+    });
+
+    renderPageAt("/alerts");
+    await user.click(screen.getByRole("tab", { name: "Rules" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Show matches for Rare types",
+      }),
+    );
+
+    expect(screen.getByTestId("url-query").textContent).toBe(
+      "tab=history&rule_id=7",
+    );
+  });
+
+  it("clears rule_id from the URL without leaving the History tab", async () => {
+    const user = userEvent.setup();
+    installAlertsApiMock({
+      rules: [alertRule({ id: 7, name: "Rare types" })],
+    });
+
+    renderPageAt("/alerts?tab=history&rule_id=7");
+    await screen.findByRole("heading", {
+      level: 2,
+      name: "Alert history: Rare types",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Show all rules" }));
+
+    expect(screen.getByTestId("url-query").textContent).toBe("tab=history");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("survives a refresh: re-rendering at the same URL restores the view", async () => {
+    installAlertsApiMock({
+      rules: [alertRule({ id: 3, name: "Rare types" })],
+    });
+
+    const { unmount } = renderPageAt("/alerts?tab=rules");
+    expect(screen.getByRole("tab", { name: "Rules" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    unmount();
+
+    // A fresh mount at the same URL is what a browser refresh amounts to.
+    renderPageAt("/alerts?tab=rules");
+    expect(screen.getByRole("tab", { name: "Rules" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

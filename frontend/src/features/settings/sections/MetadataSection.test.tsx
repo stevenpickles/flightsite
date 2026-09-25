@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatReceiverLocalTime } from "@/features/aircraft-detail/lib/format";
+import { formatReceiverLocalDateTime } from "@/features/aircraft-detail/lib/format";
 import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import type { FlightSiteConfig } from "@/lib/api/config";
 import {
@@ -16,7 +16,9 @@ const TIMEZONE = "UTC";
 //: A fixed instant far enough in the past that its relative age never
 // resolves to something like "just now" no matter when the suite runs.
 const OK_SUCCESS_MS = Date.UTC(2020, 0, 15, 8, 30, 0);
-const EXPECTED_LOCAL_TIME = formatReceiverLocalTime(
+// R4-12: metadata is routinely weeks old, so the section now names the
+// date, not just the wall-clock time.
+const EXPECTED_LOCAL_TIME = formatReceiverLocalDateTime(
   new Date(OK_SUCCESS_MS).toISOString(),
   TIMEZONE,
 );
@@ -186,6 +188,63 @@ describe("MetadataSection", () => {
     expect(
       await screen.findByText(/could not load metadata source status/i),
     ).toBeInTheDocument();
+  });
+
+  it("never claims 'never' while the status is still loading (R4-11)", async () => {
+    let resolveStatus!: (value: Response) => void;
+    const pendingStatus = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/internal/metadata/status" && method === "GET") {
+          return pendingStatus;
+        }
+        throw new Error(`Unhandled fetch in test: ${method} ${url}`);
+      }),
+    );
+    renderSection();
+
+    expect(screen.getByText("Checking…")).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    // Nothing is known about whether an update is already running, so the
+    // button must not read as available.
+    expect(
+      screen.getByRole("button", { name: /update aircraft metadata/i }),
+    ).toBeDisabled();
+    // Skeleton cards, not "no sources are registered" (empty sources and
+    // unknown sources must not render identically).
+    expect(
+      screen.getByLabelText("Loading metadata sources"),
+    ).toBeInTheDocument();
+
+    resolveStatus(
+      new Response(JSON.stringify({ sources: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(await screen.findByText("never")).toBeInTheDocument();
+  });
+
+  it("says 'Unknown', not 'never', once the status read has failed (R4-11)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("boom", { status: 500 })),
+    );
+    renderSection();
+
+    expect(
+      await screen.findByText(/unknown — could not read source status/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /update aircraft metadata/i }),
+    ).toBeDisabled();
   });
 
   it("triggers an update and reflects the in-progress state from the very next poll", async () => {

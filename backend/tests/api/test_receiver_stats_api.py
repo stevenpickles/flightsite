@@ -214,6 +214,37 @@ async def test_scorecard_unique_aircraft_today_and_since_t0(
     assert body["unique_aircraft_since_t0"] == 2
 
 
+async def test_scorecard_today_fields_never_fabricate_a_zero(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Issue #205, finding R3-02: "not measured yet" must not read as ``0``.
+
+    The scorecard's two "today" figures answer from different places and
+    neither is rollup-backed: ``max_range_today_nm`` reduces
+    ``range_by_bearing_daily`` and is ``null`` until a positioned aircraft has
+    been seen today, and ``unique_aircraft_today`` is a live count over
+    ``sightings``. Neither is affected by whether the analytics rollup for
+    today has been computed, which is exactly what this holds: the rollup
+    table is empty here and the count is still right.
+    """
+    database = live_app.app.state.database
+    day_start = local_day_start_ms(today_day(), UTC_ZONE)
+    await seed_sightings(
+        database,
+        [
+            SeedAircraft(
+                icao24="ae1463", first_seen_ms=day_start + 1_000, last_seen_ms=day_start + 2_000
+            )
+        ],
+        [SeedSighting(icao24="ae1463", started_ms=day_start + 1_000, ended_ms=day_start + 2_000)],
+    )
+
+    body = (await rest.get("/api/v1/receiver/scorecard")).json()
+
+    assert body["unique_aircraft_today"] == 1
+    assert body["max_range_today_nm"] is None
+
+
 async def test_scorecard_health_states(live_app: LiveApp, rest: AsyncClient) -> None:
     live_app.app.state.receiver_metrics = FakeMetricsService(
         latest_stats=decoder_stats(12_345.0), stats_supported=True

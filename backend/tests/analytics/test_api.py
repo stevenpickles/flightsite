@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 from flightsite.activity import (
     ActivityBatch,
@@ -32,7 +33,13 @@ from flightsite.activity import (
     ActivityRepository,
     NewActivityEvent,
 )
-from flightsite.analytics.bucketing import day_bounds_ms, local_day, local_hour, shift_days
+from flightsite.analytics.bucketing import (
+    day_bounds_ms,
+    days_in_range,
+    local_day,
+    local_hour,
+    shift_days,
+)
 from flightsite.analytics.service import AnalyticsService
 from flightsite.api.serializers import iso_utc
 from flightsite.app import create_app
@@ -243,8 +250,11 @@ async def test_every_endpoint_answers_an_empty_install(rest: AsyncClient, path: 
 
     assert body["window"]["preset"] == "t0"
     # `daily` always returns a row per day in the window so a chart has a
-    # continuous series; every other endpoint returns an empty list.
-    assert all(row["sightings"] == 0 for row in body.get("items", []))
+    # continuous series; every other endpoint returns an empty list. On an
+    # install with no rollups at all those rows are *pending*, not zero
+    # (issue #205, finding R3-02).
+    assert all(row["complete"] is False for row in body.get("items", []))
+    assert all(row["sightings"] is None for row in body.get("items", []))
     assert body.get("summary", {"sightings": 0})["sightings"] == 0
 
 
@@ -471,14 +481,66 @@ async def test_the_daily_series_has_a_row_for_every_day_including_quiet_ones(
 ) -> None:
     await seed(harness)
 
+    await harness.rebuild(*days_in_range(shift_days(harness.today, -6), harness.today))
+
     body = await get(rest, "/api/v1/analytics/daily", preset="7d")
 
     assert len(body["items"]) == 7
     assert body["items"][0]["day"] == body["window"]["first_day"]
     assert body["items"][-1]["day"] == body["window"]["last_day"]
     quiet = [row for row in body["items"] if row["day"] < harness.yesterday]
+    # A rebuilt day with no traffic *is* a zero — the zero is the measurement.
+    assert all(row["complete"] is True for row in quiet)
     assert all(row["sightings"] == 0 for row in quiet)
     assert body["items"][-1]["sightings"] == 3
+
+
+async def test_a_day_the_rollup_has_not_computed_is_null_rather_than_zero(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """Issue #205, finding R3-02: a young install reported zero as a fact.
+
+    The rollup pass runs every 30 s and only for days something touched, so
+    there is a real window in which a day has traffic and no row. Rendering
+    that as ``0 aircraft, 0 sightings`` is a fabrication; ``complete: false``
+    and nulls let the card say "not computed yet" instead.
+    """
+    await seed(harness)
+    async with harness.database.writer_session() as session:
+        await session.execute(
+            text("DELETE FROM daily_stats WHERE day = :day"), {"day": harness.today}
+        )
+
+    row = (await get(rest, "/api/v1/analytics/daily", preset="today"))["items"][0]
+
+    assert row["day"] == harness.today
+    assert row["complete"] is False
+    assert row["unique_aircraft"] is None
+    assert row["sightings"] is None
+    assert row["interesting"] is None
+    assert row["military"] is None
+    assert row["max_range_nm"] is None
+    assert row["busiest_hour"] is None
+    # Live-derived, so still a measurement on a day the rollup has not folded.
+    assert row["new_aircraft"] == 1
+
+
+async def test_a_pending_day_makes_the_summary_say_so(harness: Harness, rest: AsyncClient) -> None:
+    """The totals stay totals; ``complete`` is what qualifies them."""
+    await seed(harness)
+    complete = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+    async with harness.database.writer_session() as session:
+        await session.execute(
+            text("DELETE FROM daily_stats WHERE day = :day"), {"day": harness.today}
+        )
+
+    pending = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+
+    assert complete["complete"] is True
+    assert pending["complete"] is False
+    assert pending["sightings"] == 0
+    # Unique aircraft is a live count over `sightings`, so it does not move.
+    assert pending["unique_aircraft"] == complete["unique_aircraft"]
 
 
 async def test_the_daily_series_carries_slice_033_receiver_activity(
@@ -523,7 +585,8 @@ async def test_classification_activity_totals_the_series_it_returns(
 
     body = await get(rest, "/api/v1/analytics/classification-activity", preset="7d")
 
-    assert body["military"] == sum(row["military"] for row in body["series"])
+    assert body["complete"] is False  # the quiet days of the week are pending
+    assert body["military"] == sum(row["military"] or 0 for row in body["series"])
     assert body["military"] == 1
     assert body["government"] == body["law_enforcement"] == 0
     assert body["interesting"] == 1
@@ -645,6 +708,48 @@ async def test_rarity_counts_never_seen_before_over_the_window(
 
     assert today["never_seen_before"] == 1
     assert week["never_seen_before"] == 3
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+async def test_never_seen_before_is_one_number_on_every_surface(
+    harness: Harness, rest: AsyncClient, preset: str
+) -> None:
+    """Issue #205, finding R3-03: the page said both ``0`` and ``99``.
+
+    "Never seen before" is one SPEC §58 concept, and the Analytics page shows
+    it twice — as the daily bar series (``daily.new_aircraft``, summed into
+    ``summary.new_aircraft``) and as the Locally-rare card's headline
+    (``rarity.never_seen_before``). They now read one query, so the two cards
+    cannot disagree whatever the rollups happen to hold.
+    """
+    await seed(harness)
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset=preset))["summary"]
+    rarity = await get(rest, "/api/v1/analytics/rarity", preset=preset)
+    daily = (await get(rest, "/api/v1/analytics/daily", preset=preset))["items"]
+
+    assert summary["new_aircraft"] == rarity["never_seen_before"]
+    assert sum(row["new_aircraft"] for row in daily) == rarity["never_seen_before"]
+
+
+async def test_never_seen_before_agrees_before_the_rollup_is_computed(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """The young install: the rollup has not run, and the figure still holds.
+
+    Deriving it from ``aircraft.first_seen_ms`` rather than from
+    ``daily_stats.new_aircraft`` is what makes this true — the rollup-backed
+    form read ``0`` for a day it had not folded yet.
+    """
+    await seed(harness)
+    async with harness.database.writer_session() as session:
+        await session.execute(text("DELETE FROM daily_stats"))
+
+    summary = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
+    rarity = await get(rest, "/api/v1/analytics/rarity", preset="today")
+
+    assert rarity["never_seen_before"] == 1
+    assert summary["new_aircraft"] == 1
 
 
 async def test_rarity_lists_airframes_seen_in_the_window_with_low_lifetime_counts(

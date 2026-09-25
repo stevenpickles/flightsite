@@ -1,8 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ALERT_TEMPLATES } from "@/features/setup/constants";
 import { FieldError } from "@/features/setup/components/FieldError";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
@@ -15,6 +15,7 @@ import {
 import { validateAlertRadius } from "@/features/settings/lib/validation";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -24,8 +25,36 @@ export interface AlertsSectionProps {
   config: FlightSiteConfig;
 }
 
-/** Alert radius (SPEC §66) and which built-in alert templates are enabled
- * (SPEC §45). Applies immediately. */
+const NM_TO_KM = 1.852;
+
+/** A live "≈ metric" readout for the nautical-mile alert radius, shown only
+ * when the Units & time section's preference is metric (R4-13). Storage and
+ * the API stay nm regardless (`CLAUDE.md`). `null` for anything that is not
+ * a plain number yet. */
+function metricRadiusHint(rawNm: string): string | null {
+  const value = Number(rawNm);
+  if (rawNm.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  const km = value * NM_TO_KM;
+  return `≈ ${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
+}
+
+/**
+ * Alert radius (SPEC §66). Applies immediately.
+ *
+ * R4-03: this section used to also carry a checkbox per shipped template,
+ * backed by `config.alerts.enabled_templates` — a second, contradictory
+ * control for the same thing the Alerts page's Templates gallery manages.
+ * The two never reconciled: adding a rule from the gallery left the
+ * checkbox unticked, and the config key has no delete path, so unticking a
+ * box here never removed the rule it once seeded. The gallery is the
+ * honest source (it resolves "added" from real rule provenance) and is now
+ * the only surface — this section only links to it.
+ * `config.alerts.enabled_templates` still exists and is still read, once,
+ * by the setup wizard as the first-run seed for which templates to
+ * instantiate; it is simply no longer editable from here.
+ */
 export function AlertsSection({ config }: AlertsSectionProps) {
   const [baseline, setBaseline] = useState(() =>
     pickAlerts(draftFromConfig(config)),
@@ -35,17 +64,14 @@ export function AlertsSection({ config }: AlertsSectionProps) {
 
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
-  const alertRadiusError =
-    validateAlertRadius(draft.alertRadiusNm) ??
-    fieldErrors.alert_radius_nm ??
-    null;
-
-  function toggleTemplate(id: string, checked: boolean) {
-    const next = checked
-      ? [...draft.enabledTemplateIds, id]
-      : draft.enabledTemplateIds.filter((existing) => existing !== id);
-    setDraft({ ...draft, enabledTemplateIds: next });
-  }
+  // R4-02: only the client-side check blocks Save — a server rejection of
+  // the radius stays visible but retryable.
+  const alertRadius = fieldMessage(
+    validateAlertRadius(draft.alertRadiusNm),
+    fieldErrors.alert_radius_nm,
+  );
+  const alertRadiusError = alertRadius.message;
+  const showMetricHint = config.units === "metric";
 
   function handleSave() {
     mutation.mutate(buildAlertsPatch(draft), {
@@ -61,7 +87,7 @@ export function AlertsSection({ config }: AlertsSectionProps) {
     <SettingsSection
       id="settings-alerts"
       title="Alerts"
-      description="How far alerts consider aircraft, and which built-in templates are enabled."
+      description="How far alerts consider aircraft."
     >
       <div className="flex max-w-lg flex-col gap-4">
         <div className="flex flex-col gap-1.5">
@@ -85,37 +111,27 @@ export function AlertsSection({ config }: AlertsSectionProps) {
             id="settings-alert-radius-error"
             message={alertRadiusError}
           />
+          {showMetricHint && metricRadiusHint(draft.alertRadiusNm) && (
+            <p className="text-xs text-muted-foreground">
+              {metricRadiusHint(draft.alertRadiusNm)}
+            </p>
+          )}
         </div>
 
-        <div
-          role="group"
-          aria-label="Alert templates"
-          className="flex flex-col gap-2"
-        >
-          {ALERT_TEMPLATES.map((template) => {
-            const checked = draft.enabledTemplateIds.includes(template.id);
-            return (
-              <label
-                key={template.id}
-                className="flex items-start gap-3 rounded-lg border border-border p-3"
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={checked}
-                  onChange={(event) => {
-                    toggleTemplate(template.id, event.target.checked);
-                  }}
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">{template.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {template.description}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3">
+          <p className="text-sm font-medium">Alert templates</p>
+          <p className="text-xs text-muted-foreground">
+            Ready-made rules for military, government, emergency-squawk and
+            other traffic are managed on the Alerts page now, where adding or
+            removing one changes a real rule instead of a checkbox that could
+            disagree with it.
+          </p>
+          <Link
+            to="/alerts?tab=templates"
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            Manage templates on the Alerts page
+          </Link>
         </div>
       </div>
 
@@ -124,7 +140,7 @@ export function AlertsSection({ config }: AlertsSectionProps) {
         isPending={mutation.isPending}
         justSaved={mutation.isSuccess && !isDirty}
         errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
-        hasBlockingError={alertRadiusError !== null}
+        hasBlockingError={alertRadius.blocking}
         onSave={handleSave}
       />
     </SettingsSection>

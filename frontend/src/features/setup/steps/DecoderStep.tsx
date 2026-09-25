@@ -214,7 +214,7 @@ export function DecoderStep({
 
         <div role="status" aria-live="polite" className="text-sm">
           {testState.status === "success" && (
-            <p className="text-accent-foreground">{testState.message}</p>
+            <p className="text-success-on-surface">{testState.message}</p>
           )}
           {testState.status === "error" && (
             <p className="text-destructive">{testState.message}</p>

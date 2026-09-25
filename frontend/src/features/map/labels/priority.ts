@@ -112,8 +112,11 @@ export interface LabelTierInput {
    * dense" is only answerable with reference to what it was a frame ago.
    */
   densityLatched: boolean;
-  /** True for the selected aircraft or one carrying an active interesting
-   * match — both always get the full stack, in and out of zoom/density. */
+  /** True for the selected aircraft or one whose match is at or above the
+   * attention floor (`features/interesting/lib/ordering.ts`) — both always
+   * get the full stack, in and out of zoom/density. Deliberately *not* every
+   * aircraft with a match: on a stock install that is all of them, and the
+   * override would then simply disable the declutter (issue R1-10). */
   priority: boolean;
 }
 
@@ -135,7 +138,7 @@ export function deriveLabelTier({
   return zoom >= ZOOM_LABELS_FULL ? "full" : "callsign";
 }
 
-/** Collision priority for the label layers — selected first, interesting
+/** Collision priority for the label layers — selected first, attention-worthy
  * second, everyone else last. Lower is higher priority, per MapLibre's
  * `symbol-sort-key` semantics; mirrored in the style expressions that drive
  * the actual layers (`aircraftLayers.ts`) so both stay provably in sync
@@ -144,15 +147,23 @@ export const SORT_KEY_SELECTED = 0;
 export const SORT_KEY_INTERESTING = 1;
 export const SORT_KEY_DEFAULT = 2;
 
-/** Resolves the collision-priority sort key for one aircraft's label. */
+/**
+ * Resolves the collision-priority sort key for one aircraft's label.
+ *
+ * `attention` is the severity-resolved flag (`geojson.ts`'s property of that
+ * name), not bare "is matching something": a stock install matches
+ * `first_ever` against every airframe it has not heard before, so the looser
+ * reading handed the top priority to essentially the whole picture and the
+ * ranking stopped ranking anything (issue R1-10).
+ */
 export function deriveLabelSortKey(
   selected: boolean,
-  interesting: boolean,
+  attention: boolean,
 ): number {
   if (selected) {
     return SORT_KEY_SELECTED;
   }
-  if (interesting) {
+  if (attention) {
     return SORT_KEY_INTERESTING;
   }
   return SORT_KEY_DEFAULT;

@@ -14,6 +14,7 @@ import {
 import { validateHighResMetricDays } from "@/features/settings/lib/validation";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import { usePutConfigMutation } from "@/lib/api/config";
@@ -38,10 +39,13 @@ export function RetentionSection({ config }: RetentionSectionProps) {
 
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
-  const daysError =
-    validateHighResMetricDays(draft.highResMetricDays) ??
-    fieldErrors["retention.high_res_metric_days"] ??
-    null;
+  // R4-02: the client-side bound is what blocks Save; a server rejection of
+  // the same field stays visible but retryable.
+  const days = fieldMessage(
+    validateHighResMetricDays(draft.highResMetricDays),
+    fieldErrors["retention.high_res_metric_days"],
+  );
+  const daysError = days.message;
 
   function handleSave() {
     mutation.mutate(buildRetentionPatch(draft), {
@@ -84,7 +88,7 @@ export function RetentionSection({ config }: RetentionSectionProps) {
         isPending={mutation.isPending}
         justSaved={mutation.isSuccess && !isDirty}
         errorMessage={generalErrorMessage(mutation.error, fieldErrors)}
-        hasBlockingError={daysError !== null}
+        hasBlockingError={days.blocking}
         onSave={handleSave}
       />
     </SettingsSection>

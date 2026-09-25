@@ -182,6 +182,36 @@ test.describe("Sightings page", () => {
     }
   });
 
+  test("every row carries a link into its sighting, reachable by keyboard", async ({
+    page,
+  }) => {
+    // Review R2-07: the log's rows navigated through a bare `onClick` on the
+    // `<tr>`, so a keyboard-only or screen-reader user had no route into any
+    // `/sightings/:id` page at all. The Start cell is now an anchor, as Tail
+    // already was on `/aircraft`.
+    await page.goto("/sightings");
+    const rows = page.getByTestId("sighting-row");
+    await expect(rows.first()).toBeVisible();
+
+    const hrefs = await rows.evaluateAll((elements) =>
+      elements.map((row) => ({
+        id: (row as HTMLElement).dataset["sightingId"] ?? "",
+        href: row.querySelector("a")?.getAttribute("href") ?? null,
+      })),
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const { id, href } of hrefs) {
+      expect(href, `row for sighting ${id} contains no link`).toBe(
+        `/sightings/${id}`,
+      );
+    }
+
+    // And the link is genuinely focusable, not an anchor without an href.
+    const first = rows.first().getByRole("link").first();
+    await first.focus();
+    await expect(first).toBeFocused();
+  });
+
   test("a row opens that sighting's detail page", async ({ page, request }) => {
     await waitForPersistedSightings(request);
 

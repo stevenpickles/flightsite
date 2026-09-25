@@ -61,12 +61,70 @@ export function severityRank(severity: AlertSeverity): number {
   return SEVERITY_RANK[severity] ?? 0;
 }
 
+/**
+ * The lowest severity that earns an aircraft the full attention treatment —
+ * an attention ring on the map, a row in the panel's visible list, and
+ * priority in the label declutter.
+ *
+ * `interesting`, so `info` is below it. SPEC §36 asks for interesting
+ * aircraft to be rendered *distinctly*, and distinctness is a property of a
+ * minority: on a new install the default template set includes `first_ever`,
+ * which matches every airframe a receiver has not heard before — i.e. all of
+ * them, for the first weeks — so the review found 76 of 77 aircraft carrying
+ * the star, the ring and a panel row, and the whole mechanism saying nothing
+ * (issue R1-10). Severity is the signal that was already on the wire and
+ * already sorted on; this makes it load-bearing rather than decorative.
+ *
+ * What an `info` match keeps is the label's own indicator glyph — SPEC §35
+ * asks the label for presence, not rank — and its place in the panel, one
+ * click away under a count. Nothing is hidden; the ranking is simply
+ * honoured. The template defaults themselves are deliberately untouched:
+ * they belong to the Alerts surface, not to the map.
+ */
+export const ATTENTION_SEVERITY_FLOOR: AlertSeverity = "interesting";
+
+/** Whether `severity` is at or above {@link ATTENTION_SEVERITY_FLOOR}. Takes
+ * the wire's `""`-for-nothing form as well as a null, so both the GeoJSON
+ * builder and the panel can ask the same question of the same ladder. */
+export function meritsAttention(
+  severity: AlertSeverity | "" | null | undefined,
+): boolean {
+  if (!severity) {
+    return false;
+  }
+  return severityRank(severity) >= severityRank(ATTENTION_SEVERITY_FLOOR);
+}
+
 /** One row of the panel: a live aircraft and the match that put it there.
  * Pairing them keeps `interesting` non-null in the row's own type, so no
  * consumer re-checks what the filter already established. */
 export interface InterestingAircraft {
   aircraft: LiveAircraft;
   interesting: InterestingMatch;
+}
+
+/** The panel's two groups: the rows worth showing unprompted, and the
+ * `info`-level ones collapsed under a count behind them. Both keep the
+ * order {@link compareInterestingAircraft} put them in. */
+export interface InterestingGroups {
+  prominent: InterestingAircraft[];
+  info: InterestingAircraft[];
+}
+
+/** Splits ordered panel rows at {@link ATTENTION_SEVERITY_FLOOR}. */
+export function groupInterestingBySeverity(
+  rows: readonly InterestingAircraft[],
+): InterestingGroups {
+  const prominent: InterestingAircraft[] = [];
+  const info: InterestingAircraft[] = [];
+  for (const row of rows) {
+    if (meritsAttention(row.interesting.severity)) {
+      prominent.push(row);
+    } else {
+      info.push(row);
+    }
+  }
+  return { prominent, info };
 }
 
 /**

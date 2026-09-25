@@ -69,23 +69,63 @@ describe("describeSightingEvent", () => {
     expect(info.detail).toBe("KTCM → ? · aerodatabox");
   });
 
-  it("describes classification/alert events with a label and no detail", () => {
+  it("describes a classification event with a label and no detail", () => {
     expect(
       describeSightingEvent(event({ type: "classification_available" })),
     ).toEqual({
       label: "Classification became available",
       detail: null,
     });
+  });
+
+  it("says which alert matched, and at what severity (R2-15)", () => {
+    // The payload `apply_alert_severity` emits. All of it used to be dropped,
+    // leaving a bare "Alert matched" while the activity feed — from the same
+    // underlying event — managed "Alert: First-ever aircraft".
+    expect(
+      describeSightingEvent(
+        event({
+          type: "alert_matched",
+          detail: { reason: "Rule: First-ever aircraft", severity: "info" },
+        }),
+      ),
+    ).toEqual({
+      label: "Alert matched",
+      detail: "Rule: First-ever aircraft · Info",
+    });
+  });
+
+  it("names both rungs of an alert severity upgrade (R2-15)", () => {
+    expect(
+      describeSightingEvent(
+        event({
+          type: "alert_severity_upgraded",
+          detail: {
+            from: "info",
+            to: "critical",
+            reason: "Emergency squawk 7700",
+          },
+        }),
+      ),
+    ).toEqual({
+      label: "Alert severity upgraded",
+      detail: "Emergency squawk 7700 · Info → Critical",
+    });
+  });
+
+  it("still labels an alert event whose payload says nothing", () => {
     expect(describeSightingEvent(event({ type: "alert_matched" }))).toEqual({
       label: "Alert matched",
       detail: null,
     });
-    expect(
-      describeSightingEvent(event({ type: "alert_severity_upgraded" })),
-    ).toEqual({
-      label: "Alert severity upgraded",
-      detail: null,
-    });
+  });
+
+  it("passes an unrecognized severity through rather than dropping it", () => {
+    // §6: the ladder may grow a rung this build predates.
+    const info = describeSightingEvent(
+      event({ type: "alert_matched", detail: { severity: "catastrophic" } }),
+    );
+    expect(info.detail).toBe("catastrophic");
   });
 
   it("falls back gracefully when a detail is missing entirely", () => {

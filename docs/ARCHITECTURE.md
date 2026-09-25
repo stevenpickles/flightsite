@@ -208,6 +208,19 @@ transaction that holds the single writer while a million airframes are resolved 
 Python — which is what starved the persistence worker and the alert engine of the writer
 lock until their bounded queues overflowed (issue #185).
 
+Rollup maintenance (slices 031/033, repaired in 076): the day-keyed rollups
+(`docs/DATA_MODEL.md` §6.2/§6.5) are receiver-local, and both writers resolve the
+receiver's timezone through a **probe over live settings on each pass** rather than
+capturing it at construction — the setup wizard writes the timezone after the backend
+has booted, so a captured zone keyed every row in `UTC` while every read resolved the
+real one (issue #205). A zone that has changed since the rows were written is
+**repaired, not migrated**: the analytics rollups are a pure function of `sightings`,
+so the backfill drops its watermark and rebuilds the receiver's whole history one day
+per transaction, releasing the writer lock between days for the same reason the
+metadata import was reshaped in 075. What has no source table left — daily receiver
+summaries older than the raw window, and range-by-bearing — keeps its original key and
+says so.
+
 Unclean shutdown: WAL recovery + startup `quick_check` + repair/closure of sightings
 left open, with diagnostics (slices 005/053/044).
 

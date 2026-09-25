@@ -217,7 +217,18 @@ class LifetimeRecord(_Model):
     first_seen: IsoTimestamp
     last_seen: IsoTimestamp
     sighting_count: int
+    #: SPEC §53's cumulative observation duration — and it *includes* the
+    #: sighting still running, if there is one. `aircraft.total_observed_ms`
+    #: accrues only at close (to avoid double-counting across flushes), which
+    #: is correct for the column and would be a wrong answer here: an
+    #: airframe sixteen minutes overhead is not one this receiver has watched
+    #: for `0` seconds.
     cumulative_duration_s: int
+    #: How much of `cumulative_duration_s` is still accruing — the open
+    #: sighting's elapsed time, or `null` when this airframe has none open.
+    #: Published separately so a client can say "16m so far, still running"
+    #: instead of inferring an ongoing sighting from a total that moves.
+    open_sighting_elapsed_s: int | None = None
     closest_approach_nm: float | None = None
     max_range_nm: float | None = None
     lowest_altitude_ft: int | None = None
@@ -327,11 +338,23 @@ class SightingRow(_Model):
     operator_group: str | None = None
     classification: Classification | None = None
     started_at: IsoTimestamp
-    #: ``null`` while the sighting is open (§3.6).
+    #: ``null`` while the sighting is open (§3.7).
     ended_at: IsoTimestamp | None = None
-    #: ``null`` while the sighting is open — duration is only meaningful once
-    #: it has actually ended.
+    #: ``null`` while the sighting is open — the *recorded* duration is only
+    #: meaningful once it has actually ended. While it is open, ``elapsed_s``
+    #: is the live answer.
     duration_s: int | None = None
+    #: Whether this sighting is still running. ``ended_at is null`` says the
+    #: same thing, but saying it out loud is the point: a client that has to
+    #: infer a state from an absence renders "Unknown" — the word §2.7
+    #: reserves for "the decoder never reported this" — for a sighting the
+    #: page beside it calls "Ongoing".
+    open: bool = False
+    #: Seconds from ``started_at`` to the instant this response was built —
+    #: present only while ``open``. A finished sighting's answer is
+    #: ``duration_s``; "time since it started" would then describe the age of
+    #: the record rather than the length of the flight.
+    elapsed_s: int | None = None
     closure_reason: ClosureReasonLiteral | None = None
     closest_approach_nm: float | None = None
     max_range_nm: float | None = None
@@ -414,8 +437,21 @@ class SightingDetail(_Model):
     callsign: str | None = None
     squawk: str | None = None
     started_at: IsoTimestamp
+    #: ``null`` while the sighting is open (§3.7).
     ended_at: IsoTimestamp | None = None
+    #: ``null`` while the sighting is open — see :class:`SightingRow`.
     duration_s: int | None = None
+    #: Whether this sighting is still running. ``ended_at is null`` says the
+    #: same thing, but saying it out loud is the point: a client that has to
+    #: infer a state from an absence renders "Unknown" — the word §2.7
+    #: reserves for "the decoder never reported this" — for a sighting the
+    #: page beside it calls "Ongoing".
+    open: bool = False
+    #: Seconds from ``started_at`` to the instant this response was built —
+    #: present only while ``open``. A finished sighting's answer is
+    #: ``duration_s``; "time since it started" would then describe the age of
+    #: the record rather than the length of the flight.
+    elapsed_s: int | None = None
     closure_reason: ClosureReasonLiteral | None = None
     #: Never ``null`` as a whole — see :class:`RouteView`.
     route: RouteView = Field(default_factory=RouteView)
@@ -709,16 +745,24 @@ class AnalyticsDailyRow(_Model):
     The ``receiver_*`` fields are slice 033's activity for the same day (SPEC
     §58's "receiver activity over time"), ``null`` where that slice recorded
     none.
+
+    ``complete`` is ``false`` for a day whose rollup has not been computed
+    yet — a young install, or a day the flush pass has not reached — and every
+    count it governs is then ``null`` rather than ``0``, so "not computed yet"
+    is never rendered as a measured zero (issue #205, finding R3-02).
+    ``new_aircraft`` is the exception: it is derived live from
+    ``aircraft.first_seen_ms``, so it is a real figure on a pending day too.
     """
 
     day: str
-    unique_aircraft: int
+    complete: bool = False
+    unique_aircraft: int | None = None
     new_aircraft: int
-    sightings: int
-    interesting: int
-    military: int
-    government: int
-    law_enforcement: int
+    sightings: int | None = None
+    interesting: int | None = None
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
     max_range_nm: float | None = None
     busiest_hour: int | None = None
     receiver_messages: int | None = None
@@ -735,8 +779,15 @@ class AnalyticsDailyResponse(_Model):
 
 
 class AnalyticsSummary(_Model):
-    """SPEC §59's at-a-glance block over the selected window."""
+    """SPEC §59's at-a-glance block over the selected window.
 
+    ``complete`` is ``false`` when at least one day of the window has not been
+    rolled up yet. Unlike a daily row the totals stay numbers — a total over
+    six folded days of seven is a real total — so the flag is what lets a card
+    say "as far as we have computed" instead of asserting (issue #205).
+    """
+
+    complete: bool = False
     unique_aircraft: int
     new_aircraft: int
     sightings: int
@@ -829,6 +880,9 @@ class AnalyticsClassificationResponse(_Model):
     """``GET /api/v1/analytics/classification-activity``."""
 
     window: AnalyticsWindow
+    #: False when a day of the window has not been rolled up yet; the totals
+    #: are then over the days that have (issue #205).
+    complete: bool = False
     military: int
     government: int
     law_enforcement: int
@@ -960,6 +1014,20 @@ class AlertMatchView(_Model):
     reason: str
     icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
     sighting_id: int
+    #: The airframe as it was known through this match's sighting — SPEC §48
+    #: asks a notification to carry "callsign/tail, aircraft type", and the
+    #: history is where someone looks when they missed the notification.
+    #: ``null`` is §2.7's absence: nothing transmitted a callsign, or no
+    #: metadata source has heard of this address.
+    callsign: str | None = None
+    registration: str | None = None
+    aircraft_type: str | None = None
+    #: The *sighting's* records, not a snapshot at the instant of the match:
+    #: ``alert_matches`` stores no position, and these are the nearest true
+    #: answer to "how close, how low was it". On a sighting still open they
+    #: keep moving.
+    closest_approach_nm: float | None = None
+    lowest_altitude_ft: int | None = None
     #: ``null`` for a built-in emergency match, which has no rule.
     rule: AlertMatchRuleRef | None = None
     #: ``null`` for a rule match; a built-in detector's key otherwise.

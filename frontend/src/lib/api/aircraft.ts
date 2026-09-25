@@ -36,7 +36,14 @@ export interface LifetimeRecord {
   first_seen: string;
   last_seen: string;
   sighting_count: number;
+  /** Total observed time across every sighting, **including** one still in
+   * progress. It used to sum closed sightings only — a storage detail that
+   * reached the screen as "Cumulative observed time 0s" for an aircraft that
+   * had been overhead for sixteen minutes (review R2-02). */
   cumulative_duration_s: number;
+  /** How much of {@link LifetimeRecord.cumulative_duration_s} is still
+   * accruing, in seconds; `null` when no sighting is open. */
+  open_sighting_elapsed_s: number | null;
   closest_approach_nm: number | null;
   max_range_nm: number | null;
   lowest_altitude_ft: number | null;
@@ -170,29 +177,62 @@ export const aircraftQueryKeys = {
   detail: (icao: string) => ["aircraft", "detail", icao] as const,
 };
 
+/**
+ * Per-query refresh policy (review R2-03).
+ *
+ * Polling is opt-in at the call site rather than a default here, and never a
+ * `lib/queryClient.ts` default: the same hook is a window onto a growing
+ * table on `/aircraft` page 1 and a one-off read behind a detail view the
+ * user opened deliberately, and only the caller knows which it is. What is
+ * *not* optional is `refetchOnWindowFocus` — returning to a tab is the one
+ * moment a stale history page is guaranteed to be looked at.
+ */
+export interface RefreshOptions {
+  /** Poll interval in milliseconds, or `false` (the default) for no poll.
+   * Never runs while the tab is hidden (`refetchIntervalInBackground: false`),
+   * so a forgotten tab costs a Pi nothing. */
+  refetchInterval?: number | false;
+}
+
 /** One page of the Aircraft page's table. `placeholderData: keepPreviousData`
  * keeps the previous page's rows on screen while the next page loads, so
  * sorting/paging never flashes to an empty table. */
 export function useAircraftListQuery(
   params: AircraftListParams,
+  options: RefreshOptions = {},
 ): UseQueryResult<AircraftListResponse> {
   return useQuery({
     queryKey: aircraftQueryKeys.list(params),
     queryFn: () => getAircraftList(params),
     placeholderData: keepPreviousData,
+    refetchInterval: options.refetchInterval ?? false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }
 
 /** One aircraft's full detail. `enabled: false` when `icao` is absent so a
  * route rendered without one (never expected, but TypeScript-visible) does
- * not fire a request that can only 422. */
+ * not fire a request that can only 422.
+ *
+ * `refetchInterval` here means *while the airframe is live*: a historical
+ * airframe's lifetime block cannot move until it is sighted again, so a poll
+ * against it would only ever return the bytes it already has. The condition
+ * is enforced here rather than at the call site because only this hook can
+ * see the payload that answers it. */
 export function useAircraftDetailQuery(
   icao: string | undefined,
+  options: RefreshOptions = {},
 ): UseQueryResult<AircraftDetail> {
+  const interval = options.refetchInterval ?? false;
   return useQuery({
     queryKey: aircraftQueryKeys.detail(icao ?? ""),
     queryFn: () => getAircraftDetail(icao as string),
     enabled: icao !== undefined,
+    refetchInterval: (query) =>
+      interval !== false && query.state.data?.live === true ? interval : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: (failureCount, error) =>
       // A 404 is a real answer ("never sighted"), not a transient failure —
       // retrying it would just show a spinner for three round trips before

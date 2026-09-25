@@ -12,13 +12,18 @@ import type { AnalyticsDailyRow, AnalyticsWindow } from "@/lib/api/analytics";
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import { EChart } from "@/features/analytics/components/EChart";
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
-import { formatCompactNumber } from "@/features/analytics/lib/format";
+import {
+  formatCalendarDay,
+  formatCompactNumber,
+} from "@/features/analytics/lib/format";
 
 export interface ReceiverActivityCardProps {
   window?: AnalyticsWindow;
   items: AnalyticsDailyRow[];
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 export function ReceiverActivityCard({
@@ -26,9 +31,17 @@ export function ReceiverActivityCard({
   items,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: ReceiverActivityCardProps) {
+  // R3-02/A1: a day not computed yet also carries the receiver_* fields as
+  // `null`, so a young install still has something worth drawing (gaps
+  // plus an honest caption) rather than the flat "No data" state.
   const hasData = items.some(
-    (row) => row.receiver_messages !== null || row.receiver_positions !== null,
+    (row) =>
+      row.receiver_messages !== null ||
+      row.receiver_positions !== null ||
+      !row.complete,
   );
 
   const buildOption = useCallback(
@@ -57,6 +70,8 @@ export function ReceiverActivityCard({
         },
         yAxis: {
           type: "value" as const,
+          name: "count",
+          nameTextStyle: { color: theme.mutedInk },
           axisLabel: {
             ...axisStyle.axisLabel,
             formatter: (value: number) => formatCompactNumber(value),
@@ -92,11 +107,14 @@ export function ReceiverActivityCard({
     : `Daily receiver messages and positions: ${items
         .filter(
           (row) =>
-            row.receiver_messages !== null || row.receiver_positions !== null,
+            !row.complete ||
+            row.receiver_messages !== null ||
+            row.receiver_positions !== null,
         )
-        .map(
-          (row) =>
-            `${row.day} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
+        .map((row) =>
+          !row.complete
+            ? `${formatCalendarDay(row.day)} — not computed yet`
+            : `${formatCalendarDay(row.day)} — ${formatCompactNumber(row.receiver_messages ?? 0)} messages, ${formatCompactNumber(row.receiver_positions ?? 0)} positions`,
         )
         .join("; ")}.`;
 
@@ -106,6 +124,8 @@ export function ReceiverActivityCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

@@ -69,4 +69,31 @@ describe("describeConnectionFailure", () => {
       ),
     ).toBe("Connection failed");
   });
+
+  it("never leaves a dangling colon for an empty-string detail (R4-21)", () => {
+    expect(
+      describeConnectionFailure(
+        failureConnectionTestResult({ error: "unreachable", detail: "" }),
+      ),
+    ).toBe("Unreachable");
+  });
+
+  it("treats a whitespace-only detail as absent too (R4-21)", () => {
+    expect(
+      describeConnectionFailure(
+        failureConnectionTestResult({ error: "unreachable", detail: "   " }),
+      ),
+    ).toBe("Unreachable");
+  });
+
+  it("trims stray whitespace from a real detail", () => {
+    expect(
+      describeConnectionFailure(
+        failureConnectionTestResult({
+          error: "unreachable",
+          detail: "  Connection refused  ",
+        }),
+      ),
+    ).toBe("Unreachable: Connection refused");
+  });
 });

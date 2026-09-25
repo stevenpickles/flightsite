@@ -176,6 +176,31 @@ class RarityCondition(_Document):
     max_sightings: int = Field(ge=1, le=MAX_RARITY_THRESHOLD)
 
 
+def _times(count: int) -> str:
+    """``1`` as "once", anything else as "N times".
+
+    English, not a template with the plural bolted on in brackets. The rule
+    card is prose a user reads — "seen at most 1 time(s) here" is the shape
+    of a string that was never finished, and the builder's own field label
+    for the same idea ("At most this many sightings here") already reads
+    properly. ``max_sightings`` is ``ge=1``, so there is no zero case to
+    word.
+    """
+    return "once" if count == 1 else f"{count} times"
+
+
+def _plural(count: int, noun: str) -> str:
+    """``count`` and ``noun``, with the noun pluralised by a trailing ``s``.
+
+    Only ever applied to nouns whose plural really is ``+s`` (``airframe``);
+    this is not a general inflector and must not become one — a
+    codebase-wide pluralisation problem is a localisation problem, and the
+    honest fix for that is a library rather than a growing table of
+    exceptions here.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 class RuleConditions(_Document):
     """The ``AND``-combined condition set of one rule (§4.2, SPEC §43).
 
@@ -248,6 +273,10 @@ class RuleConditions(_Document):
         rule the user wrote (``docs/API.md`` §3.3's ``"Rule: Military
         aircraft"``), because the rule's name is the user's own description of
         what it detects and is what they want to read in a notification.
+
+        Counts are worded, not templated — see :func:`_times` and
+        :func:`_plural`. These phrases are read by a person on the Rules tab,
+        and "1 time(s)" is a string that was never finished.
         """
         phrases: list[str] = []
         if self.classification is not None:
@@ -261,9 +290,11 @@ class RuleConditions(_Document):
         if self.watchlist_any:
             phrases.append("on any watchlist")
         if self.rare_aircraft is not None:
-            phrases.append(f"seen at most {self.rare_aircraft.max_sightings} time(s) here")
+            phrases.append(f"seen at most {_times(self.rare_aircraft.max_sightings)} here")
         if self.rare_type is not None:
-            phrases.append(f"type seen on at most {self.rare_type.max_sightings} airframe(s) here")
+            phrases.append(
+                f"type seen on at most {_plural(self.rare_type.max_sightings, 'airframe')} here"
+            )
         if self.min_distance_nm is not None:
             phrases.append(f"at least {self.min_distance_nm:g} nm away")
         if self.max_distance_nm is not None:
@@ -455,6 +486,23 @@ class StoredAlertMatch:
     identities a client links on, and reading them from their own tables means
     a rename can never leave the history naming something that no longer
     exists. ``rule_name`` is ``None`` for a built-in match, which has no rule.
+
+    The identity block — ``callsign``, ``registration``, ``type_code`` — and
+    the two sighting records are joined for the same reason and answer a
+    different question. SPEC §48 says a notification carries "callsign/tail,
+    aircraft type, classification, altitude, distance, match reason", and the
+    history is exactly where someone goes when they *missed* the
+    notification; a bare six-hex address is not something a person
+    recognises. Every one of them is ``None``-able and means §2.7's absence:
+    no callsign was ever transmitted, no metadata source knows this airframe,
+    the sighting never had a position.
+
+    ``closest_approach_nm`` and ``lowest_alt_ft`` are the *sighting's*
+    records, not a snapshot taken at the instant of the match —
+    ``alert_matches`` stores no position, and inventing one now would be
+    worse than naming what is actually known. On a sighting still open they
+    keep moving; the field names are the ones §3.5/§3.7 already use for the
+    same facts, so nothing suggests otherwise.
     """
 
     id: int
@@ -468,6 +516,11 @@ class StoredAlertMatch:
     rule_name: str | None = None
     builtin_key: str | None = None
     notified: bool = False
+    callsign: str | None = None
+    registration: str | None = None
+    type_code: str | None = None
+    closest_approach_nm: float | None = None
+    lowest_alt_ft: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

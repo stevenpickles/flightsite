@@ -19,6 +19,7 @@ import {
 } from "@/features/settings/lib/draft";
 import {
   fieldErrorsFrom,
+  fieldMessage,
   generalErrorMessage,
 } from "@/features/settings/lib/errors";
 import type { FlightSiteConfig } from "@/lib/api/config";
@@ -26,6 +27,21 @@ import { usePutConfigMutation } from "@/lib/api/config";
 
 export interface ReceiverSectionProps {
   config: FlightSiteConfig;
+}
+
+const FT_TO_M = 1 / 3.28084;
+
+/** A live "≈ metric" readout for the antenna height, shown only when the
+ * Units & time section's preference is metric (R4-13). Storage and the API
+ * stay ft regardless (`CLAUDE.md`). `null` for anything that is not a plain
+ * number yet. */
+function metricHeightHint(rawFt: string): string | null {
+  const value = Number(rawFt);
+  if (rawFt.trim().length === 0 || !Number.isFinite(value)) {
+    return null;
+  }
+  const meters = value * FT_TO_M;
+  return `≈ ${meters.toLocaleString(undefined, { maximumFractionDigits: 1 })} m`;
 }
 
 /** Site name, location, and antenna height (SPEC §13) — the same fields the
@@ -45,25 +61,35 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
   const isDirty = isSectionDirty(draft, baseline);
   const fieldErrors = fieldErrorsFrom(mutation.error);
 
-  const siteNameError =
-    validateSiteName(draft.siteName) ??
-    fieldErrors["location.site_name"] ??
-    null;
-  const latitudeError =
-    validateLatitude(draft.latitude) ??
-    fieldErrors["location.latitude"] ??
-    null;
-  const longitudeError =
-    validateLongitude(draft.longitude) ??
-    fieldErrors["location.longitude"] ??
-    null;
-  const antennaError =
-    validateAntennaHeight(draft.antennaHeightFt) ??
-    fieldErrors["location.antenna_height_ft"] ??
-    null;
-  const hasBlockingError = Boolean(
-    siteNameError ?? latitudeError ?? longitudeError ?? antennaError,
+  // R4-02: only the client-side validators gate Save — a server rejection
+  // is still shown next to its field, but never leaves the section
+  // unsavable until an unrelated edit or a page reload.
+  const siteName = fieldMessage(
+    validateSiteName(draft.siteName),
+    fieldErrors["location.site_name"],
   );
+  const latitude = fieldMessage(
+    validateLatitude(draft.latitude),
+    fieldErrors["location.latitude"],
+  );
+  const longitude = fieldMessage(
+    validateLongitude(draft.longitude),
+    fieldErrors["location.longitude"],
+  );
+  const antenna = fieldMessage(
+    validateAntennaHeight(draft.antennaHeightFt),
+    fieldErrors["location.antenna_height_ft"],
+  );
+  const siteNameError = siteName.message;
+  const latitudeError = latitude.message;
+  const longitudeError = longitude.message;
+  const antennaError = antenna.message;
+  const hasBlockingError =
+    siteName.blocking ||
+    latitude.blocking ||
+    longitude.blocking ||
+    antenna.blocking;
+  const showMetricHint = config.units === "metric";
 
   function handleSave() {
     mutation.mutate(buildReceiverPatch(draft), {
@@ -153,6 +179,11 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
             id="settings-antenna-height-error"
             message={antennaError}
           />
+          {showMetricHint && metricHeightHint(draft.antennaHeightFt) && (
+            <p className="text-xs text-muted-foreground">
+              {metricHeightHint(draft.antennaHeightFt)}
+            </p>
+          )}
         </div>
       </div>
 

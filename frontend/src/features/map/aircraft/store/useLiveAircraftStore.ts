@@ -10,9 +10,9 @@
  * picture that is drawn once.
  *
  * **Two owners, two teardowns** (ADR-0015). The socket lives in the app shell
- * and writes `aircraft`, `departing` and `receiver` on every route, so those
- * are dropped when the *connection* is lost ({@link LiveAircraftState.dropLivePicture})
- * rather than when the map unmounts. `selectedIcao` and the three track fields
+ * and writes `aircraft`, `departing` and `receiver` on every route, so a lost
+ * *connection* is what marks them stale ({@link LiveAircraftState.markPictureStale})
+ * rather than the map unmounting. `selectedIcao` and the three track fields
  * are the *map's* — nothing outside the Live Map sets them — so the map clears
  * them on its own unmount, and {@link LiveAircraftState.reset} is left for the
  * shell's own teardown. That split is also this store's memory bound on a
@@ -146,10 +146,53 @@ export interface LiveAircraftState {
    * backfill has landed. Bookkeeping for the backfill, never drawn. */
   trackBackfilledFrom: number | null;
   connection: ConnectionStatus;
+  /** Consecutive failed connection attempts, as the socket counts them: 0
+   * while live, 1 after the first failure. The status chip escalates its
+   * wording off this, because `connecting` alone cannot tell a first load
+   * from a socket that will never connect (issue R1-04). */
+  connectionAttempt: number;
+  /**
+   * Whether the picture on screen is still being fed.
+   *
+   * `true` from the moment the socket stops being `live` until something —
+   * a reconnect's snapshot, or a REST fallback poll — refreshes the picture
+   * again, and `true` initially, before anything has ever arrived.
+   *
+   * It exists because an outage must never be rendered as a fact about the
+   * sky (issue R1-03). Every panel that would otherwise say "none" has to
+   * be able to tell "the receiver is hearing nothing" from "we are no
+   * longer being told what the receiver hears", and before this flag the
+   * picture was simply dropped, so they said the former in both cases: "No
+   * interesting aircraft right now", `Non-positioned 0`, and a detail panel
+   * reporting `Registration Unknown` for a registration it knew a second
+   * earlier.
+   */
+  stale: boolean;
+  /** `Date.now()` when the picture was last refreshed from a live source —
+   * a socket snapshot/delta or a fallback poll — or `null` before the first
+   * one has ever landed. What {@link stale} is measured from, and what the
+   * panels date a kept picture by. */
+  lastUpdate: number | null;
 
   applySnapshot: (data: SnapshotData, now?: number) => void;
   applyDelta: (data: DeltaData, now?: number) => void;
-  setConnection: (status: ConnectionStatus) => void;
+  /**
+   * Replaces the picture from `GET /api/v1/aircraft/current` while the
+   * socket is down (issue R1-03).
+   *
+   * The same aircraft objects the socket carries (`docs/API.md` §3.3 — one
+   * shape, one type), so this rebuilds exactly as a snapshot does and
+   * clears {@link stale}: a poll that answered is as current as a frame
+   * that arrived. It is a separate action from {@link applySnapshot} only
+   * so the store's one "this came off the wire, §4.2" path stays that, and
+   * the endpoint carries no `receiver` block, which this therefore leaves
+   * alone.
+   */
+  applyFallbackPicture: (
+    aircraft: readonly LiveAircraft[],
+    now?: number,
+  ) => void;
+  setConnection: (status: ConnectionStatus, attempt?: number) => void;
   /** Selects an aircraft (or clears the selection with `null`), restarting
    * track accumulation from the aircraft's current position. Selecting the
    * aircraft that is *already* selected changes nothing at all — see the
@@ -167,23 +210,32 @@ export interface LiveAircraftState {
     points: readonly TrackPoint[],
   ) => void;
   /**
-   * Drops the socket-owned half of the picture — every live and departing
-   * aircraft — and nothing else.
+   * Marks the picture as no longer being fed, without throwing it away.
    *
-   * Called when the connection is lost (ADR-0015): a socket that is gone can
-   * no longer say which of these aircraft are still in the sky, and the
-   * snapshot that ends the outage rebuilds the map wholesale anyway. `reset`
-   * would be too broad for that event now that the socket outlives the map.
-   * The selection and its track belong to the Live Map, which clears them when
-   * it unmounts, and a two-second reconnect must not close the detail panel
-   * the user is reading. `receiver` stays for the same kind of reason: it is
-   * configuration (units, timezone, site) that `GET /api/v1/receiver` also
-   * serves and that formatting reads on every route, not part of the picture.
+   * Called when the connection is lost (ADR-0015). It used to be
+   * `dropLivePicture`, which cleared every live and departing aircraft on
+   * the reasoning that a socket that is gone can no longer say which of them
+   * are still in the sky. That reasoning is right and the conclusion was
+   * wrong (issue R1-03): a picture nobody is updating is *old*, and old is a
+   * thing the UI can say honestly, while an empty picture is a *claim*, and
+   * the claim was false. Panels read it as one — "No interesting aircraft
+   * right now", `Non-positioned 0`, `Registration Unknown` for a
+   * registration known a second earlier — for a window that reconnect
+   * backoff makes 1-30 s on a flaky LAN.
    *
-   * A no-op on an already-empty picture, so the initial `connecting` status
-   * does not notify a single subscriber.
+   * So the aircraft stay, {@link stale} goes true, and {@link lastUpdate}
+   * keeps saying how old they are. What still goes is the live activity
+   * tail, which the socket's owner drops separately: activity frames have no
+   * replay at all, so a tail kept across the gap would read as a continuous
+   * list with a silent hole in it.
+   *
+   * The selection and its track belong to the Live Map, which clears them
+   * when it unmounts, and a two-second reconnect must not close the detail
+   * panel the user is reading. `receiver` stays for the same kind of reason:
+   * it is configuration (units, timezone, site) that `GET /api/v1/receiver`
+   * also serves and that formatting reads on every route.
    */
-  dropLivePicture: () => void;
+  markPictureStale: () => void;
   /** Returns the store to its initial state — the tab's own teardown, when
    * the shell that owns the socket goes away, so nothing is left to render a
    * picture from a connection that no longer exists. */
@@ -194,10 +246,11 @@ function initialState(): Omit<
   LiveAircraftState,
   | "applySnapshot"
   | "applyDelta"
+  | "applyFallbackPicture"
   | "setConnection"
   | "selectAircraft"
   | "backfillTrack"
-  | "dropLivePicture"
+  | "markPictureStale"
   | "reset"
 > {
   return {
@@ -209,6 +262,11 @@ function initialState(): Omit<
     trackLive: [],
     trackBackfilledFrom: null,
     connection: "connecting",
+    connectionAttempt: 0,
+    // Nothing has arrived yet, and an empty picture nobody has fed is
+    // exactly the case a panel must not report as an empty sky.
+    stale: true,
+    lastUpdate: null,
   };
 }
 
@@ -463,7 +521,30 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
         aircraft,
         departing: pruneDeparting(state.departing, now),
         receiver: data.receiver ?? state.receiver,
+        stale: false,
+        lastUpdate: now,
         ...extendTrack(state, state.selectedIcao, aircraft),
+      };
+    });
+  },
+
+  applyFallbackPicture: (aircraft, now = Date.now()) => {
+    set((state) => {
+      // The same wholesale rebuild a snapshot performs, over the same
+      // aircraft objects, minus the `receiver` block this endpoint does not
+      // carry. Position anchors survive the rebuild for the same reason
+      // they survive a reconnect's snapshot: a poll is not evidence that an
+      // aircraft moved.
+      const next: Record<string, LiveAircraftRecord> = {};
+      for (const entry of aircraft) {
+        next[entry.icao] = upsert(entry, state.aircraft[entry.icao], now);
+      }
+      return {
+        aircraft: next,
+        departing: pruneDeparting(state.departing, now),
+        stale: false,
+        lastUpdate: now,
+        ...extendTrack(state, state.selectedIcao, next),
       };
     });
   },
@@ -503,13 +584,15 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
       return {
         aircraft,
         departing,
+        stale: false,
+        lastUpdate: now,
         ...extendTrack(state, state.selectedIcao, aircraft),
       };
     });
   },
 
-  setConnection: (status) => {
-    set({ connection: status });
+  setConnection: (status, attempt = 0) => {
+    set({ connection: status, connectionAttempt: attempt });
   },
 
   selectAircraft: (icao) => {
@@ -571,13 +654,11 @@ export const useLiveAircraftStore = create<LiveAircraftState>((set) => ({
     });
   },
 
-  dropLivePicture: () => {
-    set((state) =>
-      Object.keys(state.aircraft).length === 0 &&
-      Object.keys(state.departing).length === 0
-        ? state
-        : { aircraft: {}, departing: {} },
-    );
+  markPictureStale: () => {
+    // Returning `state` itself when nothing moves, not an equal patch: the
+    // initial `connecting` status takes this path with the picture already
+    // empty and already stale, and must not notify a single subscriber.
+    set((state) => (state.stale ? state : { stale: true }));
   },
 
   reset: () => {

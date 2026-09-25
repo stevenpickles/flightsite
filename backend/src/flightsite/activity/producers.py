@@ -360,6 +360,14 @@ def record_events(
         else None
     )
     if count is not None:
+        # A day beating *itself* has no previous day to name. The record it
+        # improved on is its own earlier total, so carrying `previous_day`
+        # made the feed read "2026-09-20 · 68,764 messages · previous
+        # 2026-09-20" — a record and the record it beat on the same date,
+        # which reads as nonsense (issue #205, finding R1-17). The pair is
+        # omitted rather than reworded because the clause is the client's to
+        # write, and an absent previous day is already how it says "none".
+        beaten = previous.busiest_day if previous.busiest_day != current.busiest_day else None
         events.append(
             NewActivityEvent(
                 type=ActivityEventType.RECEIVER_RECORD,
@@ -375,8 +383,14 @@ def record_events(
                     "record": RecordKind.BUSIEST_DAY.value,
                     "day": current.busiest_day,
                     "value": int(count),
-                    "previous_day": previous.busiest_day,
-                    "previous": int(previous.busiest_day_count or 0),
+                    **(
+                        {}
+                        if beaten is None
+                        else {
+                            "previous_day": beaten,
+                            "previous": int(previous.busiest_day_count or 0),
+                        }
+                    ),
                 },
             )
         )

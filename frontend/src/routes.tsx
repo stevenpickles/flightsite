@@ -1,6 +1,8 @@
 import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
 
+import { NotFoundPage } from "@/components/NotFoundPage";
+import { RouteErrorPage } from "@/components/RouteErrorPage";
 import { AppShell } from "@/components/shell/AppShell";
 import { RootLayout } from "@/components/shell/RootLayout";
 import { SetupWizardPage } from "@/features/setup/SetupWizardPage";
@@ -40,63 +42,88 @@ export const router = createBrowserRouter([
   {
     // Pathless: owns the first-run redirect and map-config sync, and
     // renders both the chrome'd app routes and the chrome-free setup
-    // wizard as children (see `RootLayout`).
+    // wizard as children (see `RootLayout`). `errorElement` here is the
+    // chrome-free backstop (R0-01/R1-06/R3-04): it only fires for an error
+    // this route tree's own element threw (`RootLayout`) or one that
+    // reached this far because nothing closer caught it — in particular a
+    // throw from `AppShell` itself, before its `<Outlet />` ever renders,
+    // which is the one failure the in-chrome boundary below cannot catch
+    // since it depends on `AppShell` having mounted.
     element: <RootLayout />,
+    errorElement: <RouteErrorPage standalone />,
     children: [
       {
         path: "/",
         element: <AppShell />,
         children: [
-          { index: true, element: <LiveMapPage /> },
-          { path: "aircraft", element: <AircraftPage /> },
-          { path: "aircraft/:icao", element: <AircraftDetailPage /> },
-          { path: "sightings", element: <SightingsPage /> },
-          { path: "sightings/:id", element: <SightingDetailPage /> },
           {
-            path: "analytics",
-            element: (
-              <Suspense
-                fallback={
-                  <p
-                    role="status"
-                    className="p-8 text-sm text-muted-foreground"
+            // Pathless: every page inside the shell shares this one
+            // `errorElement` (R0-01/R1-06/R2-16/R3-04). Nesting it here,
+            // one level *under* `AppShell` rather than on the `/` route
+            // itself, is what keeps the sidebar mounted and usable on a
+            // render-time throw — React Router replaces the element of
+            // whichever route actually owns the boundary, and `AppShell`
+            // owns the `/` route, not this one.
+            errorElement: <RouteErrorPage />,
+            children: [
+              { index: true, element: <LiveMapPage /> },
+              { path: "aircraft", element: <AircraftPage /> },
+              { path: "aircraft/:icao", element: <AircraftDetailPage /> },
+              { path: "sightings", element: <SightingsPage /> },
+              { path: "sightings/:id", element: <SightingDetailPage /> },
+              {
+                path: "analytics",
+                element: (
+                  <Suspense
+                    fallback={
+                      <p
+                        role="status"
+                        className="p-8 text-sm text-muted-foreground"
+                      >
+                        Loading analytics…
+                      </p>
+                    }
                   >
-                    Loading analytics…
-                  </p>
-                }
-              >
-                <AnalyticsPage />
-              </Suspense>
-            ),
-          },
-          {
-            path: "receiver",
-            element: (
-              <Suspense
-                fallback={
-                  <p
-                    role="status"
-                    className="p-8 text-sm text-muted-foreground"
+                    <AnalyticsPage />
+                  </Suspense>
+                ),
+              },
+              {
+                path: "receiver",
+                element: (
+                  <Suspense
+                    fallback={
+                      <p
+                        role="status"
+                        className="p-8 text-sm text-muted-foreground"
+                      >
+                        Loading receiver…
+                      </p>
+                    }
                   >
-                    Loading receiver…
-                  </p>
-                }
-              >
-                <ReceiverPage />
-              </Suspense>
-            ),
+                    <ReceiverPage />
+                  </Suspense>
+                ),
+              },
+              { path: "alerts", element: <AlertsPage /> },
+              { path: "settings", element: <SettingsPage /> },
+              // Inside the shell but deliberately not in `NAV_ITEMS`: SPEC
+              // §10 fixes the sidebar at seven sections, so the activity
+              // feed's fuller view is reached from the Live Map panel's
+              // "View all" link, the way `sightings/:id` is reached from
+              // the log.
+              { path: "activity", element: <ActivityPage /> },
+              // Same reasoning for the health area (roadmap slice 042):
+              // SPEC §67 wants it reachable without SSH, not an eighth
+              // sidebar section, so the Receiver and Settings pages both
+              // link to it.
+              { path: "health", element: <HealthPage /> },
+              // Catch-all (R0-02/R2-16): any path under the shell that
+              // matches none of the above. Last child so it never shadows
+              // a real route.
+              { path: "*", element: <NotFoundPage /> },
+            ],
           },
-          { path: "alerts", element: <AlertsPage /> },
-          { path: "settings", element: <SettingsPage /> },
-          // Inside the shell but deliberately not in `NAV_ITEMS`: SPEC §10
-          // fixes the sidebar at seven sections, so the activity feed's
-          // fuller view is reached from the Live Map panel's "View all"
-          // link, the way `sightings/:id` is reached from the log.
-          { path: "activity", element: <ActivityPage /> },
-          // Same reasoning for the health area (roadmap slice 042): SPEC §67
-          // wants it reachable without SSH, not an eighth sidebar section, so
-          // the Receiver and Settings pages both link to it.
-          { path: "health", element: <HealthPage /> },
         ],
       },
       // Outside AppShell's sidebar chrome: a full-screen wizard layout

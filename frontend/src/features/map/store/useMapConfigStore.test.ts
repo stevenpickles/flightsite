@@ -18,6 +18,7 @@ describe("useMapConfigStore", () => {
   it("setConfig replaces the active config — the seam future slices (004/010) call into", () => {
     const realConfig: MapConfig = {
       receiver: { lat: 51.5, lon: -0.1, label: "A real receiver" },
+      receiverConfigured: true,
       ringRadiiNm: [25, 75],
       unit: "km",
       displayRadiusNm: 150,

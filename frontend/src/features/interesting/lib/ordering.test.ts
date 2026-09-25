@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ATTENTION_SEVERITY_FLOOR,
   SEVERITY_RANK,
   compareInterestingAircraft,
+  groupInterestingBySeverity,
+  meritsAttention,
   orderInterestingAircraft,
   severityRank,
 } from "@/features/interesting/lib/ordering";
@@ -117,6 +120,55 @@ describe("orderInterestingAircraft", () => {
       "Emergency squawk 7700 (general emergency)",
     ]);
     expect(entry?.aircraft.icao).toBe("aaaaaa");
+  });
+});
+
+describe("meritsAttention (R1-10)", () => {
+  it("draws the line below `interesting`, so `info` is not attention-worthy", () => {
+    expect(meritsAttention("info")).toBe(false);
+    expect(meritsAttention("interesting")).toBe(true);
+    expect(meritsAttention("high")).toBe(true);
+    expect(meritsAttention("critical")).toBe(true);
+  });
+
+  it("treats no match, and the wire's empty-string form, as no attention", () => {
+    expect(meritsAttention(null)).toBe(false);
+    expect(meritsAttention(undefined)).toBe(false);
+    expect(meritsAttention("")).toBe(false);
+  });
+
+  it("names the floor rather than hard-coding it twice", () => {
+    expect(ATTENTION_SEVERITY_FLOOR).toBe("interesting");
+  });
+});
+
+describe("groupInterestingBySeverity (R1-10)", () => {
+  it("splits at the attention floor, keeping panel order inside each group", () => {
+    const rows = orderInterestingAircraft([
+      row("aaaaaa", "info", 2),
+      row("bbbbbb", "critical", 40),
+      row("cccccc", "info", 1),
+      row("dddddd", "high", 30),
+    ]);
+    const { prominent, info } = groupInterestingBySeverity(rows);
+
+    expect(prominent.map((entry) => entry.aircraft.icao)).toEqual([
+      "bbbbbb",
+      "dddddd",
+    ]);
+    // Nothing is discarded — the info matches are a second group, in the
+    // same severity-then-distance order the panel always uses.
+    expect(info.map((entry) => entry.aircraft.icao)).toEqual([
+      "cccccc",
+      "aaaaaa",
+    ]);
+  });
+
+  it("hands back two empty groups for an empty list", () => {
+    expect(groupInterestingBySeverity([])).toEqual({
+      prominent: [],
+      info: [],
+    });
   });
 });
 

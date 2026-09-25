@@ -22,7 +22,10 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
 
-import { DetailSection } from "@/features/aircraft-detail/components/DetailSection";
+import {
+  DetailSection,
+  DetailSectionHeadingLevel,
+} from "@/features/aircraft-detail/components/DetailSection";
 import { EmergencySquawkBadge } from "@/features/aircraft-detail/components/EmergencySquawkBadge";
 import { ExternalTrackerLinks } from "@/features/aircraft-detail/components/ExternalTrackerLinks";
 import { FieldRow } from "@/features/aircraft-detail/components/FieldRow";
@@ -116,200 +119,215 @@ export function AircraftDetailPanel() {
   const headingId = "aircraft-detail-heading";
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="false"
-        aria-labelledby={headingId}
-        tabIndex={-1}
-        data-testid="aircraft-detail-panel"
-        className={cn(
-          "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
-          "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
-          "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
-          "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
-          "outline-none",
-        )}
-      >
-        <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <h2 id={headingId} className="truncate text-lg font-semibold">
-              {aircraft?.callsign ?? selectedIcao.toUpperCase()}
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              ICAO {selectedIcao.toUpperCase()} · Registration{" "}
-              {aircraft?.registration ?? <UnknownValue />}
-            </p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {aircraft && (
-                <PositionSourceBadge source={aircraft.position_source} />
-              )}
-              {aircraft && isEmergencySquawk(aircraft.squawk) && (
-                <EmergencySquawkBadge squawk={aircraft.squawk} />
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => selectAircraft(null)}
-            aria-label="Close aircraft detail"
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="overflow-y-auto">
-          {aircraft === null ? (
-            <p className="px-4 py-4 text-sm text-muted-foreground">
-              No live data for this aircraft.
-            </p>
-          ) : (
-            <>
-              {/* First, above Live: an active match is the most important
-               * thing the panel can say about an aircraft, and it is why
-               * the user clicked the row or the ringed icon that opened
-               * this. Renders nothing at all when nothing is matching. */}
-              <InterestingSection interesting={aircraft.interesting} />
-              <DetailSection title="Live">
-                <FieldRow
-                  label="Altitude"
-                  value={formatAltitude(aircraft.altitude_ft, units)}
-                  provenanceSource={
-                    aircraft.provenance.altitude_ft ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Ground speed"
-                  value={formatSpeed(aircraft.ground_speed_kt, units)}
-                  provenanceSource={
-                    aircraft.provenance.ground_speed_kt ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Track"
-                  value={formatDegreesWithCardinal(aircraft.track_deg)}
-                  provenanceSource={aircraft.provenance.track_deg ?? "decoder"}
-                />
-                <FieldRow
-                  label="Vertical rate"
-                  value={
-                    aircraft.vertical_rate_fpm === null ? null : (
-                      <span className="inline-flex items-center gap-1">
-                        <span aria-hidden="true">
-                          {
-                            TREND_GLYPH[
-                              verticalTrend(aircraft.vertical_rate_fpm) ??
-                                "level"
-                            ]
-                          }
-                        </span>
-                        {formatVerticalRate(aircraft.vertical_rate_fpm, units)}
-                      </span>
-                    )
-                  }
-                  provenanceSource={
-                    aircraft.provenance.vertical_rate_fpm ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Distance"
-                  value={formatDistance(aircraft.distance_nm, units)}
-                  provenanceSource={
-                    aircraft.provenance.distance_nm ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Bearing"
-                  value={formatDegreesWithCardinal(aircraft.bearing_deg)}
-                  provenanceSource={
-                    aircraft.provenance.bearing_deg ?? "decoder"
-                  }
-                />
-                <FieldRow
-                  label="Squawk"
-                  value={
-                    aircraft.squawk === null ? null : (
-                      <span className="inline-flex items-center gap-1.5">
-                        {aircraft.squawk}
-                        {isEmergencySquawk(aircraft.squawk) && (
-                          <EmergencySquawkBadge squawk={aircraft.squawk} />
-                        )}
-                      </span>
-                    )
-                  }
-                />
-                <FieldRow
-                  label="Signal (RSSI)"
-                  value={formatRssi(aircraft.rssi_db)}
-                />
-                <FieldRow
-                  label="Message count"
-                  value={formatMessageCount(aircraft.message_count)}
-                />
-                <FieldRow
-                  label="Last seen"
-                  value={
-                    <span>
-                      {relativeAge}{" "}
-                      <span className="text-muted-foreground">
-                        ({formatReceiverLocalTime(aircraft.last_seen, timezone)}
-                        )
-                      </span>
-                    </span>
-                  }
-                />
-                <FieldRow
-                  label="On ground"
-                  value={formatOnGround(aircraft.on_ground)}
-                />
-              </DetailSection>
-
-              <IdentityMetadataSection aircraft={aircraft} />
-
-              {/* Reported route first (§2.6), with a locally inferred end
-               * standing in only where no source answered — SPEC §28 as
-               * amended for slice 071. Both rows always render: an end
-               * neither a source nor the airport context can supply is
-               * `Unknown`, which is the same thing the panel says about
-               * every other optional field, and is what a stock install with
-               * enrichment switched off shows for every aircraft. */}
-              <RouteSection aircraft={aircraft} />
-
-              {/* Local inference only (SPEC §41), and deliberately not part of
-               * the Route section above: what somebody told FlightSite and
-               * what FlightSite guessed stay apart, in the payload and on the
-               * screen. */}
-              <NearestAirportSection
-                airport={aircraft.nearest_airport}
-                provenanceSource={aircraft.provenance.nearest_airport}
-                units={units}
-              />
-
-              <DetailSection title="History">
-                <p className="py-1 text-sm">
-                  <Link
-                    to={`/aircraft/${selectedIcao}`}
-                    className="font-medium text-accent hover:underline"
-                  >
-                    View lifetime records &amp; full metadata
-                  </Link>
-                </p>
-              </DetailSection>
-
-              <DetailSection title="External trackers">
-                <ExternalTrackerLinks aircraft={aircraft} />
-              </DetailSection>
-
-              <div className="px-4 py-3">
-                <TrackStats points={trackLive} />
-              </div>
-            </>
+    // The panel's own title is an `<h2>` (it is a labelled dialog), so its
+    // sections are one level further down than a detail route's are — which
+    // is what keeps this rendering exactly the `h3`s it always has while the
+    // routes gain the `h2` the review found missing (R2-17).
+    <DetailSectionHeadingLevel level={3}>
+      <TooltipProvider delayDuration={200}>
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={headingId}
+          tabIndex={-1}
+          data-testid="aircraft-detail-panel"
+          className={cn(
+            "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
+            "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
+            "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
+            "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
+            "outline-none",
           )}
+        >
+          <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <h2 id={headingId} className="truncate text-lg font-semibold">
+                {aircraft?.callsign ?? selectedIcao.toUpperCase()}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                ICAO {selectedIcao.toUpperCase()} · Registration{" "}
+                {aircraft?.registration ?? <UnknownValue />}
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {aircraft && (
+                  <PositionSourceBadge source={aircraft.position_source} />
+                )}
+                {aircraft && isEmergencySquawk(aircraft.squawk) && (
+                  <EmergencySquawkBadge squawk={aircraft.squawk} />
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => selectAircraft(null)}
+              aria-label="Close aircraft detail"
+              className="shrink-0 rounded-md p-1.5 text-muted-foreground outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </header>
+
+          <div className="overflow-y-auto">
+            {aircraft === null ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground">
+                No live data for this aircraft.
+              </p>
+            ) : (
+              <>
+                {/* First, above Live: an active match is the most important
+                 * thing the panel can say about an aircraft, and it is why
+                 * the user clicked the row or the ringed icon that opened
+                 * this. Renders nothing at all when nothing is matching. */}
+                <InterestingSection interesting={aircraft.interesting} />
+                <DetailSection title="Live">
+                  <FieldRow
+                    label="Altitude"
+                    value={formatAltitude(aircraft.altitude_ft, units)}
+                    provenanceSource={
+                      aircraft.provenance.altitude_ft ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Ground speed"
+                    value={formatSpeed(aircraft.ground_speed_kt, units)}
+                    provenanceSource={
+                      aircraft.provenance.ground_speed_kt ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Track"
+                    value={formatDegreesWithCardinal(aircraft.track_deg)}
+                    provenanceSource={
+                      aircraft.provenance.track_deg ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Vertical rate"
+                    value={
+                      aircraft.vertical_rate_fpm === null ? null : (
+                        <span className="inline-flex items-center gap-1">
+                          <span aria-hidden="true">
+                            {
+                              TREND_GLYPH[
+                                verticalTrend(aircraft.vertical_rate_fpm) ??
+                                  "level"
+                              ]
+                            }
+                          </span>
+                          {formatVerticalRate(
+                            aircraft.vertical_rate_fpm,
+                            units,
+                          )}
+                        </span>
+                      )
+                    }
+                    provenanceSource={
+                      aircraft.provenance.vertical_rate_fpm ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Distance"
+                    value={formatDistance(aircraft.distance_nm, units)}
+                    provenanceSource={
+                      aircraft.provenance.distance_nm ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Bearing"
+                    value={formatDegreesWithCardinal(aircraft.bearing_deg)}
+                    provenanceSource={
+                      aircraft.provenance.bearing_deg ?? "decoder"
+                    }
+                  />
+                  <FieldRow
+                    label="Squawk"
+                    value={
+                      aircraft.squawk === null ? null : (
+                        <span className="inline-flex items-center gap-1.5">
+                          {aircraft.squawk}
+                          {isEmergencySquawk(aircraft.squawk) && (
+                            <EmergencySquawkBadge squawk={aircraft.squawk} />
+                          )}
+                        </span>
+                      )
+                    }
+                  />
+                  <FieldRow
+                    label="Signal (RSSI)"
+                    value={formatRssi(aircraft.rssi_db)}
+                  />
+                  <FieldRow
+                    label="Message count"
+                    value={formatMessageCount(aircraft.message_count)}
+                  />
+                  <FieldRow
+                    label="Last seen"
+                    value={
+                      <span>
+                        {relativeAge}{" "}
+                        <span className="text-muted-foreground">
+                          (
+                          {formatReceiverLocalTime(
+                            aircraft.last_seen,
+                            timezone,
+                          )}
+                          )
+                        </span>
+                      </span>
+                    }
+                  />
+                  <FieldRow
+                    label="On ground"
+                    value={formatOnGround(aircraft.on_ground)}
+                  />
+                </DetailSection>
+
+                <IdentityMetadataSection aircraft={aircraft} />
+
+                {/* Reported route first (§2.6), with a locally inferred end
+                 * standing in only where no source answered — SPEC §28 as
+                 * amended for slice 071. Both rows always render: an end
+                 * neither a source nor the airport context can supply is
+                 * `Unknown`, which is the same thing the panel says about
+                 * every other optional field, and is what a stock install with
+                 * enrichment switched off shows for every aircraft. */}
+                <RouteSection aircraft={aircraft} />
+
+                {/* Local inference only (SPEC §41), and deliberately not part of
+                 * the Route section above: what somebody told FlightSite and
+                 * what FlightSite guessed stay apart, in the payload and on the
+                 * screen. */}
+                <NearestAirportSection
+                  airport={aircraft.nearest_airport}
+                  provenanceSource={aircraft.provenance.nearest_airport}
+                  units={units}
+                />
+
+                <DetailSection title="History">
+                  <p className="py-1 text-sm">
+                    <Link
+                      to={`/aircraft/${selectedIcao}`}
+                      className="font-medium text-accent hover:underline"
+                    >
+                      View lifetime records &amp; full metadata
+                    </Link>
+                  </p>
+                </DetailSection>
+
+                <DetailSection title="External trackers">
+                  <ExternalTrackerLinks aircraft={aircraft} />
+                </DetailSection>
+
+                <div className="px-4 py-3">
+                  <TrackStats points={trackLive} />
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </DetailSectionHeadingLevel>
   );
 }
 

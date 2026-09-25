@@ -18,6 +18,7 @@ import { useEffect, useRef } from "react";
 import type { GeoJSONSource, Map as MapLibreGlMap } from "maplibre-gl";
 
 import { useMapInstance } from "@/features/map/MapInstanceContext";
+import { ALTITUDE_RAMP } from "@/features/sighting-detail/lib/pathColors";
 import { buildPathGeojson } from "@/features/sighting-detail/lib/pathGeojson";
 import type { SightingPathPoint } from "@/lib/api/sightings";
 
@@ -27,8 +28,16 @@ export const PATH_ENDPOINTS_SOURCE_ID = "flightsite-sighting-endpoints";
 export const PATH_ENDPOINTS_LAYER_ID = "flightsite-sighting-endpoints-dot";
 
 const ACCENT_COLOR = "#4dd8cf";
-const START_COLOR = "#2ecc71";
-const END_COLOR = "#ff5a5f";
+
+/**
+ * The endpoint markers are told apart by *shape* — a hollow ring for the
+ * start, a filled dot for the end — rather than by a second red/green pair,
+ * which is what they used to be: the same two hues the altitude ramp uses
+ * for its ends, carrying an unrelated meaning a few pixels away. Both now
+ * take the neutral accent, so hue says nothing here and the fill does.
+ */
+const MARKER_COLOR = ACCENT_COLOR;
+const MARKER_HOLLOW_FILL = "#ffffff";
 
 function upsertSource(
   map: MapLibreGlMap,
@@ -55,12 +64,7 @@ function ensureLayers(map: MapLibreGlMap, altitudeColored: boolean): void {
               "interpolate",
               ["linear"],
               ["coalesce", ["get", "altitude_ft"], 0],
-              0,
-              "#2ecc71",
-              20000,
-              "#f1c40f",
-              45000,
-              "#e74c3c",
+              ...ALTITUDE_RAMP.flatMap((stop) => [stop.ft, stop.color]),
             ]
           : ACCENT_COLOR,
         "line-width": 3,
@@ -75,17 +79,22 @@ function ensureLayers(map: MapLibreGlMap, altitudeColored: boolean): void {
       source: PATH_ENDPOINTS_SOURCE_ID,
       paint: {
         "circle-radius": 6,
+        // Hollow for the start, filled for the end.
         "circle-color": [
           "match",
           ["get", "kind"],
           "start",
-          START_COLOR,
-          "end",
-          END_COLOR,
-          ACCENT_COLOR,
+          MARKER_HOLLOW_FILL,
+          MARKER_COLOR,
         ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1.5,
+        "circle-stroke-color": [
+          "match",
+          ["get", "kind"],
+          "start",
+          MARKER_COLOR,
+          "#ffffff",
+        ],
+        "circle-stroke-width": ["match", ["get", "kind"], "start", 3, 1.5],
       },
     });
   }

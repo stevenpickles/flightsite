@@ -73,6 +73,12 @@ GET /api/v1/aircraft?limit=50&offset=100&sort=last_seen&order=desc
 
 - `limit` (default 50, max 500), `offset` (default 0).
 - `sort` accepts documented column keys per endpoint; `order` is `asc`|`desc`.
+- **Rows whose sort value is `null` come last, in both directions.** §2.7 makes a
+  missing value the absence of an answer rather than the smallest one, so ascending
+  by `closest_approach_nm` puts the aircraft that genuinely came closest on the first
+  page, not the ones that have no closest approach. Every sort also carries a stable
+  final tiebreak (`icao24` or `id`, always ascending) so paging cannot repeat or skip
+  a row.
 - Filters are endpoint-specific query params (documented per endpoint).
 - Responses wrap items in an envelope:
 
@@ -378,13 +384,28 @@ Lifetime record block (SPEC §53):
   "first_seen": "2026-04-02T18:11:09Z",
   "last_seen": "2026-08-30T22:41:55Z",
   "sighting_count": 41,
-  "cumulative_duration_s": 51840,
+  "cumulative_duration_s": 52803,
+  "open_sighting_elapsed_s": 963,
   "closest_approach_nm": 2.1,
   "max_range_nm": 141.8,
   "lowest_altitude_ft": 1250,
   "highest_altitude_ft": 41000
 }
 ```
+
+`cumulative_duration_s` is SPEC §53's cumulative observation duration and **includes
+the sighting still running**, if this airframe has one. The stored column behind it
+(`aircraft.total_observed_ms`) sums *closed* sightings only — that is deliberate on
+the storage side, so a flush of an open sighting cannot double-count it at close —
+but publishing it raw told the owner of an aircraft sixteen minutes overhead that
+their cumulative observed time was `0s`.
+
+`open_sighting_elapsed_s` is how much of that total is still accruing: the open
+sighting's `started_at` to now, or `null` when nothing is open for this airframe.
+`null` rather than `0` per §2.7 — "no sighting is open" is not "an open sighting of
+zero length" — and published separately so a client can render "14h 40m so far,
+still running" instead of inferring an ongoing sighting from a total that moves
+between reads.
 
 ### 3.6 Map overlays — slices 027/028
 
@@ -410,6 +431,25 @@ size class to include.
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
 `started_at`. A value without a timezone is interpreted as UTC rather than rejected.
 
+**Open sightings.** Every list row and the detail object carry two fields that say
+whether the sighting is still running, and for how long:
+
+| Field | Meaning |
+|---|---|
+| `open` | `true` while the sighting has not closed. The same fact as `ended_at: null`, said out loud so a client never has to read a state out of an absence. |
+| `elapsed_s` | Seconds from `started_at` to the instant the response was built. Present only while `open`; `null` on a closed sighting, whose answer is `duration_s`. |
+
+`duration_s` keeps meaning exactly what it stores: the **recorded** duration of a
+finished sighting, and `null` until there is one. What that `null` must *not* be
+rendered as is "Unknown" — §2.7 reserves that word for "the decoder never reported
+this", and a sighting the same page calls "Ongoing" is not unknown in that sense:
+its start time and the current time are both known. "Not closed yet" is a different
+fact and gets different fields. Likewise `closure_reason` is `null` because there
+has been no closure, not because the reason was lost.
+
+Every row of one page is measured against a single clock reading, so two sightings
+that started in the same millisecond always report the same `elapsed_s`.
+
 Sighting detail sketch:
 
 ```json
@@ -421,6 +461,8 @@ Sighting detail sketch:
   "started_at": "2026-08-30T22:02:10Z",
   "ended_at": "2026-08-30T22:41:55Z",
   "duration_s": 2385,
+  "open": false,
+  "elapsed_s": null,
   "closure_reason": "gap_timeout",
   "route": {
     "origin": "KTCM",
@@ -455,8 +497,8 @@ Sighting detail sketch:
 ```
 
 `path` is the Douglas-Peucker-simplified, timestamp-ordered track (playback-capable,
-SPEC §19). Active sightings return the live full-resolution track instead and
-`ended_at: null`.
+SPEC §19). Active sightings return the live full-resolution track instead, with
+`ended_at: null` and `open: true`.
 
 ### 3.8 Analytics — slice 031
 
@@ -472,6 +514,70 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/classification-activity` | Military/government/police activity over time. |
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
+
+**"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
+real latency — the flush pass runs every 30 s and only for days something touched
+— so there is a window in which a day has traffic and no `daily_stats` row.
+Rendering that as `0 aircraft, 0 sightings` states a measurement that was never
+taken, which is what a young install showed. Every rollup-derived figure is
+therefore `null` until its day has been folded, and a `complete` flag says which
+state a reader is in:
+
+```jsonc
+// GET /api/v1/analytics/daily?preset=7d
+{
+  "window": { "preset": "7d", "from": "…", "to": "…",
+              "first_day": "2026-09-14", "last_day": "2026-09-20",
+              "timezone": "America/New_York" },
+  "items": [
+    {                                  // a day that has been rolled up
+      "day": "2026-09-19", "complete": true,
+      "unique_aircraft": 112, "new_aircraft": 9, "sightings": 486,
+      "interesting": 57, "military": 1, "government": 6, "law_enforcement": 4,
+      "max_range_nm": 225.6, "busiest_hour": 21,
+      "receiver_messages": 68764, "receiver_positions": 9012,
+      "receiver_aircraft_max": 61, "receiver_max_range_nm": 224.9
+    },
+    {                                  // not computed yet — not a quiet day
+      "day": "2026-09-20", "complete": false,
+      "unique_aircraft": null, "new_aircraft": 3, "sightings": null,
+      "interesting": null, "military": null, "government": null,
+      "law_enforcement": null, "max_range_nm": null, "busiest_hour": null,
+      "receiver_messages": null, "receiver_positions": null,
+      "receiver_aircraft_max": null, "receiver_max_range_nm": null
+    }
+  ]
+}
+```
+
+- `complete: false` means **the rollup for that day has not been written yet**.
+  A day that *was* rolled up and had no traffic is `complete: true` with zeros —
+  the zero is then the measurement, and a chart should draw it as one.
+- `new_aircraft` is the one count that is never `null`: it is derived live (see
+  below), so it is a real figure on a pending day too.
+- The `receiver_*` fields keep their existing meaning — `null` where slice 033
+  recorded no activity for that day — and are `null` on a pending day as well.
+- `GET /analytics/classification-activity` carries the same rows under `series`
+  and adds `complete` beside its totals.
+- `GET /analytics/summary` adds `complete`, but its **totals stay numbers**: a
+  total over six folded days of seven is a real total, and blanking the card
+  would hide six days of history to describe one. `complete: false` means "as far
+  as has been computed". `unique_aircraft`, `new_aircraft`, `new_milestones` and
+  the first/last sighting instants are live queries and are unaffected.
+- `GET /receiver/metrics?metric=unique_aircraft` reads the same rows, so a
+  pending day is a point with `"value": null` rather than a zero.
+
+**"Never seen before" has one definition across every surface** (issue #205): an
+airframe whose `aircraft.first_seen_ms` — its first-ever observation by this
+receiver — falls inside the window, attributed to the receiver-local day that
+instant fell in. `rarity.never_seen_before` is that count for the whole window,
+`daily[].new_aircraft` is it per day, and `summary.new_aircraft` is the sum; all
+three come from one query, so `summary.new_aircraft == rarity.never_seen_before`
+always. The figure is **not** read from `daily_stats.new_aircraft`: the stored
+column holds the same number but is only as current as the last rollup pass, and
+serving both left the Analytics page reporting "never seen before" as `0` on one
+card and `99` on the card beside it. It is also the only one of the daily row's
+counts that is never `null` — see below.
 
 `top-types` and `top-operators` share one row shape: `key` (the ICAO type
 designator, or the operator group id as a string), `label` (what to display),
@@ -492,8 +598,26 @@ carries a model, and always `null` for an operator group.
 | `GET /api/v1/receiver/signal-distribution` | RSSI distribution histogram, derived from per-sighting `rssi_*_db` reception stats over the selected window. |
 | `GET /api/v1/receiver/lifetime` | SPEC §63 lifetime statistics since T0. |
 
+**The scorecard's "today" figures are null-honest and never rollup-backed**
+(issue #205). `max_range_today_nm` reduces `range_by_bearing_daily` for the
+receiver-local day and is `null` until a positioned aircraft has been seen
+today — "nothing measured yet", never `0` nm. `unique_aircraft_today` and
+`unique_aircraft_since_t0` are live counts over `sightings`, so they are exact
+whether or not today's analytics rollup has been computed. Every other tile is
+either a live reading (`current_visible`, `current_positioned`,
+`messages_per_sec`, `positions_per_sec`) or a lifetime record, and all of them
+answer `null` when the receiver has nothing to report rather than a zero that
+would read as a measurement.
+
+The day these figures are "today" on is the **receiver's**, resolved from live
+settings on every request *and* on every write — see `docs/DATA_MODEL.md` §10.
+
 `metric` is one of `messages_per_sec`, `positions_per_sec`, `aircraft_count`,
 `max_range_nm`, `messages_total`, `positions_total`, `unique_aircraft`.
+
+A point's `value` is `null` where the tier has no figure for that bucket, which
+includes a day whose analytics rollup has not been computed yet
+(`metric=unique_aircraft`) — a gap in the series, not a zero.
 
 Not every metric exists at every resolution, and asking for an unavailable
 combination is a `400`, not an empty series:
@@ -510,9 +634,9 @@ combination is a `400`, not an empty series:
 | `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
-`severity`, `reason`, `icao`, `sighting_id`, `rule` (null for a built-in match),
-`builtin_key` (set when the match came from a built-in rather than a user rule, e.g.
-`emergency_7600`), and `notified`:
+`severity`, `reason`, `icao`, `sighting_id`, an identity block for the airframe,
+`rule` (null for a built-in match), `builtin_key` (set when the match came from a
+built-in rather than a user rule, e.g. `emergency_7600`), and `notified`:
 
 ```json
 {
@@ -522,11 +646,35 @@ An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
   "reason": "Emergency squawk 7600 (radio failure)",
   "icao": "56ff74",
   "sighting_id": 70,
+  "callsign": "RCH492",
+  "registration": "05-5153",
+  "aircraft_type": "C17",
+  "closest_approach_nm": 11.2,
+  "lowest_altitude_ft": 21000,
   "rule": null,
   "builtin_key": "emergency_7600",
   "notified": false
 }
 ```
+
+`callsign`, `registration` and `aircraft_type` name the aircraft in terms a person
+recognises. SPEC §48 requires a notification to carry "callsign/tail, aircraft type,
+classification, altitude, distance, match reason", and the history is exactly where
+someone looks when they *missed* the notification — a row whose only identification
+is `56ff74` does not answer that. Each is `null` per §2.7 when it is genuinely
+absent: nothing transmitted a callsign, or no metadata source has heard of this
+address. The names are the ones §3.5 and §3.7 already use for the same facts, so one
+set of client components renders an alert row, a sighting row and an aircraft row.
+
+`closest_approach_nm` and `lowest_altitude_ft` are the **sighting's** records, not a
+snapshot taken at the instant of the match: `alert_matches` stores no position of its
+own, and these are the nearest true answer to "how close, how low was it". On a
+sighting still open they keep moving between reads.
+
+`reason` remains the single statement of *what matched*. A client rendering a row
+should not also print `rule.name` beside it — for a rule match the two are the same
+string, because the stored reason is `"Rule: " + rule.name`. `rule` is there to link
+to the rule and to survive a rename, not to be shown twice.
 
 `rule_id` narrows the history to one user rule — the per-rule drill-down the Alerts
 page offers next to each rule. It is a **filter, not a lookup**: an id that names no

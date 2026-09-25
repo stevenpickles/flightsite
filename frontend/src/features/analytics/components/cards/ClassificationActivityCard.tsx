@@ -16,15 +16,25 @@ import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
 export interface ClassificationActivityCardProps {
   window?: AnalyticsWindow;
   series: AnalyticsDailyRow[];
+  /** `false` when the window includes a day not computed yet (R3-02/A1) —
+   * the totals below may then be an undercount, not a true zero, so the
+   * summary says so rather than presenting them as final. `undefined`
+   * while the query is still pending, same as `window`. */
+  complete?: boolean;
   isLoading: boolean;
   error?: string;
+  errorDetail?: string;
+  onRetry?: () => void;
 }
 
 export function ClassificationActivityCard({
   window,
   series,
+  complete,
   isLoading,
   error,
+  errorDetail,
+  onRetry,
 }: ClassificationActivityCardProps) {
   const buildOption = useCallback(
     (theme: ChartTheme) => {
@@ -44,13 +54,24 @@ export function ClassificationActivityCard({
           textStyle: { color: theme.mutedInk },
         },
         grid: { left: 8, right: 16, top: 32, bottom: 24, containLabel: true },
-        tooltip: { trigger: "axis" as const },
+        tooltip: {
+          trigger: "axis" as const,
+          valueFormatter: (value: unknown) =>
+            typeof value === "number"
+              ? `${value} ${value === 1 ? "sighting" : "sightings"}`
+              : "no data",
+        },
         xAxis: {
           type: "category" as const,
           data: series.map((row) => row.day),
           ...axisStyle,
         },
-        yAxis: { type: "value" as const, ...axisStyle },
+        yAxis: {
+          type: "value" as const,
+          name: "sightings",
+          nameTextStyle: { color: theme.mutedInk },
+          ...axisStyle,
+        },
         series: [
           {
             name: "Military",
@@ -76,11 +97,15 @@ export function ClassificationActivityCard({
     [series],
   );
 
+  // R3-02/A1: a day not computed yet carries `null` here, not a real zero —
+  // summed with `?? 0` so an in-progress day never throws off the total
+  // into `NaN`, with the incompleteness itself called out in `summary`
+  // below rather than silently folded into the count.
   const totals = series.reduce(
     (acc, row) => ({
-      military: acc.military + row.military,
-      government: acc.government + row.government,
-      lawEnforcement: acc.lawEnforcement + row.law_enforcement,
+      military: acc.military + (row.military ?? 0),
+      government: acc.government + (row.government ?? 0),
+      lawEnforcement: acc.lawEnforcement + (row.law_enforcement ?? 0),
     }),
     { military: 0, government: 0, lawEnforcement: 0 },
   );
@@ -89,7 +114,8 @@ export function ClassificationActivityCard({
       ? "No military, government or law-enforcement activity in this window."
       : `Military, government and law-enforcement activity by day: ` +
         `${totals.military} military, ${totals.government} government, ` +
-        `${totals.lawEnforcement} law-enforcement sightings across ${series.length} days.`;
+        `${totals.lawEnforcement} law-enforcement sightings across ${series.length} days` +
+        `${complete === false ? " (today not computed yet, so this may undercount)" : ""}.`;
 
   return (
     <AnalyticsCard
@@ -97,6 +123,8 @@ export function ClassificationActivityCard({
       window={window}
       isLoading={isLoading}
       error={error}
+      errorDetail={errorDetail}
+      onRetry={onRetry}
     >
       <EChart
         buildOption={buildOption}

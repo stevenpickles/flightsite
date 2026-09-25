@@ -95,6 +95,45 @@ describe("RuleBuilderForm", () => {
     expect(await screen.findByText(/can never match/i)).toBeInTheDocument();
   });
 
+  it("shows a metric conversion hint under distance/altitude fields when metric is preferred (R4-13)", async () => {
+    // Storage and the API stay nm/ft regardless of this preference
+    // (`CLAUDE.md`) — the hint is a courtesy under the field, not a second
+    // input.
+    installAlertsApiMock({ units: "metric" });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <RuleBuilderForm
+        submitLabel="Create rule"
+        isPending={false}
+        serverError={null}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await addCondition(user, "Distance");
+    await user.type(screen.getByLabelText("Within (nm)"), "250");
+
+    expect(await screen.findByText(/≈ 463 km/)).toBeInTheDocument();
+  });
+
+  it("shows no metric hint when the aviation units preference is in effect", async () => {
+    installAlertsApiMock({ units: "aviation" });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <RuleBuilderForm
+        submitLabel="Create rule"
+        isPending={false}
+        serverError={null}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await addCondition(user, "Distance");
+    await user.type(screen.getByLabelText("Within (nm)"), "250");
+
+    expect(screen.queryByText(/≈/)).toBeNull();
+  });
+
   it("stays quiet about errors until the first submit attempt", async () => {
     const { user } = renderBuilder();
 

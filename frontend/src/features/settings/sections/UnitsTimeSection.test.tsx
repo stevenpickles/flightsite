@@ -75,4 +75,41 @@ describe("UnitsTimeSection", () => {
     const body = JSON.parse(String(putInit.body)) as Record<string, unknown>;
     expect(body).toEqual({ units: "metric", timezone: "Europe/London" });
   });
+
+  it("keeps Save enabled after a rejected save so the user can retry (R4-02)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              {
+                loc: ["timezone"],
+                msg: "Unknown IANA timezone",
+                type: "value_error",
+              },
+            ],
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    await user.click(screen.getByRole("radio", { name: /metric/i }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/unknown iana timezone/i),
+    ).toBeInTheDocument();
+    // The rejection must not be the thing that disables Save.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.selectOptions(
+      screen.getByLabelText(/timezone/i),
+      "America/New_York",
+    );
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+  });
 });

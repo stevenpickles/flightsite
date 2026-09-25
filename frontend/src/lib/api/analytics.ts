@@ -41,16 +41,25 @@ export interface AnalyticsWindow {
 
 /** One receiver-local day of the §3.7 `daily` series. `receiver_*` fields are
  * slice 033's joined activity for the same day, `null` where that slice
- * recorded none. */
+ * recorded none.
+ *
+ * `complete` (R3-02/A1) is `false` for a day whose rollup has not been
+ * computed yet — every field below except `day` and `new_aircraft` (always
+ * live-derived, never null) is then `null`, meaning "not computed yet", not
+ * "counted zero". Once `complete` is `true`, `null` reverts to its original,
+ * narrower meaning for the couple of fields that could always carry one
+ * (`max_range_nm` with no positioned sighting that day, `busiest_hour`
+ * before any traffic) — a real zero is a real zero. */
 export interface AnalyticsDailyRow {
   day: string;
-  unique_aircraft: number;
+  complete: boolean;
+  unique_aircraft: number | null;
   new_aircraft: number;
-  sightings: number;
-  interesting: number;
-  military: number;
-  government: number;
-  law_enforcement: number;
+  sightings: number | null;
+  interesting: number | null;
+  military: number | null;
+  government: number | null;
+  law_enforcement: number | null;
   max_range_nm: number | null;
   busiest_hour: number | null;
   receiver_messages: number | null;
@@ -117,6 +126,11 @@ export interface AnalyticsClassificationResponse {
   government: number;
   law_enforcement: number;
   interesting: number;
+  /** `false` when the window includes a day whose rollup is not computed
+   * yet (R3-02/A1) — the totals above are summed over whatever `series`
+   * rows are `complete`, so they may be an undercount while this is
+   * `false`. */
+  complete: boolean;
   series: AnalyticsDailyRow[];
 }
 
@@ -166,6 +180,10 @@ export interface AnalyticsSummary {
    * `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record` or
    * `milestone` whose moment falls inside the window. */
   new_milestones: number;
+  /** `false` when the window includes a day whose rollup is not computed
+   * yet (R3-02/A1) — every total above still stays a number (never `null`),
+   * this is only the caveat that one may be an undercount. */
+  complete: boolean;
 }
 
 export interface AnalyticsSummaryResponse {
@@ -315,11 +333,38 @@ export const analyticsQueryKeys = {
     ["analytics", "rarity", params] as const,
 };
 
-/** `staleTime`/`refetchOnWindowFocus` are overridden past the app-wide
- * defaults (`lib/queryClient.ts`'s 30 s, no focus refetch): the Live Map's
- * "Today at a glance" card is meant to look current when a user tabs back to
- * it, and 60 s keeps a floating card that is visible far more often than the
- * Analytics page from re-requesting on every render. */
+/** How often an Analytics card re-asks its endpoint while the page is open
+ * (R3-06) — nothing on this page polled at all before, so a tab left open
+ * overnight (or simply across a receiver-local midnight, since every window
+ * here is resolved against the *receiver's* calendar) kept showing the
+ * figures it had on load, forever. */
+export const ANALYTICS_REFETCH_INTERVAL_MS = 60_000;
+
+/** Applied to every Analytics query below (R3-05/R3-06): the app-wide
+ * default of `retry: 1`, no focus refetch and no polling (`lib/queryClient.ts`)
+ * means a card that caught one transient 500 never asked again, and a card
+ * that loaded fine never asked again either. `retry: 3` with a short, fixed
+ * delay — the same `useAircraftDetailQuery` (`lib/api/aircraft.ts`) call,
+ * rather than TanStack Query's default exponential backoff climbing toward a
+ * 30 s ceiling: a card on a page someone has open should settle in well
+ * under a second. `refetchOnWindowFocus: true` gives a returning user a free
+ * extra chance beyond `refetchInterval`. */
+const RESILIENT_QUERY_OPTIONS = {
+  retry: 3,
+  retryDelay: 250,
+  refetchOnWindowFocus: true,
+  refetchInterval: ANALYTICS_REFETCH_INTERVAL_MS,
+} as const;
+
+/** `staleTime`/`refetchOnWindowFocus`/`refetchInterval` are overridden past
+ * the app-wide defaults (`lib/queryClient.ts`'s 30 s, no focus refetch, no
+ * interval — never changed here): the Live Map's "Today at a glance" card is
+ * meant to look current whether or not a user does anything at all. It is a
+ * floating card left on screen for hours at a time, not a page visited once
+ * and read, so `refetchInterval` polls every 60 s on its own rather than
+ * only on mount or a window-focus round-trip — the same 60 s `staleTime`
+ * already used, so a focus-triggered refetch and the interval's own tick
+ * never race each other into two requests back to back. */
 export function useAnalyticsSummaryQuery(
   params: AnalyticsWindowParams,
   localDate: string,
@@ -328,7 +373,8 @@ export function useAnalyticsSummaryQuery(
     queryKey: analyticsQueryKeys.summary(params, localDate),
     queryFn: () => getAnalyticsSummary(params),
     staleTime: 60_000,
-    refetchOnWindowFocus: true,
+    ...RESILIENT_QUERY_OPTIONS,
+    refetchInterval: 60_000,
   });
 }
 
@@ -338,6 +384,7 @@ export function useAnalyticsDailyQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.daily(params),
     queryFn: () => getAnalyticsDaily(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -347,6 +394,7 @@ export function useAnalyticsClassificationActivityQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.classification(params),
     queryFn: () => getAnalyticsClassificationActivity(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -356,6 +404,7 @@ export function useAnalyticsTopAircraftQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topAircraft(params),
     queryFn: () => getAnalyticsTopAircraft(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -365,6 +414,7 @@ export function useAnalyticsTopTypesQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topTypes(params),
     queryFn: () => getAnalyticsTopTypes(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -374,6 +424,7 @@ export function useAnalyticsTopOperatorsQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.topOperators(params),
     queryFn: () => getAnalyticsTopOperators(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }
 
@@ -383,5 +434,6 @@ export function useAnalyticsRarityQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.rarity(params),
     queryFn: () => getAnalyticsRarity(params),
+    ...RESILIENT_QUERY_OPTIONS,
   });
 }

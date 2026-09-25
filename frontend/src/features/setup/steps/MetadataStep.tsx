@@ -71,8 +71,8 @@ export function MetadataStep({
           <p className="text-sm font-medium">Aircraft metadata</p>
           <p className="text-xs text-muted-foreground">
             Offline registration/type metadata (Mictronics/tar1090, optional
-            FAA) is downloaded from Settings after setup finishes — nothing to
-            do here.
+            FAA, and an opt-in OpenSky database) is downloaded from Settings
+            after setup finishes — nothing to do here.
           </p>
         </div>
       </div>

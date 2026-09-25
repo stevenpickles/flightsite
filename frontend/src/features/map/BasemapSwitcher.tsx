@@ -3,6 +3,7 @@ import { useRef } from "react";
 
 import { BASEMAPS } from "@/features/map/basemaps";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
+import { useActiveBasemap } from "@/features/map/useActiveBasemap";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +14,11 @@ import { cn } from "@/lib/utils";
  * panel rather than a page-level settings control.
  */
 export function BasemapSwitcher() {
-  const basemapId = useBasemapStore((state) => state.basemapId);
+  // The *rendered* basemap, which is the user's explicit choice when they
+  // have made one and the theme's affine default when they have not (issue
+  // R1-14) — so the checked radio is always the map they are looking at,
+  // including right after a theme toggle moved it.
+  const basemapId = useActiveBasemap().id;
   const setBasemapId = useBasemapStore((state) => state.setBasemapId);
   // Vertically stacked options, so Up/Down are the natural arrows.
   const groupRef = useRef<HTMLDivElement>(null);

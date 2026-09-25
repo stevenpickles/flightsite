@@ -168,16 +168,32 @@ export const activityQueryKeys = {
   list: (params: ActivityListParams) => ["activity", "list", params] as const,
 };
 
+/** Per-query refresh policy (review R2-03) — the same opt-in shape
+ * `lib/api/aircraft.ts` documents, duplicated rather than imported for the
+ * same reason `apiV1Fetch` is.
+ *
+ * Opt-in matters most on this hook, because its two call sites want opposite
+ * things: the Live Map's `ActivityPanel` is already fed live `activity_batch`
+ * frames and must not add a poll on top, while the standalone page is REST
+ * only and is the surface the review found frozen. */
+export interface RefreshOptions {
+  refetchInterval?: number | false;
+}
+
 /** One page of the feed. `placeholderData: keepPreviousData` keeps the rows
  * on screen while the next page loads — which matters more here than on a
  * table, because the Live Map panel re-runs this query on a filter change
  * and a flash of "Loading…" over a map control reads as a glitch. */
 export function useActivityQuery(
   params: ActivityListParams,
+  options: RefreshOptions = {},
 ): UseQueryResult<ActivityListResponse> {
   return useQuery({
     queryKey: activityQueryKeys.list(params),
     queryFn: () => getActivity(params),
     placeholderData: keepPreviousData,
+    refetchInterval: options.refetchInterval ?? false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }

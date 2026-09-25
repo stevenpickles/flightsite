@@ -6,10 +6,12 @@ import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { BASEMAPS, DEFAULT_BASEMAP_ID } from "@/features/map/basemaps";
 import { BASEMAP_STORAGE_KEY } from "@/features/map/basemapPersistence";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
+import { useUiStore } from "@/store/useUiStore";
 
 afterEach(() => {
   window.localStorage.clear();
-  useBasemapStore.setState({ basemapId: DEFAULT_BASEMAP_ID });
+  useBasemapStore.setState({ explicitBasemapId: null });
+  useUiStore.setState({ theme: "dark" });
 });
 
 describe("BasemapSwitcher", () => {
@@ -39,7 +41,32 @@ describe("BasemapSwitcher", () => {
     await user.click(osmOption);
 
     expect(osmOption).toHaveAttribute("aria-checked", "true");
-    expect(useBasemapStore.getState().basemapId).toBe("osm-raster");
+    expect(useBasemapStore.getState().explicitBasemapId).toBe("osm-raster");
     expect(window.localStorage.getItem(BASEMAP_STORAGE_KEY)).toBe("osm-raster");
+  });
+
+  it("checks the theme's basemap while the user has chosen none", () => {
+    // Issue R1-14: the switcher must show the map that is actually on
+    // screen, which after a theme toggle is no longer the registry default.
+    useUiStore.setState({ theme: "light" });
+    render(<BasemapSwitcher />);
+
+    expect(
+      screen.getByRole("radio", { name: /light aviation/i }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("radio", { name: /dark aviation/i }),
+    ).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("keeps an explicit choice checked across a theme change", async () => {
+    const user = userEvent.setup();
+    render(<BasemapSwitcher />);
+    await user.click(screen.getByRole("radio", { name: /openstreetmap/i }));
+
+    useUiStore.setState({ theme: "light" });
+    expect(
+      screen.getByRole("radio", { name: /openstreetmap/i }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 });
