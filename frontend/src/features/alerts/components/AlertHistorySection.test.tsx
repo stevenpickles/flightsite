@@ -16,10 +16,7 @@ import {
   AlertHistorySection,
   type AlertHistorySectionProps,
 } from "@/features/alerts/components/AlertHistorySection";
-import {
-  ALERT_MATCHES_POLL_MS,
-  type AlertMatch,
-} from "@/lib/api/alertMatches";
+import { ALERT_MATCHES_POLL_MS, type AlertMatch } from "@/lib/api/alertMatches";
 import { alertMatch, installAlertsApiMock } from "@/test/alertsApiMock";
 
 afterEach(() => {
