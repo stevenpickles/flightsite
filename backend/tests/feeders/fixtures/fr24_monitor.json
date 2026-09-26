@@ -19,7 +19,7 @@
   "feed_num_ac_tracked": "41",
   "feed_status": "connected",
   "feed_status_message": "",
-  "fr24key": "SENTINEL-FR24KEY-9f3a",
+  "fr24key": "SENTINEL-FR24-KEY",
   "last_json_utc": "1790000000",
   "local_ips": "SENTINEL-LOCAL-IP-192.168.1.77",
   "mlat-ok": "NO",

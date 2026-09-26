@@ -32,7 +32,7 @@ FIXTURE_NOW_MS = FIXTURE_NOW_S * 1000
 
 #: Every sentinel planted in a fixture. None may ever appear in an output.
 SENTINELS = (
-    "SENTINEL-FR24KEY-9f3a",
+    "SENTINEL-FR24-KEY",
     "SENTINEL-FR24-ALIAS",
     "SENTINEL-FR24-LEGACY",
     "SENTINEL-LOCAL-IP",
