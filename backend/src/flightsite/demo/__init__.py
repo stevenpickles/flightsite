@@ -10,6 +10,7 @@ Module                              Responsibility
 :mod:`~flightsite.demo.scenario`    tick index -> decoder batch (pure)
 :mod:`~flightsite.demo.adapter`     :class:`DemoAdapter`, the ``DecoderAdapter``
 :mod:`~flightsite.demo.env`         the ``FLIGHTSITE_DEMO`` activation flag
+:mod:`~flightsite.demo.feeders`     stand-in feeder probes for the Feeders page
 =================================== ==========================================
 
 :class:`DemoAdapter` implements :class:`~flightsite.ingest.protocol.DecoderAdapter`
