@@ -42,6 +42,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.7.0 | 8 | Empty tracker: per-rule alert history, metadata URL overrides, demo classification airframes, true-cadence consumer follow-ups, labelled-count density tier, kill-drill and style-spec test hardening (slice 073; recorded 2026-09-06) |
 | v0.8.0 | 8 | Self-explanatory Analytics rankings: tail number and type on every Top aircraft bar, the long-form description beside every Top types designator, richer tooltips on both; visual capture waits for a populated demo picture (slice 074; recorded 2026-09-19) |
 | v0.9.0 | 8 | Useful and robust on every page: the 2026-09-20 formal site review's 71 findings fixed (rollups keyed on the live receiver timezone with a one-time repair, basemap switch keeps every layer, legible status text, error boundaries, responsive shell, refresh/retry everywhere, honest ordering and not-yet states), plus a metadata import that no longer starves the live pipeline and per-consumer drop attribution (slices 075–076; migration 0016; recorded 2026-09-25) |
+| v0.10.0 | 8 | Feeders: one page for every network the receiver streams to — status, gaps, connection statistics, links to the networks and their feed-stats pages, and to the sibling local pages (slice 077; migration 0017) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -164,6 +165,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 074 | Analytics ranking detail | 031, 032 | opus | low | Tail number plus type on every Top aircraft bar, the long-form description beside every Top types designator (derived from the imported metadata as the majority model per type, exposed as `description` on top-types rows), richer tooltips on both cards (issue #198) |
 | 075 | Metadata import off the live path & honest drop attribution | 021, 024, 042, 071 | opus | medium | Resolve and classify airframes before the promotion transaction (staging tables, migration 0016) so a full import no longer holds the writer for minutes and overflows the persistence/alert queues; report shed live events per subscriber in diagnostics and on the Health page instead of under the WebSocket (issue #185) |
 | 076 | Site review remediation | 075 | opus | high | Fix every finding of the 2026-09-20 formal site review (`docs/reviews/2026-09-20-site-review.md`): rollup day keys from the live timezone, basemap layer loss, invisible status text, error boundaries, responsive shell, refresh/retry on every page, ordering and 'not yet' semantics, raw strings, and the per-page usefulness gaps |
+| 077 | Feeders page | 033, 042, 076 | opus | medium | `/receiver/feeders`: status of every network the receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, AeroDataBox, OpenSky) from their local status documents and, opt-in via the Docker socket, their container logs; links to each network and its stats page (URLs kept in secrets.yaml), gap timeline and connection statistics, and links to sibling local pages such as tar1090 and graphs1090 (issue #215; migration 0017; v0.10.0) |
 
 ## Parallelization Guide
 
