@@ -2298,7 +2298,7 @@ slices:
     title: "Feeders page"
     phase: 8
     branch: "077-feeders-page"
-    status: in_progress
+    status: merged
     depends_on: ["033", "042", "076"]
     objective: "One page under Receiver that shows the status of every network the receiver feeds, links to each network and its per-feeder stats page, gaps in feeding and connection statistics, plus links to the other locally hosted pages (issue #215)."
     scope:
