@@ -241,7 +241,7 @@ class UltrafeederProbe:
             "outlier_pct": outliers,
         }
         metrics: dict[str, MetricValue] = {
-            "peers": mlat.peers if mlat is not None else None,
+            "mlat_peers": mlat.peers if mlat is not None else None,
             "good_sync_pct": mlat.good_sync_pct if mlat is not None else None,
             "adsb_out_connected": None if connected is None else int(connected),
         }

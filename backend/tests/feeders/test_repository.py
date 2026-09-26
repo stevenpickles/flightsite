@@ -28,8 +28,8 @@ async def test_samples_round_trip_their_numeric_metrics(database: Database) -> N
 
     await repository.record(
         [
-            FeederSample("adsbx", T, FeederState.UP, {"peers": 12, "good_sync_pct": 93.5}),
-            FeederSample("adsbx", T + 60_000, FeederState.DEGRADED, {"peers": None}),
+            FeederSample("adsbx", T, FeederState.UP, {"mlat_peers": 12, "good_sync_pct": 93.5}),
+            FeederSample("adsbx", T + 60_000, FeederState.DEGRADED, {"mlat_peers": None}),
             FeederSample("other", T, FeederState.UP, {}),
         ],
         [],
@@ -37,8 +37,8 @@ async def test_samples_round_trip_their_numeric_metrics(database: Database) -> N
 
     samples = await repository.samples_between("adsbx", T, T + 60_001)
     assert [(s.ts_ms, s.state, dict(s.metrics)) for s in samples] == [
-        (T, FeederState.UP, {"good_sync_pct": 93.5, "peers": 12}),
-        (T + 60_000, FeederState.DEGRADED, {"peers": None}),
+        (T, FeederState.UP, {"good_sync_pct": 93.5, "mlat_peers": 12}),
+        (T + 60_000, FeederState.DEGRADED, {"mlat_peers": None}),
     ]
 
 

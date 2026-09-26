@@ -5,14 +5,18 @@ to include the Feeders page: the e2e and visual suites drive it on the demo
 stack. So this module supplies everything the feeder service needs to run
 with nothing behind it —
 
-* :func:`demo_feeder_settings` — six entries shaped like the reference
-  receiver's (a receiver, FlightAware, FR24, ADS-B Exchange, AeroDataBox,
-  OpenSky) plus the local-pages list and two harmless stats links;
-* :func:`demo_probe` — a :data:`~flightsite.feeders.protocol.ProbeFactory`
-  answering every kind with plausible numbers;
-* :func:`demo_docker_client` — a :data:`~flightsite.feeders.docker.DockerFactory`
-  whose client answers ``/_ping`` without a socket, so the page shows the
-  socket as available.
+* :func:`demo_probes` — what the application passes as the service's
+  ``probes`` in demo mode: a stand-in per configured entry, or, on an install
+  with none configured (the usual demo), the six reference-shaped entries of
+  :data:`DEMO_ENTRIES` (a receiver, FlightAware, FR24, ADS-B Exchange,
+  AeroDataBox, OpenSky). Each stand-in carries its ``entry`` and a public
+  network landing page as its stats link — nobody's account — and the list
+  carries :data:`DEMO_LOCAL_PAGES`, so the whole page renders with nothing
+  configured;
+* :func:`demo_probe` — the same stand-ins as a
+  :data:`~flightsite.feeders.protocol.ProbeFactory`, and
+  :func:`demo_feeder_settings` / :func:`demo_docker_client` for building a
+  service from settings instead.
 
 Every value is a pure function of the clock and the feeder's name, so two
 runs at the same instant agree and a visual snapshot is reproducible. Two
@@ -130,13 +134,8 @@ class DemoFeederSettings:
     docker_socket: str | None = DEMO_DOCKER_SOCKET
     entries: Sequence[FeederEntry] = DEMO_ENTRIES
     local_pages: Sequence[LocalPage] = DEMO_LOCAL_PAGES
-    #: Public network landing pages — deliberately nobody's account.
-    stats_urls: Mapping[str, SecretStr] = field(
-        default_factory=lambda: {
-            "flightaware": SecretStr("https://www.flightaware.com/adsb/stats/"),
-            "fr24": SecretStr("https://www.flightradar24.com/"),
-        }
-    )
+    #: Empty: every demo stand-in carries its own public stats link.
+    stats_urls: Mapping[str, SecretStr] = field(default_factory=dict)
 
 
 def demo_feeder_settings() -> DemoFeederSettings:
@@ -170,6 +169,17 @@ def _wave(now_ms: int, name: str, period_s: float) -> float:
     return 0.5 + 0.5 * math.sin(2 * math.pi * (now_ms / 1000) / period_s + _phase(name))
 
 
+#: Public landing pages the demo links as "stats" — deliberately nobody's
+#: account, so a demo click never leads to a real feeder's page.
+DEMO_STATS_LINKS: Final[Mapping[str, str]] = {
+    FeederKind.PIAWARE: "https://www.flightaware.com/adsb/",
+    FeederKind.FR24: "https://www.flightradar24.com/",
+    FeederKind.OPENSKY_LOGS: "https://opensky-network.org/",
+    "adsbx": "https://www.adsbexchange.com/",
+    "aerodatabox": "https://aerodatabox.com/",
+}
+
+
 def fr24_outage(now_ms: int) -> bool:
     """Whether the scripted FR24 outage is in progress at ``now_ms``."""
     return (now_ms // 1000) % FR24_CYCLE_S < FR24_OUTAGE_S
@@ -196,6 +206,16 @@ class DemoProbe:
     def kind(self) -> str:
         return self._entry.kind
 
+    @property
+    def entry(self) -> FeederEntry:
+        """The entry this stand-in answers for; the service adopts it if unconfigured."""
+        return self._entry
+
+    @property
+    def stats_fallback(self) -> str | None:
+        """A public landing page for the network — never an account page."""
+        return DEMO_STATS_LINKS.get(self._entry.name) or DEMO_STATS_LINKS.get(self._entry.kind)
+
     async def probe(self, now_ms: int) -> ProbeResult:
         return demo_result(self._entry, now_ms)
 
@@ -207,11 +227,12 @@ def demo_result(entry: FeederEntry, now_ms: int) -> ProbeResult:
     if kind == FeederKind.READSB:
         messages = int(24_000 + 14_000 * wave)
         uplink = ReceiverUplink(
-            bytes_out_per_s=round(1800 + 2400 * wave, 1),
+            bytes_out_rate_per_s=round(1800 + 2400 * wave, 1),
             messages_per_min=messages,
-            aircraft_total=int(40 + 30 * wave),
+            positions_per_min=int(messages * 0.18),
+            aircraft=int(40 + 30 * wave),
             aircraft_with_pos=int(32 + 26 * wave),
-            aircraft_mlat=int(2 + 4 * wave),
+            mlat_inbound=int(2 + 4 * wave),
             dropped_samples=0,
             max_range_nm=round(180 + 40 * wave, 1),
             gain_db=43.9,
@@ -230,10 +251,11 @@ def demo_result(entry: FeederEntry, now_ms: int) -> ProbeResult:
                 "aircraft_with_pos": uplink.aircraft_with_pos,
             },
             metrics={
-                "bytes_out_per_s": uplink.bytes_out_per_s,
+                "bytes_out_rate_per_s": uplink.bytes_out_rate_per_s,
                 "messages_per_min": messages,
+                "positions_per_min": uplink.positions_per_min,
                 "aircraft_with_pos": uplink.aircraft_with_pos,
-                "aircraft_mlat": uplink.aircraft_mlat,
+                "mlat_inbound": uplink.mlat_inbound,
             },
             receiver=uplink,
         )
@@ -291,7 +313,7 @@ def demo_result(entry: FeederEntry, now_ms: int) -> ProbeResult:
             adsb_out=AdsbOutStatus(connected=True, since_ms=since_ms),
             detail={"host": entry.host, "outlier_pct": round(1.5 * wave, 2)},
             metrics={
-                "peers": peers,
+                "mlat_peers": peers,
                 "good_sync_pct": round(82 + 15 * wave, 1),
                 "adsb_out_connected": 1,
             },
@@ -310,7 +332,7 @@ def demo_result(entry: FeederEntry, now_ms: int) -> ProbeResult:
                 "bytes_sent": int(online_s * rate),
                 "statistics_at_ms": now_ms - (now_ms % 600_000),
             },
-            metrics={"bytes_out_per_s": rate, "availability_pct": 99.81, "disconnections": 3},
+            metrics={"bytes_out_rate_per_s": rate, "availability_pct": 99.81, "disconnections": 3},
         )
     if kind == FeederKind.DOCKER_HEALTH:
         return ProbeResult(
@@ -326,20 +348,29 @@ def demo_probe(entry: FeederEntryLike, context: ProbeContext) -> FeederProbe:
     return DemoProbe(FeederEntry.of(entry))
 
 
-def demo_probes(entries: Sequence[FeederEntryLike]) -> dict[str, FeederProbe]:
-    """A demo probe per entry, keyed by name."""
-    return {entry.name: DemoProbe(FeederEntry.of(entry)) for entry in entries}
+class DemoProbes(list[DemoProbe]):
+    """The demo's probe list, carrying the local pages the demo links to."""
+
+    local_pages: Sequence[LocalPage] = DEMO_LOCAL_PAGES
+
+
+def demo_probes(entries: Sequence[FeederEntryLike]) -> DemoProbes:
+    """A stand-in per configured entry — or for :data:`DEMO_ENTRIES` when none are."""
+    chosen: Sequence[FeederEntryLike] = entries or DEMO_ENTRIES
+    return DemoProbes(DemoProbe(FeederEntry.of(entry)) for entry in chosen)
 
 
 __all__ = [
     "DEMO_DOCKER_SOCKET",
     "DEMO_ENTRIES",
     "DEMO_LOCAL_PAGES",
+    "DEMO_STATS_LINKS",
     "FR24_CYCLE_S",
     "FR24_OUTAGE_S",
     "PEER_FLAP_S",
     "DemoFeederSettings",
     "DemoProbe",
+    "DemoProbes",
     "aerodatabox_peers",
     "demo_docker_client",
     "demo_feeder_settings",

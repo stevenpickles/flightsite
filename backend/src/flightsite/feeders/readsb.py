@@ -17,13 +17,15 @@ Field                                            Normalized to
 ================================================ ============================
 status ``now``                                   staleness
 status ``uptime``                                ``uptime_s``
-status ``aircraft_with_pos`` (+ ``_without_pos``)  ``aircraft_with_pos`` / ``aircraft_total``
-status ``aircraft_count_by_type.mlat``           ``aircraft_mlat``
+status ``aircraft_with_pos`` (+ ``_without_pos``)  ``aircraft_with_pos`` / ``aircraft``
+status ``aircraft_count_by_type.mlat``           ``mlat_inbound``
 stats ``gain_db``                                ``gain_db``
 stats ``last1min.messages``                      ``messages_per_min``
+stats ``last1min.position_count_total``          ``positions_per_min`` (else
+                                                 ``cpr.global_ok + local_ok``)
 stats ``last1min.local.signal`` / ``noise``      ``signal_db`` / ``noise_db``
 stats ``last1min.local.samples_dropped``         ``dropped_samples``
-stats ``total.remote.bytes_out``                 ``bytes_out_per_s`` (differenced)
+stats ``total.remote.bytes_out``                 ``bytes_out_rate_per_s`` (differenced)
 stats ``total.max_distance_in_nautical_miles``   ``max_range_nm`` (or
                                                  ``max_distance`` metres)
 ================================================ ============================
@@ -69,12 +71,22 @@ def _max_range_nm(total: dict[str, Any]) -> float | None:
     return None if metres is None else metres / METRES_PER_NM
 
 
+def _positions(minute: dict[str, Any]) -> int | None:
+    """Positions decoded in the last minute: readsb's own total, else the CPR paths."""
+    total = count(minute.get("position_count_total"))
+    if total is not None:
+        return total
+    cpr = block(minute, "cpr")
+    decoded = [n for key in ("global_ok", "local_ok") if (n := count(cpr.get(key))) is not None]
+    return sum(decoded) if decoded else None
+
+
 def parse_documents(
     status: object, stats: object | None, *, now_ms: int
 ) -> tuple[ReceiverUplink, int | None, int | None]:
     """Normalize the two documents.
 
-    Returns the uplink summary (its ``bytes_out_per_s`` left for the caller to
+    Returns the uplink summary (its ``bytes_out_rate_per_s`` left for the caller to
     fill, since only the caller has the previous poll), the cumulative
     bytes-out counter, and the status document's own timestamp.
     """
@@ -89,11 +101,12 @@ def parse_documents(
     written_s = number(status_doc.get("now"))
     uplink = ReceiverUplink(
         messages_per_min=count(minute.get("messages")),
-        aircraft_total=(
+        positions_per_min=_positions(minute),
+        aircraft=(
             with_pos + without_pos if with_pos is not None and without_pos is not None else None
         ),
         aircraft_with_pos=with_pos,
-        aircraft_mlat=count(block(status_doc, "aircraft_count_by_type").get("mlat")),
+        mlat_inbound=count(block(status_doc, "aircraft_count_by_type").get("mlat")),
         dropped_samples=count(local.get("samples_dropped")),
         max_range_nm=_max_range_nm(total),
         gain_db=number(stats_doc.get("gain_db")),
@@ -166,12 +179,13 @@ class ReadsbProbe:
 
         uplink, bytes_out, written_ms = parse_documents(status, stats, now_ms=now_ms)
         rate = self._rate(now_ms, bytes_out)
-        uplink = replace(uplink, bytes_out_per_s=rate)
+        uplink = replace(uplink, bytes_out_rate_per_s=rate)
         metrics: dict[str, MetricValue] = {
-            "bytes_out_per_s": rate,
+            "bytes_out_rate_per_s": rate,
             "messages_per_min": uplink.messages_per_min,
+            "positions_per_min": uplink.positions_per_min,
             "aircraft_with_pos": uplink.aircraft_with_pos,
-            "aircraft_mlat": uplink.aircraft_mlat,
+            "mlat_inbound": uplink.mlat_inbound,
         }
         detail: dict[str, DetailValue] = {
             "uptime_s": uplink.uptime_s,

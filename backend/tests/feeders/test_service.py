@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 import pytest
 from pydantic import SecretStr
 
+from flightsite.activity import FeederEpisode as OutageFact
+from flightsite.config import FeederSettings
 from flightsite.counters import CounterRegistry
 from flightsite.db import Database
 from flightsite.feeders import FeederService
@@ -40,7 +42,7 @@ from .conftest import (
     Transitions,
 )
 
-UP = ProbeResult(state=FeederState.UP, observability=Observability.HTTP, metrics={"peers": 3})
+UP = ProbeResult(state=FeederState.UP, observability=Observability.HTTP, metrics={"mlat_peers": 3})
 DOWN = ProbeResult(
     state=FeederState.DOWN, observability=Observability.HTTP, message="gone", failed=True
 )
@@ -116,9 +118,11 @@ async def test_first_poll_opens_an_episode_in_the_observed_state(
 
     assert statuses[0].state is FeederState.UP
     assert statuses[0].since_ms == FIXTURE_NOW_MS
-    assert transitions.episodes == [
+    episodes = await FeederRepository(database).episodes_between("fr24", 0, FIXTURE_NOW_MS + 1)
+    assert episodes == [
         FeederEpisode(feeder="fr24", started_ms=FIXTURE_NOW_MS, state=FeederState.UP)
     ]
+    assert transitions.facts == []  # only outages are announced
     await service.stop()
 
 
@@ -142,8 +146,20 @@ async def test_down_is_committed_only_after_two_consecutive_polls(
         FeederState.DOWN,  # the second consecutive one commits
         FeederState.DOWN,
     ]
-    down_opened = [e for e in transitions.episodes if e.state is FeederState.DOWN]
-    assert len(down_opened) == 1 and down_opened[0].open
+    # One announcement, dated from the first failing poll of the committed run.
+    outage_start = FIXTURE_NOW_MS + 45_000
+    assert transitions.facts == [
+        OutageFact(
+            feeder="fr24",
+            label="Fr24",
+            kind="fr24",
+            offline=True,
+            since_ms=outage_start,
+            at_ms=outage_start,
+        )
+    ]
+    status = service.status("fr24")
+    assert status is not None and status.since_ms == outage_start
     assert counters.snapshot()["feeder_poll_failures"] == 4
     await service.stop()
 
@@ -158,16 +174,37 @@ async def test_restoration_closes_the_down_episode_then_opens_up(
         await service.poll_once()
         clock.advance(15)
 
-    kinds = [(e.state, e.open) for e in transitions.episodes]
-    assert kinds == [
-        (FeederState.UP, True),
-        (FeederState.UP, False),
-        (FeederState.DOWN, True),
-        (FeederState.DOWN, False),
-        (FeederState.UP, True),
+    outage_start, restored_at = FIXTURE_NOW_MS + 15_000, FIXTURE_NOW_MS + 45_000
+    assert [(f.offline, f.since_ms, f.at_ms) for f in transitions.facts] == [
+        (True, outage_start, outage_start),
+        (False, outage_start, restored_at),
     ]
-    closed_down = transitions.episodes[3]
-    assert closed_down.ended_ms == FIXTURE_NOW_MS + 45_000
+    assert transitions.facts[1].outage_ms == 30_000
+    episodes = await FeederRepository(database).episodes_between("fr24", 0, clock.now_ms)
+    assert [(e.state, e.started_ms, e.ended_ms) for e in episodes] == [
+        (FeederState.UP, FIXTURE_NOW_MS, outage_start),
+        (FeederState.DOWN, outage_start, restored_at),
+        (FeederState.UP, restored_at, None),
+    ]
+    await service.stop()
+
+
+async def test_unknown_during_an_outage_neither_ends_it_nor_starts_another(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    unknown = ProbeResult(state=FeederState.UNKNOWN, observability=Observability.NONE)
+    transitions = Transitions()
+    factory = Factory({"fr24": [DOWN, DOWN, unknown, DOWN, DOWN, DEGRADED]})
+    service = make(database, clock, counters, settings("fr24"), factory, transitions)
+    for _ in range(6):
+        await service.poll_once()
+        clock.advance(15)
+
+    assert [(f.offline, f.since_ms) for f in transitions.facts] == [
+        (True, FIXTURE_NOW_MS),
+        (False, FIXTURE_NOW_MS),
+    ]
+    assert transitions.facts[1].at_ms == FIXTURE_NOW_MS + 75_000
     await service.stop()
 
 
@@ -188,29 +225,35 @@ async def test_degraded_and_unknown_commit_immediately(
 async def test_a_raising_listener_or_probe_never_stops_polling(
     database: Database, clock: ManualClock, counters: CounterRegistry
 ) -> None:
-    def explode(episode: FeederEpisode) -> None:
+    def explode(fact: OutageFact) -> None:
         raise RuntimeError("listener bug")
 
     class Broken:
-        name = "fr24"
+        name = "broken"
         kind = "fr24"
 
         async def probe(self, now_ms: int) -> ProbeResult:
             raise RuntimeError("probe bug")
 
+    scripted = Factory({"fr24": [DOWN]})
+
+    def factory(entry: FeederEntryLike, context: ProbeContext) -> FeederProbe:
+        return Broken() if entry.name == "broken" else scripted(entry, context)
+
     service = FeederService(
         database=database,
-        settings=settings("fr24"),
+        settings=settings("broken", "fr24"),
         on_transition=explode,
-        probe_factory=lambda entry, context: Broken(),
+        probe_factory=factory,
         clock=clock,
         counters=counters,
     )
 
-    statuses = await service.poll_once()
+    await service.poll_once()
+    statuses = await service.poll_once()  # commits fr24 down: the listener raises
 
-    assert statuses[0].state is FeederState.UNKNOWN
-    assert counters.snapshot()["feeder_poll_failures"] == 1
+    assert [s.state for s in statuses] == [FeederState.UNKNOWN, FeederState.DOWN]
+    assert counters.snapshot()["feeder_poll_failures"] == 4
     await service.stop()
 
 
@@ -244,7 +287,7 @@ async def test_transitions_are_written_at_once_and_samples_on_the_flush_interval
         await service.poll_once()
     samples = await repository.samples_between("fr24", 0, clock.now_ms + 1)
     assert [s.ts_ms for s in samples] == [FIXTURE_NOW_MS, FIXTURE_NOW_MS + 60_000]
-    assert samples[0].metrics == {"peers": 3}
+    assert samples[0].metrics == {"mlat_peers": 3}
     await service.stop()
 
 
@@ -259,7 +302,7 @@ async def test_stop_closes_open_episodes_silently_and_start_closes_dangling_ones
 
     episodes = await FeederRepository(database).episodes_between("fr24", 0, clock.now_ms + 1)
     assert episodes[0].ended_ms == FIXTURE_NOW_MS + 30_000
-    assert len(transitions.episodes) == 1  # stopping is not a transition
+    assert transitions.facts == []  # stopping is not a transition
 
     # An unclean stop: an episode left open, samples after it.
     repository = FeederRepository(database)
@@ -463,8 +506,8 @@ async def test_history_merges_stored_and_pending_rows(
     assert [e["state"] for e in history["episodes"]] == ["up", "down", "up"]
     assert history["episodes"][-1]["ended_at"] is None
     assert len(history["samples"]) == 5
-    # 2 min up then 2 min down (committed on the third poll) then 1 min up.
-    assert history["availability_pct"] == 60.0
+    # 1 min up, 3 min down (dated from the first failing poll), 1 min up.
+    assert history["availability_pct"] == 40.0
     assert await service.history("nope", "24h") is None
     with pytest.raises(ValueError):
         await service.history("fr24", "1y")
@@ -536,3 +579,75 @@ async def test_a_failed_flush_keeps_the_batch_for_the_next_one(
     assert await service.flush()
     assert service.pending_samples == 0
     assert len(await repository.episodes_between("fr24", 0, clock.now_ms + 1)) == 1
+
+
+async def test_the_application_s_constructor_keywords_and_config_models(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    """``app.py`` passes the section's parts, as B's validated config models."""
+    config = FeederSettings.model_validate(
+        {
+            "poll_interval_s": 20,
+            "entries": [
+                {
+                    "name": "fr24",
+                    "label": "FlightRadar24",
+                    "kind": "fr24",
+                    "url": "http://host.docker.internal:8754/monitor.json",
+                    "web_url": "http://fermi.local:8754/",
+                }
+            ],
+            "local_pages": [{"label": "tar1090", "url": "http://fermi.local:8080/"}],
+            "stats_urls": {"fr24": SECRET_STATS_URL},
+        }
+    )
+    factory = Factory()
+    service = FeederService(
+        database=database,
+        entries=config.entries,
+        docker_socket=config.docker_socket,
+        poll_interval_s=config.poll_interval_s,
+        clock=clock,
+        on_transition=Transitions(),
+        probe_factory=factory,
+        counters=counters,
+    )
+    await service.poll_once()
+
+    assert service.poll_interval_s == 20
+    assert service.docker_client is None
+    status = service.status("fr24")
+    assert status is not None
+    assert status.web_url == "http://fermi.local:8754/"
+    assert status.stats_link is False  # not given the secrets ...
+    live = service.report(stats_urls=config.stats_urls, local_pages=config.local_pages)
+    assert live["feeders"][0]["stats_link"] is True  # ... until the live section is passed
+    assert live["local_pages"] == [{"label": "tar1090", "url": "http://fermi.local:8080/"}]
+    assert service.stats_url("fr24", config.stats_urls) == SECRET_STATS_URL
+
+    await service.apply_settings(config)  # the hot-apply path gets the whole section
+    assert service.stats_url("fr24") == SECRET_STATS_URL
+    assert factory.built["fr24"].calls == 1  # the unchanged entry kept its probe
+    await service.stop()
+
+
+async def test_supplied_probes_replace_construction(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    fixed = ScriptedProbe("fr24", "fr24", [DEGRADED])
+    factory = Factory()
+    service = FeederService(
+        database=database,
+        entries=settings("fr24", "other").entries,
+        probes=[fixed],
+        probe_factory=factory,
+        clock=clock,
+        counters=counters,
+    )
+
+    statuses = await service.poll_once()
+
+    assert [s.state for s in statuses] == [FeederState.DEGRADED, FeederState.UP]
+    assert set(factory.built) == {"other"}
+    assert fixed.calls == 1
+    await service.stop()

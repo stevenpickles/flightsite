@@ -102,12 +102,13 @@ class ReceiverUplink:
 
     #: Bytes per second to *all* network connectors together, differenced
     #: between two polls of a cumulative counter.
-    bytes_out_per_s: float | None = None
+    bytes_out_rate_per_s: float | None = None
     messages_per_min: int | None = None
-    aircraft_total: int | None = None
+    positions_per_min: int | None = None
+    aircraft: int | None = None
     aircraft_with_pos: int | None = None
     #: Aircraft positioned by multilateration results coming back *in*.
-    aircraft_mlat: int | None = None
+    mlat_inbound: int | None = None
     dropped_samples: int | None = None
     max_range_nm: float | None = None
     gain_db: float | None = None

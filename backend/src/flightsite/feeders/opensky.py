@@ -17,7 +17,7 @@ Line                             Used as
 ``currently online|offline``     the state
 ``N [P%] seconds online``        ``detail.seconds_online`` / ``availability_pct``
 ``N disconnections``             ``detail.disconnections``
-``N bytes sent (R unit/s)``      ``detail.bytes_sent`` / ``bytes_out_per_s``
+``N bytes sent (R unit/s)``      ``detail.bytes_sent`` / ``bytes_out_rate_per_s``
 ================================ =========================================
 
 The feeder stamps its lines in the container's *local* zone, so they are not
@@ -141,7 +141,7 @@ def block_result(block: StatisticsBlock | None, *, now_ms: int) -> ProbeResult:
         "statistics_at_ms": block.logged_ms,
     }
     metrics: dict[str, MetricValue] = {
-        "bytes_out_per_s": block.bytes_per_s,
+        "bytes_out_rate_per_s": block.bytes_per_s,
         "availability_pct": block.availability_pct,
         "disconnections": block.disconnections,
     }

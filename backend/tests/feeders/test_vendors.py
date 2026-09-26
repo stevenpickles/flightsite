@@ -203,15 +203,16 @@ async def test_readsb_reports_the_uplink_and_no_rate_on_the_first_poll() -> None
     uplink = result.receiver
     assert uplink is not None
     assert uplink.messages_per_min == 31_234
+    assert uplink.positions_per_min == 5_620
     assert uplink.aircraft_with_pos == 37
-    assert uplink.aircraft_total == 49
-    assert uplink.aircraft_mlat == 3
+    assert uplink.aircraft == 49
+    assert uplink.mlat_inbound == 3
     assert uplink.dropped_samples == 0
     assert uplink.max_range_nm == 212.7
     assert uplink.gain_db == 43.9
     assert uplink.signal_db == -17.4
     assert uplink.noise_db == -31.6
-    assert uplink.bytes_out_per_s is None
+    assert uplink.bytes_out_rate_per_s is None
 
 
 async def test_readsb_bytes_out_rate_is_differenced_between_polls() -> None:
@@ -232,8 +233,8 @@ async def test_readsb_bytes_out_rate_is_differenced_between_polls() -> None:
     result = await probe.probe(FIXTURE_NOW_MS + 15_000)
 
     assert result.receiver is not None
-    assert result.receiver.bytes_out_per_s == 3000.0
-    assert result.metrics["bytes_out_per_s"] == 3000.0
+    assert result.receiver.bytes_out_rate_per_s == 3000.0
+    assert result.metrics["bytes_out_rate_per_s"] == 3000.0
     assert result.last_data_sent_ms == FIXTURE_NOW_MS + 15_000
 
 
@@ -254,7 +255,7 @@ async def test_readsb_counter_reset_yields_no_rate_rather_than_a_negative_one() 
     result = await probe.probe(FIXTURE_NOW_MS + 15_000)
 
     assert result.receiver is not None
-    assert result.receiver.bytes_out_per_s is None
+    assert result.receiver.bytes_out_rate_per_s is None
 
 
 async def test_readsb_stale_status_is_down_and_silence_is_degraded() -> None:

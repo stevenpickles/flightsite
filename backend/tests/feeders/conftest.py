@@ -20,9 +20,9 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
+from flightsite.activity import FeederEpisode as OutageFact
 from flightsite.counters import CounterRegistry
 from flightsite.db import Database, database_path
-from flightsite.feeders.model import FeederEpisode
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -133,12 +133,12 @@ class Settings:
 
 @dataclass
 class Transitions:
-    """Records every episode the service reports."""
+    """Records every outage fact the service announces."""
 
-    episodes: list[FeederEpisode] = field(default_factory=list)
+    facts: list[OutageFact] = field(default_factory=list)
 
-    def __call__(self, episode: FeederEpisode) -> None:
-        self.episodes.append(episode)
+    def __call__(self, fact: OutageFact) -> None:
+        self.facts.append(fact)
 
 
 @pytest.fixture

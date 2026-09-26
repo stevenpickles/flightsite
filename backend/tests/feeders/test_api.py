@@ -8,7 +8,9 @@ application factory wires the service in.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -47,7 +49,7 @@ def factory(entry: FeederEntryLike, context: ProbeContext) -> FeederProbe:
         observability=Observability.HTTP,
         mlat=MlatStatus(peers=7) if entry.kind == "ultrafeeder" else None,
         detail={"host": "feed.example"},
-        metrics={"peers": 7},
+        metrics={"mlat_peers": 7},
     )
     return Probe(entry.name, str(entry.kind), result)
 
@@ -152,12 +154,13 @@ async def test_history_windows_and_errors(api: AsyncClient) -> None:
     assert set(body) == {"episodes", "samples", "availability_pct"}
     assert body["episodes"][0]["state"] == "up"
     assert body["episodes"][0]["ended_at"] is None
-    assert body["samples"][0]["metrics"] == {"peers": 7}
+    assert body["samples"][0]["metrics"] == {"mlat_peers": 7}
     assert body["availability_pct"] == 100.0
     assert default.status_code == 200
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
     assert bad_window.status_code == 422
+    assert bad_window.json()["error"]["code"] == "invalid_window"
 
 
 async def test_stats_link_redirects_to_the_secret_or_the_fallback(api: AsyncClient) -> None:
@@ -201,3 +204,29 @@ def test_the_feeder_endpoints_are_in_the_published_schema() -> None:
     assert "/api/v1/feeders/{name}/history" in document["paths"]
     assert "FeedersResponse" in document["components"]["schemas"]
     assert not any("stats-link" in path for path in document["paths"])
+
+
+async def test_the_live_settings_win_for_links_and_local_pages(service: FeederService) -> None:
+    live_url = "https://stats.example.invalid/live/SENTINEL-LIVE"
+    app = FastAPI()
+    app.include_router(v1_router, prefix="/api/v1")
+    app.include_router(feeders_internal_router, prefix="/api/internal")
+    app.state.feeders = service
+    app.state.settings = SimpleNamespace(
+        feeders=SimpleNamespace(
+            stats_urls={"opensky": SecretStr(live_url)},
+            local_pages=[Page(label="graphs1090", url="http://fermi.local:8080/graphs1090/")],
+        )
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        body = (await client.get("/api/v1/feeders")).json()
+        live = await client.get("/api/internal/feeders/opensky/stats-link")
+        own = await client.get("/api/internal/feeders/adsbx/stats-link")
+
+    assert [f["stats_link"] for f in body["feeders"]] == [True, True, True]
+    assert body["local_pages"] == [
+        {"label": "graphs1090", "url": "http://fermi.local:8080/graphs1090/"}
+    ]
+    assert live_url not in json.dumps(body)
+    assert live.headers["location"] == live_url
+    assert own.headers["location"] == SECRET_STATS_URL

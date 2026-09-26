@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, get_args
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -1032,7 +1032,12 @@ async def feeders(request: Request) -> dict[str, Any]:
     service = _feeders(request)
     if service is None:
         return empty_report(utc_now_ms())
-    return service.report()
+    # The live section, so a save is reflected on the next read.
+    live = getattr(getattr(request.app.state, "settings", None), "feeders", None)
+    return service.report(
+        stats_urls=getattr(live, "stats_urls", None),
+        local_pages=getattr(live, "local_pages", None),
+    )
 
 
 @router.get(
@@ -1046,15 +1051,31 @@ async def feeder_history(
     request: Request,
     name: Annotated[str, Path(description="The feeder's configured name.")],
     window: Annotated[
-        FeederHistoryWindowLiteral,
-        Query(description="How far back to look: `24h`, `7d` or `30d`."),
+        str,
+        Query(
+            description="How far back to look: `24h`, `7d` or `30d`.",
+            json_schema_extra={"enum": list(get_args(FeederHistoryWindowLiteral))},
+        ),
     ] = "24h",
 ) -> dict[str, Any] | Response:
     """Episodes, bucketed samples and availability for one feeder — §3.12.
 
-    404s — in the §2.5 error envelope — for a name that is not configured;
-    an unrecognised ``window`` is a 422 from validation.
+    Both failures answer in the §2.5 error envelope: ``422 invalid_window``
+    for a window outside the three, checked here rather than by parameter
+    validation so the body has the envelope's shape, and ``404 not_found``
+    for a name that is not configured.
     """
+    if window not in get_args(FeederHistoryWindowLiteral):
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={
+                "error": {
+                    "code": "invalid_window",
+                    "message": "window must be one of 24h, 7d, 30d",
+                    "detail": None,
+                }
+            },
+        )
     service = _feeders(request)
     history = None if service is None else await service.history(name, window)
     if history is None:

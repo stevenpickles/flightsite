@@ -843,7 +843,7 @@ still cannot reach this response.
 | Path | Returns |
 |---|---|
 | `GET /api/v1/feeders` | Every configured feeder's current state, the receiver's uplink summary, and the local-pages list. |
-| `GET /api/v1/feeders/{name}/history` | One feeder's episodes, samples and availability. Param: `window=24h\|7d\|30d` (default `24h`). `404` for a name that is not configured, `422` for any other window. |
+| `GET /api/v1/feeders/{name}/history` | One feeder's episodes, samples and availability. Param: `window=24h\|7d\|30d` (default `24h`). `404 not_found` for a name that is not configured, `422 invalid_window` for any other window — both in the §2.5 envelope. |
 
 Feeders are the networks the receiver streams to (FlightAware, FlightRadar24, ADS-B
 Exchange, AeroDataBox, OpenSky, ...), configured as `feeders.entries[]`
@@ -858,8 +858,8 @@ feeders configured answers `200` with an empty `feeders` list, never `404`.
   "poll_interval_s": 15.0,
   "docker_socket": "available",
   "receiver": {
-    "bytes_out_per_s": 3012.5, "messages_per_min": 31234, "aircraft_total": 49,
-    "aircraft_with_pos": 37, "aircraft_mlat": 3, "dropped_samples": 0,
+    "bytes_out_rate_per_s": 3012.5, "messages_per_min": 31234, "positions_per_min": 5620,
+    "aircraft": 49, "aircraft_with_pos": 37, "mlat_inbound": 3, "samples_dropped": 0,
     "max_range_nm": 212.7, "gain_db": 43.9, "signal_db": -17.4, "noise_db": -31.6,
     "uptime_s": 864000.2, "updated_at": "2026-09-26T14:13:19.600Z"
   },
@@ -893,14 +893,16 @@ feeders configured answers `200` with an empty `feeders` list, never `404`.
 - **`mlat`** and **`adsb_out`** are `null` for kinds that do not have them, and
   `adsb_out` is `null` for `ultrafeeder` entries whenever the Docker socket is unset.
   An MLAT client with zero peers reads `degraded` only after three consecutive polls,
-  and never `down`.
+  and never `down`. `mlat.good_sync_pct` is a percentage, 0–100, over the client's
+  last hour.
 - **`detail`** is a flat object of scalars whose keys depend on `kind`; it is built at
   the source from an allowlist, so an identity field never enters it.
 - **`docker_socket`** is `unset` (no `feeders.docker_socket`), `available`, or
   `unreachable` (configured but not answering).
 - **`receiver`** is `null` unless a `readsb` entry is configured and has answered.
-  `bytes_out_per_s` is to all network connectors together and is `null` until two
-  polls have been differenced.
+  `bytes_out_rate_per_s` is to all network connectors together and is `null` until two
+  polls have been differenced; `aircraft` counts every tracked aircraft and
+  `mlat_inbound` those positioned by multilateration results coming back in.
 - **`stats_link`** is a boolean: whether the internal stats-link redirect (§5) has
   somewhere to send the browser. The per-network stats URL itself is a secret — it
   names the owner's account — and is **never** part of any `/api/v1` response.
@@ -914,7 +916,7 @@ feeders configured answers `200` with an empty `feeders` list, never `404`.
     {"state": "down", "started_at": "2026-09-26T14:00:15.000Z", "ended_at": "2026-09-26T14:03:00.000Z"},
     {"state": "up", "started_at": "2026-09-26T14:03:00.000Z", "ended_at": null}
   ],
-  "samples": [{"t": "2026-09-26T14:13:00.000Z", "state": "up", "metrics": {"peers": 14, "good_sync_pct": 93.4, "adsb_out_connected": 1}}],
+  "samples": [{"t": "2026-09-26T14:13:00.000Z", "state": "up", "metrics": {"mlat_peers": 14, "good_sync_pct": 93.4, "adsb_out_connected": 1}}],
   "availability_pct": 98.51
 }
 ```
@@ -927,10 +929,11 @@ feeders configured answers `200` with an empty `feeders` list, never `404`.
   Samples are retained 14 days and episodes 90 days
   ([DATA_MODEL.md](DATA_MODEL.md) §6.6), so the `30d` window has samples for its most
   recent fortnight only.
-- `metrics` keys by kind: `readsb` — `bytes_out_per_s`, `messages_per_min`,
-  `aircraft_with_pos`, `aircraft_mlat`; `ultrafeeder` — `peers`, `good_sync_pct`,
+- `metrics` keys by kind: `readsb` — `bytes_out_rate_per_s`, `messages_per_min`,
+  `positions_per_min`, `aircraft_with_pos`, `mlat_inbound`; `ultrafeeder` —
+  `mlat_peers`, `good_sync_pct`,
   `adsb_out_connected` (1/0); `fr24` — `aircraft_sent`, `messages`; `piaware` —
-  `cpu_temp_c`; `opensky_logs` — `bytes_out_per_s`, `availability_pct`,
+  `cpu_temp_c`; `opensky_logs` — `bytes_out_rate_per_s`, `availability_pct`,
   `disconnections`. A `null` or missing key is a gap, never a zero.
 - `availability_pct` is the share of the **observed** part of the window spent `up` or
   `degraded`. `unknown` time, and time no episode covers (FlightSite not running), is

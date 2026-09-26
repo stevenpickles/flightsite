@@ -1462,16 +1462,19 @@ class FeederReceiverUplink(_Model):
     """The receiver's own uplink summary — the tiles atop the Feeders page.
 
     Every field is independently ``null`` when the decoder does not publish
-    it. ``bytes_out_per_s`` is to *all* network connectors together and is
+    it. ``bytes_out_rate_per_s`` is to *all* network connectors together and is
     ``null`` until two polls have been differenced.
     """
 
-    bytes_out_per_s: float | None = None
+    bytes_out_rate_per_s: float | None = None
     messages_per_min: int | None = None
-    aircraft_total: int | None = None
+    positions_per_min: int | None = None
+    #: Aircraft currently tracked, positioned or not.
+    aircraft: int | None = None
     aircraft_with_pos: int | None = None
-    aircraft_mlat: int | None = None
-    dropped_samples: int | None = None
+    #: Aircraft positioned by multilateration results coming back in.
+    mlat_inbound: int | None = None
+    samples_dropped: int | None = None
     max_range_nm: float | None = None
     gain_db: float | None = None
     signal_db: float | None = None

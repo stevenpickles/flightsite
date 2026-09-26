@@ -37,16 +37,35 @@ router = APIRouter()
 FEEDERS_PATH = "/feeders"
 
 
+def _configured_link(request: Request, name: str) -> str | None:
+    """``feeders.stats_urls[name]`` from the live settings, or ``None``.
+
+    Read from ``app.state.settings`` on every request rather than from the
+    feeder service, so a save that adds or clears a link is in effect on the
+    very next click.
+    """
+    settings = getattr(request.app.state, "settings", None)
+    urls = getattr(getattr(settings, "feeders", None), "stats_urls", None) or {}
+    secret = urls.get(name)
+    value = secret.get_secret_value().strip() if secret is not None else ""
+    return value or None
+
+
 @router.get(f"{FEEDERS_PATH}/{{name}}/stats-link", status_code=status.HTTP_302_FOUND)
 async def feeder_stats_link(request: Request, name: str) -> RedirectResponse:
     """Redirect to the feeder's configured stats page; ``404`` when there is none.
 
-    The 404 is deliberately the same for "no such feeder" and "no link for
-    this feeder": neither tells a caller anything worth distinguishing, and
-    the page only offers the link when ``stats_link`` is ``true``.
+    The live ``feeders.stats_urls[name]`` wins; failing that, whatever the
+    feeder service holds — the links it was configured with, then the one the
+    feeder's own probe discovered (FlightAware's site page). The 404 is
+    deliberately the same for "no such feeder" and "no link for this feeder":
+    neither tells a caller anything worth distinguishing, and the page only
+    offers the link when ``stats_link`` is ``true``.
     """
-    service: FeederService | None = getattr(request.app.state, "feeders", None)
-    target = None if service is None else service.stats_url(name)
+    target = _configured_link(request, name)
+    if target is None:
+        service: FeederService | None = getattr(request.app.state, "feeders", None)
+        target = None if service is None else service.stats_url(name)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no stats link for this feeder")
     return RedirectResponse(

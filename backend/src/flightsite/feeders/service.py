@@ -30,12 +30,20 @@ the timeline. While a ``down`` reading is held back, the card keeps showing
 the committed state.
 
 Each committed change closes the feeder's current
-:class:`~flightsite.feeders.model.FeederEpisode` and opens the next, and the
-injected ``on_transition`` listener sees both — the closed one first. That is
-the whole contract the activity producers (``feeder_offline`` /
-``feeder_restored``) are built on: "a ``down`` episode opened" and "a ``down``
-episode closed". The listener is synchronous and must not raise; if it does,
-the error is logged and polling carries on.
+:class:`~flightsite.feeders.model.FeederEpisode` and opens the next. A ``down``
+episode starts at the **first** failing poll, not at the poll that got past
+the debounce, so the timeline and the outage's duration are honest about when
+the feed actually stopped.
+
+The injected ``on_transition`` listener hears about outages only, as
+:class:`flightsite.activity.FeederEpisode` facts — ``offline=True`` on the
+transition into ``down`` (``since_ms`` = ``at_ms`` = the outage row's
+``started_ms``), ``offline=False`` when the feeder is next seen ``up`` or
+``degraded`` (``since_ms`` the same outage start, ``at_ms`` the restore). A
+spell of ``unknown`` in between neither ends the outage nor starts a second
+one: FlightSite losing sight of a feed is not the feed recovering. The
+listener is synchronous and must not raise; if it does, the error is logged
+and polling carries on.
 
 Stopping cleanly closes every open episode at the stop instant, silently —
 the process stopping is not a feeder transition. An unclean stop leaves them
@@ -65,7 +73,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, get_args
@@ -74,6 +82,7 @@ import httpx
 import structlog
 from pydantic import SecretStr
 
+from flightsite.activity.facts import FeederEpisode as OutageFact
 from flightsite.counters import CounterRegistry
 from flightsite.counters import counters as default_counters
 from flightsite.db.clock import MS_PER_SECOND, utc_now_ms
@@ -151,8 +160,9 @@ BUCKET_MS: Final[Mapping[str, int]] = {
 #: ``docker_socket`` as the API and diagnostics report it.
 DockerSocketStatus = Literal["available", "unset", "unreachable"]
 
-#: Receives every episode as it opens and as it closes. Synchronous; must not raise.
-TransitionListener = Callable[[FeederEpisode], None]
+#: Hears every outage start and end (see "The state machine"). Synchronous;
+#: must not raise.
+TransitionListener = Callable[[OutageFact], None]
 EpochClock = Callable[[], int]
 Sleeper = Callable[[float], Awaitable[None]]
 ClientFactory = Callable[[], httpx.AsyncClient]
@@ -217,6 +227,17 @@ class LocalPage:
         return None if url is None else cls(label=page.label, url=url)
 
 
+@dataclass(frozen=True, slots=True)
+class _SettingsView:
+    """A ``feeders`` section assembled from constructor keywords."""
+
+    poll_interval_s: float = DEFAULT_POLL_INTERVAL_S
+    docker_socket: str | None = None
+    entries: Sequence[FeederEntryLike] = ()
+    local_pages: Sequence[LocalPageLike] = ()
+    stats_urls: Mapping[str, SecretStr] = field(default_factory=dict)
+
+
 def build_probe(entry: FeederEntryLike, context: ProbeContext) -> FeederProbe:
     """The production :data:`~flightsite.feeders.protocol.ProbeFactory`."""
     normalized = FeederEntry.of(entry)
@@ -277,6 +298,10 @@ class _Tracker:
     observability: Observability = Observability.NONE
     episode_started_ms: int | None = None
     held_downs: int = 0
+    #: When the current run of ``down`` readings began (debounce pending).
+    first_down_ms: int | None = None
+    #: When the announced, not-yet-restored outage began.
+    outage_since_ms: int | None = None
     last_polled_ms: int | None = None
     last_success_ms: int | None = None
     last_data_sent_ms: int | None = None
@@ -292,11 +317,18 @@ class FeederService:
 
     Args:
         database: the application database; writes take its single writer lock.
-        settings: the ``feeders`` section (with ``stats_urls`` merged in from
-            ``secrets.yaml``), or ``None`` for an install with none — a fully
-            supported state in which nothing is polled.
-        on_transition: receives every episode as it opens and as it closes.
-        probe_factory: builds a probe per entry; the demo passes its own.
+        settings: the whole ``feeders`` section (with ``stats_urls`` merged in
+            from ``secrets.yaml``). Alternatively pass its parts as ``entries``
+            / ``docker_socket`` / ``poll_interval_s`` / ``local_pages`` /
+            ``stats_urls``; ``settings`` wins when both are given. No entries
+            is a fully supported state in which nothing is polled.
+        probes: ready-made probes that replace construction for their names —
+            the demo's stand-ins. A probe carrying an ``entry`` attribute
+            brings that entry with it when it is not configured, and a
+            collection carrying ``local_pages`` brings those, so demo mode
+            shows a full page on an install with no feeders configured.
+        on_transition: hears every outage start and end.
+        probe_factory: builds a probe per entry.
         client_factory: builds the shared HTTP client.
         docker_factory: builds the Docker client for a configured socket.
             Never called when ``feeders.docker_socket`` is unset.
@@ -312,6 +344,12 @@ class FeederService:
         *,
         database: Database,
         settings: FeederSettingsLike | None = None,
+        entries: Sequence[FeederEntryLike] | None = None,
+        docker_socket: str | None = None,
+        poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
+        local_pages: Sequence[LocalPageLike] | None = None,
+        stats_urls: Mapping[str, SecretStr] | None = None,
+        probes: Iterable[FeederProbe] | Mapping[str, FeederProbe] | None = None,
         on_transition: TransitionListener | None = None,
         probe_factory: ProbeFactory = build_probe,
         client_factory: ClientFactory = _default_client,
@@ -358,6 +396,21 @@ class FeederService:
         self._poll_task: asyncio.Task[None] | None = None
         self._maintenance_task: asyncio.Task[None] | None = None
 
+        self._fixed: dict[str, FeederProbe] = {}
+        self._fixed_pages: tuple[LocalPage, ...] = ()
+        if probes is not None:
+            listed = probes.values() if isinstance(probes, Mapping) else probes
+            self._fixed = {probe.name: probe for probe in listed}
+            pages: Iterable[LocalPageLike] = getattr(probes, "local_pages", ()) or ()
+            self._fixed_pages = tuple(p for p in (LocalPage.of(raw) for raw in pages) if p)
+        if settings is None:
+            settings = _SettingsView(
+                poll_interval_s=poll_interval_s,
+                docker_socket=docker_socket,
+                entries=tuple(entries or ()),
+                local_pages=tuple(local_pages or ()),
+                stats_urls=dict(stats_urls or {}),
+            )
         self._configure(settings, now_ms=None)
 
     # ------------------------------------------------------------ inspection
@@ -400,15 +453,19 @@ class FeederService:
     def shed_samples(self) -> int:
         return self._shed
 
-    def statuses(self) -> tuple[FeederStatus, ...]:
+    def statuses(
+        self, stats_urls: Mapping[str, SecretStr] | None = None
+    ) -> tuple[FeederStatus, ...]:
         """Every feeder's committed status, in configuration order."""
-        return tuple(self._status(tracker) for tracker in self._trackers.values())
+        return tuple(self._status(tracker, stats_urls) for tracker in self._trackers.values())
 
     def status(self, name: str) -> FeederStatus | None:
         tracker = self._trackers.get(name)
         return None if tracker is None else self._status(tracker)
 
-    def _status(self, tracker: _Tracker) -> FeederStatus:
+    def _status(
+        self, tracker: _Tracker, stats_urls: Mapping[str, SecretStr] | None = None
+    ) -> FeederStatus:
         entry = tracker.entry
         return FeederStatus(
             name=entry.name,
@@ -425,22 +482,32 @@ class FeederService:
             adsb_out=tracker.adsb_out,
             detail=dict(tracker.detail),
             web_url=entry.web_url,
-            stats_link=self.stats_url(entry.name) is not None,
+            stats_link=self.stats_url(entry.name, stats_urls) is not None,
         )
 
-    def stats_url(self, name: str) -> str | None:
-        """The per-feeder stats page for the internal redirect. A secret: never log it."""
+    def stats_url(self, name: str, configured: Mapping[str, SecretStr] | None = None) -> str | None:
+        """The per-feeder stats page for the internal redirect. A secret: never log it.
+
+        ``configured`` is the live ``feeders.stats_urls`` when the caller has
+        it; then the service's own copy; then what the feeder's probe found
+        for itself (FlightAware's site page, a demo landing page).
+        """
         tracker = self._trackers.get(name)
         if tracker is None:
             return None
-        configured = self._stats_urls.get(name)
-        if configured is not None:
-            value = configured.get_secret_value().strip()
+        for source in (configured or {}, self._stats_urls):
+            secret = source.get(name)
+            value = secret.get_secret_value().strip() if secret is not None else ""
             if value:
                 return value
-        if isinstance(tracker.probe, StatsFallbackSource):
-            return tracker.probe.stats_fallback
-        return None
+        return self.stats_fallback(name)
+
+    def stats_fallback(self, name: str) -> str | None:
+        """The link a feeder's probe discovered for itself, if any. Also a secret."""
+        tracker = self._trackers.get(name)
+        if tracker is None or not isinstance(tracker.probe, StatsFallbackSource):
+            return None
+        return tracker.probe.stats_fallback
 
     def summary(self) -> dict[str, Any]:
         """Counts by state plus the socket status — diagnostics' ``feeders`` section."""
@@ -455,15 +522,28 @@ class FeederService:
 
     # ----------------------------------------------------------- report / API
 
-    def report(self) -> dict[str, Any]:
-        """The ``GET /api/v1/feeders`` payload (``docs/API.md`` §3.12)."""
+    def report(
+        self,
+        *,
+        stats_urls: Mapping[str, SecretStr] | None = None,
+        local_pages: Sequence[LocalPageLike] | None = None,
+    ) -> dict[str, Any]:
+        """The ``GET /api/v1/feeders`` payload (``docs/API.md`` §3.12).
+
+        The API passes the live ``feeders.stats_urls`` and ``local_pages`` so
+        a save is reflected on the next read whatever the service was built
+        with; either left out (or empty) falls back to the service's own.
+        """
+        pages = tuple(p for p in (LocalPage.of(raw) for raw in local_pages or ()) if p)
         return {
             "generated_at": iso_ms(self._clock()),
             "poll_interval_s": self._poll_interval_s,
             "docker_socket": self.docker_socket_status,
             "receiver": _receiver_payload(self._receiver),
-            "feeders": [_status_payload(status) for status in self.statuses()],
-            "local_pages": [{"label": page.label, "url": page.url} for page in self._local_pages],
+            "feeders": [_status_payload(status) for status in self.statuses(stats_urls)],
+            "local_pages": [
+                {"label": page.label, "url": page.url} for page in pages or self._local_pages
+            ],
         }
 
     async def history(self, name: str, window: str) -> dict[str, Any] | None:
@@ -558,7 +638,7 @@ class FeederService:
         await self._cancel_tasks()
         now_ms = self._clock()
         for tracker in self._trackers.values():
-            self._close_episode(tracker, now_ms, notify=False)
+            self._close_episode(tracker, now_ms)
         await self.flush()
         await self._close_clients()
         if was_started:
@@ -629,16 +709,28 @@ class FeederService:
     ) -> list[DockerClient]:
         """Swap in ``settings``; return Docker clients the caller must close."""
         entries = [FeederEntry.of(entry) for entry in settings.entries] if settings else []
+        named = {entry.name for entry in entries}
+        for probe in self._fixed.values():
+            carried = getattr(probe, "entry", None)
+            if carried is not None and probe.name not in named:
+                entries.append(FeederEntry.of(carried))
+                named.add(probe.name)
         self._poll_interval_s = (
             float(settings.poll_interval_s) if settings else DEFAULT_POLL_INTERVAL_S
         )
-        self._local_pages = tuple(
-            page
-            for page in (LocalPage.of(raw) for raw in (settings.local_pages if settings else ()))
-            if page is not None
+        self._local_pages = (
+            tuple(
+                page
+                for page in (
+                    LocalPage.of(raw) for raw in (settings.local_pages if settings else ())
+                )
+                if page is not None
+            )
+            or self._fixed_pages
         )
         self._stats_urls = dict(settings.stats_urls) if settings else {}
 
+        built = [entry for entry in entries if entry.name not in self._fixed]
         stale: list[DockerClient] = []
         socket = text_or_none(settings.docker_socket) if settings else None
         socket_changed = socket != self._docker_socket
@@ -646,59 +738,65 @@ class FeederService:
             if self._docker is not None:
                 stale.append(self._docker)
             self._docker_socket = socket
-            self._docker = self._docker_factory(socket) if socket and entries else None
-        elif socket and entries and self._docker is None:
+            self._docker = self._docker_factory(socket) if socket and built else None
+        elif socket and built and self._docker is None:
             self._docker = self._docker_factory(socket)
             socket_changed = True
-        elif not entries and self._docker is not None:
+        elif not built and self._docker is not None:
             stale.append(self._docker)
             self._docker = None
 
         rebuild = socket_changed
-        if self._http is None and entries:
+        if self._http is None and built:
             self._http = self._client_factory()
             rebuild = True
-        context = ProbeContext(http=self._http, docker=self._docker) if self._http else None
 
         previous = self._trackers
         trackers: dict[str, _Tracker] = {}
         for entry in entries:
-            if entry.name in trackers or context is None:
+            if entry.name in trackers:
                 continue
             tracker = previous.get(entry.name)
             if tracker is None:
-                trackers[entry.name] = _Tracker(
-                    entry=entry, probe=self._probe_factory(entry, context)
-                )
+                trackers[entry.name] = _Tracker(entry=entry, probe=self._probe_for(entry))
                 continue
-            if rebuild or tracker.entry != entry:
-                tracker.probe = self._probe_factory(entry, context)
-                tracker.entry = entry
+            if entry.name not in self._fixed and (rebuild or tracker.entry != entry):
+                tracker.probe = self._probe_for(entry)
+            tracker.entry = entry
             trackers[entry.name] = tracker
         for name, tracker in previous.items():
             if name not in trackers and now_ms is not None:
-                self._close_episode(tracker, now_ms, notify=False)
+                self._close_episode(tracker, now_ms)
         self._trackers = trackers
         if not any(t.entry.kind == FeederKind.READSB for t in trackers.values()):
             self._receiver = None
         return stale
 
+    def _probe_for(self, entry: FeederEntry) -> FeederProbe:
+        """A fixed probe when one was supplied; otherwise one built from the entry."""
+        fixed = self._fixed.get(entry.name)
+        if fixed is not None:
+            return fixed
+        if self._http is None:
+            self._http = self._client_factory()
+        return self._probe_factory(entry, ProbeContext(http=self._http, docker=self._docker))
+
     def _rebuild_all(self) -> None:
-        """Recreate the HTTP client and every probe, keeping each feeder's state."""
-        if not self._trackers:
+        """Recreate the HTTP client and every built probe, keeping each feeder's state."""
+        built = [t for t in self._trackers.values() if t.entry.name not in self._fixed]
+        if not built:
             return
         self._http = self._client_factory()
         if self._docker is None and self._docker_socket:
             self._docker = self._docker_factory(self._docker_socket)
-        context = ProbeContext(http=self._http, docker=self._docker)
-        for tracker in self._trackers.values():
-            tracker.probe = self._probe_factory(tracker.entry, context)
+        for tracker in built:
+            tracker.probe = self._probe_for(tracker.entry)
 
     # ---------------------------------------------------------------- polling
 
     async def poll_once(self) -> tuple[FeederStatus, ...]:
         """Probe every feeder once, commit, sample, and flush if due."""
-        if self._http is None and self._trackers:
+        if self._http is None:
             self._rebuild_all()
         trackers = list(self._trackers.values())
         now_ms = self._clock()
@@ -741,11 +839,14 @@ class FeederService:
 
         committed = result.state
         if result.state is FeederState.DOWN and tracker.state is not FeederState.DOWN:
+            if tracker.held_downs == 0:
+                tracker.first_down_ms = now_ms
             tracker.held_downs += 1
             if tracker.held_downs < DOWN_DEBOUNCE_POLLS:
                 committed = tracker.state
         else:
             tracker.held_downs = 0
+            tracker.first_down_ms = None
 
         held = committed is not result.state
         if not held:
@@ -755,7 +856,9 @@ class FeederService:
             tracker.adsb_out = result.adsb_out
             tracker.detail = dict(result.detail)
         if tracker.episode_started_ms is None or committed is not tracker.state:
-            self._transition(tracker, committed, now_ms)
+            # A committed outage is dated from its first failing poll.
+            began = tracker.first_down_ms if committed is FeederState.DOWN else None
+            self._transition(tracker, committed, began if began is not None else now_ms, now_ms)
 
         if (
             tracker.last_sample_ms is None
@@ -771,14 +874,14 @@ class FeederService:
                 )
             )
 
-    def _transition(self, tracker: _Tracker, state: FeederState, now_ms: int) -> None:
+    def _transition(self, tracker: _Tracker, state: FeederState, at_ms: int, now_ms: int) -> None:
+        """Close the current episode and open ``state``'s at ``at_ms``; announce outages."""
         previous = tracker.state
-        self._close_episode(tracker, now_ms, notify=True)
+        self._close_episode(tracker, at_ms)
         tracker.state = state
-        tracker.episode_started_ms = now_ms
-        opened = FeederEpisode(feeder=tracker.entry.name, started_ms=now_ms, state=state)
+        tracker.episode_started_ms = at_ms
+        opened = FeederEpisode(feeder=tracker.entry.name, started_ms=at_ms, state=state)
         self._pending_episodes[(opened.feeder, opened.started_ms)] = opened
-        self._notify(opened)
         logger.info(
             "feeder_state_changed",
             feeder=tracker.entry.name,
@@ -786,7 +889,14 @@ class FeederService:
             state=state.value,
         )
 
-    def _close_episode(self, tracker: _Tracker, now_ms: int, *, notify: bool) -> None:
+        if state is FeederState.DOWN and tracker.outage_since_ms is None:
+            tracker.outage_since_ms = at_ms
+            self._announce(tracker, offline=True, since_ms=at_ms, at_ms=at_ms)
+        elif state in _AVAILABLE and tracker.outage_since_ms is not None:
+            since_ms, tracker.outage_since_ms = tracker.outage_since_ms, None
+            self._announce(tracker, offline=False, since_ms=since_ms, at_ms=now_ms)
+
+    def _close_episode(self, tracker: _Tracker, ended_ms: int) -> None:
         started = tracker.episode_started_ms
         if started is None:
             return
@@ -794,22 +904,28 @@ class FeederService:
             feeder=tracker.entry.name,
             started_ms=started,
             state=tracker.state,
-            ended_ms=max(started, now_ms),
+            ended_ms=max(started, ended_ms),
         )
         self._pending_episodes[(closed.feeder, closed.started_ms)] = closed
         tracker.episode_started_ms = None
-        if notify:
-            self._notify(closed)
 
-    def _notify(self, episode: FeederEpisode) -> None:
+    def _announce(self, tracker: _Tracker, *, offline: bool, since_ms: int, at_ms: int) -> None:
         if self._on_transition is None:
             return
+        fact = OutageFact(
+            feeder=tracker.entry.name,
+            label=tracker.entry.label,
+            kind=tracker.entry.kind,
+            offline=offline,
+            since_ms=since_ms,
+            at_ms=at_ms,
+        )
         try:
-            self._on_transition(episode)
+            self._on_transition(fact)
         except Exception as exc:
             logger.warning(
                 "feeders_transition_listener_error",
-                feeder=episode.feeder,
+                feeder=tracker.entry.name,
                 error_type=type(exc).__name__,
             )
 
@@ -934,12 +1050,14 @@ def _receiver_payload(uplink: ReceiverUplink | None) -> dict[str, Any] | None:
     if uplink is None:
         return None
     return {
-        "bytes_out_per_s": uplink.bytes_out_per_s,
+        "bytes_out_rate_per_s": uplink.bytes_out_rate_per_s,
         "messages_per_min": uplink.messages_per_min,
-        "aircraft_total": uplink.aircraft_total,
+        "positions_per_min": uplink.positions_per_min,
+        "aircraft": uplink.aircraft,
         "aircraft_with_pos": uplink.aircraft_with_pos,
-        "aircraft_mlat": uplink.aircraft_mlat,
-        "dropped_samples": uplink.dropped_samples,
+        "mlat_inbound": uplink.mlat_inbound,
+        # The published name (docs/API.md §3.12) happens to be readsb's own.
+        "samples_dropped": uplink.dropped_samples,
         "max_range_nm": uplink.max_range_nm,
         "gain_db": uplink.gain_db,
         "signal_db": uplink.signal_db,

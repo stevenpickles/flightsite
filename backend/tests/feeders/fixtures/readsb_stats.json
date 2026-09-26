@@ -20,7 +20,8 @@
       "bad": 0,
       "bytes_out": 180000
     },
-    "max_distance": 301234
+    "max_distance": 301234,
+    "position_count_total": 5620
   },
   "total": {
     "start": 1789135999.6,

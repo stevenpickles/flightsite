@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from flightsite.config import FeederSettings
 from flightsite.counters import CounterRegistry
 from flightsite.db import Database
 from flightsite.demo.feeders import (
@@ -57,13 +58,60 @@ def test_aerodatabox_peers_flap_between_zero_and_one() -> None:
     assert seen == {0, 1}
 
 
-def test_demo_probes_cover_every_entry() -> None:
-    probes = demo_probes(DEMO_ENTRIES)
+def test_demo_probes_cover_every_entry_or_the_demo_set_when_none() -> None:
+    configured = [FeederEntry(name="mine", label="Mine", kind="fr24")]
 
-    assert set(probes) == {entry.name for entry in DEMO_ENTRIES}
+    assert [probe.name for probe in demo_probes(configured)] == ["mine"]
+    fallback = demo_probes([])
+    assert [probe.name for probe in fallback] == [entry.name for entry in DEMO_ENTRIES]
+    assert [page.label for page in fallback.local_pages] == [
+        "tar1090",
+        "graphs1090",
+        "SkyAware",
+        "FR24 feeder",
+    ]
+
+
+def test_demo_stats_links_are_public_pages_on_all_but_the_receiver() -> None:
+    links = {probe.name: probe.stats_fallback for probe in demo_probes([])}
+
+    assert links["receiver"] is None
     assert all(
-        probe.kind == entry.kind for entry, probe in zip(DEMO_ENTRIES, probes.values(), strict=True)
+        url and url.startswith("https://") for name, url in links.items() if name != "receiver"
     )
+
+
+async def test_the_application_s_demo_wiring_shows_a_full_page(
+    database: Database, counters: CounterRegistry
+) -> None:
+    """Exactly what ``app.py`` builds in demo mode: config entries (none), no socket."""
+    clock = ManualClock(CYCLE_START_MS + FR24_OUTAGE_S * 1000 + 60_000)
+    service = FeederService(
+        database=database,
+        entries=FeederSettings().entries,
+        docker_socket=None,
+        poll_interval_s=FeederSettings().poll_interval_s,
+        clock=clock,
+        on_transition=lambda fact: None,
+        probes=demo_probes(FeederSettings().entries),
+        counters=counters,
+    )
+    await service.poll_once()
+
+    report = service.report(stats_urls={}, local_pages=[])
+    assert [f["name"] for f in report["feeders"]] == [entry.name for entry in DEMO_ENTRIES]
+    assert {f["name"]: f["stats_link"] for f in report["feeders"]} == {
+        "receiver": False,
+        "flightaware": True,
+        "fr24": True,
+        "adsbx": True,
+        "aerodatabox": True,
+        "opensky": True,
+    }
+    assert len(report["local_pages"]) == 4
+    assert report["docker_socket"] == "unset"
+    assert service.docker_client is None
+    await service.stop()
 
 
 async def test_the_demo_drives_the_whole_service(

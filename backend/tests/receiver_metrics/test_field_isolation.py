@@ -32,6 +32,16 @@ ADAPTER_MODULE = PACKAGE_ROOT / "receiver_metrics" / "statsjson.py"
 #: in *its* package that knows these names — ``tests/feeders`` holds that line.
 UPLINK_MODULE = PACKAGE_ROOT / "feeders" / "readsb.py"
 
+#: Published API names that happen to coincide with a decoder spelling, and the
+#: modules that serialize them. ``samples_dropped`` is a key of
+#: ``GET /api/v1/feeders``'s ``receiver`` block (``docs/API.md`` §3.12), chosen
+#: with the frontend; the domain value behind it is ``dropped_samples``.
+PUBLISHED_NAMES = {
+    "samples_dropped": frozenset(
+        {PACKAGE_ROOT / "api" / "schemas.py", PACKAGE_ROOT / "feeders" / "service.py"}
+    ),
+}
+
 #: Field names unique to the readsb / dump1090-fa statistics document that the
 #: adapter genuinely reads. Each must appear there and nowhere else.
 STATS_FIELD_NAMES = (
@@ -79,7 +89,8 @@ def test_statistics_field_names_stay_inside_the_adapter(field: str) -> None:
     offenders = [
         str(path.relative_to(PACKAGE_ROOT))
         for path in source_files()
-        if pattern.search(path.read_text(encoding="utf-8"))
+        if path not in PUBLISHED_NAMES.get(field, frozenset())
+        and pattern.search(path.read_text(encoding="utf-8"))
     ]
 
     assert offenders == [], (
