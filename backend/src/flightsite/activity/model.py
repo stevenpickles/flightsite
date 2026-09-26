@@ -108,6 +108,10 @@ class ActivityEventType(StrEnum):
     RECEIVER_RESTORED = "receiver_restored"
     METADATA_UPDATED = "metadata_updated"
     MILESTONE = "milestone"
+    #: Slice 077: one network the receiver feeds went ``down`` / came back.
+    #: Distinct from :attr:`RECEIVER_OFFLINE`, which is the decoder itself.
+    FEEDER_OFFLINE = "feeder_offline"
+    FEEDER_RESTORED = "feeder_restored"
 
 
 class Severity(StrEnum):

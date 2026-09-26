@@ -933,6 +933,8 @@ ActivityEventTypeLiteral = Literal[
     "receiver_restored",
     "metadata_updated",
     "milestone",
+    "feeder_offline",
+    "feeder_restored",
 ]
 
 
