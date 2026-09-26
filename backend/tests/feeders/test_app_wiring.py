@@ -13,7 +13,6 @@ and so needs :mod:`flightsite.feeders` to be present.
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from flightsite.activity import FeederEpisode
-from flightsite.app import _feeders_module, _record_feeder_episode, create_app
+from flightsite.app import _record_feeder_episode, create_app
 from flightsite.config import FeederSettings
 
 ENTRY = {
@@ -177,24 +176,6 @@ def test_the_transition_hook_feeds_the_activity_queue() -> None:
     _record_feeder_episode(app)(episode)  # type: ignore[arg-type]
 
     assert received == [episode]
-
-
-def test_a_missing_feeder_module_is_none() -> None:
-    assert _feeders_module("flightsite.no_such_package_077.service") is None
-
-
-def test_a_broken_feeder_module_is_not_mistaken_for_a_missing_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / "broken_feeders_077.py").write_text(
-        "import definitely_not_installed_077\n", encoding="utf-8"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    try:
-        with pytest.raises(ModuleNotFoundError):
-            _feeders_module("broken_feeders_077")
-    finally:
-        sys.modules.pop("broken_feeders_077", None)
 
 
 # ------------------------------------------------------- the real service

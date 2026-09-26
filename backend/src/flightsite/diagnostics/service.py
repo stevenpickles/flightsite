@@ -654,12 +654,19 @@ def _feeders_section(app: FastAPI) -> tuple[dict[str, Any], str]:
 
     counts = dict.fromkeys(_FEEDER_STATES, 0)
     socket_state = DOCKER_SOCKET_UNSET if socket_path is None else DOCKER_SOCKET_AVAILABLE
+    configured = len(entries)
 
     service = _state(app, "feeders")
     report_source = getattr(service, "report", None)
     report = report_source() if callable(report_source) else report_source
     if report is not None:
-        for feeder in _field(report, "feeders") or ():
+        # The report is what the service is actually watching, which in demo
+        # mode is six scripted stand-ins over an empty config — so the
+        # configured figure follows the report, and the counts always add
+        # up to it.
+        reported_feeders = list(_field(report, "feeders") or ())
+        configured = len(reported_feeders)
+        for feeder in reported_feeders:
             state = _field(feeder, "state")
             state = str(getattr(state, "value", state))
             counts[state if state in counts else "unknown"] += 1
@@ -673,7 +680,7 @@ def _feeders_section(app: FastAPI) -> tuple[dict[str, Any], str]:
         counts["unknown"] = len(entries)
 
     section = {
-        "configured": len(entries),
+        "configured": configured,
         **counts,
         "docker_socket": socket_state,
     }

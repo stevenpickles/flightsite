@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -33,6 +32,7 @@ from flightsite.airports import (
 from flightsite.airports.ourairports import DEFAULT_ARTIFACT_URL as OURAIRPORTS_ARTIFACT_URL
 from flightsite.alerts import AlertListener, AlertService
 from flightsite.analytics import AnalyticsService
+from flightsite.api import feeders_internal
 from flightsite.api.context import LiveApiContext
 from flightsite.api.ingestion import decoder_endpoint, start_decoder_ingestion
 from flightsite.api.internal import router as internal_router
@@ -45,6 +45,7 @@ from flightsite.db.clock import utc_now_ms
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.demo.airframes import seed_demo_metadata
+from flightsite.demo.feeders import demo_probes
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import (
     ROUTES_SOURCE,
@@ -54,6 +55,7 @@ from flightsite.enrichment import (
     RouteDirectoryRepository,
 )
 from flightsite.enrichment.service import build_economy, build_provider
+from flightsite.feeders.service import FeederService
 from flightsite.ingest import IngestionService, Position
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
@@ -426,28 +428,6 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     )
 
 
-#: Where slice 077's feeder service and its internal router live. Imported by
-#: name at construction (:func:`_feeders_module`) rather than at the top of
-#: this module so that the application still builds in a tree where the
-#: ``flightsite.feeders`` package is absent — slice 077 lands the package and
-#: this wiring in parallel work packages, and the integration commit on the
-#: slice branch replaces the lookup with ordinary imports (issue #215).
-_FEEDER_SERVICE_MODULE = "flightsite.feeders.service"
-_FEEDER_DEMO_MODULE = "flightsite.demo.feeders"
-_FEEDER_ROUTER_MODULE = "flightsite.api.feeders_internal"
-
-
-def _feeders_module(name: str) -> Any | None:
-    """Import one of slice 077's modules, or ``None`` if it is not present."""
-    try:
-        return importlib.import_module(name)
-    except ModuleNotFoundError as exc:
-        if exc.name is not None and not name.startswith(exc.name):
-            raise  # the module exists and one of *its* imports is broken
-        logger.warning("feeders_module_missing", module=name)
-        return None
-
-
 def _record_feeder_episode(app: FastAPI) -> Callable[[FeederEpisode], None]:
     """The feeder service's ``on_transition`` hook: into the activity feed.
 
@@ -466,7 +446,7 @@ def _record_feeder_episode(app: FastAPI) -> Callable[[FeederEpisode], None]:
     return record
 
 
-def _build_feeders(app: FastAPI, settings: Settings) -> Any | None:
+def _build_feeders(app: FastAPI, settings: Settings) -> FeederService:
     """Construct the feeder status service (slice 077, ADR-0017).
 
     Constructing it opens nothing: no HTTP client, no Docker socket, no task.
@@ -480,9 +460,6 @@ def _build_feeders(app: FastAPI, settings: Settings) -> Any | None:
     the gap timeline and the activity events all have something to show with
     no feeder on the network. The Docker socket is never used in demo mode.
     """
-    module = _feeders_module(_FEEDER_SERVICE_MODULE)
-    if module is None:
-        return None
     feeders = settings.feeders
     demo = demo_enabled()
     options: dict[str, Any] = {
@@ -494,17 +471,13 @@ def _build_feeders(app: FastAPI, settings: Settings) -> Any | None:
         "on_transition": _record_feeder_episode(app),
     }
     if demo:
-        demo_module = _feeders_module(_FEEDER_DEMO_MODULE)
-        if demo_module is not None:
-            options["probes"] = demo_module.demo_probes(feeders.entries)
-    return module.FeederService(**options)
+        options["probes"] = demo_probes(feeders.entries)
+    return FeederService(**options)
 
 
 def _include_feeders_internal(app: FastAPI) -> None:
     """Mount slice 077's ``/api/internal/feeders`` router (the stats-link redirect)."""
-    module = _feeders_module(_FEEDER_ROUTER_MODULE)
-    if module is not None:
-        app.include_router(module.router, prefix="/api/internal", include_in_schema=False)
+    app.include_router(feeders_internal.router, prefix="/api/internal", include_in_schema=False)
 
 
 async def _start_ingestion(app: FastAPI) -> None:
