@@ -36,7 +36,10 @@ def test_the_sentinel_secret_is_actually_loaded(configured: Settings) -> None:
 
 
 def test_secret_fields_are_discovered_by_type(configured: Settings) -> None:
-    assert secret_field_paths(Settings) == (("enrichment", "aerodatabox_api_key"),)
+    assert secret_field_paths(Settings) == (
+        ("enrichment", "aerodatabox_api_key"),
+        ("feeders", "stats_urls"),
+    )
 
 
 def test_repr_and_str_do_not_reveal_the_secret(configured: Settings) -> None:

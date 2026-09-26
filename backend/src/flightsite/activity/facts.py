@@ -212,8 +212,53 @@ class HealthEpisode:
     error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FeederEpisode:
+    """A feeder's announced transition into or out of ``down`` (slice 077).
+
+    Handed to :meth:`~flightsite.activity.service.ActivityService.record_feeder_episode`
+    by the feeder service's ``on_transition`` hook, after its own two-poll
+    debounce has held — the same division of labour as :class:`HealthEpisode`:
+    the debounce needs a clock and lives with the thing being watched, and what
+    reaches the feed is a transition that already happened.
+
+    Only ``down`` counts as offline. ``degraded`` is a feed that is still
+    sending, and ``unknown`` is a feed FlightSite cannot see (no Docker socket,
+    say) — announcing either as an outage would be reporting FlightSite's
+    blindness as the network's failure.
+
+    Every field is configuration or a timestamp. Nothing a vendor document
+    carries — a feeder key, a site URL, a UUID — is ever copied here, which is
+    what keeps the activity feed on the right side of ``docs/SECURITY.md`` §3.
+    """
+
+    #: The entry's slug (``feeders.entries[].name``).
+    feeder: str
+    #: The entry's display label, captured now so a later rename cannot
+    #: rewrite what the feed said at the time.
+    label: str
+    #: The entry's kind (``piaware``, ``fr24``, ...).
+    kind: str
+    #: ``True`` for the transition into ``down``, ``False`` for the one out.
+    offline: bool
+    #: When the outage began: the first failing poll, not the moment the
+    #: debounce expired. The same value on both events of one outage, which
+    #: is what their dedupe keys are built from — and it is the
+    #: ``feeder_episodes.started_ms`` of the outage row.
+    since_ms: int
+    #: When this transition was announced. For a restore, the moment the feed
+    #: was seen healthy again; for an outage, normally ``since_ms``.
+    at_ms: int
+
+    @property
+    def outage_ms(self) -> int | None:
+        """How long the outage lasted, for a restore; ``None`` for an outage."""
+        return None if self.offline else max(0, self.at_ms - self.since_ms)
+
+
 __all__ = [
     "AlertMatchFact",
+    "FeederEpisode",
     "HealthEpisode",
     "ImportOutcome",
     "LongestSighting",

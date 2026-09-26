@@ -21,6 +21,11 @@ const LABELS: Record<ActivityEventType, string> = {
   receiver_restored: "Restored",
   metadata_updated: "Metadata",
   milestone: "Milestones",
+  // Slice 077. Distinct wording from the existing "Offline"/"Restored"
+  // chips (`receiver_offline`/`receiver_restored`) — those two and these
+  // two are never the same event, so the chips must not read the same.
+  feeder_offline: "Feed offline",
+  feeder_restored: "Feed restored",
 };
 
 /** The chip label for an event type; falls back to the slug itself for a

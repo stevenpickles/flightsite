@@ -1,0 +1,41 @@
+{
+  "now": 1789999999.6,
+  "gain_db": 43.9,
+  "estimated_ppm": -1.2,
+  "lat": 51.12345678,
+  "lon": -1.98765432,
+  "last1min": {
+    "start": 1789999939.6,
+    "end": 1789999999.6,
+    "messages": 31234,
+    "local": {
+      "samples_processed": 120000000,
+      "samples_dropped": 0,
+      "signal": -17.4,
+      "noise": -31.6,
+      "peak_signal": -2.1
+    },
+    "remote": {
+      "modes": 0,
+      "bad": 0,
+      "bytes_out": 180000
+    },
+    "max_distance": 301234,
+    "position_count_total": 5620
+  },
+  "total": {
+    "start": 1789135999.6,
+    "end": 1789999999.6,
+    "messages": 987654321,
+    "local": {
+      "samples_dropped": 12
+    },
+    "remote": {
+      "modes": 0,
+      "bad": 0,
+      "bytes_out": 2000000000
+    },
+    "max_distance_in_nautical_miles": 212.7,
+    "max_distance": 393920
+  }
+}

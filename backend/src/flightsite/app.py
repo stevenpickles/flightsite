@@ -7,6 +7,7 @@ import os
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from flightsite.activity import (
     ActivityListener,
     ActivityService,
     AlertMatchFact,
+    FeederEpisode,
     HealthProbe,
     StoredActivityEvent,
 )
@@ -30,6 +32,7 @@ from flightsite.airports import (
 from flightsite.airports.ourairports import DEFAULT_ARTIFACT_URL as OURAIRPORTS_ARTIFACT_URL
 from flightsite.alerts import AlertListener, AlertService
 from flightsite.analytics import AnalyticsService
+from flightsite.api import feeders_internal
 from flightsite.api.context import LiveApiContext
 from flightsite.api.ingestion import decoder_endpoint, start_decoder_ingestion
 from flightsite.api.internal import router as internal_router
@@ -38,9 +41,11 @@ from flightsite.api.v1 import router as v1_router
 from flightsite.api.ws import LiveBroadcaster
 from flightsite.config import ConfigStore, Settings
 from flightsite.db import Database, database_path, initialize_database
+from flightsite.db.clock import utc_now_ms
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.demo.airframes import seed_demo_metadata
+from flightsite.demo.feeders import demo_probes
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import (
     ROUTES_SOURCE,
@@ -50,6 +55,7 @@ from flightsite.enrichment import (
     RouteDirectoryRepository,
 )
 from flightsite.enrichment.service import build_economy, build_provider
+from flightsite.feeders.service import FeederService
 from flightsite.ingest import IngestionService, Position
 from flightsite.ingest.health import AdapterHealth
 from flightsite.live import LiveStore
@@ -422,6 +428,58 @@ def _build_receiver_metrics(app: FastAPI, settings: Settings) -> ReceiverMetrics
     )
 
 
+def _record_feeder_episode(app: FastAPI) -> Callable[[FeederEpisode], None]:
+    """The feeder service's ``on_transition`` hook: into the activity feed.
+
+    The same seam as :func:`_record_alert_matches`: the feeder service writes
+    its own episode row on its own transaction, then hands the debounced
+    transition here; the activity service records ``feeder_offline`` /
+    ``feeder_restored`` on its next pass, on its own transaction, under a
+    dedupe key named after the outage's start. Synchronous and memory-only, so
+    a feed failure can never fail a poll.
+    """
+
+    def record(episode: FeederEpisode) -> None:
+        activity: ActivityService = app.state.activity
+        activity.record_feeder_episode(episode)
+
+    return record
+
+
+def _build_feeders(app: FastAPI, settings: Settings) -> FeederService:
+    """Construct the feeder status service (slice 077, ADR-0017).
+
+    Constructing it opens nothing: no HTTP client, no Docker socket, no task.
+    ``start()`` in the lifespan hook begins polling — and starts no task at all
+    while no entries are configured — and a configuration save hands it the
+    new section through :func:`flightsite.api.internal._apply_feeders`, so the
+    feeder set is hot-applied rather than restart-required.
+
+    Demo mode (``FLIGHTSITE_DEMO=1``) swaps every probe for a scripted
+    stand-in from :func:`flightsite.demo.feeders.demo_probes`, so the page,
+    the gap timeline and the activity events all have something to show with
+    no feeder on the network. The Docker socket is never used in demo mode.
+    """
+    feeders = settings.feeders
+    demo = demo_enabled()
+    options: dict[str, Any] = {
+        "database": app.state.database,
+        "entries": feeders.entries,
+        "docker_socket": None if demo else feeders.docker_socket,
+        "poll_interval_s": feeders.poll_interval_s,
+        "clock": utc_now_ms,
+        "on_transition": _record_feeder_episode(app),
+    }
+    if demo:
+        options["probes"] = demo_probes(feeders.entries)
+    return FeederService(**options)
+
+
+def _include_feeders_internal(app: FastAPI) -> None:
+    """Mount slice 077's ``/api/internal/feeders`` router (the stats-link redirect)."""
+    app.include_router(feeders_internal.router, prefix="/api/internal", include_in_schema=False)
+
+
 async def _start_ingestion(app: FastAPI) -> None:
     """Start decoder ingestion, unless this install has never been configured.
 
@@ -496,6 +554,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     activity: ActivityService = app.state.activity
     alerts: AlertService = app.state.alerts
     maintenance: MaintenanceService = app.state.maintenance
+    feeders: Any | None = app.state.feeders
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -576,6 +635,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # truth. A failed migration leaves the feed empty and nothing else
         # degraded — the same shape as every subsystem above it.
         await activity.start()
+        # Same condition, and after the activity service for the alert
+        # engine's reason: a feeder transition is handed to that service's
+        # pending queue, so its consumer is running before anything can be
+        # produced. The feeder service writes `feeder_samples` and
+        # `feeder_episodes`, which the failed migration may not have created.
+        # With no entries configured it starts no task at all (slice 077).
+        if feeders is not None:
+            await feeders.start()
         # Same condition again: the alert engine reads `alert_rules` and writes
         # `alert_matches`, both created by the migration that may have failed,
         # and it instantiates the shipped templates on its first ever start.
@@ -666,6 +733,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # carry, are in memory at this point. It takes the same writer lock
         # the persistence worker does, so the two simply serialize.
         await receiver_metrics.stop()
+        # Beside receiver metrics and for the same reason: its final sample
+        # flush is a real write on the shared writer. Before the activity
+        # service, so a transition announced by that last poll still reaches
+        # the feed's final pass.
+        if feeders is not None:
+            await feeders.stop()
         await persistence.stop()
         # After the persistence worker, deliberately: that worker's own
         # stop force-flushes every dirty accumulator and closes nothing
@@ -978,6 +1051,13 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
         health=_decoder_health(app),
     )
     app.state.activity.subscribe(_broadcast_activity(app))
+    # Feeder status (slice 077, ADR-0017): polls the networks this receiver
+    # feeds over the LAN and, only when the owner opts in, the Docker Engine
+    # socket. Its own low-frequency task, writing samples and outage episodes
+    # through the same single writer as everything else; transitions reach the
+    # activity feed through `_record_feeder_episode`. Constructing it opens
+    # nothing and starts no task.
+    app.state.feeders = _build_feeders(app, settings)
     # Interesting-aircraft alerting (SPEC §43 to §48, docs/DATA_MODEL.md §4.2
     # and §4.3). A seventh background task and a fifth consumer of the live
     # event stream: it evaluates each aircraft's rules on its own updates from
@@ -1027,5 +1107,8 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # kept out of the OpenAPI schema published for /api/v1. One flag here
     # covers every internal endpoint, now and in later slices.
     app.include_router(internal_router, prefix="/api/internal", include_in_schema=False)
+    # Slice 077's stats-link redirect: internal for the same reason, since the
+    # URL it redirects to is an owner-supplied secret (docs/SECURITY.md §3).
+    _include_feeders_internal(app)
 
     return app

@@ -106,6 +106,56 @@ export function emergencySquawkEvent(
   };
 }
 
+/** A `feeder_offline` event (roadmap slice 077), payload per the design
+ * record: `{feeder, label, kind, since_ms, outage_s}`. Never aircraft-scoped
+ * — `icao`/`sighting_id` are `null`, the same as `receiver_offline`. */
+export function feederOfflineEvent(
+  overrides: Partial<ActivityEvent> = {},
+): ActivityEvent {
+  const { payload, ...rest } = overrides;
+  return {
+    id: 6100,
+    type: "feeder_offline",
+    severity: "high",
+    at: "2026-09-26T14:03:22.418Z",
+    icao: null,
+    sighting_id: null,
+    payload: {
+      feeder: "fr24",
+      label: "FlightRadar24",
+      kind: "fr24",
+      since_ms: Date.parse("2026-09-26T14:03:22.418Z"),
+      outage_s: 90,
+      ...payload,
+    },
+    ...rest,
+  };
+}
+
+/** The matching `feeder_restored` event — same feeder, closing the episode
+ * `feederOfflineEvent` opened. */
+export function feederRestoredEvent(
+  overrides: Partial<ActivityEvent> = {},
+): ActivityEvent {
+  const { payload, ...rest } = overrides;
+  return {
+    id: 6101,
+    type: "feeder_restored",
+    severity: "info",
+    at: "2026-09-26T14:15:22.418Z",
+    icao: null,
+    sighting_id: null,
+    payload: {
+      feeder: "fr24",
+      label: "FlightRadar24",
+      kind: "fr24",
+      outage_s: 720,
+      ...payload,
+    },
+    ...rest,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,

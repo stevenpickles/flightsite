@@ -7,7 +7,16 @@
  * validates (site name, lat/lon, antenna height, decoder host/port/path/poll
  * interval) are reused directly from that module rather than duplicated.
  */
-import { parseNumber } from "@/features/setup/lib/validation";
+import {
+  parseNumber,
+  PORT_MAX,
+  PORT_MIN,
+} from "@/features/setup/lib/validation";
+import { feederKindFields } from "@/features/settings/lib/feederKinds";
+import type {
+  FeederEntryDraft,
+  LocalPageDraft,
+} from "@/features/settings/types";
 
 export const DISPLAY_RADIUS_MAX_NM = 10000;
 export const ALERT_RADIUS_MAX_NM = 10000;
@@ -115,4 +124,193 @@ export function validateRouteTtlDays(raw: string): string | null {
     return `Enter a whole number of days between ${ROUTE_TTL_MIN_DAYS} and ${ROUTE_TTL_MAX_DAYS}.`;
   }
   return null;
+}
+
+/**
+ * Feeders (roadmap slice 077, `docs/design/077-feeders-page.md`). Bounds and
+ * shape rules mirror the design record's "Config" section and its `feeders:
+ * poll_interval_s # 5–120` comment; the slug pattern, URL scheme check and
+ * per-kind required-field rules below are this module's own reading of "shape
+ * only" and "kind-dependent fields" — there is no backend model to check them
+ * against yet (work packages A/B build it in parallel), so a real save is
+ * still the final word and a rejection is always shown even when this
+ * validator saw nothing wrong (see `fieldMessage`).
+ */
+export const FEEDERS_POLL_INTERVAL_MIN_S = 5;
+export const FEEDERS_POLL_INTERVAL_MAX_S = 120;
+
+export function validateFeedersPollInterval(raw: string): string | null {
+  const value = parseNumber(raw);
+  if (
+    value === null ||
+    !Number.isInteger(value) ||
+    value < FEEDERS_POLL_INTERVAL_MIN_S ||
+    value > FEEDERS_POLL_INTERVAL_MAX_S
+  ) {
+    return `Enter a whole number of seconds between ${FEEDERS_POLL_INTERVAL_MIN_S} and ${FEEDERS_POLL_INTERVAL_MAX_S}.`;
+  }
+  return null;
+}
+
+/** Blank means unset (`docker_socket: null`) — opt-in, off by default. A
+ * non-blank value must at least look like the absolute path the helper text
+ * asks for (`/var/run/docker.sock`). */
+export function validateDockerSocketPath(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (!trimmed.startsWith("/")) {
+    return 'Enter an absolute path (e.g. "/var/run/docker.sock"), or leave blank to disable.';
+  }
+  return null;
+}
+
+const FEEDER_SLUG_PATTERN = /^[a-z][a-z0-9_-]*$/;
+
+/** A feeder entry's `name` is a slug (it keys `secrets_set` and the wire
+ * config), so it gets its own, stricter rule than a free-text label:
+ * lowercase, starting with a letter, and only letters/digits/hyphen/
+ * underscore afterward. */
+export function validateFeederSlug(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return "Name is required.";
+  }
+  if (!FEEDER_SLUG_PATTERN.test(trimmed)) {
+    return "Use lowercase letters, digits, hyphens or underscores, starting with a letter.";
+  }
+  return null;
+}
+
+export function validateFeederLabel(raw: string): string | null {
+  return raw.trim().length === 0 ? "Label is required." : null;
+}
+
+/** `http(s)://…` only, and only when the caller says the field is required
+ * for the row's kind — an unused field left blank is not an error. */
+export function validateFeederUrl(
+  raw: string,
+  required: boolean,
+): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return required ? "A URL is required for this kind." : null;
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return "Enter a URL starting with http:// or https://.";
+  }
+  try {
+    new URL(trimmed);
+  } catch {
+    return "Enter a valid URL.";
+  }
+  return null;
+}
+
+export function validateFeederContainer(
+  raw: string,
+  required: boolean,
+): string | null {
+  return required && raw.trim().length === 0
+    ? "Container name is required for this kind."
+    : null;
+}
+
+export function validateFeederHost(
+  raw: string,
+  required: boolean,
+): string | null {
+  return required && raw.trim().length === 0
+    ? "Host is required for this kind."
+    : null;
+}
+
+export function validateFeederPort(
+  raw: string,
+  required: boolean,
+): string | null {
+  if (!required && raw.trim().length === 0) {
+    return null;
+  }
+  const value = parseNumber(raw);
+  if (
+    value === null ||
+    !Number.isInteger(value) ||
+    value < PORT_MIN ||
+    value > PORT_MAX
+  ) {
+    return `Enter a port between ${PORT_MIN} and ${PORT_MAX}.`;
+  }
+  return null;
+}
+
+/** Per-field messages for one entries-table row, keyed the way the row's
+ * own cells are — `null` for a field with nothing wrong. */
+export interface FeederEntryFieldErrors {
+  name: string | null;
+  label: string | null;
+  url: string | null;
+  container: string | null;
+  host: string | null;
+  mlatPort: string | null;
+  beastPort: string | null;
+  webUrl: string | null;
+}
+
+/**
+ * Validates one entries-table row against the rules its `kind` implies
+ * (`lib/feederKinds.ts`'s field map) plus name-uniqueness across the whole
+ * table — the one rule that needs every row, not just this one.
+ */
+export function validateFeederEntry(
+  entry: FeederEntryDraft,
+  allEntries: readonly FeederEntryDraft[],
+): FeederEntryFieldErrors {
+  const fields = feederKindFields(entry.kind);
+  const trimmedName = entry.name.trim();
+  const isDuplicate =
+    trimmedName.length > 0 &&
+    allEntries.filter((other) => other.name.trim() === trimmedName).length > 1;
+
+  return {
+    name:
+      validateFeederSlug(entry.name) ??
+      (isDuplicate ? "Name must be unique." : null),
+    label: validateFeederLabel(entry.label),
+    url: validateFeederUrl(entry.url, fields.url),
+    container: validateFeederContainer(entry.container, fields.container),
+    host: validateFeederHost(entry.host, fields.hostPorts),
+    mlatPort: validateFeederPort(entry.mlatPort, fields.hostPorts),
+    beastPort: validateFeederPort(entry.beastPort, fields.hostPorts),
+    webUrl: validateFeederUrl(entry.webUrl, false),
+  };
+}
+
+export function feederEntryHasError(errors: FeederEntryFieldErrors): boolean {
+  return Object.values(errors).some((message) => message !== null);
+}
+
+/** Per-field messages for one local-pages row. A row left entirely blank —
+ * the state every trailing "add another" row starts in — is not an error:
+ * `buildFeedersPatch` drops it rather than the section refusing to save. */
+export interface LocalPageFieldErrors {
+  label: string | null;
+  url: string | null;
+}
+
+export function validateLocalPage(page: LocalPageDraft): LocalPageFieldErrors {
+  const isBlank =
+    page.label.trim().length === 0 && page.url.trim().length === 0;
+  if (isBlank) {
+    return { label: null, url: null };
+  }
+  return {
+    label: page.label.trim().length === 0 ? "Label is required." : null,
+    url: validateFeederUrl(page.url, true),
+  };
+}
+
+export function localPageHasError(errors: LocalPageFieldErrors): boolean {
+  return errors.label !== null || errors.url !== null;
 }

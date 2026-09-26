@@ -5,6 +5,76 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.10.0] — 2026-09-26
+
+FlightSite now watches the networks the receiver feeds. A Feeders page under
+Receiver shows every feed's status, when it last sent data, its MLAT sync, gaps
+in feeding with availability over a day, a week or a month, links to each
+network and to its feed-stats page, and links to the other pages hosted beside
+FlightSite.
+
+### Added
+- **Feeders page** at `/receiver/feeders`, reached from Receiver and Health:
+  receiver uplink tiles (bytes out, messages and positions per minute, aircraft,
+  MLAT inbound, dropped samples, max range); one card per feed with its status,
+  since / last data sent, MLAT and ADS-B-out chips, an *Open* link and a *View
+  stats on …* link; a gap timeline with availability over 24 h / 7 d / 30 d,
+  scored over the span FlightSite actually observed; metric charts; and a Local
+  pages card (#215)
+- Feed kinds: `readsb` (the receiver's uplink), `piaware` (FlightAware),
+  `fr24` (FlightRadar24), `ultrafeeder` (ADS-B Exchange, AeroDataBox and any
+  other connector: MLAT stats over HTTP, ADS-B-out from container logs),
+  `opensky_logs`, `docker_health`, `link_only`
+- **Opt-in Docker socket** (`feeders.docker_socket`) for the feeds that publish
+  their state only in container logs (OpenSky, the ADS-B-out legs); off by
+  default, documented as a trust decision in `docs/SECURITY.md` and
+  `docs/INSTALL.md`
+- Settings → **Feeders**: poll interval, socket path, an entries editor with
+  kind-dependent fields, local pages, and a masked per-feed *stats URL* (kept in
+  `secrets.yaml`, reached through an internal redirect, never shown); an
+  "Load the example" button fills the six-entry layout for a Pi running
+  ultrafeeder + piaware + fr24 + opensky
+- Health: a Feeders card (up / degraded / down / unknown, socket state); a down
+  feed degrades the overall status without taking it down
+- Activity: `feeder_offline` (high) and `feeder_restored` (info) events, with
+  the outage length; both in the Activity page's filter
+- Receiver page: a Feeders summary card
+- API: `GET /api/v1/feeders`, `GET /api/v1/feeders/{name}/history?window=`,
+  diagnostics `feeders` section, `counters.feeder_poll_failures`
+  (`docs/API.md` §3.12)
+- ADR-0017 (feeder status sources and the opt-in Docker socket); SPEC notes in
+  §10, §67 and §79
+
+### Changed
+- Migration **0017** adds `feeder_episodes` and `feeder_samples`; it creates
+  two empty tables and moves no data
+- The visual-regression fixtures gained the Feeders view; the Receiver baseline
+  was re-taken for the summary card
+
+### Fixed
+- Setup wizard: the location map's marker follows the just-typed coordinate
+  (a dependency the map memo had missed)
+- Feeder status writes survive the poll task being cancelled at shutdown, so a
+  stop can no longer strand the writer connection or leave an episode open
+  (#218)
+
+### Upgrade notes
+- **Back up first** (`docker compose exec backend flightsite-backup create`).
+- Nothing is watched until feeds are configured: Settings → Feeders → *Load
+  the example*, adjust hosts and ports, save. Entries poll over HTTP without any
+  further setup.
+- To watch OpenSky and the ADS-B-out legs, mount the Docker socket into the
+  backend container read-only and set `feeders.docker_socket`
+  (`docs/INSTALL.md` "Feeders"); this grants the container root-equivalent
+  access to the Docker daemon on most hosts — leave it off if that is not
+  acceptable, and those feeds read `unknown`.
+- Paste each network's feed-stats page URL into the Feeders section (stored in
+  `secrets.yaml`); FlightAware's is filled from piaware automatically.
+
+### Known issues
+- #153 (clean Raspberry Pi 4 qualification on non-SD storage) remains deferred
+  by the owner; review follow-ups #209–#212 remain open
+
 ## [0.9.0] — 2026-09-25
 
 Every page is now expected to be useful *and* robust: a formal site review

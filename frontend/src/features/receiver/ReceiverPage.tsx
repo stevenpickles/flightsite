@@ -12,6 +12,7 @@ import {
   useReceiverRangeByBearingQuery,
 } from "@/lib/api/receiverStats";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { FeedersSummaryCard } from "@/features/receiver/components/FeedersSummaryCard";
 import { LifetimeStatsSection } from "@/features/receiver/components/LifetimeStatsSection";
 import { RangeByBearingChart } from "@/features/receiver/components/RangeByBearingChart";
 import { ReceiverScorecard } from "@/features/receiver/components/ReceiverScorecard";
@@ -83,6 +84,10 @@ export function ReceiverPage() {
         t0={receiver?.t0 ?? null}
         timezone={timezone}
       />
+
+      {/* Roadmap slice 077: a one-line pointer to the Feeders sub-page,
+          discoverable from here even before any feeder is configured. */}
+      <FeedersSummaryCard />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-medium">Charts</h2>

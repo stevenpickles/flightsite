@@ -30,7 +30,7 @@ import { VISUAL_THEMES } from "./support/stabilize";
 /** The tallest view in the suite: scorecard, nine chart cards and the
  * lifetime section. See `expectFitsWithoutScrolling`, which fails the run
  * if this stops being enough. */
-const VIEWPORT_HEIGHT = 2700;
+const VIEWPORT_HEIGHT = 2900;
 
 for (const theme of VISUAL_THEMES) {
   test(`receiver — ${theme}`, async ({ page }) => {

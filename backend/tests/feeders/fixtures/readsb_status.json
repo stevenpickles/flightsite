@@ -1,0 +1,13 @@
+{
+  "now": 1789999999.6,
+  "uptime": 864000.2,
+  "aircraft_with_pos": 37,
+  "aircraft_without_pos": 12,
+  "aircraft_count_by_type": {
+    "adsb_icao": 40,
+    "mlat": 3,
+    "mode_s": 6
+  },
+  "lat": 51.12345678,
+  "lon": -1.98765432
+}

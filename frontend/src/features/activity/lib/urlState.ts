@@ -39,6 +39,11 @@ export const FILTERABLE_TYPES: readonly ActivityEventType[] = [
   "receiver_offline",
   "receiver_restored",
   "metadata_updated",
+  // Slice 077 — the Feeders page's own pair, listed after the receiver's
+  // for the same reason it has its own icons and chip wording: a feeder
+  // outage is a different fact than a decoder outage.
+  "feeder_offline",
+  "feeder_restored",
 ];
 
 /** Every type a URL may name. Identical to {@link FILTERABLE_TYPES} today,
