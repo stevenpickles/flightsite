@@ -1,0 +1,8 @@
+{
+  "now": 1789999996.8,
+  "peer_count": 14,
+  "good_sync_percentage_last_hour": 93.4,
+  "bad_sync_timeout": 0,
+  "outlier_percent": 0.8,
+  "last_bad_sync": -1
+}

@@ -46,9 +46,13 @@ INGESTION: Final = "ingestion"
 DATABASE: Final = "database"
 ENRICHMENT: Final = "enrichment"
 WEBSOCKET: Final = "websocket"
+#: Slice 077: feeder status polling. Its own category rather than
+#: ``ingestion``: a network the receiver feeds going away says nothing about
+#: whether FlightSite is receiving, and the Health page must not suggest it.
+FEEDERS: Final = "feeders"
 OTHER: Final = "other"
 
-CATEGORIES: Final[tuple[str, ...]] = (INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, OTHER)
+CATEGORIES: Final[tuple[str, ...]] = (INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, FEEDERS, OTHER)
 
 #: Logger-name prefixes mapped to categories. The longest matching prefix wins,
 #: so a specific module outranks its parent package.
@@ -67,6 +71,7 @@ _CATEGORY_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("flightsite.metadata", ENRICHMENT),
     ("flightsite.api.ws", WEBSOCKET),
     ("flightsite.live", WEBSOCKET),
+    ("flightsite.feeders", FEEDERS),
 )
 
 #: How many records each category retains. Small enough that the whole buffer
@@ -167,20 +172,11 @@ def secrets_from_settings(settings: Settings | None) -> tuple[str, ...]:
     if settings is None:
         return ()
 
-    from flightsite.config.models import Settings as SettingsModel
-    from flightsite.config.models import secret_field_paths
+    from flightsite.config.models import iter_secret_values
 
-    values: list[str] = []
-    for path in secret_field_paths(SettingsModel):
-        node: Any = settings
-        for part in path:
-            node = getattr(node, part, None)
-            if node is None:
-                break
-        reveal = getattr(node, "get_secret_value", None)
-        if reveal is not None:
-            values.append(str(reveal()))
-    return tuple(values)
+    # Mapping-valued secrets (``feeders.stats_urls``, slice 077) are yielded
+    # one value at a time, so each stored stats URL is redacted on its own.
+    return tuple(secret.get_secret_value() for _, secret in iter_secret_values(settings))
 
 
 @dataclass(frozen=True, slots=True)

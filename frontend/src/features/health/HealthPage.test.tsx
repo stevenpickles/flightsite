@@ -76,6 +76,10 @@ describe("HealthPage", () => {
     expect(
       screen.getByRole("heading", { name: "WebSocket errors" }),
     ).toBeInTheDocument();
+    // Roadmap slice 077: the feeders error category.
+    expect(
+      screen.getByRole("heading", { name: "Feeders errors" }),
+    ).toBeInTheDocument();
   });
 
   it("puts the enrichment budget and cache counters on the page", async () => {
@@ -567,5 +571,42 @@ describe("HealthPage notification status", () => {
     expect(
       screen.queryByRole("button", { name: /enable notifications/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("omits the Feeders card on a backend older than roadmap slice 077", async () => {
+    installDiagnosticsApiMock();
+    renderApp("/health");
+
+    await screen.findByRole("group", { name: "Health summary" });
+    expect(
+      screen.queryByRole("region", { name: "Feeders" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the Feeders card and its counts when the backend reports them", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({
+        feeders: {
+          configured: 6,
+          up: 5,
+          degraded: 1,
+          down: 0,
+          unknown: 0,
+          docker_socket: "available",
+        },
+      }),
+    });
+    renderApp("/health");
+
+    await screen.findByRole("group", { name: "Health summary" });
+    const card = screen.getByRole("region", { name: "Feeders" });
+    // Scoped to the pill itself: the card's own "Degraded" `DetailRow`
+    // label reads the same text, so an unscoped query is ambiguous.
+    expect(
+      within(card).getByText("Degraded", { selector: "[data-tone]" }),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByRole("link", { name: "Open the Feeders page" }),
+    ).toHaveAttribute("href", "/receiver/feeders");
   });
 });

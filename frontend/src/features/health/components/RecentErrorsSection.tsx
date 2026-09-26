@@ -4,13 +4,15 @@ import { errorCountPresentation } from "@/features/health/lib/status";
 import { formatReceiverLocalDateTime } from "@/features/receiver/lib/format";
 import type { DiagnosticsErrorEntry } from "@/lib/api/diagnostics";
 
-/** SPEC §67 names four error kinds; `other` catches anything outside a named
- * subsystem so a novel failure is still visible. */
+/** SPEC §67 names four error kinds; roadmap slice 077 adds `feeders`; `other`
+ * catches anything outside a named subsystem so a novel failure is still
+ * visible. */
 const CATEGORY_LABELS: Record<string, string> = {
   ingestion: "Ingestion",
   database: "Database",
   enrichment: "Enrichment",
   websocket: "WebSocket",
+  feeders: "Feeders",
   other: "Other",
 };
 
@@ -19,6 +21,7 @@ const CATEGORY_ORDER = [
   "database",
   "enrichment",
   "websocket",
+  "feeders",
   "other",
 ] as const;
 

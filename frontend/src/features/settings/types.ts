@@ -1,4 +1,57 @@
-import type { NotificationConfig, UnitSystem } from "@/lib/api/config";
+import type {
+  FeederKind,
+  NotificationConfig,
+  UnitSystem,
+} from "@/lib/api/config";
+
+/**
+ * One row of the Feeders section's entries editor. Numeric/kind-dependent
+ * fields stay strings, same rationale as every other draft field
+ * (`lib/validation.ts` owns bounds-checking); fields a given `kind` does
+ * not use are simply left blank and dropped by `buildFeedersPatch` rather
+ * than validated.
+ *
+ * The stats-URL trio mirrors `aerodataboxKeyInput` /
+ * `aerodataboxKeyTouched` exactly, once per row instead of once per
+ * section: always empty on load, `statsUrlTouched` gates whether the row's
+ * entry is even present in a save's `feeders.stats_urls` patch, and
+ * `statsUrlStored` is this row's own reading of
+ * `secrets_set["feeders.stats_urls.<name>"]` — tracked per row (by the
+ * entry's `name` at load/save time) because the section holds a table of
+ * these, not one secret.
+ */
+export interface FeederEntryDraft {
+  name: string;
+  label: string;
+  kind: FeederKind;
+  url: string;
+  container: string;
+  host: string;
+  mlatPort: string;
+  beastPort: string;
+  webUrl: string;
+  statsUrlInput: string;
+  statsUrlTouched: boolean;
+  statsUrlStored: boolean;
+}
+
+/** One row of the local-pages table — no probe, no secret, just a link. */
+export interface LocalPageDraft {
+  label: string;
+  url: string;
+}
+
+/** The Feeders section's whole draft (roadmap slice 077). Applies on save
+ * — the service rebuilds its probes from a new entry list, same as
+ * `EnrichmentSection`'s provider rebuild, so this section carries no
+ * restart badge either. */
+export interface FeedersDraft {
+  pollIntervalS: string;
+  /** Blank means unset (`docker_socket: null`) — opt-in, off by default. */
+  dockerSocket: string;
+  entries: FeederEntryDraft[];
+  localPages: LocalPageDraft[];
+}
 
 /**
  * The Settings page's working copy of the config document. Mirrors
@@ -77,4 +130,7 @@ export interface SettingsDraft {
 
   // Retention.
   highResMetricDays: string;
+
+  // Feeders (slice 077).
+  feeders: FeedersDraft;
 }

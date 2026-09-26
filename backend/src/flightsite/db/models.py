@@ -22,7 +22,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 (:class:`ActivityEvent`, :class:`Milestone`) in slice 035, and the alert group
 (:class:`AlertRule`, :class:`AlertMatch`) in slice 038, and the two resolution
 scratch tables (:class:`AircraftMetadataResolvedStaging`,
-:class:`AircraftClassificationStaging`) in slice 075.
+:class:`AircraftClassificationStaging`) in slice 075, and the feeder pair
+(:class:`FeederEpisodeRow`, :class:`FeederSampleRow`) in slice 077.
 """
 
 from __future__ import annotations
@@ -1569,3 +1570,48 @@ class AlertMatch(Base):
             f"AlertMatch(id={self.id!r}, rule_id={self.rule_id!r}, "
             f"builtin_key={self.builtin_key!r}, sighting_id={self.sighting_id!r})"
         )
+
+
+class FeederEpisodeRow(Base):
+    """One span of one committed feeder state (``docs/DATA_MODEL.md`` §6.6, slice 077).
+
+    ``Row`` because :class:`flightsite.feeders.model.FeederEpisode` is the
+    domain value this stores. ``ended_ms`` is ``NULL`` while the episode is the
+    feeder's current state. ``WITHOUT ROWID`` keyed on ``(feeder, started_ms)``:
+    every read is one feeder's time range, and the key is the only lookup
+    structure the table has.
+    """
+
+    __tablename__ = "feeder_episodes"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    feeder: Mapped[str] = mapped_column(Text, primary_key=True)
+    started_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ended_ms: Mapped[int | None] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"FeederEpisodeRow(feeder={self.feeder!r}, started_ms={self.started_ms!r}, "
+            f"state={self.state!r})"
+        )
+
+
+class FeederSampleRow(Base):
+    """One stored reading of one feeder (``docs/DATA_MODEL.md`` §6.6, slice 077).
+
+    ``metrics_json`` is a small object of numeric chart series whose keys
+    depend on the feeder's kind; a key absent or ``null`` is a gap, never a
+    zero. Pruned after 14 days by the feeder service's own maintenance loop.
+    """
+
+    __tablename__ = "feeder_samples"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    feeder: Mapped[str] = mapped_column(Text, primary_key=True)
+    ts_ms: Mapped[int] = mapped_column(Integer, primary_key=True)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics_json: Mapped[str | None] = mapped_column(Text)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"FeederSampleRow(feeder={self.feeder!r}, ts_ms={self.ts_ms!r})"

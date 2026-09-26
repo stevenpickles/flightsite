@@ -1,0 +1,28 @@
+{
+  "adept": {
+    "status": "green",
+    "message": "Connected to FlightAware and logged in"
+  },
+  "cpu_load_percent": 6,
+  "cpu_temp_celcius": 48.7,
+  "expiry": 1790000010000,
+  "interval": 5000,
+  "mlat": {
+    "status": "green",
+    "message": "Multilateration synchronized"
+  },
+  "modes_enabled": true,
+  "piaware": {
+    "status": "green",
+    "message": "PiAware 10.2 is running"
+  },
+  "piaware_version": "10.2",
+  "radio": {
+    "status": "green",
+    "message": "Received Mode S data recently"
+  },
+  "site_url": "https://www.flightaware.com/adsb/stats/user/SENTINEL-FA-USER#stats-SENTINEL-FA-SITE",
+  "system_uptime": 864000,
+  "time": 1790000000000,
+  "uat_enabled": false
+}

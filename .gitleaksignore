@@ -1,0 +1,4 @@
+# gitleaks fingerprints that are known-fake test fixtures (commit:file:rule:line)
+# The FR24 sharing key in this fixture is a sentinel used to prove redaction; it was
+# replaced by a lower-entropy sentinel in the next commit, but history keeps this one.
+4437e2e8edbf517632fc626c4bc1b598b180b99e:backend/tests/feeders/fixtures/fr24_monitor.json:generic-api-key:22

@@ -43,7 +43,13 @@ export type ActivityEventType =
   | "receiver_offline"
   | "receiver_restored"
   | "metadata_updated"
-  | "milestone";
+  | "milestone"
+  // Roadmap slice 077 (`docs/design/077-feeders-page.md` "Activity"):
+  // deliberately distinct from `receiver_offline`/`receiver_restored` — a
+  // feeder is one of the outbound networks this receiver feeds, so its
+  // outage says nothing about whether the receiver's own decoder is up.
+  | "feeder_offline"
+  | "feeder_restored";
 
 /** Which rolling receiver record a `receiver_record` event describes. A new
  * furthest detection is *not* one of these — §3.9 gives it its own

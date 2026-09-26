@@ -66,6 +66,7 @@ module says why.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Sequence
 from typing import Annotated, Any
 
@@ -234,11 +235,17 @@ async def _apply_live_settings(app: FastAPI, settings: Settings) -> None:
     thing that would change the answer is an entry that must run
     *conditionally* on something other than its own state — deciding which
     entries run is what a dispatcher is actually for.
+
+    Slice 077 adds a fifth of the same kind as enrichment's: the feeder set
+    (entries, poll interval, Docker socket, local pages) is applied as a
+    *state* on every save, so adding a network or pointing FlightSite at the
+    socket needs no restart.
     """
     await _apply_enabled_templates(app, settings)
     _apply_receiver_location(app, settings)
     await _apply_ingestion_start(app)
     await _apply_enrichment(app, settings)
+    await _apply_feeders(app, settings)
 
 
 def _apply_failed(setting: str, exc: Exception, **fields: Any) -> None:
@@ -356,6 +363,36 @@ async def _apply_enrichment(app: FastAPI, settings: Settings) -> None:
         await enrichment.apply_provider(build_provider(settings), build_economy(settings))
     except Exception as exc:
         _apply_failed("enrichment", exc)
+
+
+async def _apply_feeders(app: FastAPI, settings: Settings) -> None:
+    """Hand the saved ``feeders`` section to the feeder service (slice 077).
+
+    The same shape as :func:`_apply_enrichment`: the service is given the whole
+    section and decides what it means — rebuilding its probes, starting its
+    poll task when the first entry appears, stopping it when the last one
+    goes, opening or dropping the Docker client as ``docker_socket`` changes —
+    including that a save which did not touch this section means nothing.
+
+    Demo mode keeps its scripted stand-ins: the probes there are not built
+    from configuration, so a save must not swap them for real ones that point
+    at nothing — the same reason :func:`_apply_receiver_location` leaves the
+    demo anchor alone.
+
+    Stats URLs travel inside the section as :class:`~pydantic.SecretStr` and
+    are never logged here: a failure reports the setting name and the error,
+    and the diagnostics capture redacts every stored secret from that text
+    (:func:`flightsite.diagnostics.errors.secrets_from_settings`).
+    """
+    feeders: Any | None = getattr(app.state, "feeders", None)
+    if feeders is None or getattr(app.state, "demo_enabled", False):
+        return
+    try:
+        result = feeders.apply_settings(settings.feeders)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        _apply_failed("feeders", exc)
 
 
 @router.post("/decoder/test")

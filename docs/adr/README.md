@@ -34,3 +34,4 @@ Trivial implementation details do not get ADRs.
 | [0014](0014-track-storage-cost.md) | Accept the measured `sighting_tracks` storage cost for v1 | Accepted |
 | [0015](0015-app-shell-live-socket.md) | The app shell owns the live WebSocket | Accepted |
 | [0016](0016-offline-route-directory.md) | An offline route directory as the primary origin/destination source | Accepted |
+| [0017](0017-feeder-status-sources.md) | Feeder status sources and the opt-in Docker socket | Accepted |

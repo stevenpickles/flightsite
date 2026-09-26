@@ -262,12 +262,15 @@ export function diagnostics(overrides: Partial<Diagnostics> = {}): Diagnostics {
       enrichment_failures: 0,
       ws_disconnects: 0,
       live_events_dropped: 0,
+      // Roadmap slice 077.
+      feeder_poll_failures: 0,
     },
     recent_errors: {
       ingestion: [],
       database: [],
       enrichment: [],
       websocket: [],
+      feeders: [],
       other: [],
     },
     ...overrides,

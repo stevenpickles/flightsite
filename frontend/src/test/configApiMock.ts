@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import type {
   ConfigResponse,
   EnrichmentConfig,
+  FeedersConfig,
   FlightSiteConfig,
 } from "@/lib/api/config";
 import type { ConnectionTestResult } from "@/lib/api/decoder";
@@ -19,6 +20,21 @@ export function defaultEnrichmentConfig(
     aerodatabox_api_key: null,
     daily_lookup_budget: 0,
     route_ttl_days: 7,
+    ...overrides,
+  };
+}
+
+/** The schema-default feeders block: no entries, no local pages, no stats
+ * URLs configured — a fresh install has nothing to poll yet (slice 077). */
+export function defaultFeedersConfig(
+  overrides: Partial<FeedersConfig> = {},
+): FeedersConfig {
+  return {
+    poll_interval_s: 15,
+    docker_socket: null,
+    entries: [],
+    local_pages: [],
+    stats_urls: {},
     ...overrides,
   };
 }
@@ -65,6 +81,7 @@ export function defaultFlightSiteConfig(
       critical: true,
     },
     alerts: { enabled_templates: [] },
+    feeders: defaultFeedersConfig(),
     ...overrides,
   };
 }
@@ -145,6 +162,28 @@ function applyPatch(
     }
   }
 
+  // `feeders.stats_urls` is a dict secret: an untouched entry name must
+  // survive a save the same way an untouched `aerodatabox_api_key` does —
+  // the one-level merge above replaces `stats_urls` wholesale (it is itself
+  // a plain object), which would otherwise drop every name the patch didn't
+  // mention. Merged per-key here instead, mirroring the real config store's
+  // secret-merge semantics closely enough for these tests.
+  const existingFeeders = base.config.feeders;
+  const feedersValue = patch.feeders;
+  if (
+    isPlainObject(existingFeeders) &&
+    isPlainObject(feedersValue) &&
+    isPlainObject(feedersValue.stats_urls)
+  ) {
+    const existingStatsUrls = isPlainObject(existingFeeders.stats_urls)
+      ? existingFeeders.stats_urls
+      : {};
+    config.feeders = {
+      ...(config.feeders as Record<string, unknown>),
+      stats_urls: { ...existingStatsUrls, ...feedersValue.stats_urls },
+    };
+  }
+
   const secretsSet = { ...base.secrets_set };
   const enrichmentPatch = patch.enrichment;
   if (
@@ -153,6 +192,17 @@ function applyPatch(
   ) {
     secretsSet["enrichment.aerodatabox_api_key"] =
       enrichmentPatch.aerodatabox_api_key !== null;
+  }
+
+  // `feeders.stats_urls` is a dict secret keyed by entry name (see
+  // `FeedersConfig.stats_urls`'s doc comment) — each key the patch touches
+  // gets its own `secrets_set["feeders.stats_urls.<name>"]` boolean, the
+  // same way `aerodatabox_api_key` gets one un-namespaced key above.
+  const feedersPatch = patch.feeders;
+  if (isPlainObject(feedersPatch) && isPlainObject(feedersPatch.stats_urls)) {
+    for (const [name, value] of Object.entries(feedersPatch.stats_urls)) {
+      secretsSet[`feeders.stats_urls.${name}`] = value !== null;
+    }
   }
 
   return {

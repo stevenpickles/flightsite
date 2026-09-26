@@ -122,6 +122,12 @@ Primary navigation: Live Map, Aircraft, Sightings, Analytics, Receiver, Alerts,
 Settings. The Live Map is the primary product experience — FlightSite should feel like
 a live radar application with analytics, not an analytics dashboard containing a map.
 
+> **Amendment (2026-09-26, owner decision recorded by Fable):** a **Feeders** page
+> showing the networks the receiver feeds is reached from Receiver (and from the
+> health area) at `/receiver/feeders`. It is a sub-route of Receiver, not an eighth
+> primary section: the seven sections above stand unchanged. Recorded in ADR-0017;
+> implemented in slice 077.
+
 # 11. ADS-B Decoder Boundary
 
 FlightSite does not decode RF or ADS-B messages itself in v1. It consumes an existing
@@ -554,6 +560,13 @@ permission/status; recent ingestion errors; recent database errors; enrichment
 failures; WebSocket issues. The user should not have to SSH into the Pi to determine
 whether FlightSite is healthy.
 
+> **Amendment (2026-09-26, owner decision recorded by Fable):** the status of the
+> networks the receiver feeds joins system health — how many configured feeders are
+> up, degraded, down or unknown, and whether the optional Docker socket is available —
+> and a feeder that is down degrades the overall health status without taking it down,
+> since FlightSite itself is still receiving. Feeder outages and restorations also
+> appear in the activity feed (§55). Recorded in ADR-0017; implemented in slice 077.
+
 # 68. Logging and Observability
 
 Structured backend logging; configurable log levels; rotating local logs. Provide:
@@ -648,6 +661,14 @@ aircraft-follow mode; advanced circling detection; loitering detection; repeated
 behavioral detection; complex nested boolean alert expressions; user-installable
 plugins; Prometheus/Grafana requirement; automatic self-updater. Keep these in a
 future/backlog section of the roadmap.
+
+> **Amendment (2026-09-26, owner decision recorded by Fable):** monitoring the
+> networks this one receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange,
+> OpenSky, AeroDataBox and similar) is admitted to v1. It is distinct from the
+> multi-receiver non-goal above, which stands: FlightSite still ingests from one
+> decoder, and feeder monitoring only reads the status those feeders publish on the
+> LAN — optionally their container logs through an opt-in Docker socket — without
+> ingesting anything from them. Recorded in ADR-0017; implemented in slice 077.
 
 # 80. Accessibility
 
