@@ -8,14 +8,95 @@
  * `SettingsDraft` shape for consistency.
  */
 import { parseNumber } from "@/features/setup/lib/validation";
+import {
+  FEEDERS_EXAMPLE_ENTRIES,
+  FEEDERS_EXAMPLE_LOCAL_PAGES,
+  feederKindFields,
+} from "@/features/settings/lib/feederKinds";
 import { parseRangeRingRadii } from "@/features/settings/lib/validation";
-import type { SettingsDraft } from "@/features/settings/types";
-import type { ConfigPatch, FlightSiteConfig } from "@/lib/api/config";
+import type {
+  FeederEntryDraft,
+  FeedersDraft,
+  LocalPageDraft,
+  SettingsDraft,
+} from "@/features/settings/types";
+import type {
+  ConfigPatch,
+  FeederEntryConfig,
+  FlightSiteConfig,
+} from "@/lib/api/config";
+
+/** One feeder entry's config shape, converted to its editable draft row.
+ * `statsUrlStored` reads `secrets_set["feeders.stats_urls.<name>"]` at the
+ * moment the draft is built (load, or post-save resync) — see
+ * `FeederEntryDraft`'s doc comment for why the input itself always starts
+ * blank regardless. */
+function feederEntryToDraft(
+  entry: FeederEntryConfig,
+  secretsSet: Record<string, boolean>,
+): FeederEntryDraft {
+  return {
+    name: entry.name,
+    label: entry.label,
+    kind: entry.kind,
+    url: entry.url ?? "",
+    container: entry.container ?? "",
+    host: entry.host ?? "",
+    mlatPort:
+      entry.mlat_port !== null && entry.mlat_port !== undefined
+        ? String(entry.mlat_port)
+        : "",
+    beastPort:
+      entry.beast_port !== null && entry.beast_port !== undefined
+        ? String(entry.beast_port)
+        : "",
+    webUrl: entry.web_url ?? "",
+    statsUrlInput: "",
+    statsUrlTouched: false,
+    statsUrlStored: secretsSet[`feeders.stats_urls.${entry.name}`] ?? false,
+  };
+}
+
+function localPageToDraft(page: {
+  label: string;
+  url: string;
+}): LocalPageDraft {
+  return { label: page.label, url: page.url };
+}
+
+/** Builds the Feeders section's draft from its config slice — its own
+ * function (rather than folded into `draftFromConfig`) because, unlike
+ * every other section, it needs `secrets_set` to seed each row's
+ * `statsUrlStored`, the same information `EnrichmentSection` gets as a
+ * `hasStoredKey` prop rather than through this module. */
+export function feedersDraftFromConfig(
+  config: FlightSiteConfig,
+  secretsSet: Record<string, boolean>,
+): FeedersDraft {
+  return {
+    pollIntervalS: String(config.feeders.poll_interval_s),
+    dockerSocket: config.feeders.docker_socket ?? "",
+    entries: config.feeders.entries.map((entry) =>
+      feederEntryToDraft(entry, secretsSet),
+    ),
+    localPages: config.feeders.local_pages.map(localPageToDraft),
+  };
+}
 
 /** Builds the initial (and post-save) draft from the effective config.
  * Every section reads its slice of this via the `pick*` helpers below, so
- * a fresh load and a post-save resync are the same code path. */
-export function draftFromConfig(config: FlightSiteConfig): SettingsDraft {
+ * a fresh load and a post-save resync are the same code path.
+ *
+ * `secretsSet` is optional and defaults to empty — every section but
+ * Feeders ignores it entirely (their own secret, `aerodatabox_api_key`, is
+ * read through a separate `hasStoredKey` prop, per `EnrichmentSection`).
+ * Feeders is the one section whose "is this stored" state lives *inside*
+ * the draft, one flag per table row rather than one section-wide prop, so
+ * it is threaded through here instead. */
+export function draftFromConfig(
+  config: FlightSiteConfig,
+  secretsSet: Record<string, boolean> = {},
+): SettingsDraft {
   const { location, receiver, map } = config;
   return {
     siteName: location.site_name ?? "",
@@ -53,6 +134,8 @@ export function draftFromConfig(config: FlightSiteConfig): SettingsDraft {
     openskyEnabled: config.metadata.opensky_enabled,
 
     highResMetricDays: String(config.retention.high_res_metric_days),
+
+    feeders: feedersDraftFromConfig(config, secretsSet),
   };
 }
 
@@ -116,6 +199,10 @@ export function pickMetadata(draft: SettingsDraft) {
 
 export function pickRetention(draft: SettingsDraft) {
   return { highResMetricDays: draft.highResMetricDays };
+}
+
+export function pickFeeders(draft: SettingsDraft): FeedersDraft {
+  return draft.feeders;
 }
 
 /** Whether two picked slices differ — plain structural equality via JSON,
@@ -241,6 +328,107 @@ export function buildRetentionPatch(
 }
 
 const RETENTION_DEFAULT_DAYS = 14;
+
+/** Only ever reached when the poll interval field is unparseable, which the
+ * section's own validation (5–120 s) blocks before a save can fire. */
+const FEEDERS_POLL_INTERVAL_DEFAULT_S = 15;
+
+/** One draft row -> the wire shape, dropping (as `null`) every field the
+ * row's `kind` doesn't use rather than sending stray values a different
+ * kind happened to leave filled in from before a kind change — `web_url` is
+ * the one exception, since it applies to every kind (see
+ * `lib/feederKinds.ts`'s doc comment). */
+function feederEntryDraftToConfig(entry: FeederEntryDraft): FeederEntryConfig {
+  const fields = feederKindFields(entry.kind);
+  const mlatPort = parseNumber(entry.mlatPort);
+  const beastPort = parseNumber(entry.beastPort);
+  return {
+    name: entry.name.trim(),
+    label: entry.label.trim(),
+    kind: entry.kind,
+    url: fields.url && entry.url.trim().length > 0 ? entry.url.trim() : null,
+    container:
+      fields.container && entry.container.trim().length > 0
+        ? entry.container.trim()
+        : null,
+    host:
+      fields.hostPorts && entry.host.trim().length > 0
+        ? entry.host.trim()
+        : null,
+    mlat_port:
+      fields.hostPorts && mlatPort !== null ? Math.trunc(mlatPort) : null,
+    beast_port:
+      fields.hostPorts && beastPort !== null ? Math.trunc(beastPort) : null,
+    web_url: entry.webUrl.trim().length > 0 ? entry.webUrl.trim() : null,
+  };
+}
+
+/**
+ * Builds the Feeders patch. `entries` and `local_pages` are always sent in
+ * full — the design record's contract for this section ("lists replaced
+ * wholesale") — so a row removed in the editor is a row absent from the
+ * saved config rather than something the backend has to diff out.
+ *
+ * `stats_urls` mirrors `buildEnrichmentPatch`'s secret handling per row: a
+ * row is only present in the patch's `stats_urls` map when its own
+ * `statsUrlTouched` is true, so an untouched row's previously-stored stats
+ * URL is never disturbed just by saving the rest of the section (adding or
+ * editing an unrelated row, reordering, changing the poll interval, …). The
+ * key is omitted from the patch entirely when nothing was touched, the same
+ * "no-op means absent" rule the single-secret sections follow.
+ */
+export function buildFeedersPatch(draft: FeedersDraft): ConfigPatch {
+  const patch: ConfigPatch = {
+    feeders: {
+      poll_interval_s: Math.trunc(
+        parseNumber(draft.pollIntervalS) ?? FEEDERS_POLL_INTERVAL_DEFAULT_S,
+      ),
+      docker_socket:
+        draft.dockerSocket.trim().length > 0 ? draft.dockerSocket.trim() : null,
+      entries: draft.entries.map(feederEntryDraftToConfig),
+      local_pages: draft.localPages
+        .filter(
+          (page) => page.label.trim().length > 0 || page.url.trim().length > 0,
+        )
+        .map((page) => ({ label: page.label.trim(), url: page.url.trim() })),
+    },
+  };
+
+  const statsUrls: Record<string, string | null> = {};
+  let anyTouched = false;
+  for (const entry of draft.entries) {
+    if (!entry.statsUrlTouched) {
+      continue;
+    }
+    anyTouched = true;
+    const trimmed = entry.statsUrlInput.trim();
+    statsUrls[entry.name.trim()] = trimmed.length > 0 ? trimmed : null;
+  }
+  if (anyTouched) {
+    patch.feeders = { ...patch.feeders, stats_urls: statsUrls };
+  }
+
+  return patch;
+}
+
+/** Fills the "Load the example for a Pi with ultrafeeder + piaware + fr24 +
+ * opensky" example (`docs/design/077-feeders-page.md` "Config") into the
+ * draft, replacing its entries and local pages — never saving, and never
+ * touching `pollIntervalS`/`dockerSocket`, which stay whatever the section
+ * already had (the Docker socket in particular is opt-in and this button is
+ * not a reason to turn it on for someone who hasn't). Every example row's
+ * stats-URL input starts blank and untouched, same as any other freshly
+ * loaded row — the example does not (and cannot) know anyone's real stats
+ * URLs. */
+export function applyFeedersExample(draft: FeedersDraft): FeedersDraft {
+  return {
+    ...draft,
+    entries: FEEDERS_EXAMPLE_ENTRIES.map((entry) =>
+      feederEntryToDraft(entry, {}),
+    ),
+    localPages: FEEDERS_EXAMPLE_LOCAL_PAGES.map(localPageToDraft),
+  };
+}
 
 /** Only ever reached when the field is unparseable, which the section's own
  * validation blocks before a save can fire — a value rather than a throw so

@@ -7,6 +7,7 @@ import { DangerZoneSection } from "@/features/settings/sections/DangerZoneSectio
 import { DecoderSection } from "@/features/settings/sections/DecoderSection";
 import { DisplaySection } from "@/features/settings/sections/DisplaySection";
 import { EnrichmentSection } from "@/features/settings/sections/EnrichmentSection";
+import { FeedersSection } from "@/features/settings/sections/FeedersSection";
 import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import { NotificationsSection } from "@/features/settings/sections/NotificationsSection";
 import { ReceiverSection } from "@/features/settings/sections/ReceiverSection";
@@ -103,6 +104,7 @@ export function SettingsPage() {
         <EnrichmentSection config={config} hasStoredKey={hasStoredKey} />
         <MetadataSection timezone={config.timezone} config={config} />
         <RetentionSection config={config} />
+        <FeedersSection config={config} secretsSet={secretsSet} />
       </div>
 
       <DangerZoneSection />

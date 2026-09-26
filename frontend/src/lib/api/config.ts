@@ -92,6 +92,82 @@ export interface AlertConfig {
   enabled_templates: string[];
 }
 
+/** The seven feeder-entry kinds (slice 077 design record, "Kinds"). Each is
+ * the only place its own vendor's vocabulary is read on the backend — the
+ * frontend just needs to know which kind-dependent fields a card and this
+ * section's entries-editor row should show. */
+export type FeederKind =
+  | "readsb"
+  | "piaware"
+  | "fr24"
+  | "ultrafeeder"
+  | "opensky_logs"
+  | "docker_health"
+  | "link_only";
+
+/**
+ * One feeder entry (`docs/design/077-feeders-page.md` "Config"). Every
+ * field beyond `name`/`label`/`kind` is kind-dependent and optional here —
+ * the backend validates which ones a given `kind` requires; the frontend
+ * mirrors that per-kind requirement only for inline validation, not as a
+ * second source of truth.
+ *
+ * `url` is the probe endpoint (readsb/piaware/fr24 HTTP JSON, or the
+ * ultrafeeder host's HTTP for MLAT client stats); `host`/`mlat_port`/
+ * `beast_port` are the ultrafeeder peer this receiver connects out to;
+ * `container` names the Docker container a socket-backed kind reads logs or
+ * health from; `web_url` is the "Open" link to the feeder's own locally
+ * hosted page, independent of how (or whether) its status is probed.
+ */
+export interface FeederEntryConfig {
+  name: string;
+  label: string;
+  kind: FeederKind;
+  url?: string | null;
+  container?: string | null;
+  host?: string | null;
+  mlat_port?: number | null;
+  beast_port?: number | null;
+  web_url?: string | null;
+}
+
+/** One entry in `feeders.local_pages` — a locally hosted sibling page
+ * (tar1090, graphs1090, SkyAware, the FR24 feeder UI, …) with no status of
+ * its own to probe, just a link. */
+export interface LocalPageConfig {
+  label: string;
+  url: string;
+}
+
+/**
+ * Mirrors `FeederSettings` (slice 077). Hot-applied on save, like
+ * enrichment — the service rebuilds its probes from the new entry list
+ * rather than waiting for a restart.
+ *
+ * `stats_urls` is the one secret-backed field here, keyed by entry `name`
+ * exactly the way `EnrichmentConfig.aerodatabox_api_key` is masked: a
+ * configured URL reads back as a non-null mask string (never the real
+ * value — SPEC §29), an unconfigured one as `null`. **Assumption** (no
+ * backend contract to check this against yet, per work package D's
+ * instructions): the design record only states that `secrets.yaml` stores
+ * `feeders.stats_urls.<name>` and that `secrets_set` carries one boolean
+ * per configured name; it does not say whether the masked value itself
+ * round-trips inside `config.feeders.stats_urls` the way
+ * `aerodatabox_api_key` does inside `config.enrichment`. This type assumes
+ * it does, for symmetry with the one other masked-secret field this page
+ * already has to match — if agents A/B instead omit `stats_urls` from the
+ * config dump entirely (relying on `secrets_set` alone), this field simply
+ * never gets a non-empty value from the real backend and every consumer
+ * here already treats "no mask string" the same as "not configured".
+ */
+export interface FeedersConfig {
+  poll_interval_s: number;
+  docker_socket: string | null;
+  entries: FeederEntryConfig[];
+  local_pages: LocalPageConfig[];
+  stats_urls: Record<string, string | null>;
+}
+
 /** Mirrors `Settings.dump_public()` — the full effective configuration
  * with secrets masked. */
 export interface FlightSiteConfig {
@@ -111,6 +187,7 @@ export interface FlightSiteConfig {
   metadata: MetadataConfig;
   notifications: NotificationConfig;
   alerts: AlertConfig;
+  feeders: FeedersConfig;
 }
 
 /** `GET`/`PUT /api/internal/config` response envelope. `secrets_set` reports
