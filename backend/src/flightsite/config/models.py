@@ -18,11 +18,14 @@ instead of by a hand-maintained list.
 
 from __future__ import annotations
 
+import re
 import types
 import typing
 import zoneinfo
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -30,6 +33,7 @@ from pydantic import (
     Field,
     HttpUrl,
     SecretStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -303,6 +307,206 @@ class AlertSettings(_ConfigModel):
         return cleaned
 
 
+#: The ``feeders`` entry-name shape: a lowercase slug, so a name is safe in a
+#: URL path segment (``/api/v1/feeders/{name}/history``), a dedupe key and a
+#: ``secrets.yaml`` key without any escaping.
+FEEDER_NAME_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{0,31}$"
+_FEEDER_NAME_RE: Final = re.compile(FEEDER_NAME_PATTERN)
+
+FeederKind = Literal[
+    "readsb",
+    "piaware",
+    "fr24",
+    "ultrafeeder",
+    "opensky_logs",
+    "docker_health",
+    "link_only",
+]
+
+#: Which fields each kind cannot work without (slice 077). A kind absent here
+#: needs nothing beyond ``name``/``label``/``kind``. The Settings UI mirrors
+#: this table so an entry is rejected per field before it is ever sent.
+FEEDER_KIND_REQUIRED_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "readsb": ("url",),
+    "piaware": ("url",),
+    "fr24": ("url",),
+    "ultrafeeder": ("url", "host"),
+    "opensky_logs": ("container",),
+    "docker_health": ("container",),
+}
+
+
+def _check_feeder_name(value: str, *, what: str) -> str:
+    stripped = value.strip()
+    if not _FEEDER_NAME_RE.match(stripped):
+        raise ValueError(
+            f"{what} {value!r} must be a lowercase slug: a letter or digit, then up to 31 "
+            "letters, digits or hyphens (e.g. 'flightaware')"
+        )
+    return stripped
+
+
+def _is_cleared(value: Any) -> bool:
+    """True for a ``stats_urls`` value that means "remove this key"."""
+    if value is None:
+        return True
+    raw = value.get_secret_value() if isinstance(value, SecretStr) else value
+    return isinstance(raw, str) and not raw.strip()
+
+
+class FeederEntry(_ConfigModel):
+    """One network the receiver feeds, or one sibling service — slice 077.
+
+    Validated for *shape* only: nothing here opens a connection. What each
+    kind needs is in :data:`FEEDER_KIND_REQUIRED_FIELDS`, and a missing field
+    is reported against that field (``feeders.entries.2.url``) rather than
+    against the entry, so the Settings UI can mark the one input that is wrong.
+    ``url``, ``container`` and ``host`` are declared after ``kind`` and
+    validated even when left at their default, which is what gives their
+    validators the entry's kind to check against.
+
+    The per-network *stats* link is deliberately not here: it usually embeds a
+    feeder identity, so it lives in ``secrets.yaml`` as
+    ``feeders.stats_urls.<name>`` (:class:`FeederSettings`).
+    """
+
+    name: str
+    label: str = Field(min_length=1, max_length=80)
+    kind: FeederKind
+    url: HttpUrl | None = Field(default=None, validate_default=True)
+    container: str | None = Field(default=None, max_length=128, validate_default=True)
+    host: str | None = Field(default=None, max_length=253, validate_default=True)
+    mlat_port: int | None = Field(default=None, ge=1, le=65535)
+    beast_port: int | None = Field(default=None, ge=1, le=65535)
+    web_url: HttpUrl | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _slug(cls, value: str) -> str:
+        return _check_feeder_name(value, what="feeder name")
+
+    @field_validator("label")
+    @classmethod
+    def _strip_label(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("feeder label must not be blank")
+        return stripped
+
+    @field_validator("container", "host", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("url", "container", "host")
+    @classmethod
+    def _required_by_kind(cls, value: Any, info: ValidationInfo) -> Any:
+        kind = info.data.get("kind")
+        field_name = info.field_name
+        if (
+            value is None
+            and kind is not None
+            and field_name in FEEDER_KIND_REQUIRED_FIELDS.get(kind, ())
+        ):
+            raise ValueError(f"{field_name} is required for a feeder of kind {kind!r}")
+        return value
+
+
+class LocalPage(_ConfigModel):
+    """A sibling page hosted beside FlightSite (tar1090, graphs1090, ...)."""
+
+    label: str = Field(min_length=1, max_length=80)
+    url: HttpUrl
+
+    @field_validator("label")
+    @classmethod
+    def _strip_label(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("local page label must not be blank")
+        return stripped
+
+
+class FeederSettings(_ConfigModel):
+    """Feeder monitoring — slice 077, ADR-0017. Hot-applied on save.
+
+    ``docker_socket`` is off by default and is the one setting here with a
+    trust consequence: mounting the Docker Engine socket into the container is
+    root-equivalent on most hosts (``docs/SECURITY.md`` §10). Without it the
+    log- and health-only signals read ``unknown``, never ``down``.
+
+    ``stats_urls`` is the second kind of secret FlightSite stores and the
+    first that is a mapping: one per-network stats URL per entry name, pasted
+    by the owner into ``secrets.yaml``. They usually embed a feeder identity (a
+    site id, a username, a UUID), so they are typed :class:`SecretStr`, masked
+    everywhere secrets are masked (:func:`secret_field_paths` walks mapping
+    values), and reached only through the internal ``stats-link`` redirect —
+    never through ``/api/v1``. Keys are validated for entry-name *shape* only,
+    so pasting a URL before adding its entry is harmless. A ``null`` or blank
+    value in an update removes that key; the mask leaves it unchanged.
+    """
+
+    poll_interval_s: int = Field(default=15, ge=5, le=120)
+    docker_socket: str | None = None
+    entries: list[FeederEntry] = Field(default_factory=list)
+    local_pages: list[LocalPage] = Field(default_factory=list)
+    stats_urls: dict[str, SecretStr] = Field(default_factory=dict)
+
+    @field_validator("docker_socket", mode="before")
+    @classmethod
+    def _blank_socket_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("docker_socket")
+    @classmethod
+    def _absolute_socket(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped.startswith("/"):
+            raise ValueError(
+                "feeders.docker_socket must be an absolute path (e.g. /var/run/docker.sock)"
+            )
+        return stripped
+
+    @field_validator("entries")
+    @classmethod
+    def _unique_names(cls, value: list[FeederEntry]) -> list[FeederEntry]:
+        seen: set[str] = set()
+        for entry in value:
+            if entry.name in seen:
+                raise ValueError(f"feeder name {entry.name!r} is used by more than one entry")
+            seen.add(entry.name)
+        return value
+
+    @field_validator("stats_urls", mode="before")
+    @classmethod
+    def _drop_cleared(cls, value: Any) -> Any:
+        # ``null`` or a blank string is how an update clears one stored URL:
+        # the file layers are deep-merged, so omitting a key can never remove it.
+        if isinstance(value, Mapping):
+            return {key: url for key, url in value.items() if not _is_cleared(url)}
+        return value
+
+    @field_validator("stats_urls")
+    @classmethod
+    def _stats_url_shape(cls, value: dict[str, SecretStr]) -> dict[str, SecretStr]:
+        cleaned: dict[str, SecretStr] = {}
+        for key, secret in value.items():
+            name = _check_feeder_name(key, what="feeders.stats_urls key")
+            raw = secret.get_secret_value().strip()
+            parsed = urlsplit(raw)
+            # The message names the key, never the value: it is a secret.
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError(f"feeders.stats_urls.{name} must be an http(s) URL")
+            cleaned[name] = SecretStr(raw)
+        return cleaned
+
+
 class Settings(BaseSettings):
     """Root FlightSite configuration.
 
@@ -352,6 +556,7 @@ class Settings(BaseSettings):
     metadata: MetadataSettings = Field(default_factory=MetadataSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
+    feeders: FeederSettings = Field(default_factory=FeederSettings)
 
     @classmethod
     def settings_customise_sources(
@@ -408,18 +613,60 @@ class Settings(BaseSettings):
         return data
 
     def secrets_state(self) -> dict[str, bool]:
-        """Map each secret's dotted path to whether a value is stored."""
+        """Map each secret's dotted path to whether a value is stored.
+
+        A scalar secret always appears, ``True`` or ``False``. A mapping of
+        secrets (``feeders.stats_urls``) contributes one ``True`` entry per
+        stored key — ``feeders.stats_urls.flightaware`` — and nothing for a
+        key it does not hold, because the set of possible keys is open.
+        """
         state: dict[str, bool] = {}
         for path in secret_field_paths(type(self)):
-            value: Any = self
-            for part in path:
-                value = getattr(value, part)
-            state[".".join(path)] = value is not None
+            value = _resolve(self, path)
+            if isinstance(value, Mapping):
+                for key, secret in value.items():
+                    state[".".join((*path, str(key)))] = secret is not None
+            else:
+                state[".".join(path)] = value is not None
         return state
 
 
+def _resolve(root: Any, path: tuple[str, ...]) -> Any:
+    """Follow ``path`` through attributes, returning ``None`` if it breaks."""
+    value: Any = root
+    for part in path:
+        value = getattr(value, part, None)
+        if value is None:
+            return None
+    return value
+
+
+def iter_secret_values(settings: BaseModel) -> Iterator[tuple[tuple[str, ...], SecretStr]]:
+    """Yield every *stored* secret with its concrete path.
+
+    A scalar secret's path is its field path; a mapping value's path ends in
+    its key (``("feeders", "stats_urls", "fr24")``). Every consumer that needs
+    secret *values* — ``secrets.yaml`` write-back, diagnostics redaction —
+    goes through here, so a secret added as a mapping value cannot be skipped
+    by a consumer that only knew how to read a scalar.
+    """
+    for path in secret_field_paths(type(settings)):
+        value = _resolve(settings, path)
+        if isinstance(value, SecretStr):
+            yield path, value
+        elif isinstance(value, Mapping):
+            for key, secret in value.items():
+                if isinstance(secret, SecretStr):
+                    yield (*path, str(key)), secret
+
+
 def _set_masked(data: dict[str, Any], path: tuple[str, ...], *, mask: str | None) -> None:
-    """Replace ``path`` in ``data`` with ``mask`` (or drop it when masking to None)."""
+    """Replace ``path`` in ``data`` with ``mask`` (or drop it when masking to None).
+
+    When ``path`` holds a mapping of secrets, every value in it is masked
+    (keys stay visible — they are entry names, not secrets), or the whole
+    mapping is dropped when masking to ``None``.
+    """
     node: Any = data
     for part in path[:-1]:
         node = node.get(part)
@@ -430,6 +677,10 @@ def _set_masked(data: dict[str, Any], path: tuple[str, ...], *, mask: str | None
         return
     if mask is None:
         del node[leaf]
+    elif isinstance(node[leaf], dict):
+        node[leaf] = {
+            key: (mask if value is not None else None) for key, value in node[leaf].items()
+        }
     else:
         node[leaf] = mask if node[leaf] is not None else None
 
@@ -440,6 +691,10 @@ def _contains_secret_str(annotation: Any) -> bool:
     origin = typing.get_origin(annotation)
     if origin in (typing.Union, types.UnionType):
         return any(_contains_secret_str(arg) for arg in typing.get_args(annotation))
+    if origin is dict:
+        # ``dict[str, SecretStr]``: a mapping whose *values* are secrets.
+        args = typing.get_args(annotation)
+        return len(args) == 2 and _contains_secret_str(args[1])
     return False
 
 
@@ -449,6 +704,11 @@ def secret_field_paths(model: type[BaseModel]) -> tuple[tuple[str, ...], ...]:
     Walking the model by type means a secret added in a later slice is
     automatically masked everywhere secrets are masked — nothing has to be
     added to a parallel list.
+
+    A field typed ``dict[str, SecretStr]`` (``feeders.stats_urls``, slice 077)
+    is reported by its field path; the value there is a mapping, and every
+    consumer handles that case — :func:`iter_secret_values` yields its entries
+    one by one with the key appended to the path.
     """
     paths: list[tuple[str, ...]] = []
 

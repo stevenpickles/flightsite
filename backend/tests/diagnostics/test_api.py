@@ -119,6 +119,7 @@ class TestPayloadShape:
             "database",
             "enrichment",
             "websocket",
+            "feeders",
             "other",
         }
 

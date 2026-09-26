@@ -51,6 +51,17 @@ services:
           - backend
     volumes:
       - ${FLIGHTSITE_HOST_DATA_DIR:-/opt/flightsite/data}:/opt/flightsite/data
+      # Feeder monitoring (slice 077, docs/INSTALL.md "Feeders"): OPT-IN.
+      # Read docs/SECURITY.md §10 first — Docker socket access is
+      # root-equivalent on most hosts, and `:ro` does not change that. Needed
+      # only for log-only feeds (OpenSky, ADS-B out on ultrafeeder
+      # connectors); then also set feeders.docker_socket. Replace 994 with
+      # `stat -c '%g' /var/run/docker.sock` on this host.
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    # group_add: ["994"]
+    # Lets feeder `url`s name this host as http://host.docker.internal:<port>/.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         [

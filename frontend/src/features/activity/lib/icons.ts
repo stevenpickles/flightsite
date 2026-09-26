@@ -17,6 +17,8 @@ import {
   type LucideIcon,
   Plane,
   Radar,
+  Rss,
+  SatelliteDish,
   Sparkles,
   TriangleAlert,
   Trophy,
@@ -36,6 +38,11 @@ export const ACTIVITY_ICONS: Record<ActivityEventType, LucideIcon> = {
   receiver_restored: CircleCheckBig,
   metadata_updated: DatabaseBackup,
   milestone: Trophy,
+  // Slice 077 — deliberately distinct from the receiver's own
+  // `WifiOff`/`CircleCheckBig` pair (a feeder outage is not a decoder
+  // outage).
+  feeder_offline: Rss,
+  feeder_restored: SatelliteDish,
 };
 
 /**

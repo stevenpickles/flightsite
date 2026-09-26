@@ -14,10 +14,12 @@ It does not decode RF itself ([ADR-0003](adr/0003-decoder-adapter-abstraction.md
 flowchart LR
     subgraph LAN["Trusted LAN"]
         DEC["readsb / dump1090-fa\n(aircraft.json, stats.json)"]
+        FEED["Feeder status pages\n(piaware, fr24feed, ultrafeeder)"]
         subgraph HOST["Docker host (Pi 4 or Linux)"]
             FE["flightsite-frontend\nnginx + React static app"]
             BE["flightsite-backend\nFastAPI + SQLite"]
             DATA[("/opt/flightsite/data\nbind mount")]
+            SOCK[("Docker socket\n(opt-in)")]
         end
         BROWSER["User's browser"]
     end
@@ -32,6 +34,8 @@ flowchart LR
     BROWSER -- "HTTP + WebSocket" --> FE
     FE -- "proxy /api" --> BE
     BE --- DATA
+    BE -. "feeder status polls (LAN)" .-> FEED
+    BE -. "container logs/health (opt-in)" .-> SOCK
     BE -. "manual metadata update" .-> MIC
     BE -. "manual metadata update" .-> FAA
     BE -. "route enrichment (API key)" .-> ADB
@@ -41,6 +45,12 @@ flowchart LR
 Everything in the `NET` group is optional: the core product (live map, sightings,
 history, analytics, alerts) works with no internet access. Only basemap imagery and
 enrichment degrade.
+
+Feeder monitoring (slice 077, [ADR-0017](adr/0017-feeder-status-sources.md)) adds **no
+internet destination**: it polls status documents the owner's feeders publish on the
+LAN and, only when `feeders.docker_socket` is set, reads container logs and health
+through the local Docker socket. The per-network stats pages are opened by the user's
+browser through a redirect; the backend never fetches them.
 
 ## 2. Deployment Topology
 
@@ -143,6 +153,7 @@ Package `flightsite` (backend/src/flightsite/), matching roadmap `expected_artif
 | `diagnostics/` | Health aggregation, error ring buffers, counters | 042 |
 | `backup/` | Backup/restore CLI, manifests, validation | 043 |
 | `maintenance/` | Integrity checks, pruning execution, optimize/VACUUM policy | 044 |
+| `feeders/` | Feeder status: one vendor module per kind (`readsb`, `piaware`, `fr24`, `ultrafeeder`, `opensky`), the opt-in Docker Engine client (`docker.py`, httpx over the unix socket), the poll service with its per-feeder state machine, episodes and samples | 077 |
 
 ### 3.3 Concurrency model
 
@@ -176,6 +187,13 @@ Asyncio tasks in one process:
   slices 021 (build), 024 (classification fields), and 038 (rarity conditions)
   implement and consume it.
 - **Stats poller / maintenance scheduler** — low-frequency background tasks.
+- **Feeder poller** (slice 077) — one low-frequency task, started only while at least
+  one feeder entry is configured. Each tick probes every entry concurrently (bounded
+  timeouts, LAN only), advances a per-feeder state machine with a two-poll debounce
+  before `down`, hands transitions to the activity service's pending queue, and flushes
+  a sample buffer every 60 s on its own short writer transaction; a 300 s maintenance
+  step prunes samples older than 14 days and episodes older than 90. A failed probe is a
+  counted poll failure, never a failed tick. Config saves hot-apply the feeder set.
 
 Blocking or CPU-heavy work (imports, simplification of long tracks, backups) runs via
 `asyncio.to_thread` or subprocess so the event loop stays responsive.
@@ -243,10 +261,15 @@ class MetadataProvider(Protocol):
 
 class RouteEnrichmentProvider(Protocol):
     async def lookup(self, ctx: FlightContextQuery) -> RouteInfo | None: ...
+
+class FeederProbe(Protocol):  # slice 077, flightsite.feeders.protocol
+    async def probe(self) -> ProbeResult: ...
 ```
 
 Implementations in v1: `ReadsbJsonAdapter`, `DemoAdapter`, `ReplayAdapter`;
-`MictronicsProvider`, `FaaRegistryProvider`; `AeroDataBoxProvider`. Reserved seams
+`MictronicsProvider`, `FaaRegistryProvider`; `AeroDataBoxProvider`; one `FeederProbe`
+per feeder kind, plus scripted demo probes ([ADR-0017](adr/0017-feeder-status-sources.md)).
+Reserved seams
 (documented here and in ADR-0006 only — no code protocols are declared until a first
 consumer exists): ownership providers, photo providers, notification providers,
 further decoder adapters (Beast/SBS/remote).
@@ -329,6 +352,7 @@ Perf regression harness and Pi 4 qualification: slices 049/050, `docs/PERFORMANC
 | Slow WS client | Drop-and-resync for that client only |
 | DB slow/contended | Live path unaffected (memory); persistence queue depth surfaces in diagnostics; shedding before stalling |
 | Malformed decoder output | Adapter-level hardening; bad records dropped and counted; ingestion never crashes |
+| Feeder unreachable / document changes shape | Counted poll failure (`feeder_poll_failures`, `feeders` error category); `down` after a two-poll debounce with an episode row and a `feeder_offline` event; overall health `degraded`, never `down`. Without the Docker socket, socket-only signals read `unknown`, never `down` |
 
 ## 8. Future-Proofing (Designed For, Not Built)
 

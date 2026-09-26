@@ -141,3 +141,43 @@ alerts:
   # `emergency_squawk` creates no rule — 7500/7600/7700 alert unconditionally
   # and cannot be switched off (SPEC §47).
   enabled_templates: []
+
+# Feeder monitoring (slice 077, docs/adr/0017-feeder-status-sources.md). One
+# page under Receiver shows the status of every network this receiver feeds.
+# Applies immediately on save; nothing is polled until an entry exists.
+#
+# `url` is polled by the backend container over the LAN, so it names the
+# Docker host as the container sees it (`host.docker.internal`, mapped by
+# `extra_hosts` in compose.yaml — see docs/INSTALL.md "Feeders"). `web_url`
+# and `local_pages` are links your browser opens, so they name the host as
+# you reach it.
+#
+# Kinds and what each needs: readsb, piaware, fr24 → url; ultrafeeder → url +
+# host (the connector's feed host; mlat_port/beast_port optional); opensky_logs,
+# docker_health → container (and docker_socket); link_only → nothing.
+#
+# Per-network stats links usually embed your feeder identity, so they are
+# secrets: put them in secrets.yaml, never here. They are reached only through
+# FlightSite's internal redirect and never appear in /api/v1 or the page:
+#   feeders:
+#     stats_urls:
+#       flightaware: "https://flightaware.com/adsb/stats/user/..."
+#       fr24: "https://www.flightradar24.com/account/feed-stats/?id=..."
+feeders:
+  poll_interval_s: 15 # 5–120
+  # Opt-in and off by default. Mounting the Docker socket is root-equivalent
+  # on most hosts (docs/SECURITY.md §10). Without it, log-only signals
+  # (OpenSky, ADS-B out on ultrafeeder connectors) read "unknown", never "down".
+  docker_socket: null # e.g. /var/run/docker.sock
+  entries: []
+  # - { name: receiver,    label: Receiver (readsb), kind: readsb,       url: "http://host.docker.internal:8080/",             web_url: "http://fermi.local:8080/" }
+  # - { name: flightaware, label: FlightAware,       kind: piaware,      url: "http://host.docker.internal:8081/status.json",  web_url: "http://fermi.local:8081/" }
+  # - { name: fr24,        label: FlightRadar24,     kind: fr24,         url: "http://host.docker.internal:8754/monitor.json", web_url: "http://fermi.local:8754/" }
+  # - { name: adsbx,       label: ADS-B Exchange,    kind: ultrafeeder,  url: "http://host.docker.internal:8080/", host: feed.adsbexchange.com, mlat_port: 31090, beast_port: 30004, container: ultrafeeder }
+  # - { name: aerodatabox, label: AeroDataBox,       kind: ultrafeeder,  url: "http://host.docker.internal:8080/", host: feed.aerodatabox.com,  mlat_port: 31090, beast_port: 30004, container: ultrafeeder }
+  # - { name: opensky,     label: OpenSky Network,   kind: opensky_logs, container: opensky }
+  local_pages: []
+  # - { label: tar1090,     url: "http://fermi.local:8080/" }
+  # - { label: graphs1090,  url: "http://fermi.local:8080/graphs1090/" }
+  # - { label: SkyAware,    url: "http://fermi.local:8081/" }
+  # - { label: FR24 feeder, url: "http://fermi.local:8754/" }

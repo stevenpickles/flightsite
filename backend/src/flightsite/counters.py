@@ -29,12 +29,19 @@ LIVE_EVENTS_DROPPED: Final = "live_events_dropped"
 #: distribution shed a client rather than stalling for it.
 WS_DISCONNECTS: Final = "ws_disconnects"
 
+#: Feeder status polls that failed outright — a refused connection, a timeout,
+#: an unparseable document (slice 077, ``flightsite.feeders``). A failed poll
+#: is not yet a ``down`` feeder (that takes the two-poll debounce), so this is
+#: the early signal the Health page can show before any state changes.
+FEEDER_POLL_FAILURES: Final = "feeder_poll_failures"
+
 KNOWN_COUNTERS: Final[tuple[str, ...]] = (
     "ingestion_failures",
     "db_errors",
     "enrichment_failures",
     WS_DISCONNECTS,
     LIVE_EVENTS_DROPPED,
+    FEEDER_POLL_FAILURES,
 )
 
 

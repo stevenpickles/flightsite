@@ -8,8 +8,10 @@ import type {
   ReceiverSeriesMetric,
   ReceiverSignalDistribution,
 } from "@/lib/api/receiverStats";
+import type { FeedersResponse } from "@/lib/api/feeders";
 
 import { defaultReceiverInfo } from "@/test/aircraftApiMock";
+import { feedersResponse } from "@/test/feedersApiMock";
 
 export function scorecard(
   overrides: Partial<ReceiverScorecard> = {},
@@ -144,6 +146,12 @@ export interface MockReceiverStatsApiOptions {
   rangeByBearing?: ReceiverRangeByBearing;
   signalDistribution?: ReceiverSignalDistribution;
   lifetime?: ReceiverLifetimeStats;
+  /** `GET /api/v1/feeders` — `ReceiverPage` mounts `FeedersSummaryCard`
+   * (roadmap slice 077), which queries this endpoint on its own. Defaults
+   * to an empty roster: most Receiver-page tests have nothing to do with
+   * feeders, and an empty roster keeps the summary card's own assertions
+   * ("No feeders configured") out of their way. */
+  feeders?: FeedersResponse;
 }
 
 /** Installs a `global.fetch` stub serving `GET /api/v1/receiver` plus every
@@ -191,6 +199,11 @@ export function installReceiverStatsApiMock(
       }
       if (url.pathname === "/api/v1/receiver/lifetime" && method === "GET") {
         return jsonResponse(options.lifetime ?? lifetimeStats());
+      }
+      if (url.pathname === "/api/v1/feeders" && method === "GET") {
+        return jsonResponse(
+          options.feeders ?? feedersResponse({ feeders: [] }),
+        );
       }
 
       throw new Error(`Unhandled fetch in test: ${method} ${raw}`);

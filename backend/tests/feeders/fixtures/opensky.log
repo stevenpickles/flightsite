@@ -1,0 +1,11 @@
+2026-09-21T13:43:20.000000000Z [opensky] Statistics
+2026-09-21T13:43:20.000100000Z [opensky]  - currently online
+2026-09-21T13:43:20.000200000Z [opensky]  - 86190 [99.76%] seconds online (overall)
+2026-09-21T13:43:20.000300000Z [opensky]  - 4 disconnections (overall)
+2026-09-21T13:43:20.000400000Z [opensky]  - 51234567 bytes sent (0.59 kB/s)
+2026-09-21T13:48:00.000000000Z [opensky] Received 1 frame from receiver
+2026-09-21T13:53:20.000000000Z [opensky] Statistics
+2026-09-21T13:53:20.000100000Z [opensky]  - currently online
+2026-09-21T13:53:20.000200000Z [opensky]  - 86790 [99.77%] seconds online (overall)
+2026-09-21T13:53:20.000300000Z [opensky]  - 4 disconnections (overall)
+2026-09-21T13:53:20.000400000Z [opensky]  - 51588567 bytes sent (1.23 kB/s)

@@ -36,6 +36,17 @@ const ReceiverPage = lazy(() =>
     default: module.ReceiverPage,
   })),
 );
+/**
+ * Same reasoning, and the same "reached from Receiver/Health, not an
+ * eighth sidebar section" precedent (roadmap slice 077): `FeedersPage`
+ * pulls in ECharts for its metric charts, so it is kept out of the
+ * initial bundle the same way.
+ */
+const FeedersPage = lazy(() =>
+  import("@/pages/FeedersPage").then((module) => ({
+    default: module.FeedersPage,
+  })),
+);
 /* eslint-enable react-refresh/only-export-components */
 
 export const router = createBrowserRouter([
@@ -102,6 +113,28 @@ export const router = createBrowserRouter([
                     }
                   >
                     <ReceiverPage />
+                  </Suspense>
+                ),
+              },
+              // Sub-route of Receiver rather than a sidebar entry of its
+              // own (roadmap slice 077, design record's "Decisions taken
+              // with the owner": SPEC §10's seven sections stay unchanged).
+              // Reached from the Receiver and Health pages' own links, the
+              // same `/health` precedent below.
+              {
+                path: "receiver/feeders",
+                element: (
+                  <Suspense
+                    fallback={
+                      <p
+                        role="status"
+                        className="p-8 text-sm text-muted-foreground"
+                      >
+                        Loading feeders…
+                      </p>
+                    }
+                  >
+                    <FeedersPage />
                   </Suspense>
                 ),
               },

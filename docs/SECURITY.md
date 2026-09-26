@@ -42,12 +42,26 @@ Canonical layout (SPEC §29):
 
 - Non-secret configuration: `/opt/flightsite/data/config.yaml`
 - Secrets: `/opt/flightsite/data/secrets.yaml` and/or `FLIGHTSITE_*` environment
-  variable overrides. The only v1 secret is the optional AeroDataBox API key.
+  variable overrides. Two kinds of secret exist: the optional AeroDataBox API key, and
+  the optional per-feeder **stats URLs** (`feeders.stats_urls.<name>`, slice 077).
+
+A stats URL is a secret because it usually embeds a feeder identity — a FlightAware
+user and site id, an FR24 sharing key, a UUID. FlightSite never builds one from an
+identity; the owner pastes the full URL. It is typed `SecretStr` like the API key, so
+every rule below covers it by construction: the secret walker discovers mapping-valued
+secrets too. The Feeders page reaches it only through
+`GET /api/internal/feeders/{name}/stats-link`, which answers `302` to the stored URL —
+it never appears in `/api/v1`, in the rendered page, or in a log line. The same holds
+for the identities the feeders' own status documents carry (`fr24key`, `feed_alias`,
+piaware's `site_url`, ultrafeeder UUIDs, the receiver's coordinates): each vendor parser
+drops them at parse time, and a sentinel test proves they reach neither the API, the
+diagnostics payload, the activity feed nor the logs.
 
 Enforced rules (tested, not aspirational — see slices 004, 019, 026, 042, 043):
 
 - Secrets never appear in logs at any log level.
-- Secrets never appear in any documented read-only API response.
+- Secrets never appear in any documented read-only API response (tested for stats URLs
+  in `/api/v1/feeders`, `/api/v1/diagnostics` and the activity feed with sentinel values).
 - The Settings UI masks stored values; plaintext secrets are never round-tripped to
   the client.
 - Diagnostics/support output provably contains no secrets (automated test).
@@ -104,6 +118,8 @@ Two consequences of that first rule, as implemented (slice 040):
   everything else is immutable application content.
 - No anonymous volumes hold important state (SPEC §6, §116).
 - The frontend proxies API traffic to the backend; only intended ports are published.
+- The Docker Engine socket is **not** mounted by default. Mounting it is an explicit,
+  documented owner choice with the consequences set out in §10.
 - Images are scanned (Trivy) in CI; scan gates block releases on material findings.
 
 ## 8. Dependency and Supply-Chain Controls
@@ -137,7 +153,42 @@ FlightSite is local-first. The complete list of optional outbound traffic:
 | AeroDataBox route enrichment | Only when `enrichment.aerodatabox_enabled` is on **and** an API key is set; then at most once per airline callsign per `enrichment.route_ttl_days` (default 7 days), capped by `enrichment.daily_lookup_budget` lookups per UTC day when you set one, and by 10 requests/minute always | One `GET https://api.aerodatabox.com/flights/callsign/{callsign}` per lookup: the transmitted callsign in the URL path and your API key in the `X-Api-Key` header. No request body, no query parameters. |
 | Basemap tiles | When using internet basemaps (default) | Standard tile HTTP requests, which reveal the viewed map area (and therefore approximately your receiver's region) to the tile provider |
 | Metadata updates | Only on the manual "Update Aircraft Metadata" action | Plain HTTP(S) downloads from Mictronics/tar1090, FAA, airport-data and route-directory sources; nothing about your receiver is uploaded |
+| Feeder status polls | Only while `feeders.entries` is non-empty; one poll per entry per `feeders.poll_interval_s` | **Nothing leaves your network.** Every poll is a plain HTTP `GET` to a LAN address you configured (your own piaware, fr24feed and ultrafeeder status pages), and the optional Docker socket is local to the host. The per-network stats pages are opened by your browser when you click a link, never fetched by FlightSite. |
 | Route directory download | Only on the manual "Update Aircraft Metadata" action | One `GET https://github.com/vradarserver/standing-data/archive/refs/heads/main.zip` — a ~7 MB public archive of Virtual Radar Server standing data (CC0). No headers of yours, no key, no query string, no body: the request says nothing except which file is wanted. Nothing is uploaded, and the file is read into the local `route_directory` table and discarded ([ADR-0016](adr/0016-offline-route-directory.md)). |
+
+### The Docker socket (feeder monitoring, opt-in)
+
+Two feeds publish their status only in their container's log — OpenSky, and ADS-B out
+on the ultrafeeder connectors (ADS-B Exchange, AeroDataBox). To see those, FlightSite can
+read container logs and health through the Docker Engine socket
+([ADR-0017](adr/0017-feeder-status-sources.md)). It is **off by default**
+(`feeders.docker_socket: null`), and without it those signals read `unknown`, never
+`down`.
+
+What it grants is more than FlightSite uses. FlightSite issues exactly two read
+requests — `GET /containers/{name}/json` and `GET /containers/{name}/logs` — with `httpx`
+over the unix socket and no Docker SDK. But **the socket, not FlightSite, decides what is
+possible**: anything that can send requests to it can create a privileged container that
+mounts the host's root filesystem. On most hosts, access to the Docker socket is
+therefore equivalent to root on the host.
+
+- **A read-only bind mount does not make it read-only.** `:ro` stops the container
+  replacing or deleting the socket *file*; it does not stop the container *connecting*
+  to it and sending any API request, including ones that start containers.
+- **`group_add` is the same grant, spelled differently.** The backend runs as uid 1000,
+  so it needs the socket's group (usually `docker`) to open it; adding that gid gives
+  the backend process exactly the root-equivalent power above.
+- **So the trust question is whether you trust the backend process with the host.**
+  FlightSite has no authentication (ADR-0010) and assumes a trusted LAN; the internal API
+  exposes no request that reaches the socket beyond the two reads, and no user input
+  selects the container beyond the names you configure. A compromise of the backend,
+  however, would become a compromise of the host. If that is not acceptable, leave the
+  socket unset and accept `unknown` for the log-only feeds, or front the socket with a
+  filtering proxy that allows only those two read endpoints.
+
+Nothing read through the socket leaves the network: log lines are parsed for the state
+transitions and statistics the page shows, identities are dropped at parse time, and the
+raw text is not stored.
 
 ### The offline directory comes first, so most callsigns are never sent
 

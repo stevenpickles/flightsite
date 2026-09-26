@@ -38,6 +38,7 @@ from typing import Any
 
 from flightsite.activity.facts import (
     AlertMatchFact,
+    FeederEpisode,
     HealthEpisode,
     ImportOutcome,
     LongestSighting,
@@ -438,6 +439,51 @@ def health_events(episodes: Iterable[HealthEpisode]) -> ActivityBatch:
     return ActivityBatch(events=tuple(events))
 
 
+def feeder_health_events(episodes: Iterable[FeederEpisode]) -> ActivityBatch:
+    """``feeder_offline`` / ``feeder_restored`` for debounced feeder transitions.
+
+    Slice 077. The same severities as the decoder's own pair and for the same
+    reason: an outage is the thing in the feed the owner can act on (``high``),
+    and the restore that ends it is news that the problem is over (``info``).
+
+    Both dedupe keys name the feeder and the moment its outage *began* —
+    ``feeder_offline:fr24:1790000000000`` and
+    ``feeder_restored:fr24:1790000000000`` — which is the outage row's own key
+    in ``feeder_episodes``. A transition re-announced after a restart, or
+    replayed by a hook that fired twice, therefore recomputes the same key and
+    the ``UNIQUE`` index keeps the feed to one event of each kind per outage.
+
+    The payload is ``{feeder, label, kind, since_ms, outage_s}``: configuration
+    and timestamps only. ``outage_s`` is ``null`` on the offline event (the
+    outage has no length yet) and the outage's length in seconds on the
+    restore.
+    """
+    events: list[NewActivityEvent] = []
+    for episode in episodes:
+        event_type = (
+            ActivityEventType.FEEDER_OFFLINE
+            if episode.offline
+            else ActivityEventType.FEEDER_RESTORED
+        )
+        outage_ms = episode.outage_ms
+        events.append(
+            NewActivityEvent(
+                type=event_type,
+                ts_ms=episode.at_ms,
+                dedupe_key=dedupe_key(event_type.value, episode.feeder, episode.since_ms),
+                severity=Severity.HIGH if episode.offline else Severity.INFO,
+                payload={
+                    "feeder": episode.feeder,
+                    "label": episode.label,
+                    "kind": episode.kind,
+                    "since_ms": episode.since_ms,
+                    "outage_s": None if outage_ms is None else outage_ms / _MS_PER_SECOND,
+                },
+            )
+        )
+    return ActivityBatch(events=tuple(events))
+
+
 def import_events(outcomes: Iterable[ImportOutcome]) -> ActivityBatch:
     """One ``metadata_updated`` event per source of a completed run (SPEC §27).
 
@@ -578,6 +624,7 @@ def merge(batches: Sequence[ActivityBatch]) -> ActivityBatch:
 __all__ = [
     "alert_events",
     "best_closed",
+    "feeder_health_events",
     "first_ever_events",
     "health_events",
     "import_events",

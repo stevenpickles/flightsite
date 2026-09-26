@@ -9,7 +9,7 @@ This slice adds the live picture — ``GET /aircraft/current`` (§3.3), ``GET
 /receiver`` (§3.2) and the ``ws/live`` WebSocket (§4, documented in
 :mod:`flightsite.api.ws`) — on top of the health and readiness endpoints from
 slice 001. Later slices add the history (§3.5), sightings (§3.6) and analytics
-(§3.7) surfaces, and slice 042 adds diagnostics (§3.10).
+(§3.7) surfaces, and slice 042 adds diagnostics (§3.10). Slice 077 adds feeder status (§3.12).
 
 The REST endpoints declare Pydantic response models, so the OpenAPI document
 served at ``/api/v1/openapi.json`` (§2.10) describes them exactly and every
@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, get_args
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -62,6 +62,9 @@ from flightsite.api.schemas import (
     AnalyticsSummaryResponse,
     CurrentAircraftResponse,
     DiagnosticsResponse,
+    FeederHistoryResponse,
+    FeederHistoryWindowLiteral,
+    FeedersResponse,
     InterestingAircraftResponse,
     ReceiverInfo,
     ReceiverLifetimeStats,
@@ -88,8 +91,9 @@ from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
 from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
-from flightsite.db import to_epoch_ms
+from flightsite.db import to_epoch_ms, utc_now_ms
 from flightsite.diagnostics import collect_diagnostics
+from flightsite.feeders import FeederService, empty_report
 from flightsite.readiness import ReadinessRegistry
 
 #: §2.9's ``{icao}`` path parameter validator: lowercase 6-hex-char ICAO
@@ -1001,3 +1005,88 @@ async def analytics_rarity(
         "rare_aircraft": [analytics_aircraft_payload(row) for row in rarity.rare_aircraft],
         "rare_types": [analytics_rare_type_payload(row) for row in rarity.rare_types],
     }
+
+
+def _feeders(request: Request) -> FeederService | None:
+    """The feeder service, or ``None`` on an app built without one."""
+    service: FeederService | None = getattr(request.app.state, "feeders", None)
+    return service
+
+
+@router.get(
+    "/feeders",
+    response_model=FeedersResponse,
+    tags=["feeders"],
+    summary="Status of every network the receiver feeds",
+)
+async def feeders(request: Request) -> dict[str, Any]:
+    """Every configured feeder's committed state — §3.12 (slice 077).
+
+    Read from the feeder service's memory, never from the database: the
+    answer is what the last poll found, and costs nothing to serve every ten
+    seconds. An install with no feeders configured answers with an empty
+    ``feeders`` list, not a 404. No stats URL, feeder key, alias or receiver
+    coordinate is ever part of this payload — ``stats_link`` is a boolean,
+    and the link itself is only reachable through the internal redirect.
+    """
+    service = _feeders(request)
+    if service is None:
+        return empty_report(utc_now_ms())
+    # The live section, so a save is reflected on the next read.
+    live = getattr(getattr(request.app.state, "settings", None), "feeders", None)
+    return service.report(
+        stats_urls=getattr(live, "stats_urls", None),
+        local_pages=getattr(live, "local_pages", None),
+    )
+
+
+@router.get(
+    "/feeders/{name}/history",
+    response_model=FeederHistoryResponse,
+    tags=["feeders"],
+    summary="One feeder's episodes, samples and availability over a window",
+    responses={404: {"description": "No feeder with this name is configured."}},
+)
+async def feeder_history(
+    request: Request,
+    name: Annotated[str, Path(description="The feeder's configured name.")],
+    window: Annotated[
+        str,
+        Query(
+            description="How far back to look: `24h`, `7d` or `30d`.",
+            json_schema_extra={"enum": list(get_args(FeederHistoryWindowLiteral))},
+        ),
+    ] = "24h",
+) -> dict[str, Any] | Response:
+    """Episodes, bucketed samples and availability for one feeder — §3.12.
+
+    Both failures answer in the §2.5 error envelope: ``422 invalid_window``
+    for a window outside the three, checked here rather than by parameter
+    validation so the body has the envelope's shape, and ``404 not_found``
+    for a name that is not configured.
+    """
+    if window not in get_args(FeederHistoryWindowLiteral):
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={
+                "error": {
+                    "code": "invalid_window",
+                    "message": "window must be one of 24h, 7d, 30d",
+                    "detail": None,
+                }
+            },
+        )
+    service = _feeders(request)
+    history = None if service is None else await service.history(name, window)
+    if history is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": {
+                    "code": "not_found",
+                    "message": f"No feeder named {name}",
+                    "detail": None,
+                }
+            },
+        )
+    return history

@@ -51,6 +51,7 @@ describe("SettingsPage", () => {
       "Enrichment",
       "Aircraft Metadata",
       "Retention",
+      "Feeders",
     ]) {
       expect(
         screen.getByRole("heading", { name: heading, level: 2 }),

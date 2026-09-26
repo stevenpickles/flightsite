@@ -110,9 +110,14 @@ def test_redaction_covers_every_secret_field_the_model_declares() -> None:
         node: object = settings
         for part in path[:-1]:
             node = getattr(node, part)
-        marker = f"secret-{index}-b7f2e1"
-        setattr(node, path[-1], marker)
-        markers.append(marker)
+        marker = f"https://secret-{index}-b7f2e1.example/"
+        if isinstance(getattr(node, path[-1]), dict):
+            # A mapping of secrets (feeders.stats_urls): every value counts.
+            setattr(node, path[-1], {"one": marker, "two": f"{marker}two"})
+            markers.extend([marker, f"{marker}two"])
+        else:
+            setattr(node, path[-1], marker)
+            markers.append(marker)
 
     discovered = secrets_from_settings(settings)
     for marker in markers:

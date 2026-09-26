@@ -30,7 +30,7 @@
 #   - Documentation relevant to the slice is updated within the slice.
 
 version: 2  # v2: Phase 0 review-gate corrections (dependency completions, 009 split into 009/052/053, packed track storage, numeric perf criteria, licensing register)
-updated: "2026-09-20"
+updated: "2026-09-26"
 
 phases:
   - number: 0
@@ -133,6 +133,13 @@ releases:
       ordering and not-yet states), plus a metadata import that no longer
       starves the live pipeline and per-consumer drop attribution (slices
       075-076; migration 0016). Recorded 2026-09-25."
+  - version: "v0.10.0"
+    after_phase: 8
+    theme: "Feeders: one page for every network the receiver streams to — status,
+      last data sent, MLAT sync, gaps and availability over the observed span,
+      links to the networks and their feed-stats pages, and to the sibling local
+      pages; opt-in Docker socket for log-only feeds (slice 077; migration 0017;
+      ADR-0017). Recorded 2026-09-26."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2293,6 +2300,80 @@ slices:
     preferred_agent: opus
     risk_level: high
     notes: "Owner request 2026-09-20: 'review each page and make sure it's providing useful information ... in a really robust way' before v0.9.0. Findings fixed by eight agents (Opus for backend/live/map/cross-page, Sonnet for contained UI) in isolated worktrees, one commit per finding group, integrated by Fable. Added by Fable outside the phase plan."
+
+  - id: "077"
+    title: "Feeders page"
+    phase: 8
+    branch: "077-feeders-page"
+    status: merged
+    depends_on: ["033", "042", "076"]
+    objective: "One page under Receiver that shows the status of every network the receiver feeds, links to each network and its per-feeder stats page, gaps in feeding and connection statistics, plus links to the other locally hosted pages (issue #215)."
+    scope:
+      - "config `feeders` section (hot-applied on save): `poll_interval_s`, opt-in `docker_socket`, `entries[]` (name, label, kind, url, container, host/ports, web_url) and `local_pages[]`; per-entry stats URLs live only in secrets.yaml as `feeders.stats_urls.<name>` (SecretStr) and are reached through `GET /api/internal/feeders/{name}/stats-link` (302), never through /api/v1, logs or the DOM"
+      - "backend `feeders/` package: kinds `readsb` (receiver uplink: bytes out, messages, aircraft, MLAT inbound, samples dropped), `piaware` (status.json lights), `fr24` (monitor.json), `ultrafeeder` (MLAT client stats over HTTP; ADS-B-out state from ultrafeeder logs when the Docker socket is set), `opensky_logs` (Statistics block from logs), `docker_health`, `link_only`; one vendor module per kind is the only place that knows that vendor's vocabulary; Docker Engine API over the unix socket with httpx, no SDK"
+      - "service modelled on receiver_metrics: injected clock/sleep/client factory, poll loop that survives a bad tick, per-feeder state machine (up/degraded/down/unknown) with a two-poll debounce, episodes on transitions, 60 s sample flush in its own short writer transactions, 14-day sample and 90-day episode retention on a maintenance loop, hot-apply on config save"
+      - "migration 0017: `feeder_episodes` and `feeder_samples` (WITHOUT ROWID, no secondary indexes); documented in DATA_MODEL §6.6 and §12"
+      - "`GET /api/v1/feeders` and `GET /api/v1/feeders/{name}/history?window=24h|7d|30d`; diagnostics `feeders` section folded into the status roll-up; activity events `feeder_offline` (high) / `feeder_restored` (info); counter `feeder_poll_failures`"
+      - "frontend `/receiver/feeders` (lazy, not a sidebar item — the /health precedent): receiver uplink tiles, one card per feeder (status pill, since, last data sent, MLAT and ADS-B-out chips, Open link, View-stats link, message), gap timeline with availability % over 24 h / 7 d / 30 d, metric charts, local pages card; FeedersSummaryCard on Receiver; FeedersHealthCard on Health; Settings `Feeders` section with an entries editor and masked stats URLs; Activity wording and filter chips"
+      - "demo probes (all kinds, a scripted FR24 outage) so e2e and visual suites drive the page; e2e `12-feeders.spec.ts`; visual `06-feeders`"
+      - "SPEC dated notes in §10, §67 and §79; ADR-0017 (feeder status sources and the opt-in Docker socket); PRODUCT §4.15; CONFIGURATION, API §3.12, ARCHITECTURE, SECURITY §3/§10, INSTALL (socket mount, host.docker.internal endpoints, reverse-proxy note); compose.yaml socket comment"
+    out_of_scope:
+      - "building stats URLs from feeder identities (only FlightAware's pattern is confirmed); multi-receiver; alerting channels other than the activity feed and browser notifications; an eighth sidebar section; scraping adsbexchange.com/myip"
+    acceptance_criteria:
+      - "with fermi's six entries configured and the Docker socket set, every feeder reads `up` with live numbers within two poll intervals; with the socket unset, socket-only signals read `unknown`/`none`, never `down`"
+      - "a feed that stops updating is `down` after the debounce, produces one `feeder_offline` activity event, an episode row, and a gap on the timeline; its restoration produces one `feeder_restored` event and closes the episode"
+      - "no stats URL, feeder key, alias, UUID, serial, or receiver coordinate appears in `/api/v1/feeders`, `/api/v1/diagnostics`, the activity feed, logs, or the rendered page (tested with sentinel secrets)"
+      - "the page is reachable from Receiver and Health, renders in both themes and at 390 px, and every card degrades honestly when its source is absent"
+      - "migration 0017 upgrades, downgrades and resumes; a populated database upgrades in seconds"
+      - "config save hot-applies the feeder set without a restart; an invalid entry is rejected per field"
+      - "`Closes #215` in the PR body"
+    required_tests:
+      - "vendor parsers against captured fixtures (piaware status.json, fr24 monitor.json, mlat-client stats, readsb status/stats, opensky and ultrafeeder log excerpts) incl. redaction; service state machine and debounce; repository/retention; migration 0017; API contract and secret-absence; app wiring negative claim (no socket ⇒ no docker client; no entries ⇒ no task); activity producers; frontend page/cards/timeline/settings tests; e2e; visual"
+    expected_artifacts:
+      - backend/src/flightsite/feeders/
+      - backend/src/flightsite/db/migrations/versions/rev_0017_feeders.py
+      - backend/src/flightsite/config/models.py
+      - backend/src/flightsite/app.py
+      - backend/src/flightsite/api/v1.py
+      - backend/src/flightsite/api/internal.py
+      - backend/src/flightsite/api/schemas.py
+      - backend/src/flightsite/diagnostics/service.py
+      - backend/src/flightsite/activity/
+      - backend/src/flightsite/demo/feeders.py
+      - backend/tests/feeders/
+      - frontend/src/features/feeders/
+      - frontend/src/lib/api/feeders.ts
+      - frontend/src/features/settings/sections/FeedersSection.tsx
+      - frontend/src/routes.tsx
+      - docs/adr/0017-feeder-status-sources.md
+      - planning/SPEC.md
+      - docs/
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner request 2026-09-26 for v0.10.0. Design settled with the owner the same day: opt-in Docker socket for log-only feeds (OpenSky, ADS-B-out), /receiver/feeders sub-route, owner-supplied stats URLs in secrets.yaml. Read-only survey of fermi.local's containers recorded in docs/adr/0017. Added by Fable outside the phase plan."
+
+  - id: "078"
+    title: "Feeder writes survive a cancelled poll task"
+    phase: 8
+    branch: "078-feeders-flush-cancel-safety"
+    status: merged
+    depends_on: ["077"]
+    objective: "Hotfix: a feeder flush in flight is never interrupted by the poll task's cancellation, and stop() settles it before its own final flush, so the single writer connection is never stranded and no episode is left open (issue #218)."
+    scope:
+      - "`FeederService.flush` runs the repository write as a shielded task it remembers; `stop()` awaits any in-flight write after cancelling the loops and before flushing the episodes it closes"
+      - "regression test: a cancelled flush's write still lands on its own before stop(), and stop() returns promptly without a db_errors increment"
+    out_of_scope:
+      - "the receiver-metrics service's identical cancel-then-flush order (no failure observed; revisit if it flakes)"
+    acceptance_criteria:
+      - "the regression test fails against the unfixed service and passes with the fix; tests/feeders is green three runs in a row"
+      - "`Closes #218` in the PR body"
+    required_tests: [feeders service regression test]
+    expected_artifacts:
+      - backend/src/flightsite/feeders/service.py
+      - backend/tests/feeders/test_service.py
+    preferred_agent: opus
+    risk_level: low
+    notes: "Found by the v0.10.0 release PR's CI (#217) after PR #216 had passed: a 30 s writer-pool TimeoutError in the removed-feeder test. Added by Fable outside the phase plan, 2026-09-26."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

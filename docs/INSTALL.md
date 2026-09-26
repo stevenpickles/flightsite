@@ -14,6 +14,7 @@ thirty seconds and between them account for most first-install failures.
 - [5. Get FlightSite and start it](#5-get-flightsite-and-start-it)
 - [6. First-run setup](#6-first-run-setup)
 - [7. Verify the install](#7-verify-the-install)
+- [Feeders (optional)](#feeders)
 - [8. Upgrading](#8-upgrading)
 - [9. Troubleshooting](#9-troubleshooting)
 
@@ -301,6 +302,80 @@ Give it a minute after finishing the wizard, then check, in order:
 A healthy install shows `"status":"ok"` with `ingestion_failures` staying flat over
 time. A climbing `ingestion_failures` means FlightSite cannot reach the decoder — go
 to the Health page's Decoder card for the specific error.
+
+---
+
+## Feeders
+
+Optional (slice 077). If this host also runs feeders for FlightAware, FlightRadar24,
+ADS-B Exchange, OpenSky or AeroDataBox, the **Feeders** page (Receiver → Feeders) shows
+their status once you add them under Settings → Feeders. Nothing here is needed for the
+rest of FlightSite. The full key reference is in
+[CONFIGURATION.md](CONFIGURATION.md#feeders--feeder-status-monitoring); the design and
+its trade-offs are in [ADR-0017](adr/0017-feeder-status-sources.md).
+
+### Let the backend reach the feeders on this host
+
+The backend polls each feeder's status page from **inside its container**, where
+`localhost` is the container itself. Map the Docker host to a name the container can
+use by adding `extra_hosts` to the `flightsite-backend` service in `compose.yaml`:
+
+```yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+Then configure each entry's `url` with that name — for example
+`http://host.docker.internal:8081/status.json` for piaware,
+`http://host.docker.internal:8754/monitor.json` for fr24feed, and
+`http://host.docker.internal:8080/` for readsb/ultrafeeder. A feeder on another
+machine is reached by its LAN address as usual.
+
+Two things catch people out:
+
+- **piaware's `status.json` lives at `:8081/status.json`, outside `/skyaware/`.** If
+  you only ever open SkyAware at `/skyaware/`, the status document is still at the
+  root of port 8081.
+- **Reverse proxies.** `url` is fetched by the backend, so it should be the direct LAN
+  address, not a URL behind your reverse proxy (which may require auth, rewrite paths,
+  or not serve `/status.json` at all). `web_url` and the local-page links are opened by
+  *your browser*, so those are the ones to point at your proxy hostnames
+  (`https://adsb.example.com/…`) if that is how you reach them.
+
+### The Docker socket (opt-in)
+
+OpenSky, and ADS-B out on the ultrafeeder connectors (ADS-B Exchange, AeroDataBox),
+report their state only in their container logs. To show those, FlightSite needs
+read access to the Docker socket. **Read [SECURITY.md §10](SECURITY.md#the-docker-socket-feeder-monitoring-opt-in)
+first: access to the socket is root-equivalent on most hosts, even mounted read-only.**
+Without it, those rows read `unknown` — everything else on the page still works.
+
+1. Find the socket's group id on the host:
+
+   ```bash
+   stat -c '%g' /var/run/docker.sock      # e.g. 994
+   ```
+
+2. Uncomment the two socket lines in `compose.yaml` under `flightsite-backend`, with
+   your gid:
+
+   ```yaml
+       volumes:
+         - ${FLIGHTSITE_HOST_DATA_DIR:-/opt/flightsite/data}:/opt/flightsite/data
+         - /var/run/docker.sock:/var/run/docker.sock:ro
+       group_add: ["994"]
+   ```
+
+   The backend runs as uid 1000; `group_add` is what lets it open the socket.
+
+3. `docker compose up -d`, then set **Docker socket** to `/var/run/docker.sock` in
+   Settings → Feeders (or `feeders.docker_socket` in `config.yaml`). It applies on
+   save. The Health page's Feeders card reports the socket as `available`, `unset` or
+   `unreachable`.
+
+Per-network **stats links** are secrets: paste each full URL into the stats-URL field
+of its entry in Settings → Feeders (or `feeders.stats_urls` in `secrets.yaml`). They
+are never shown back, only linked through FlightSite.
 
 ---
 

@@ -26,7 +26,7 @@ export type MetadataSourceState = "never_run" | "ok" | "failed";
 export type MaintenanceJobOutcome = "ok" | "skipped" | "failed";
 
 export type DiagnosticsErrorCategory =
-  "ingestion" | "database" | "enrichment" | "websocket" | "other";
+  "ingestion" | "database" | "enrichment" | "websocket" | "feeders" | "other";
 
 export interface DiagnosticsVersions {
   backend: string;
@@ -257,6 +257,29 @@ export interface DiagnosticsErrorEntry {
   detail: string | null;
 }
 
+/** Docker socket read-state, reused verbatim from the design record's
+ * `feeders` diagnostics section (roadmap slice 077,
+ * `docs/design/077-feeders-page.md` "Backend package"): `"unset"` is the
+ * default opt-out, `"unreachable"` is a configured path the backend could
+ * not open, and only `"available"` means log/health-only feeder signals
+ * are actually being read. */
+export type FeedersDockerSocketState = "available" | "unset" | "unreachable";
+
+/** SPEC §67's feeder roll-up (roadmap slice 077) — declared here rather than
+ * in `lib/api/feeders.ts` because this block only ever arrives inside
+ * `GET /api/v1/diagnostics`, and the Health page is this type's only reader
+ * (`FeedersHealthCard`). Optional on `Diagnostics` for the same reason
+ * `live_events` is: absent from any backend built before this slice, so the
+ * card disappears rather than rendering a row of invented zeroes. */
+export interface DiagnosticsFeeders {
+  configured: number;
+  up: number;
+  degraded: number;
+  down: number;
+  unknown: number;
+  docker_socket: FeedersDockerSocketState;
+}
+
 export interface Diagnostics {
   generated_at: string;
   status: DiagnosticsStatus;
@@ -276,6 +299,8 @@ export interface Diagnostics {
   websocket: DiagnosticsWebSocket;
   counters: Record<string, number>;
   recent_errors: Record<string, DiagnosticsErrorEntry[]>;
+  /** Absent from a backend older than roadmap slice 077. */
+  feeders?: DiagnosticsFeeders;
 }
 
 interface ApiV1ErrorBody {

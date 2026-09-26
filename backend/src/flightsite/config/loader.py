@@ -26,7 +26,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from flightsite.config.models import SECRET_MASK, Settings, secret_field_paths
+from flightsite.config.models import (
+    SECRET_MASK,
+    Settings,
+    iter_secret_values,
+    secret_field_paths,
+)
 from flightsite.config.paths import config_path, resolve_data_dir, secrets_path
 
 CONFIG_HEADER = (
@@ -124,6 +129,10 @@ def strip_masked_secrets(patch: Mapping[str, Any]) -> dict[str, Any]:
     :data:`~flightsite.config.models.SECRET_MASK`. A client that edits one
     field and sends the whole document back must not overwrite the real
     secret with the mask, so masked secret values mean "leave unchanged".
+
+    A mapping of secrets (``feeders.stats_urls``) is handled per key: each
+    masked value is dropped, so the deep merge keeps that key's stored value
+    while a new value beside it is still applied.
     """
     result = _deep_copy_mapping(patch)
     for path in secret_field_paths(Settings):
@@ -132,8 +141,13 @@ def strip_masked_secrets(patch: Mapping[str, Any]) -> dict[str, Any]:
             node = node.get(part) if isinstance(node, dict) else None
             if not isinstance(node, dict):
                 break
-        if isinstance(node, dict) and node.get(path[-1]) == SECRET_MASK:
+        if not isinstance(node, dict):
+            continue
+        leaf = node.get(path[-1])
+        if leaf == SECRET_MASK:
             del node[path[-1]]
+        elif isinstance(leaf, dict):
+            node[path[-1]] = {key: value for key, value in leaf.items() if value != SECRET_MASK}
     return result
 
 
@@ -226,12 +240,7 @@ class ConfigStore:
         left holding a stale key.
         """
         document: dict[str, Any] = {}
-        for path in secret_field_paths(Settings):
-            value: Any = settings
-            for part in path:
-                value = getattr(value, part)
-            if value is None:
-                continue
+        for path, value in iter_secret_values(settings):
             node = document
             for part in path[:-1]:
                 node = node.setdefault(part, {})

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from flightsite.activity.facts import (
     AlertMatchFact,
+    FeederEpisode,
     HealthEpisode,
     ImportOutcome,
     LongestSighting,
@@ -62,6 +63,7 @@ __all__ = [
     "ActivityRepository",
     "ActivityService",
     "AlertMatchFact",
+    "FeederEpisode",
     "HealthEpisode",
     "HealthProbe",
     "ImportOutcome",
