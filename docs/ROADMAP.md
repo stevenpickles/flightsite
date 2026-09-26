@@ -42,7 +42,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.7.0 | 8 | Empty tracker: per-rule alert history, metadata URL overrides, demo classification airframes, true-cadence consumer follow-ups, labelled-count density tier, kill-drill and style-spec test hardening (slice 073; recorded 2026-09-06) |
 | v0.8.0 | 8 | Self-explanatory Analytics rankings: tail number and type on every Top aircraft bar, the long-form description beside every Top types designator, richer tooltips on both; visual capture waits for a populated demo picture (slice 074; recorded 2026-09-19) |
 | v0.9.0 | 8 | Useful and robust on every page: the 2026-09-20 formal site review's 71 findings fixed (rollups keyed on the live receiver timezone with a one-time repair, basemap switch keeps every layer, legible status text, error boundaries, responsive shell, refresh/retry everywhere, honest ordering and not-yet states), plus a metadata import that no longer starves the live pipeline and per-consumer drop attribution (slices 075–076; migration 0016; recorded 2026-09-25) |
-| v0.10.0 | 8 | Feeders: one page for every network the receiver streams to — status, gaps, connection statistics, links to the networks and their feed-stats pages, and to the sibling local pages (slice 077; migration 0017) |
+| v0.10.0 | 8 | Feeders: one page for every network the receiver streams to — status, last data sent, MLAT sync, gaps and availability over the observed span, links to the networks and their feed-stats pages, and to the sibling local pages; opt-in Docker socket for log-only feeds (slice 077; migration 0017; ADR-0017; recorded 2026-09-26) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
