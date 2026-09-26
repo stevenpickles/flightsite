@@ -782,10 +782,14 @@ CREATE TABLE feeder_samples (              -- one reading per feeder per minute
 
 - **Episodes** are written at once on every committed state change (the closing one
   updated, the next inserted), so an unclean stop never costs the record that a feeder
-  went down. A clean stop closes every open episode at the stop instant; after an
-  unclean one, the next start closes each dangling episode at the **last sample** the
-  old process wrote for that feeder (or at its own start, if none) — the time between
-  is time nobody was watching and is not claimed as either state.
+  went down. A `down` episode starts at the first failing poll. **An outage survives a
+  restart:** stopping never closes a `down` episode, and the next start resumes it —
+  the feeder is seeded as `down` since that row's `started_ms`, so its recovery closes
+  the same row and the activity feed gets one `feeder_offline` and one
+  `feeder_restored` for it. Any other open episode is closed at a clean stop; one an
+  unclean stop left open is closed at the next start, at the last sample the old
+  process wrote for that feeder (or at its own start, if none), and one belonging to
+  a feeder no longer configured is closed at the start instant.
 - **Samples** are buffered and written once a minute in one transaction. `metrics_json`
   keys depend on the feeder's kind (API §3.12); a missing or `null` key is a gap.
 - **Names are not foreign keys.** `feeder` is the owner's configured slug; removing an

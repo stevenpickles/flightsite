@@ -45,9 +45,15 @@ one: FlightSite losing sight of a feed is not the feed recovering. The
 listener is synchronous and must not raise; if it does, the error is logged
 and polling carries on.
 
-Stopping cleanly closes every open episode at the stop instant, silently —
-the process stopping is not a feeder transition. An unclean stop leaves them
-open, and the next start closes each at the last sample the old process wrote
+An outage outlives a restart. Stopping — cleanly or not — never ends one:
+a ``down`` episode is left open, and the next start **resumes** it — that
+feeder is seeded as ``down`` since the row's ``started_ms``, silently, so the
+feeder's recovery closes that same row and announces one ``feeder_restored``
+with the original ``since_ms``, and no second ``feeder_offline`` is ever sent
+for it. Every other open episode is closed silently at stop; one an unclean
+stop left open is closed at start, at the last sample the old process wrote
+for that feeder, and one belonging to a feeder no longer configured is closed
+at the start instant
 (:meth:`~flightsite.feeders.repository.FeederRepository.close_dangling`).
 
 Hot apply
@@ -606,7 +612,7 @@ class FeederService:
     # ------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
-        """Close what an unclean stop left open, then start polling. Idempotent.
+        """Resume open outages, close other leftovers, then start polling. Idempotent.
 
         With no feeders configured nothing is started; a later
         :meth:`apply_settings` that adds one starts the tasks then.
@@ -617,13 +623,13 @@ class FeederService:
         if self._http is None:
             self._rebuild_all()
         try:
-            closed = await self._repository.close_dangling(self._clock())
+            resumed = await self._resume_outages()
         except Exception as exc:
             self._counters.increment(DB_ERRORS_COUNTER)
             logger.warning("feeders_close_dangling_failed", error_type=type(exc).__name__)
         else:
-            if closed:
-                logger.info("feeders_closed_dangling_episodes", episodes=closed)
+            if resumed:
+                logger.info("feeders_resumed_outages", feeders=resumed)
         self._ensure_tasks()
         logger.info(
             "feeders_started",
@@ -632,13 +638,48 @@ class FeederService:
             docker_socket=self.docker_socket_status,
         )
 
+    async def _resume_outages(self) -> list[str]:
+        """Seed configured feeders whose last open episode is ``down``; close the rest.
+
+        Returns the names resumed. Only a feeder not yet polled by this
+        process is seeded, and nothing is announced: the outage was announced
+        by the process that saw it begin.
+        """
+        latest: dict[str, FeederEpisode] = {}
+        for episode in await self._repository.open_episodes():
+            current = latest.get(episode.feeder)
+            if current is None or episode.started_ms > current.started_ms:
+                latest[episode.feeder] = episode
+        keep: set[tuple[str, int]] = set()
+        resumed: list[str] = []
+        for name, episode in latest.items():
+            tracker = self._trackers.get(name)
+            if (
+                tracker is None
+                or episode.state is not FeederState.DOWN
+                or tracker.episode_started_ms is not None
+            ):
+                continue
+            tracker.state = FeederState.DOWN
+            tracker.episode_started_ms = episode.started_ms
+            tracker.outage_since_ms = episode.started_ms
+            keep.add((name, episode.started_ms))
+            resumed.append(name)
+        removed = frozenset(name for name in latest if name not in self._trackers)
+        await self._repository.close_dangling(self._clock(), keep=keep, removed=removed)
+        return resumed
+
     async def stop(self) -> None:
-        """Stop the tasks, close open episodes silently, flush, close clients. Idempotent."""
+        """Stop the tasks, close non-outage episodes silently, flush, close clients.
+
+        Idempotent. A ``down`` episode stays open for the next start to resume.
+        """
         was_started, self._started = self._started, False
         await self._cancel_tasks()
         now_ms = self._clock()
         for tracker in self._trackers.values():
-            self._close_episode(tracker, now_ms)
+            if tracker.state is not FeederState.DOWN:
+                self._close_episode(tracker, now_ms)
         await self.flush()
         await self._close_clients()
         if was_started:

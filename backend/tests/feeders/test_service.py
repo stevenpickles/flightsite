@@ -304,9 +304,9 @@ async def test_stop_closes_open_episodes_silently_and_start_closes_dangling_ones
     assert episodes[0].ended_ms == FIXTURE_NOW_MS + 30_000
     assert transitions.facts == []  # stopping is not a transition
 
-    # An unclean stop: an episode left open, samples after it.
+    # An unclean stop: a non-outage episode left open, no sample after it.
     repository = FeederRepository(database)
-    dangling = FeederEpisode(feeder="fr24", started_ms=clock.now_ms, state=FeederState.DOWN)
+    dangling = FeederEpisode(feeder="fr24", started_ms=clock.now_ms, state=FeederState.DEGRADED)
     await repository.record([], [dangling])
     restarted = make(database, clock, counters, settings("fr24"), Factory())
     clock.advance(600)
@@ -314,8 +314,8 @@ async def test_stop_closes_open_episodes_silently_and_start_closes_dangling_ones
     await restarted.stop()
 
     stored = await repository.episodes_between("fr24", 0, clock.now_ms + 1)
-    down = next(e for e in stored if e.state is FeederState.DOWN)
-    assert down.ended_ms == dangling.started_ms  # no sample after it: closed at its start
+    degraded = next(e for e in stored if e.state is FeederState.DEGRADED)
+    assert degraded.ended_ms == dangling.started_ms  # closed at its start, not at restart
 
 
 async def test_start_with_no_entries_starts_no_task_and_apply_starts_one(
@@ -651,3 +651,77 @@ async def test_supplied_probes_replace_construction(
     assert set(factory.built) == {"other"}
     assert fixed.calls == 1
     await service.stop()
+
+
+async def _open_rows(database: Database) -> list[FeederEpisode]:
+    return await FeederRepository(database).open_episodes()
+
+
+async def _start_without_loop(service: FeederService) -> None:
+    """``start()``, with its poll task cancelled before it runs, so polls are the test's."""
+    await service.start()
+    await service._cancel_tasks()
+
+
+@pytest.mark.parametrize("clean", [True, False])
+async def test_a_restart_mid_outage_resumes_it(
+    database: Database, clock: ManualClock, counters: CounterRegistry, clean: bool
+) -> None:
+    """One offline event before the restart, one restored after, same since_ms."""
+    before = Transitions()
+    first = make(
+        database, clock, counters, settings("fr24", "other"), Factory({"fr24": [DOWN]}), before
+    )
+    await _start_without_loop(first)
+    await first.poll_once()
+    await first.poll_once()
+    outage_start = FIXTURE_NOW_MS
+    assert [(f.offline, f.since_ms) for f in before.facts] == [(True, outage_start)]
+    if clean:
+        await first.stop()
+    else:
+        await first._cancel_tasks()  # the process dies: nothing is closed or flushed
+        await first.flush()
+        await first._close_clients()
+
+    clock.advance(600)
+    after = Transitions()
+    second = make(
+        database, clock, counters, settings("fr24", "other"), Factory({"fr24": [DOWN, UP]}), after
+    )
+    await _start_without_loop(second)
+    status = second.status("fr24")
+    assert status is not None
+    assert status.state is FeederState.DOWN
+    assert status.since_ms == outage_start
+    await second.poll_once()  # still down: nothing new to say
+    assert after.facts == []
+    clock.advance(15)
+    await second.poll_once()  # recovered
+
+    assert [(f.offline, f.since_ms, f.at_ms) for f in after.facts] == [
+        (False, outage_start, clock.now_ms)
+    ]
+    episodes = await FeederRepository(database).episodes_between("fr24", 0, clock.now_ms + 1)
+    down = [e for e in episodes if e.state is FeederState.DOWN]
+    assert [(e.started_ms, e.ended_ms) for e in down] == [(outage_start, clock.now_ms)]
+    await second.stop()
+    assert await _open_rows(database) == []
+
+
+async def test_a_removed_feeder_s_open_episode_is_closed_at_start(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    repository = FeederRepository(database)
+    await repository.record([], [FeederEpisode("gone", FIXTURE_NOW_MS - 60_000, FeederState.DOWN)])
+    transitions = Transitions()
+    service = make(database, clock, counters, settings("fr24"), Factory(), transitions)
+
+    await service.start()
+
+    (episode,) = await repository.episodes_between("gone", 0, clock.now_ms + 1)
+    assert episode.ended_ms == clock.now_ms
+    assert transitions.facts == []
+    assert service.status("gone") is None
+    await service.stop()
+    assert await _open_rows(database) == []

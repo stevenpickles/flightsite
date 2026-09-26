@@ -90,3 +90,44 @@ async def test_an_unknown_stored_state_reads_back_as_unknown(database: Database)
 
     assert sample.state is FeederState.UNKNOWN
     assert sample.metrics == {}
+
+
+async def test_open_episodes_lists_only_unended_rows(database: Database) -> None:
+    repository = FeederRepository(database)
+    await repository.record(
+        [],
+        [
+            FeederEpisode("a", T, FeederState.UP, T + 1),
+            FeederEpisode("a", T + 1, FeederState.DOWN),
+            FeederEpisode("b", T - 5, FeederState.UP),
+        ],
+    )
+
+    assert await repository.open_episodes() == [
+        FeederEpisode("b", T - 5, FeederState.UP),
+        FeederEpisode("a", T + 1, FeederState.DOWN),
+    ]
+
+
+async def test_close_dangling_keeps_resumed_rows_and_closes_removed_feeders_at_now(
+    database: Database,
+) -> None:
+    repository = FeederRepository(database)
+    await repository.record(
+        [FeederSample("kept", T + 30_000, FeederState.DOWN)],
+        [
+            FeederEpisode("kept", T, FeederState.DOWN),
+            FeederEpisode("removed", T, FeederState.DOWN),
+            FeederEpisode("stale", T, FeederState.UP),
+        ],
+    )
+    now = T + 3_600_000
+
+    closed = await repository.close_dangling(now, keep={("kept", T)}, removed={"removed"})
+
+    assert closed == 2
+    assert await repository.open_episodes() == [FeederEpisode("kept", T, FeederState.DOWN)]
+    (removed,) = await repository.episodes_between("removed", 0, now + 1)
+    (stale,) = await repository.episodes_between("stale", 0, now + 1)
+    assert removed.ended_ms == now
+    assert stale.ended_ms == T  # never sampled after it opened

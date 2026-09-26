@@ -11,7 +11,7 @@ store, and reads go through the read-only session.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import Final
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -115,15 +115,43 @@ class FeederRepository:
                     )
                 )
 
-    async def close_dangling(self, now_ms: int) -> int:
-        """Close every episode a previous process left open. Returns how many.
+    async def open_episodes(self) -> list[FeederEpisode]:
+        """Every episode with no end, oldest first — what a previous process left open."""
+        async with self._database.read_session() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        FeederEpisodeRow.feeder,
+                        FeederEpisodeRow.started_ms,
+                        FeederEpisodeRow.state,
+                    )
+                    .where(FeederEpisodeRow.ended_ms.is_(None))
+                    .order_by(FeederEpisodeRow.started_ms)
+                )
+            ).all()
+        return [
+            FeederEpisode(feeder=feeder, started_ms=int(started), state=_state(state))
+            for feeder, started, state in rows
+        ]
 
-        Each is closed at the last instant the previous process is known to
-        have observed that feeder — its newest sample, never earlier than the
-        episode's own start — rather than at ``now``: the time between is time
-        nobody was watching, and claiming it as the old state would put a
-        fabricated stretch of "up" (or "down") on the timeline.
+    async def close_dangling(
+        self,
+        now_ms: int,
+        *,
+        keep: Collection[tuple[str, int]] = frozenset(),
+        removed: Collection[str] = frozenset(),
+    ) -> int:
+        """Close the episodes a previous process left open. Returns how many.
+
+        ``keep`` names ``(feeder, started_ms)`` rows being resumed, which stay
+        open. A feeder in ``removed`` is no longer configured, and its episode
+        is closed at ``now_ms``. Any other is closed at the last instant the
+        previous process is known to have observed that feeder — its newest
+        sample, never earlier than the episode's own start — rather than at
+        ``now``: the time between is time nobody was watching, and claiming it
+        as the old state would put a fabricated stretch on the timeline.
         """
+        closed = 0
         async with self._database.writer_session() as session:
             open_rows = (
                 await session.execute(
@@ -133,6 +161,19 @@ class FeederRepository:
                 )
             ).all()
             for feeder, started_ms in open_rows:
+                if (feeder, int(started_ms)) in keep:
+                    continue
+                closed += 1
+                if feeder in removed:
+                    await session.execute(
+                        update(FeederEpisodeRow)
+                        .where(
+                            FeederEpisodeRow.feeder == feeder,
+                            FeederEpisodeRow.started_ms == started_ms,
+                        )
+                        .values(ended_ms=max(int(started_ms), now_ms))
+                    )
+                    continue
                 last_seen = (
                     await session.execute(
                         select(func.max(FeederSampleRow.ts_ms)).where(
@@ -150,7 +191,7 @@ class FeederRepository:
                     )
                     .values(ended_ms=ended)
                 )
-        return len(open_rows)
+        return closed
 
     async def episodes_between(self, feeder: str, from_ms: int, to_ms: int) -> list[FeederEpisode]:
         """Episodes of ``feeder`` overlapping ``[from_ms, to_ms)``, oldest first."""
