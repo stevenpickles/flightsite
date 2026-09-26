@@ -25,7 +25,7 @@ bind-mounted into the backend container:
 | Path | What it is |
 |---|---|
 | `config.yaml` | Non-secret configuration. Rewritten whenever you save from the UI |
-| `secrets.yaml` | API keys only. Written `0600`, never returned by the API, never logged |
+| `secrets.yaml` | API keys and feeder stats URLs only. Written `0600`, never returned by the API, never logged |
 | `flightsite.sqlite3` (+ `-wal`, `-shm`) | The single SQLite database |
 | `logs/` | Rotating JSON logs, when `log_file_enabled` is true |
 | `backups/` | Default destination for `flightsite-backup` archives |
@@ -97,6 +97,14 @@ closed, so what [SECURITY.md §10](SECURITY.md) promises — that FlightSite con
 AeroDataBox *only* while enrichment is enabled and a key is set — is unchanged and now
 true from the moment you save rather than from the next restart. Lookups already
 answered stay in the route cache, and sightings that were enriched keep their routes.
+
+So does `feeders.*` (slice 077). Adding, editing or removing an entry, changing the
+poll interval, setting or clearing `docker_socket`, editing the local pages and pasting
+a stats URL all take effect on save: the backend hands the new section to the running
+feeder service, which rebuilds its probes, starts polling when the first entry appears
+and stops when the last one goes. Outage history already recorded for a feeder is kept
+under its `name`, so renaming an entry starts a new history. Demo mode keeps its
+scripted stand-ins whatever is saved.
 
 ### Needs a restart
 
@@ -398,25 +406,96 @@ persisted, then skipped with an `alert_template_unknown` warning in the logs, cr
 no rule. If a template you enabled produced no rule, check the backend log for that
 warning, and prefer the Alerts page's Templates tab.
 
+### `feeders` — feeder status monitoring
+
+Slice 077, [ADR-0017](adr/0017-feeder-status-sources.md). Drives the **Feeders** page
+under Receiver (`/receiver/feeders`): the status of every network this receiver feeds,
+outage gaps over 24 h / 7 d / 30 d, connection statistics, and links to each network and
+to the pages hosted beside FlightSite. [Applies immediately](#applies-immediately).
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `poll_interval_s` | int | `15` | 5–120. One poll per entry per interval, all on the LAN |
+| `docker_socket` | absolute path or `null` | `null` | **Opt-in.** e.g. `/var/run/docker.sock`. Enables the log- and health-only kinds; see [SECURITY.md §10](SECURITY.md) before setting it |
+| `entries` | list of entry | `[]` | Replaced wholesale on save, like every list |
+| `local_pages` | list of `{label, url}` | `[]` | Links only — FlightSite never fetches them |
+| `stats_urls` | map of name → URL | `{}` | **Secret. Belongs in `secrets.yaml`, not here** — see [Secrets](#secrets) |
+
+Each entry:
+
+| Key | Type | Notes |
+|---|---|---|
+| `name` | slug | `^[a-z0-9][a-z0-9-]{0,31}$`, unique across entries. The key for history and for `stats_urls` |
+| `label` | string | Shown on the page; 1–80 characters |
+| `kind` | enum | One of the kinds below |
+| `url` | http(s) URL | The status document the backend polls. Name the Docker host as the **container** sees it — `http://host.docker.internal:…` (see [INSTALL.md](INSTALL.md#feeders)) |
+| `container` | string | Container name, for the socket-only kinds |
+| `host` | string | The connector's feed host, for `ultrafeeder` (e.g. `feed.adsbexchange.com`) |
+| `mlat_port`, `beast_port` | int | Optional, 1–65535. The connector's MLAT and Beast ports |
+| `web_url` | http(s) URL | Optional. The feeder's own page, as **your browser** reaches it |
+
+| `kind` | Needs | What it reads |
+|---|---|---|
+| `readsb` | `url` | The receiver's uplink: `status.json` / `stats.json` (bytes out, messages, aircraft, MLAT inbound, samples dropped) |
+| `piaware` | `url` | piaware's `status.json` lights. It is served at `:8081/status.json`, **outside** `/skyaware/` |
+| `fr24` | `url` | fr24feed's `monitor.json` |
+| `ultrafeeder` | `url`, `host` | MLAT client stats over HTTP always; ADS-B-out state from the ultrafeeder container's logs when `docker_socket` is set (then `container` too) |
+| `opensky_logs` | `container` | The OpenSky feeder's Statistics block, from its logs — needs `docker_socket` |
+| `docker_health` | `container` | The container's own health status — a backstop, needs `docker_socket` |
+| `link_only` | — | Nothing is polled; the card is a link |
+
+An invalid entry is rejected per field — the error names `feeders.entries.<n>.<field>`.
+Without `docker_socket`, a signal only the socket can provide reads `unknown`, never
+`down`: FlightSite not being able to see a feed is not the feed failing.
+
+```yaml
+feeders:
+  poll_interval_s: 15
+  docker_socket: /var/run/docker.sock
+  entries:
+    - { name: flightaware, label: FlightAware, kind: piaware, url: "http://host.docker.internal:8081/status.json", web_url: "http://fermi.local:8081/" }
+    - { name: adsbx, label: ADS-B Exchange, kind: ultrafeeder, url: "http://host.docker.internal:8080/", host: feed.adsbexchange.com, mlat_port: 31090, beast_port: 30004, container: ultrafeeder }
+    - { name: opensky, label: OpenSky Network, kind: opensky_logs, container: opensky }
+  local_pages:
+    - { label: tar1090, url: "http://fermi.local:8080/" }
+```
+
+`config.example.yaml` carries a commented six-entry example.
+
 ---
 
 ## Secrets
 
 Secrets live in `<data-dir>/secrets.yaml`, never in `config.yaml`. The file mirrors
-the configuration tree and holds only secret leaves. In this release there is exactly
-one:
+the configuration tree and holds only secret leaves. There are two kinds — the
+AeroDataBox key, and one stats URL per feeder (slice 077):
 
 ```yaml
 enrichment:
   aerodatabox_api_key: your-key-here
+feeders:
+  stats_urls:
+    flightaware: "https://flightaware.com/adsb/stats/user/…"
+    fr24: "https://www.flightradar24.com/account/feed-stats/?id=…"
 ```
+
+A stats URL is a secret because it usually embeds your feeder identity — a username, a
+site id, a UUID. Paste the full URL you use to reach your stats page; FlightSite never
+builds one from an identity. Keys are entry `name`s (shape-checked, so a URL can be
+pasted before its entry exists); values must be `http(s)` URLs. The Feeders page links
+to `/api/internal/feeders/<name>/stats-link`, which answers with a redirect to the
+stored URL — the URL itself never appears in `/api/v1`, the page, or the logs. For
+FlightAware, when no stats URL is stored, the site link piaware itself reports is used
+the same way.
 
 Handling:
 
 - Written with `0600` permissions.
 - The API returns `•••` for a configured secret, plus a separate "is it set" flag —
   the value itself is never served. Submitting the mask back means "leave unchanged";
-  submitting `null` clears it.
+  submitting `null` clears it. For stats URLs this is per key: `stats_urls` comes back
+  as `{name: "•••"}`, `secrets_set` gains a `feeders.stats_urls.<name>` flag for each
+  stored URL, and `{"fr24": null}` removes that one URL.
 - Masked in logs and redacted from diagnostics error records.
 - **Excluded from backups by default** — `flightsite-backup` includes them only with
   an explicit `--include-secrets`, and records the choice in the archive manifest.
