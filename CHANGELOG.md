@@ -54,6 +54,9 @@ FlightSite.
 ### Fixed
 - Setup wizard: the location map's marker follows the just-typed coordinate
   (a dependency the map memo had missed)
+- Feeder status writes survive the poll task being cancelled at shutdown, so a
+  stop can no longer strand the writer connection or leave an episode open
+  (#218)
 
 ### Upgrade notes
 - **Back up first** (`docker compose exec backend flightsite-backup create`).
