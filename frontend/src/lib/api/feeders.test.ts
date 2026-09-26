@@ -2,12 +2,13 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  FeedersApiError,
   getFeederHistory,
   getFeeders,
   useFeederHistoryQuery,
   useFeedersQuery,
 } from "@/lib/api/feeders";
-import { ApiError, NetworkError } from "@/lib/api/client";
+import { NetworkError } from "@/lib/api/client";
 import { createQueryWrapper } from "@/test/queryWrapper";
 import {
   feederHistory,
@@ -40,15 +41,44 @@ describe("getFeeders", () => {
     expect(result.docker_socket).toBe("available");
   });
 
-  it("throws ApiError on a non-2xx response", async () => {
+  it("throws FeedersApiError carrying the §2.5 code on a non-2xx response", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
-        Promise.resolve(jsonResponse({ detail: "Feeders unavailable" }, 503)),
+        Promise.resolve(
+          jsonResponse(
+            {
+              error: {
+                code: "service_unavailable",
+                message: "db down",
+                detail: null,
+              },
+            },
+            503,
+          ),
+        ),
       ),
     );
 
-    await expect(getFeeders()).rejects.toBeInstanceOf(ApiError);
+    await expect(getFeeders()).rejects.toMatchObject({
+      status: 503,
+      code: "service_unavailable",
+      message: "db down",
+    });
+    await expect(getFeeders()).rejects.toBeInstanceOf(FeedersApiError);
+  });
+
+  it("still throws FeedersApiError when the error response has no JSON body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("", { status: 500 }))),
+    );
+
+    await expect(getFeeders()).rejects.toMatchObject({
+      status: 500,
+      code: null,
+      message: "Request failed with status 500",
+    });
   });
 
   it("throws NetworkError when fetch itself rejects", async () => {

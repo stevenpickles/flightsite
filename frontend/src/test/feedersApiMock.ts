@@ -176,7 +176,12 @@ export function installFeedersApiMock(options: MockFeedersApiOptions = {}) {
       if (url.pathname === "/api/v1/feeders" && method === "GET") {
         if (options.status !== undefined && options.status >= 400) {
           return jsonResponse(
-            { detail: "Feeders unavailable" },
+            {
+              error: {
+                code: "service_unavailable",
+                message: "Feeders unavailable",
+              },
+            },
             options.status,
           );
         }

@@ -3,19 +3,16 @@
  * `GET /api/v1/feeders/{name}/history` (`docs/design/077-feeders-page.md`
  * "API", roadmap slice 077).
  *
- * Uses `lib/api/client.ts`'s `apiFetch`/`ApiError`/`describeError` rather
- * than the per-module `apiV1Fetch` + `{"error": {...}}` envelope most other
- * `/api/v1` clients duplicate (`lib/api/receiverStats.ts`,
- * `lib/api/diagnostics.ts`, `lib/api/activity.ts`) — the slice-076 refresh
- * settled on `describeError` as the shared error-rendering convention for
- * new pages. CONTRACT GAP: the design record does not pin down which error
- * envelope `/api/v1/feeders` itself emits; `apiFetch` reads a FastAPI-style
- * `{"detail": ...}` body, matching `/api/internal`. If the backend instead
- * emits the `{"error": {code, message}}` envelope the other v1 modules use,
- * a failed request still resolves to a typed `ApiError` (so `describeError`
- * never throws), just with a generic "Request failed with status NNN"
- * message instead of the backend's own text — flagged for the integrator to
- * reconcile once agents A/B's backend lands.
+ * Reuses the `apiV1Fetch` pattern `lib/api/receiverStats.ts` and
+ * `lib/api/diagnostics.ts` established for the external `/api/v1` surface's
+ * `{"error": {...}}` envelope (§2.5) — duplicated rather than imported, the
+ * same call those modules make relative to `lib/api/aircraft.ts`. A
+ * transport-level failure (the request never reached a server that
+ * answered) is wrapped in `lib/api/client.ts`'s `NetworkError` rather than
+ * left as a raw `fetch` rejection, so `describeError` from that same module
+ * still produces a readable message for it — `FeedersApiError` itself
+ * (an HTTP-level 4xx/5xx) carries its own `.message` from the backend's
+ * envelope, which callers read directly.
  *
  * The one exception is the per-feeder stats link
  * (`GET /api/internal/feeders/{name}/stats-link`): it is never fetched from
@@ -25,7 +22,7 @@
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import { apiFetch } from "@/lib/api/client";
+import { NetworkError } from "@/lib/api/client";
 
 /** The per-feeder state machine's four values (design record "Backend
  * package"). `unknown` covers both "not polled yet" and a socket-only
@@ -154,8 +151,50 @@ export const FEEDERS_POLL_MS = 10_000;
 
 export const feedersQueryKey = ["feeders"] as const;
 
+interface ApiV1ErrorBody {
+  error?: { code?: string; message?: string; detail?: unknown };
+}
+
+/** Thrown for any non-2xx response from `/api/v1/feeders*`. `code` is the
+ * §2.5 machine-readable slug, `null` when the response did not carry the
+ * documented envelope. */
+export class FeedersApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(status: number, body: ApiV1ErrorBody | undefined) {
+    super(body?.error?.message ?? `Request failed with status ${status}`);
+    this.name = "FeedersApiError";
+    this.status = status;
+    this.code = body?.error?.code ?? null;
+  }
+}
+
+async function apiV1Fetch<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path);
+  } catch (cause) {
+    // `fetch` rejects (rather than resolving with a non-ok `Response`) only
+    // for transport failures — see `lib/api/client.ts`'s `apiFetch`, which
+    // this mirrors for the same reason: a raw `TypeError: Failed to fetch`
+    // is not meant for a reader, only `describeError`'s fixed message is.
+    throw new NetworkError(cause);
+  }
+  if (!response.ok) {
+    let body: ApiV1ErrorBody | undefined;
+    try {
+      body = (await response.json()) as ApiV1ErrorBody;
+    } catch {
+      body = undefined;
+    }
+    throw new FeedersApiError(response.status, body);
+  }
+  return (await response.json()) as T;
+}
+
 export function getFeeders(): Promise<FeedersResponse> {
-  return apiFetch<FeedersResponse>("/api/v1/feeders");
+  return apiV1Fetch<FeedersResponse>("/api/v1/feeders");
 }
 
 /** `refetchOnWindowFocus: true` gives a returning user a free extra chance
@@ -176,7 +215,7 @@ export function getFeederHistory(
   name: string,
   window: FeederHistoryWindow,
 ): Promise<FeederHistory> {
-  return apiFetch<FeederHistory>(
+  return apiV1Fetch<FeederHistory>(
     `/api/v1/feeders/${encodeURIComponent(name)}/history?window=${window}`,
   );
 }
