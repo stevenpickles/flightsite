@@ -2345,6 +2345,29 @@ slices:
     risk_level: medium
     notes: "Owner request 2026-09-26 for v0.10.0. Design settled with the owner the same day: opt-in Docker socket for log-only feeds (OpenSky, ADS-B-out), /receiver/feeders sub-route, owner-supplied stats URLs in secrets.yaml. Read-only survey of fermi.local's containers recorded in docs/adr/0017. Added by Fable outside the phase plan."
 
+  - id: "078"
+    title: "Feeder writes survive a cancelled poll task"
+    phase: 8
+    branch: "078-feeders-flush-cancel-safety"
+    status: merged
+    depends_on: ["077"]
+    objective: "Hotfix: a feeder flush in flight is never interrupted by the poll task's cancellation, and stop() settles it before its own final flush, so the single writer connection is never stranded and no episode is left open (issue #218)."
+    scope:
+      - "`FeederService.flush` runs the repository write as a shielded task it remembers; `stop()` awaits any in-flight write after cancelling the loops and before flushing the episodes it closes"
+      - "regression test: a cancelled flush's write still lands on its own before stop(), and stop() returns promptly without a db_errors increment"
+    out_of_scope:
+      - "the receiver-metrics service's identical cancel-then-flush order (no failure observed; revisit if it flakes)"
+    acceptance_criteria:
+      - "the regression test fails against the unfixed service and passes with the fix; tests/feeders is green three runs in a row"
+      - "`Closes #218` in the PR body"
+    required_tests: [feeders service regression test]
+    expected_artifacts:
+      - backend/src/flightsite/feeders/service.py
+      - backend/tests/feeders/test_service.py
+    preferred_agent: opus
+    risk_level: low
+    notes: "Found by the v0.10.0 release PR's CI (#217) after PR #216 had passed: a 30 s writer-pool TimeoutError in the removed-feeder test. Added by Fable outside the phase plan, 2026-09-26."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
