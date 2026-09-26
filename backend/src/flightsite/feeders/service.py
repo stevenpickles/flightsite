@@ -395,6 +395,9 @@ class FeederService:
         self._receiver: ReceiverUplink | None = None
 
         self._pending_samples: list[FeederSample] = []
+        # The write in flight, if any: shielded from the poll task's
+        # cancellation and awaited by ``stop()`` before its own final flush.
+        self._write_task: asyncio.Task[None] | None = None
         self._pending_episodes: dict[tuple[str, int], FeederEpisode] = {}
         self._last_flush_ms: int | None = None
         self._shed = 0
@@ -676,6 +679,7 @@ class FeederService:
         """
         was_started, self._started = self._started, False
         await self._cancel_tasks()
+        await self._settle_write()
         now_ms = self._clock()
         for tracker in self._trackers.values():
             if tracker.state is not FeederState.DOWN:
@@ -692,6 +696,13 @@ class FeederService:
         self._maintenance_task = asyncio.create_task(
             self._maintenance_loop(), name="flightsite-feeders-maintenance"
         )
+
+    async def _settle_write(self) -> None:
+        """Wait for a write the cancelled poll loop left in flight (see ``flush``)."""
+        write = self._write_task
+        if write is not None and not write.done():
+            with contextlib.suppress(Exception):
+                await asyncio.shield(write)
 
     async def _cancel_tasks(self) -> None:
         for attribute in ("_poll_task", "_maintenance_task"):
@@ -1004,8 +1015,20 @@ class FeederService:
         episodes = dict(self._pending_episodes)
         if not samples and not episodes:
             return False
+        # Shielded: a cancellation landing mid-transaction (``stop()``
+        # cancelling the poll loop) must not interrupt aiosqlite halfway
+        # through a write — that leaves the single writer connection checked
+        # out until the pool times out, and the final flush then fails with a
+        # 30-second ``TimeoutError`` instead of closing the open episodes.
+        # The task is remembered so ``stop()`` can wait for it to finish.
+        if self._write_task is not None and not self._write_task.done():
+            await asyncio.shield(self._write_task)
+        write = asyncio.ensure_future(self._repository.record(samples, episodes.values()))
+        self._write_task = write
         try:
-            await self._repository.record(samples, episodes.values())
+            await asyncio.shield(write)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             self._counters.increment(DB_ERRORS_COUNTER)
             logger.warning(
