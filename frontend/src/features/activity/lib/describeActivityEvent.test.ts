@@ -185,6 +185,56 @@ describe("describeActivityEvent", () => {
     expect(detail).toBe("after 12m 00s offline");
   });
 
+  it("names an offline feed by its label (slice 077)", () => {
+    const { label, detail } = describeActivityEvent(
+      event(
+        "feeder_offline",
+        {
+          feeder: "fr24",
+          label: "FlightRadar24",
+          kind: "fr24",
+          since_ms: 1_756_000_000_000,
+          outage_s: 90,
+        },
+        { icao: null },
+      ),
+    );
+    expect(label).toBe("Feed offline: FlightRadar24");
+    expect(detail).toBe("down for 1m 30s");
+  });
+
+  it("falls back to the feeder's slug when no label resolved", () => {
+    const { label } = describeActivityEvent(
+      event("feeder_offline", { feeder: "fr24" }, { icao: null }),
+    );
+    expect(label).toBe("Feed offline: fr24");
+  });
+
+  it("describes a plain offline event with nothing to add", () => {
+    const { label, detail } = describeActivityEvent(
+      event("feeder_offline", {}, { icao: null }),
+    );
+    expect(label).toBe("Feed offline");
+    expect(detail).toBeNull();
+  });
+
+  it("names a restored feed and how long it was down (slice 077)", () => {
+    const { label, detail } = describeActivityEvent(
+      event(
+        "feeder_restored",
+        {
+          feeder: "fr24",
+          label: "FlightRadar24",
+          kind: "fr24",
+          outage_s: 720,
+        },
+        { icao: null },
+      ),
+    );
+    expect(label).toBe("Feed restored: FlightRadar24");
+    expect(detail).toBe("down for 12m 00s");
+  });
+
   it("describes a successful metadata import per source", () => {
     const { label, detail } = describeActivityEvent(
       event("metadata_updated", {
@@ -306,6 +356,8 @@ describe("describeActivityEvent", () => {
     "receiver_restored",
     "metadata_updated",
     "milestone",
+    "feeder_offline",
+    "feeder_restored",
   ])("never renders undefined for a %s with an empty payload", (type) => {
     // The degrade-gracefully sweep: a payload stripped to nothing (a frame
     // this client could not narrow, a producer that shipped less than

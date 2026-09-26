@@ -318,6 +318,32 @@ export function describeActivityEvent(
       };
     }
 
+    // Slice 077 (`docs/design/077-feeders-page.md` "Activity"). Payloads
+    // per the design record: `feeder_offline` carries `{feeder, label,
+    // kind, since_ms, outage_s}`; `feeder_restored` carries the same
+    // `feeder`/`label` plus `outage_s` for the episode that just closed.
+    // Neither is aircraft-scoped (`icao` is always `null` for these), so
+    // there is no airframe line — the feeder's own label is the subject.
+    case "feeder_offline": {
+      const label = str(payload, "label") ?? str(payload, "feeder");
+      const outage = num(payload, "outage_s");
+      return {
+        label: label === null ? "Feed offline" : `Feed offline: ${label}`,
+        detail:
+          outage === null ? null : `down for ${formatSightingDuration(outage)}`,
+      };
+    }
+
+    case "feeder_restored": {
+      const label = str(payload, "label") ?? str(payload, "feeder");
+      const outage = num(payload, "outage_s");
+      return {
+        label: label === null ? "Feed restored" : `Feed restored: ${label}`,
+        detail:
+          outage === null ? null : `down for ${formatSightingDuration(outage)}`,
+      };
+    }
+
     case "emergency_squawk": {
       const squawk = str(payload, "squawk");
       return {
