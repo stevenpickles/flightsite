@@ -40,7 +40,7 @@ NEW_TABLES = (RESOLVED_STAGING, CLASSIFICATION_STAGING)
 
 
 async def test_the_upgrade_creates_both_scratch_tables(db_path: Path) -> None:
-    assert await upgrade_empty_database(db_path) == REVISION
+    assert await upgrade_empty_database(db_path, REVISION) == REVISION
 
     assert set(NEW_TABLES) <= table_names(db_path)
 
