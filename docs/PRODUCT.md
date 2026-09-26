@@ -225,6 +225,27 @@ interesting aircraft, aircraft history, sightings, analytics, receiver statistic
 activity, health — via REST and WebSocket. Mutation endpoints used internally by the
 frontend are not part of the supported external contract.
 
+### 4.15 Feeders (§10, §67, §79 amendments; slice 077)
+
+One page, `/receiver/feeders`, reached from the Receiver page and from Health — a
+sub-route of Receiver, not an eighth sidebar section. It shows every network the
+receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, OpenSky, AeroDataBox and
+similar), each as a card with its status (up / degraded / down / unknown), how long it
+has been in that state, when data was last sent, MLAT and ADS-B-out state where the
+feeder reports them, a link to the feeder's own page and a **View stats** link to the
+network's per-feeder stats page. A gap timeline shows outages and availability over
+24 h / 7 d / 30 d, charts show connection statistics, receiver uplink tiles summarize
+what leaves the receiver, and a local-pages card links to the pages hosted beside
+FlightSite (tar1090, graphs1090, SkyAware, the FR24 feeder UI).
+
+Configured from Settings (hot-applied): a poll interval, the feeder entries by kind,
+the local pages, and an **opt-in** Docker socket that unlocks the feeds whose status is
+only in container logs; without it those read `unknown`, never `down`. Stats URLs are
+secrets the owner pastes, masked like the API key and never shown. Outages and
+restorations appear in the activity feed; feeder counts appear on Health. Monitoring
+the feeds of one receiver is not multi-receiver support, which stays a non-goal (§79).
+See [ADR-0017](adr/0017-feeder-status-sources.md).
+
 ## 5. Key Product Behaviors
 
 | Behavior | Policy |

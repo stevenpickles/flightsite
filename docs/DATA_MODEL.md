@@ -555,7 +555,8 @@ CREATE TABLE activity_events (
   type        TEXT NOT NULL,               -- first_aircraft, new_type, range_record,
                                            -- alert, emergency, receiver_offline,
                                            -- receiver_restored, metadata_update,
-                                           -- milestone, maintenance_issue, data_reset
+                                           -- milestone, maintenance_issue, data_reset,
+                                           -- feeder_offline, feeder_restored (077)
   severity    TEXT NOT NULL DEFAULT 'info' CHECK (severity IN
                 ('info','interesting','high','critical')),
   aircraft_id INTEGER REFERENCES aircraft(id),

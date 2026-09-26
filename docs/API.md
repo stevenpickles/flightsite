@@ -630,7 +630,7 @@ combination is a `400`, not an empty series:
 
 | Path | Returns |
 |---|---|
-| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`). |
+| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`), plus `feeder_offline` (`high`) and `feeder_restored` (`info`) since slice 077, whose payload is `{feeder, label, kind, since_ms, outage_s}` — `outage_s` is `null` on the offline event. |
 | `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
@@ -704,14 +704,14 @@ member is described where its producer builds it.
 
 Everything in SPEC §67: decoder connection state and last successful update, database
 health/size/row counts, free disk space, backend uptime, versions, metadata source
-ages, recent error ring buffers (ingestion/db/enrichment/websocket), WebSocket client
-count. **Never contains secrets** (tested requirement).
+ages, recent error ring buffers (ingestion/db/enrichment/websocket/feeders), WebSocket
+client count. **Never contains secrets** (tested requirement).
 
 Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health banner
 renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`,
 `live_events` (slice 075), `database` (`quick_check`, `storage`, `row_counts`,
 `maintenance`, `recovery`), `metadata`, `notifications`, `enrichment`, `websocket`,
-`counters`, `recent_errors`.
+`feeders` (slice 077), `counters`, `recent_errors`.
 
 Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
 pragma takes the writer lock, so the endpoint reports the result the maintenance
@@ -722,6 +722,20 @@ Two contract details worth knowing:
 - `decoder.state` distinguishes `unconfigured` (a first-run install with no receiver
   yet) from `down` (a receiver that should be answering and is not). Rendering the
   first as an outage would be wrong.
+- `feeders` (slice 077) counts the configured feeders by state and reports the
+  optional Docker socket — counts only, the per-feeder detail is `GET /api/v1/feeders`:
+
+  ```json
+  "feeders": {"configured": 6, "up": 4, "degraded": 1, "down": 0, "unknown": 1,
+              "docker_socket": "available"}
+  ```
+
+  `up + degraded + down + unknown == configured`. Any `down` rolls `status` up to
+  `degraded`, never to `down` — FlightSite itself is still receiving. `docker_socket` is
+  `unset` when `feeders.docker_socket` is not configured, otherwise `available` or
+  `unreachable`; the path is never published. `recent_errors` gains a `feeders`
+  category (loggers under `flightsite.feeders`) and `counters` a
+  `feeder_poll_failures` counter.
 - `notifications` carries only what the server can know — the configured severities —
   and `permission_known_by` is always `"client"`. Browser permission is unobservable
   from the backend, so the health page joins this with the frontend notification store
@@ -899,6 +913,8 @@ against the slice-010 protocol ignore this frame type until they support it (§ 
 - An `alert_triggered` or `emergency_squawk` event carries `match_id` on its payload
   (§ 3.10), which is what a client that showed a browser notification for it posts
   back to `POST /api/internal/alerts/matches/{id}/notified` (§ 5).
+- `feeder_offline` and `feeder_restored` (slice 077) arrive in the same frames with the
+  § 3.10 vocabulary and payload; they carry no `match_id` and no aircraft.
 
 ### 4.5 Keepalive, reconnect, slow consumers
 
