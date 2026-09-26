@@ -725,3 +725,53 @@ async def test_a_removed_feeder_s_open_episode_is_closed_at_start(
     assert service.status("gone") is None
     await service.stop()
     assert await _open_rows(database) == []
+
+
+async def test_a_cancelled_flush_still_lands_and_stop_does_not_wait_on_the_pool(
+    database: Database, clock: ManualClock, counters: CounterRegistry
+) -> None:
+    """A cancellation mid-write must not strand the single writer connection.
+
+    Before the fix, cancelling the poll task while ``record()`` was inside
+    aiosqlite left the connection checked out; ``stop()``'s final flush then
+    waited out the pool timeout and failed, leaving episodes open.
+    """
+    transitions = Transitions()
+    service = make(database, clock, counters, settings("fr24"), Factory(), transitions)
+    repository = service._repository
+    entered = asyncio.Event()
+
+    class SlowRepository:
+        """The real repository with a write slow enough to cancel into."""
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(repository, name)
+
+        async def record(self, samples: object, episodes: object) -> None:
+            entered.set()
+            await asyncio.sleep(0.2)
+            await repository.record(samples, episodes)  # type: ignore[arg-type]
+
+    service._repository = SlowRepository()  # type: ignore[assignment]
+    service._pending_episodes[("fr24", clock.now_ms)] = FeederEpisode(
+        "fr24", clock.now_ms, FeederState.UP
+    )
+
+    flush = asyncio.create_task(service.flush())
+    await entered.wait()
+    flush.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await flush
+
+    # The write the cancelled flush had started must still land on its own
+    # — before ``stop()``'s final flush gets a chance to re-issue it.
+    await asyncio.sleep(0.4)
+    (landed,) = await repository.episodes_between("fr24", 0, clock.now_ms + 1)
+    assert landed.state is FeederState.UP
+
+    before = counters.snapshot().get("db_errors", 0)
+    await asyncio.wait_for(service.stop(), timeout=5)
+
+    assert counters.snapshot().get("db_errors", 0) == before
+    (episode,) = await repository.episodes_between("fr24", 0, clock.now_ms + 1)
+    assert episode.state is FeederState.UP
