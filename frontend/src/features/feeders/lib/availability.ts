@@ -162,14 +162,52 @@ export function buildAvailabilitySegments(
   return segments;
 }
 
-/** The fraction of the window spent `"up"`, as a 0–100 percentage — derived
- * from the same segments the bar renders, so the number and the picture can
- * never disagree (see module docstring). */
+export interface Availability {
+  /** Share of the *observed* span spent `"up"`, 0–100; `null` when nothing
+   * in the window was observed at all. */
+  pct: number | null;
+  /** How much of the window FlightSite actually watched this feeder. */
+  observedMs: number;
+  /** The window's full length, for "of N observed" wording. */
+  windowMs: number;
+}
+
+/** Availability over the part of the window that was actually observed —
+ * derived from the same segments the bar renders, so the number and the
+ * picture can never disagree (see module docstring).
+ *
+ * The denominator is the observed span, not the window: a feeder watched for
+ * three minutes of a 24-hour window and up for all of them is 100 % available
+ * "of 3 m observed", not 0.2 % available. Scoring the unobserved stretch as
+ * downtime would blame the feeder for FlightSite's own absence, which is the
+ * kind of confident wrong number the 2026-09-20 site review was about. */
+export function computeAvailability(
+  segments: readonly AvailabilitySegment[],
+  window: AvailabilityWindow,
+): Availability {
+  const windowMs = windowDurationMs(window);
+  let upWidthPct = 0;
+  let observedWidthPct = 0;
+  for (const segment of segments) {
+    if (segment.state === "unknown") continue;
+    observedWidthPct += segment.widthPct;
+    if (segment.state === "up") upWidthPct += segment.widthPct;
+  }
+  const observedMs = Math.round((observedWidthPct / 100) * windowMs);
+  if (observedWidthPct <= 0) {
+    return { pct: null, observedMs: 0, windowMs };
+  }
+  return {
+    pct: clampMs((upWidthPct / observedWidthPct) * 100, 0, 100),
+    observedMs,
+    windowMs,
+  };
+}
+
+/** {@link computeAvailability}'s percentage alone; `null` when unobserved. */
 export function computeAvailabilityPct(
   segments: readonly AvailabilitySegment[],
-): number {
-  const upWidthPct = segments
-    .filter((segment) => segment.state === "up")
-    .reduce((total, segment) => total + segment.widthPct, 0);
-  return clampMs(upWidthPct, 0, 100);
+  window: AvailabilityWindow = "24h",
+): number | null {
+  return computeAvailability(segments, window).pct;
 }

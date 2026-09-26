@@ -166,7 +166,9 @@ test("capture visual fixtures from a seeded demo stack", async ({
         return;
       }
       try {
-        const parsed = JSON.parse(frame.payload as string) as CapturedSnapshot & {
+        const parsed = JSON.parse(
+          frame.payload as string,
+        ) as CapturedSnapshot & {
           type?: string;
         };
         if (parsed.type === "snapshot") {
@@ -182,8 +184,12 @@ test("capture visual fixtures from a seeded demo stack", async ({
   // (`tests/support/fixtures.ts`) and as the replay does: the recording
   // must not contain third-party tile responses, and the map's degraded
   // path is what the baselines lock.
-  await page.route("https://tiles.openfreemap.org/**", (route) => route.abort());
-  await page.route("https://tile.openstreetmap.org/**", (route) => route.abort());
+  await page.route("https://tiles.openfreemap.org/**", (route) =>
+    route.abort(),
+  );
+  await page.route("https://tile.openstreetmap.org/**", (route) =>
+    route.abort(),
+  );
 
   // ---------------------------------------------------------------------
   // 3. Live Map — wait for a genuinely populated live picture.
@@ -292,18 +298,44 @@ test("capture visual fixtures from a seeded demo stack", async ({
   // which is the view worth regression-testing. See `fixtureContract.ts`.
   // ---------------------------------------------------------------------
   await page.goto(`/analytics?preset=${ANALYTICS_PRESET}`);
-  await expect(page.getByRole("heading", { level: 1, name: "Analytics" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Top aircraft" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Never seen before" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Analytics" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Top aircraft" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Never seen before" }),
+  ).toBeVisible();
   await settle(page);
 
   // ---------------------------------------------------------------------
   // 6. Receiver.
   // ---------------------------------------------------------------------
   await page.goto("/receiver");
-  await expect(page.getByRole("heading", { level: 1, name: "Receiver" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Receiver scorecard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Receiver" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Receiver scorecard" }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
+  await settle(page);
+
+  // ---------------------------------------------------------------------
+  // 6b. Feeders (slice 077) — the page's own list plus every feeder's
+  // history, so the gap timelines replay from the HAR too.
+  // ---------------------------------------------------------------------
+  await page.goto("/receiver/feeders");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Feeders" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Receiver uplink" }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Local pages" })).toBeVisible();
+  await expect(page.getByTestId("feeder-card").first()).toBeVisible();
+  await expect(page.getByTestId("gap-timeline").first()).toBeVisible();
   await settle(page);
 
   // ---------------------------------------------------------------------
@@ -311,7 +343,9 @@ test("capture visual fixtures from a seeded demo stack", async ({
   // unvisited tab's endpoints would be missing from the HAR.
   // ---------------------------------------------------------------------
   await page.goto("/alerts");
-  await expect(page.getByRole("heading", { level: 1, name: "Alerts" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Alerts" }),
+  ).toBeVisible();
   for (const tabId of ALERT_TAB_IDS) {
     await page.locator(`#alerts-tab-${tabId}`).click();
     await expect(page.locator(`#alerts-tabpanel-${tabId}`)).toBeVisible();

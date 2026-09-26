@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { AvailabilityWindowSelector } from "@/features/feeders/components/AvailabilityWindowSelector";
 import {
   buildAvailabilitySegments,
-  computeAvailabilityPct,
+  computeAvailability,
   type AvailabilitySegment,
   type AvailabilityWindow,
 } from "@/features/feeders/lib/availability";
@@ -104,8 +104,18 @@ export function GapTimeline({
     episodes !== undefined
       ? buildAvailabilitySegments(episodes, window, new Date())
       : [];
-  const availabilityPct =
-    episodes !== undefined ? computeAvailabilityPct(segments) : null;
+  const availability =
+    episodes !== undefined ? computeAvailability(segments, window) : null;
+  const availabilityPct = availability?.pct ?? null;
+  // Say how much of the window was actually watched when that is less than
+  // the whole of it, so "100 % available" over a three-minute-old install
+  // is read as exactly that.
+  const observedNote =
+    availability !== null &&
+    availability.pct !== null &&
+    availability.observedMs < availability.windowMs * 0.99
+      ? ` of ${formatDurationCompact(Math.round(availability.observedMs / 1000))} observed`
+      : "";
 
   return (
     // `data-testid="gap-timeline"` per `e2e/tests/12-feeders.spec.ts`'s
@@ -120,7 +130,7 @@ export function GapTimeline({
           <span className="text-sm font-medium">{feederLabel}</span>
           {availabilityPct !== null && (
             <span className="text-xs tabular-nums text-muted-foreground">
-              {`${availabilityPct.toFixed(1)}% available`}
+              {`${availabilityPct.toFixed(1)}% available${observedNote}`}
             </span>
           )}
         </div>

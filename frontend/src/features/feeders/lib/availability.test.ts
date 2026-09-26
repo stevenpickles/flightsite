@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAvailabilitySegments,
+  computeAvailability,
   computeAvailabilityPct,
   windowDurationMs,
 } from "@/features/feeders/lib/availability";
@@ -159,7 +160,9 @@ describe("computeAvailabilityPct", () => {
     expect(computeAvailabilityPct(segments)).toBe(0);
   });
 
-  it("weighs partial up-time by its share of the window", () => {
+  it("scores only the observed span, and says how long that was", () => {
+    // Up for the last six hours of a 24-hour window, unobserved before that:
+    // 100 % of six hours, not 25 % of a day.
     const segments = buildAvailabilitySegments(
       [
         {
@@ -171,6 +174,37 @@ describe("computeAvailabilityPct", () => {
       "24h",
       NOW,
     );
-    expect(computeAvailabilityPct(segments)).toBeCloseTo(25, 5);
+    const availability = computeAvailability(segments, "24h");
+    expect(availability.pct).toBeCloseTo(100, 5);
+    expect(availability.observedMs).toBe(6 * 60 * 60 * 1000);
+    expect(availability.windowMs).toBe(24 * 60 * 60 * 1000);
+    expect(computeAvailabilityPct(segments, "24h")).toBeCloseTo(100, 5);
+  });
+
+  it("divides up-time by the observed span when part of it was down", () => {
+    // Observed for the last six hours: down for the first three, up since.
+    const segments = buildAvailabilitySegments(
+      [
+        {
+          state: "down",
+          started_at: "2026-09-26T06:00:00.000Z",
+          ended_at: "2026-09-26T09:00:00.000Z",
+        },
+        {
+          state: "up",
+          started_at: "2026-09-26T09:00:00.000Z",
+          ended_at: null,
+        },
+      ],
+      "24h",
+      NOW,
+    );
+    expect(computeAvailability(segments, "24h").pct).toBeCloseTo(50, 5);
+  });
+
+  it("is null, not zero, when nothing in the window was observed", () => {
+    const segments = buildAvailabilitySegments([], "24h", NOW);
+    expect(computeAvailability(segments, "24h").pct).toBeNull();
+    expect(computeAvailabilityPct(segments, "24h")).toBeNull();
   });
 });
