@@ -583,7 +583,7 @@ One-time milestones live here (PK = natural key ⇒ fire-once for free). Rolling
 
 ---
 
-## 6. Receiver metrics (slice 033) & analytics rollups (slice 031)
+## 6. Receiver metrics (slice 033), analytics rollups (slice 031) & feeder history (slice 077)
 
 ### 6.1 `receiver_metrics_raw` — windowed high-resolution samples
 
@@ -752,6 +752,51 @@ The two agree by construction — `aircraft.first_seen_ms` is the minimum
 `sightings.started_ms` for that airframe — and the live form is additionally exact
 for an explicit mid-day window and available before the day's rollup has been
 computed.
+
+### 6.6 Feeder status history — slice 077
+
+The Feeders page (`GET /api/v1/feeders/{name}/history`, [API.md](API.md) §3.12) draws
+a gap timeline and a few connection statistics per feeder over 24 hours, 7 days and
+30 days. Two tables, both written only by the feeder service
+(`flightsite.feeders.service`) through the single writer, both `WITHOUT ROWID` on
+their natural keys with no secondary indexes: every read is one feeder's time range,
+which is exactly key order.
+
+```sql
+CREATE TABLE feeder_episodes (             -- one span of one committed state
+  feeder     TEXT    NOT NULL,             -- the entry's configured name (a slug)
+  started_ms INTEGER NOT NULL,
+  ended_ms   INTEGER,                      -- NULL while this is the current state
+  state      TEXT    NOT NULL,             -- 'up'|'degraded'|'down'|'unknown'
+  PRIMARY KEY (feeder, started_ms)
+) WITHOUT ROWID;
+
+CREATE TABLE feeder_samples (              -- one reading per feeder per minute
+  feeder       TEXT    NOT NULL,
+  ts_ms        INTEGER NOT NULL,
+  state        TEXT    NOT NULL,           -- the committed state at ts_ms
+  metrics_json TEXT,                       -- {"peers": 14, ...}: numbers only, by kind
+  PRIMARY KEY (feeder, ts_ms)
+) WITHOUT ROWID;
+```
+
+- **Episodes** are written at once on every committed state change (the closing one
+  updated, the next inserted), so an unclean stop never costs the record that a feeder
+  went down. A clean stop closes every open episode at the stop instant; after an
+  unclean one, the next start closes each dangling episode at the **last sample** the
+  old process wrote for that feeder (or at its own start, if none) — the time between
+  is time nobody was watching and is not claimed as either state.
+- **Samples** are buffered and written once a minute in one transaction. `metrics_json`
+  keys depend on the feeder's kind (API §3.12); a missing or `null` key is a gap.
+- **Names are not foreign keys.** `feeder` is the owner's configured slug; removing an
+  entry from `config.yaml` closes its open episode and leaves its history to age out.
+  No `CHECK` on `state`: the service is the only writer, and a value this build does
+  not recognise reads back as `unknown`.
+- **Retention** is enforced by the service's own maintenance loop every 5 minutes:
+  samples older than **14 days**, closed episodes that ended more than **90 days** ago.
+  An open episode is never pruned, however old its start.
+- **Size.** Six feeders sample 8,640 rows a day, ~121k rows steady-state over 14 days
+  at under 100 B each — about 10 MB; episodes are a handful a day.
 
 ---
 
@@ -929,6 +974,8 @@ The API composes these into per-field provenance for the detail UI.
 | sighting_track_checkpoints | Deleted at sighting close / recovery (bounded by concurrent traffic) |
 | receiver_metrics_raw | High-res window, default **14 days** (7–30 configurable) |
 | receiver_metrics_hourly/daily | Indefinite |
+| feeder_samples | **14 days** (feeder service maintenance, slice 077) |
+| feeder_episodes | **90 days** after an episode ends; the open one is never pruned (slice 077) |
 | route_cache | TTL-pruned |
 | aircraft_metadata* | Replaced per source at import |
 
@@ -1086,3 +1133,4 @@ field names; ingest normalizes before anything is persisted.
 | 070 | `route_cache` gains `confirmations` / `first_fetched_ms` and the `restricted` status (rev 0014, a table rebuild) |
 | 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |
 | 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |
+| 077 | `feeder_episodes`, `feeder_samples` (rev 0017 — two new tables, no data movement; §6.6) |

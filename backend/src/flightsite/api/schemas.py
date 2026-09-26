@@ -1434,6 +1434,141 @@ class DiagnosticsResponse(_Model):
     recent_errors: dict[str, list[DiagnosticsError]] = Field(default_factory=dict)
 
 
+# --------------------------------------------------------------------------
+# Feeders — docs/API.md §3.12 (slice 077)
+# --------------------------------------------------------------------------
+
+#: A feeder's committed state. ``unknown`` is "FlightSite cannot see this"
+#: (no Docker socket, a statistics block gone quiet, a link-only entry) and is
+#: never a softer ``down``.
+FeederStateLiteral = Literal["up", "degraded", "down", "unknown"]
+
+#: Where the state was read from; ``none`` when it could not be read at all.
+FeederObservabilityLiteral = Literal["http", "docker", "none"]
+
+#: The probe kinds a configured entry can name.
+FeederKindLiteral = Literal[
+    "readsb", "piaware", "fr24", "ultrafeeder", "opensky_logs", "docker_health", "link_only"
+]
+
+#: Whether the opt-in Docker socket is configured and answering.
+DockerSocketLiteral = Literal["available", "unset", "unreachable"]
+
+#: ``GET /api/v1/feeders/{name}/history`` windows.
+FeederHistoryWindowLiteral = Literal["24h", "7d", "30d"]
+
+
+class FeederReceiverUplink(_Model):
+    """The receiver's own uplink summary — the tiles atop the Feeders page.
+
+    Every field is independently ``null`` when the decoder does not publish
+    it. ``bytes_out_per_s`` is to *all* network connectors together and is
+    ``null`` until two polls have been differenced.
+    """
+
+    bytes_out_per_s: float | None = None
+    messages_per_min: int | None = None
+    aircraft_total: int | None = None
+    aircraft_with_pos: int | None = None
+    aircraft_mlat: int | None = None
+    dropped_samples: int | None = None
+    max_range_nm: float | None = None
+    gain_db: float | None = None
+    signal_db: float | None = None
+    noise_db: float | None = None
+    uptime_s: float | None = None
+    updated_at: IsoTimestamp | None = None
+
+
+class FeederMlat(_Model):
+    """A multilateration client's link to its network."""
+
+    peers: int | None = None
+    good_sync_pct: float | None = None
+    bad_sync_timeout_s: float | None = None
+    last_bad_sync_at: IsoTimestamp | None = None
+
+
+class FeederAdsbOut(_Model):
+    """The ADS-B (Beast) output connection, as the ultrafeeder logs report it."""
+
+    connected: bool | None = None
+    since: IsoTimestamp | None = None
+
+
+class FeederView(_Model):
+    """One configured feeder — one card on the Feeders page.
+
+    ``stats_link`` says only whether ``GET /api/internal/feeders/{name}/stats-link``
+    has somewhere to redirect to; the URL itself is a secret and never appears
+    in ``/api/v1``. ``detail`` is kind-specific, scalar-valued and redacted at
+    its source (``docs/API.md`` §3.12).
+    """
+
+    name: str
+    label: str
+    kind: str
+    state: FeederStateLiteral
+    observability: FeederObservabilityLiteral
+    since: IsoTimestamp | None = None
+    last_polled_at: IsoTimestamp | None = None
+    last_success_at: IsoTimestamp | None = None
+    last_data_sent_at: IsoTimestamp | None = None
+    message: str | None = None
+    mlat: FeederMlat | None = None
+    adsb_out: FeederAdsbOut | None = None
+    detail: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    web_url: str | None = None
+    stats_link: bool = False
+
+
+class FeederLocalPage(_Model):
+    """A link to another page hosted beside FlightSite (tar1090, graphs1090, ...)."""
+
+    label: str
+    url: str
+
+
+class FeedersResponse(_Model):
+    """``GET /api/v1/feeders`` — every configured feeder's current status."""
+
+    generated_at: IsoTimestamp
+    poll_interval_s: float
+    docker_socket: DockerSocketLiteral
+    receiver: FeederReceiverUplink | None = None
+    feeders: list[FeederView] = Field(default_factory=list)
+    local_pages: list[FeederLocalPage] = Field(default_factory=list)
+
+
+class FeederEpisodeView(_Model):
+    """One span of one state; ``ended_at`` is ``null`` for the current one."""
+
+    state: FeederStateLiteral
+    started_at: IsoTimestamp
+    ended_at: IsoTimestamp | None = None
+
+
+class FeederSampleView(_Model):
+    """One stored reading: the state and the kind's numeric chart series."""
+
+    t: IsoTimestamp
+    state: FeederStateLiteral
+    metrics: dict[str, float | int | None] = Field(default_factory=dict)
+
+
+class FeederHistoryResponse(_Model):
+    """``GET /api/v1/feeders/{name}/history`` — episodes, samples, availability.
+
+    ``availability_pct`` is the share of the *observed* window spent ``up`` or
+    ``degraded``; ``unknown`` time is excluded rather than counted against the
+    feeder, and the value is ``null`` when nothing in the window was observed.
+    """
+
+    episodes: list[FeederEpisodeView] = Field(default_factory=list)
+    samples: list[FeederSampleView] = Field(default_factory=list)
+    availability_pct: float | None = None
+
+
 __all__ = [
     "ActivityEventTypeLiteral",
     "ActivityEventView",
@@ -1495,6 +1630,20 @@ __all__ = [
     "DiagnosticsVacuumRefusal",
     "DiagnosticsVersions",
     "DiagnosticsWebSocket",
+    "DockerSocketLiteral",
+    "FeederAdsbOut",
+    "FeederEpisodeView",
+    "FeederHistoryResponse",
+    "FeederHistoryWindowLiteral",
+    "FeederKindLiteral",
+    "FeederLocalPage",
+    "FeederMlat",
+    "FeederObservabilityLiteral",
+    "FeederReceiverUplink",
+    "FeederSampleView",
+    "FeederStateLiteral",
+    "FeederView",
+    "FeedersResponse",
     "GeoPosition",
     "InterestingAircraftResponse",
     "InterestingMatch",

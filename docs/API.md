@@ -838,6 +838,105 @@ ring buffer, and once over the whole assembled payload, both against the configu
 `SecretStr` values discovered by type. A secret that reached a log record by mistake
 still cannot reach this response.
 
+### 3.12 Feeders — slice 077
+
+| Path | Returns |
+|---|---|
+| `GET /api/v1/feeders` | Every configured feeder's current state, the receiver's uplink summary, and the local-pages list. |
+| `GET /api/v1/feeders/{name}/history` | One feeder's episodes, samples and availability. Param: `window=24h\|7d\|30d` (default `24h`). `404` for a name that is not configured, `422` for any other window. |
+
+Feeders are the networks the receiver streams to (FlightAware, FlightRadar24, ADS-B
+Exchange, AeroDataBox, OpenSky, ...), configured as `feeders.entries[]`
+([CONFIGURATION.md](CONFIGURATION.md)) and polled every `feeders.poll_interval_s` by
+the feeder service. `GET /feeders` is answered from memory — it is what the last poll
+found — so it is cheap to poll at the page's 10-second cadence. An install with no
+feeders configured answers `200` with an empty `feeders` list, never `404`.
+
+```json
+{
+  "generated_at": "2026-09-26T14:13:20.000Z",
+  "poll_interval_s": 15.0,
+  "docker_socket": "available",
+  "receiver": {
+    "bytes_out_per_s": 3012.5, "messages_per_min": 31234, "aircraft_total": 49,
+    "aircraft_with_pos": 37, "aircraft_mlat": 3, "dropped_samples": 0,
+    "max_range_nm": 212.7, "gain_db": 43.9, "signal_db": -17.4, "noise_db": -31.6,
+    "uptime_s": 864000.2, "updated_at": "2026-09-26T14:13:19.600Z"
+  },
+  "feeders": [
+    {
+      "name": "adsbx", "label": "ADS-B Exchange", "kind": "ultrafeeder",
+      "state": "up", "observability": "docker",
+      "since": "2026-09-26T09:00:04.000Z",
+      "last_polled_at": "2026-09-26T14:13:20.000Z",
+      "last_success_at": "2026-09-26T14:13:20.000Z",
+      "last_data_sent_at": "2026-09-26T14:13:20.000Z",
+      "message": null,
+      "mlat": {"peers": 14, "good_sync_pct": 93.4, "bad_sync_timeout_s": 0.0, "last_bad_sync_at": null},
+      "adsb_out": {"connected": true, "since": "2026-09-20T09:00:01.000Z"},
+      "detail": {"host": "feed.adsbexchange.com", "outlier_pct": 0.8},
+      "web_url": null,
+      "stats_link": true
+    }
+  ],
+  "local_pages": [{"label": "tar1090", "url": "http://fermi.local:8080/"}]
+}
+```
+
+- **`state`** is `up`, `degraded`, `down` or `unknown`. `unknown` means FlightSite
+  cannot see the feed — no Docker socket for a log-only signal, a statistics block gone
+  quiet, a `link_only` entry — and is never a softer `down`. `down` is committed only
+  after **two consecutive** `down` readings, so one dropped request never shows as an
+  outage. `since` is when the current state began (`null` before the first poll).
+- **`observability`** says where the state was read: `http` (the network's own status
+  document), `docker` (container logs or health through the opt-in socket), or `none`.
+- **`mlat`** and **`adsb_out`** are `null` for kinds that do not have them, and
+  `adsb_out` is `null` for `ultrafeeder` entries whenever the Docker socket is unset.
+  An MLAT client with zero peers reads `degraded` only after three consecutive polls,
+  and never `down`.
+- **`detail`** is a flat object of scalars whose keys depend on `kind`; it is built at
+  the source from an allowlist, so an identity field never enters it.
+- **`docker_socket`** is `unset` (no `feeders.docker_socket`), `available`, or
+  `unreachable` (configured but not answering).
+- **`receiver`** is `null` unless a `readsb` entry is configured and has answered.
+  `bytes_out_per_s` is to all network connectors together and is `null` until two
+  polls have been differenced.
+- **`stats_link`** is a boolean: whether the internal stats-link redirect (§5) has
+  somewhere to send the browser. The per-network stats URL itself is a secret — it
+  names the owner's account — and is **never** part of any `/api/v1` response.
+
+`GET /feeders/{name}/history`:
+
+```json
+{
+  "episodes": [
+    {"state": "up", "started_at": "2026-09-26T13:40:00.000Z", "ended_at": "2026-09-26T14:00:15.000Z"},
+    {"state": "down", "started_at": "2026-09-26T14:00:15.000Z", "ended_at": "2026-09-26T14:03:00.000Z"},
+    {"state": "up", "started_at": "2026-09-26T14:03:00.000Z", "ended_at": null}
+  ],
+  "samples": [{"t": "2026-09-26T14:13:00.000Z", "state": "up", "metrics": {"peers": 14, "good_sync_pct": 93.4, "adsb_out_connected": 1}}],
+  "availability_pct": 98.51
+}
+```
+
+- `episodes` are every stored span overlapping the window, oldest first, with
+  `started_at` **unclipped** (a client clips to the window it draws). The current
+  episode has `ended_at: null`.
+- `samples` are one per feeder per minute, bucketed to at most one point per minute
+  (`24h`), 10 minutes (`7d`) or 30 minutes (`30d`) — the latest sample in each bucket.
+  Samples are retained 14 days and episodes 90 days
+  ([DATA_MODEL.md](DATA_MODEL.md) §6.6), so the `30d` window has samples for its most
+  recent fortnight only.
+- `metrics` keys by kind: `readsb` — `bytes_out_per_s`, `messages_per_min`,
+  `aircraft_with_pos`, `aircraft_mlat`; `ultrafeeder` — `peers`, `good_sync_pct`,
+  `adsb_out_connected` (1/0); `fr24` — `aircraft_sent`, `messages`; `piaware` —
+  `cpu_temp_c`; `opensky_logs` — `bytes_out_per_s`, `availability_pct`,
+  `disconnections`. A `null` or missing key is a gap, never a zero.
+- `availability_pct` is the share of the **observed** part of the window spent `up` or
+  `degraded`. `unknown` time, and time no episode covers (FlightSite not running), is
+  excluded rather than counted against the feed; `null` when nothing in the window
+  was observed.
+
 ---
 
 ## 4. WebSocket Protocol — `/api/v1/ws/live` (slice 010)
@@ -964,6 +1063,7 @@ config/domain models the backend uses.
 | Alert matches | `POST /alerts/matches/{id}/notified` (records that a browser notification was actually shown for one match; empty body — the assertion *is* the request; `204` whether this call marked the row or found it already marked, `404` for an unknown id) | #104 |
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
+| Feeder stats links | `GET /feeders/{name}/stats-link` → `302` to that feeder's per-network stats page (`feeders.stats_urls.<name>` in `secrets.yaml`; for a `piaware` feeder with none configured, the site page piaware itself reports). `404` when there is no link or no such feeder. `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. The only place a stats URL ever leaves the backend, and only as the `Location` of this response — never in `/api/v1`, a log line or the rendered page; `/api/v1/feeders` carries just `stats_link: true\|false` | 077 |
 
 `GET /metadata/status` reports one row per **registered** source, each with its own
 `status`, `last_success_ms`, `dataset_version`, `row_count` and `last_error`, and each
