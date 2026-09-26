@@ -26,6 +26,12 @@ PACKAGE_ROOT = Path(flightsite.__file__).parent
 #: The module allowed to speak the decoder's statistics vocabulary.
 ADAPTER_MODULE = PACKAGE_ROOT / "receiver_metrics" / "statsjson.py"
 
+#: The one other reader of the same document (slice 077): the Feeders page's
+#: receiver-uplink probe. It reads ``stats.json`` for a different purpose on a
+#: different cadence (see its module docstring), and it too is the only place
+#: in *its* package that knows these names — ``tests/feeders`` holds that line.
+UPLINK_MODULE = PACKAGE_ROOT / "feeders" / "readsb.py"
+
 #: Field names unique to the readsb / dump1090-fa statistics document that the
 #: adapter genuinely reads. Each must appear there and nowhere else.
 STATS_FIELD_NAMES = (
@@ -57,7 +63,7 @@ def source_files() -> list[Path]:
     return sorted(
         path
         for path in PACKAGE_ROOT.rglob("*.py")
-        if path != ADAPTER_MODULE and "__pycache__" not in path.parts
+        if path not in (ADAPTER_MODULE, UPLINK_MODULE) and "__pycache__" not in path.parts
     )
 
 
