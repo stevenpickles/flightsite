@@ -8,6 +8,7 @@ import {
   StatTile,
 } from "@/features/health/components/HealthCard";
 import { EnrichmentHealthCard } from "@/features/health/components/EnrichmentHealthCard";
+import { FeedersHealthCard } from "@/features/health/components/FeedersHealthCard";
 import { NotificationHealthCard } from "@/features/health/components/NotificationHealthCard";
 import { RecentErrorsSection } from "@/features/health/components/RecentErrorsSection";
 import { StatusPill } from "@/features/health/components/StatusPill";
@@ -557,6 +558,10 @@ export function HealthPage() {
           enrichment={data.enrichment}
           timezone={timezone}
         />
+
+        {data.feeders !== undefined && (
+          <FeedersHealthCard feeders={data.feeders} />
+        )}
       </div>
 
       <section
