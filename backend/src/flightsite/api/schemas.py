@@ -1365,6 +1365,31 @@ class DiagnosticsWebSocket(_Model):
     events_dropped: int = 0
 
 
+# ------------------------------------------------ diagnostics: feeders (077)
+#
+# Slice 077's diagnostics block, kept apart from the feeder API models
+# (``GET /api/v1/feeders``) that live elsewhere in this module: this one is
+# counts only, and it is what the Health page's feeders card and the status
+# roll-up read.
+
+
+class DiagnosticsFeeders(_Model):
+    """Slice 077: configured feeders by state, and the Docker socket's state.
+
+    ``up + degraded + down + unknown == configured``. Any ``down`` rolls the
+    overall ``status`` up to ``degraded``. ``docker_socket`` never carries the
+    path (``docs/SECURITY.md`` §9): ``unset`` when the owner has not opted in,
+    ``unreachable`` when it is set and the feeder service could not reach it.
+    """
+
+    configured: int = 0
+    up: int = 0
+    degraded: int = 0
+    down: int = 0
+    unknown: int = 0
+    docker_socket: Literal["available", "unset", "unreachable"] = "unset"
+
+
 class DiagnosticsError(_Model):
     """One captured recent error.
 
@@ -1373,7 +1398,7 @@ class DiagnosticsError(_Model):
     """
 
     at: IsoTimestamp
-    category: Literal["ingestion", "database", "enrichment", "websocket", "other"]
+    category: Literal["ingestion", "database", "enrichment", "websocket", "feeders", "other"]
     event: str
     level: str
     logger: str
@@ -1403,6 +1428,7 @@ class DiagnosticsResponse(_Model):
     notifications: DiagnosticsNotifications = Field(default_factory=DiagnosticsNotifications)
     enrichment: DiagnosticsEnrichment = Field(default_factory=DiagnosticsEnrichment)
     websocket: DiagnosticsWebSocket = Field(default_factory=DiagnosticsWebSocket)
+    feeders: DiagnosticsFeeders = Field(default_factory=DiagnosticsFeeders)
     counters: dict[str, int] = Field(default_factory=dict)
     #: Keyed by category; each list is newest-first and bounded.
     recent_errors: dict[str, list[DiagnosticsError]] = Field(default_factory=dict)
@@ -1450,6 +1476,7 @@ __all__ = [
     "DiagnosticsEnrichmentBudget",
     "DiagnosticsEnrichmentCache",
     "DiagnosticsError",
+    "DiagnosticsFeeders",
     "DiagnosticsLive",
     "DiagnosticsLiveEventSubscriber",
     "DiagnosticsLiveEvents",

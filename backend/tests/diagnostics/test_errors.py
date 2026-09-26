@@ -10,6 +10,7 @@ import pytest
 from flightsite.diagnostics.errors import (
     DATABASE,
     ENRICHMENT,
+    FEEDERS,
     INGESTION,
     OTHER,
     REDACTED,
@@ -146,7 +147,7 @@ class TestErrorRing:
         _record(ring, "one", WEBSOCKET)
         snapshot = ring.snapshot()
 
-        assert set(snapshot) == {INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, OTHER}
+        assert set(snapshot) == {INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, FEEDERS, OTHER}
         assert [e.event for e in snapshot[WEBSOCKET]] == ["one"]
 
     def test_clear_empties_every_category(self) -> None:

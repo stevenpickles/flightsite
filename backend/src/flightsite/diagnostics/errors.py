@@ -46,9 +46,13 @@ INGESTION: Final = "ingestion"
 DATABASE: Final = "database"
 ENRICHMENT: Final = "enrichment"
 WEBSOCKET: Final = "websocket"
+#: Slice 077: feeder status polling. Its own category rather than
+#: ``ingestion``: a network the receiver feeds going away says nothing about
+#: whether FlightSite is receiving, and the Health page must not suggest it.
+FEEDERS: Final = "feeders"
 OTHER: Final = "other"
 
-CATEGORIES: Final[tuple[str, ...]] = (INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, OTHER)
+CATEGORIES: Final[tuple[str, ...]] = (INGESTION, DATABASE, ENRICHMENT, WEBSOCKET, FEEDERS, OTHER)
 
 #: Logger-name prefixes mapped to categories. The longest matching prefix wins,
 #: so a specific module outranks its parent package.
@@ -67,6 +71,7 @@ _CATEGORY_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("flightsite.metadata", ENRICHMENT),
     ("flightsite.api.ws", WEBSOCKET),
     ("flightsite.live", WEBSOCKET),
+    ("flightsite.feeders", FEEDERS),
 )
 
 #: How many records each category retains. Small enough that the whole buffer

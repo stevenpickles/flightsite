@@ -613,6 +613,73 @@ def _error_payload(entry: RecentError) -> dict[str, Any]:
     }
 
 
+#: ``feeders.docker_socket`` as diagnostics reports it (slice 077). The path
+#: itself is never published — ``docs/SECURITY.md`` §9 keeps filesystem paths
+#: off the read-only API — only whether it is set and whether it answers.
+DOCKER_SOCKET_AVAILABLE: Final = "available"
+DOCKER_SOCKET_UNSET: Final = "unset"
+DOCKER_SOCKET_UNREACHABLE: Final = "unreachable"
+_DOCKER_SOCKET_STATES: Final = frozenset(
+    {DOCKER_SOCKET_AVAILABLE, DOCKER_SOCKET_UNSET, DOCKER_SOCKET_UNREACHABLE}
+)
+_FEEDER_STATES: Final[tuple[str, ...]] = ("up", "degraded", "down", "unknown")
+
+
+def _field(item: Any, name: str) -> Any:
+    """Read ``name`` from an object or a mapping — the report's shape is A's."""
+    if isinstance(item, Mapping):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def _feeders_section(app: FastAPI) -> tuple[dict[str, Any], str]:
+    """Slice 077: how many configured feeders are in each state.
+
+    Counts only — the per-feeder detail is ``GET /api/v1/feeders``'s, and a
+    count carries nothing a vendor document could have leaked into it. Any
+    feeder ``down`` rolls the overall status up to ``degraded``, never to
+    ``down``: a network the receiver feeds going away is worth a banner, but
+    FlightSite itself is still receiving, recording and serving. ``unknown``
+    (a socket-only signal with no socket, a first poll not yet made) moves
+    nothing, for the reason :class:`~flightsite.activity.FeederEpisode` gives.
+
+    ``docker_socket`` is ``unset`` when the owner has not opted in, and
+    otherwise whatever the feeder service last learned about it — reported as
+    ``available`` until the service says it could not reach it.
+    """
+    settings = _state(app, "settings")
+    feeder_settings = getattr(settings, "feeders", None)
+    entries = getattr(feeder_settings, "entries", None) or ()
+    socket_path = getattr(feeder_settings, "docker_socket", None)
+
+    counts = dict.fromkeys(_FEEDER_STATES, 0)
+    socket_state = DOCKER_SOCKET_UNSET if socket_path is None else DOCKER_SOCKET_AVAILABLE
+
+    service = _state(app, "feeders")
+    report_source = getattr(service, "report", None)
+    report = report_source() if callable(report_source) else report_source
+    if report is not None:
+        for feeder in _field(report, "feeders") or ():
+            state = _field(feeder, "state")
+            state = str(getattr(state, "value", state))
+            counts[state if state in counts else "unknown"] += 1
+        reported = _field(report, "docker_socket")
+        reported = getattr(reported, "value", reported)
+        if socket_path is not None and reported in _DOCKER_SOCKET_STATES:
+            socket_state = str(reported)
+    else:
+        # Constructed but not yet polled, or not constructed at all: every
+        # configured entry is honestly ``unknown``.
+        counts["unknown"] = len(entries)
+
+    section = {
+        "configured": len(entries),
+        **counts,
+        "docker_socket": socket_state,
+    }
+    return section, STATUS_DEGRADED if counts["down"] > 0 else STATUS_OK
+
+
 def _recent_errors(ring: ErrorRing) -> dict[str, list[dict[str, Any]]]:
     """SPEC §67: recent ingestion / database / enrichment / WebSocket errors."""
     snapshot = ring.snapshot(limit=RECENT_ERROR_LIMIT)
@@ -682,6 +749,7 @@ async def collect_diagnostics(
     quick_check, quick_check_status = _quick_check_section(app)
     recovery, recovery_status = _recovery_section(app)
     metadata, metadata_status = await _metadata_section(app, moment)
+    feeders, feeders_status = _feeders_section(app)
 
     database_status = _worst(
         quick_check_status,
@@ -692,7 +760,7 @@ async def collect_diagnostics(
 
     payload: dict[str, Any] = {
         "generated_at": _iso(moment),
-        "status": _worst(decoder_status, database_status, metadata_status),
+        "status": _worst(decoder_status, database_status, metadata_status, feeders_status),
         "ready": bool(getattr(readiness, "is_ready", False)),
         "subsystems": dict(readiness.snapshot()) if readiness is not None else {},
         "versions": _versions(schema_revision),
@@ -713,6 +781,7 @@ async def collect_diagnostics(
         "notifications": _notifications_section(settings),
         "enrichment": _enrichment_section(app, counter_values, moment),
         "websocket": _websocket_section(app, counter_values),
+        "feeders": feeders,
         "counters": dict(counter_values),
         "recent_errors": _recent_errors(buffer),
     }
