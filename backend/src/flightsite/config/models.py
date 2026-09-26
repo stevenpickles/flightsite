@@ -346,6 +346,14 @@ def _check_feeder_name(value: str, *, what: str) -> str:
     return stripped
 
 
+def _is_cleared(value: Any) -> bool:
+    """True for a ``stats_urls`` value that means "remove this key"."""
+    if value is None:
+        return True
+    raw = value.get_secret_value() if isinstance(value, SecretStr) else value
+    return isinstance(raw, str) and not raw.strip()
+
+
 class FeederEntry(_ConfigModel):
     """One network the receiver feeds, or one sibling service — slice 077.
 
@@ -436,8 +444,8 @@ class FeederSettings(_ConfigModel):
     everywhere secrets are masked (:func:`secret_field_paths` walks mapping
     values), and reached only through the internal ``stats-link`` redirect —
     never through ``/api/v1``. Keys are validated for entry-name *shape* only,
-    so pasting a URL before adding its entry is harmless. A ``null`` value in
-    an update removes that key; the mask leaves it unchanged.
+    so pasting a URL before adding its entry is harmless. A ``null`` or blank
+    value in an update removes that key; the mask leaves it unchanged.
     """
 
     poll_interval_s: int = Field(default=15, ge=5, le=120)
@@ -478,10 +486,10 @@ class FeederSettings(_ConfigModel):
     @field_validator("stats_urls", mode="before")
     @classmethod
     def _drop_cleared(cls, value: Any) -> Any:
-        # ``null`` is how an update clears one stored URL: the file layers are
-        # deep-merged, so omitting a key can never remove it.
+        # ``null`` or a blank string is how an update clears one stored URL:
+        # the file layers are deep-merged, so omitting a key can never remove it.
         if isinstance(value, Mapping):
-            return {key: url for key, url in value.items() if url is not None}
+            return {key: url for key, url in value.items() if not _is_cleared(url)}
         return value
 
     @field_validator("stats_urls")

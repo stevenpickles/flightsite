@@ -257,3 +257,33 @@ def test_a_null_stats_url_is_dropped() -> None:
         {"stats_urls": {"fr24": None, "flightaware": "https://flightaware.com/x"}}
     )
     assert set(feeders.stats_urls) == {"flightaware"}
+
+
+@pytest.mark.parametrize("cleared", [None, "", "   "])
+def test_a_null_or_blank_stats_url_is_dropped(cleared: str | None) -> None:
+    feeders = _validate(stats_urls={"fr24": cleared, "flightaware": "https://flightaware.com/x"})
+    assert set(feeders.stats_urls) == {"flightaware"}
+
+
+def test_web_url_is_allowed_on_every_kind() -> None:
+    needs = {
+        "url": "http://host.docker.internal:8080/",
+        "host": "feed.example.com",
+        "container": "c",
+    }
+    for kind in typing.get_args(FeederKind):
+        entry = {"name": "x", "label": "X", "kind": kind, "web_url": "http://fermi.local/"}
+        entry.update({field: needs[field] for field in FEEDER_KIND_REQUIRED_FIELDS.get(kind, ())})
+        assert str(_validate(entries=[entry]).entries[0].web_url) == "http://fermi.local/"
+
+
+def test_an_unknown_field_is_reported_on_its_own_cell() -> None:
+    entries = [
+        {"name": "a", "label": "A", "kind": "link_only"},
+        {"name": "b", "label": "B", "kind": "link_only"},
+        {"name": "c", "label": "C", "kind": "link_only", "colour": "red"},
+    ]
+    with pytest.raises(ValidationError) as exc:
+        _validate(entries=entries)
+    assert _locs(exc) == [("entries", 2, "colour")]
+    assert exc.value.errors()[0]["type"] == "extra_forbidden"

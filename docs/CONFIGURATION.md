@@ -495,7 +495,7 @@ Handling:
   the value itself is never served. Submitting the mask back means "leave unchanged";
   submitting `null` clears it. For stats URLs this is per key: `stats_urls` comes back
   as `{name: "•••"}`, `secrets_set` gains a `feeders.stats_urls.<name>` flag for each
-  stored URL, and `{"fr24": null}` removes that one URL.
+  stored URL, and `{"fr24": null}` (or an empty string) removes that one URL.
 - Masked in logs and redacted from diagnostics error records.
 - **Excluded from backups by default** — `flightsite-backup` includes them only with
   an explicit `--include-secrets`, and records the choice in the archive manifest.

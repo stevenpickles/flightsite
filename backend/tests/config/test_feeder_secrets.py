@@ -122,7 +122,7 @@ def test_round_trip_keeps_masked_replaces_new_and_clears_null(
     public = configured.dump_public()
     public["feeders"]["stats_urls"] = {
         "flightaware": SECRET_MASK,  # sent back as given: unchanged
-        "fr24": None,  # cleared
+        "fr24": "",  # cleared (null does the same)
         "opensky": "https://opensky-network.org/receiver-profile?s=sentinel-os",  # new
     }
     saved = store.apply_update({"feeders": public["feeders"]})
