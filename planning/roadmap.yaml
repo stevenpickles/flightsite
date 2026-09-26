@@ -133,6 +133,13 @@ releases:
       ordering and not-yet states), plus a metadata import that no longer
       starves the live pipeline and per-consumer drop attribution (slices
       075-076; migration 0016). Recorded 2026-09-25."
+  - version: "v0.10.0"
+    after_phase: 8
+    theme: "Feeders: one page for every network the receiver streams to — status,
+      last data sent, MLAT sync, gaps and availability over the observed span,
+      links to the networks and their feed-stats pages, and to the sibling local
+      pages; opt-in Docker socket for log-only feeds (slice 077; migration 0017;
+      ADR-0017). Recorded 2026-09-26."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
