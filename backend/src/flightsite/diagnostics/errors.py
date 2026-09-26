@@ -167,20 +167,11 @@ def secrets_from_settings(settings: Settings | None) -> tuple[str, ...]:
     if settings is None:
         return ()
 
-    from flightsite.config.models import Settings as SettingsModel
-    from flightsite.config.models import secret_field_paths
+    from flightsite.config.models import iter_secret_values
 
-    values: list[str] = []
-    for path in secret_field_paths(SettingsModel):
-        node: Any = settings
-        for part in path:
-            node = getattr(node, part, None)
-            if node is None:
-                break
-        reveal = getattr(node, "get_secret_value", None)
-        if reveal is not None:
-            values.append(str(reveal()))
-    return tuple(values)
+    # Mapping-valued secrets (``feeders.stats_urls``, slice 077) are yielded
+    # one value at a time, so each stored stats URL is redacted on its own.
+    return tuple(secret.get_secret_value() for _, secret in iter_secret_values(settings))
 
 
 @dataclass(frozen=True, slots=True)
