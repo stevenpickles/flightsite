@@ -30,12 +30,13 @@ Write cost, stated rather than assumed:
   30-second flush: the ORM leaves an unchanged attribute out of the UPDATE,
   so the entry moves only when the callsign actually changes.
 * ``aircraft_metadata_resolved`` — replaced wholesale by a metadata promotion
-  (:mod:`flightsite.metadata.repository`), so both indexes are rebuilt inside
-  that swap. Replaying a 900k-row swap in memory measured 1.5 s without them
-  and 3.4 s with them. That is time the single writer is held, which slice 075
-  worked to bound; a couple of seconds on an import that runs at most daily
-  was judged worth a search that does not scan the metadata table on every
-  keystroke.
+  (:mod:`flightsite.metadata.repository`), inside the writer-held swap slice
+  075 worked to keep short. Maintained row by row through that swap's bulk
+  copy, the two indexes tripled it (a 900k-row replay on disk: ~20 s without
+  them, ~62 s with them), so the swap drops them before the copy and rebuilds
+  them after (``SEARCH_INDEXES``), which measured ~21 s — within noise of not
+  having them. The definitions there and here must match;
+  ``tests/metadata/test_search_indexes_survive_promotion.py`` checks it.
 
 Building the indexes is a one-off sort of existing rows — about a second for
 all three at the sizes above. Every step is conditional, because SQLite DDL

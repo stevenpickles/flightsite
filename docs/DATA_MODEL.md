@@ -345,9 +345,10 @@ CREATE INDEX ix_amr_operator_nocase     ON aircraft_metadata_resolved(operator_n
 
 The two `NOCASE` indexes (rev 0018, slice 083) serve the Aircraft page's
 case-insensitive prefix search (`docs/API.md` §3.5 `q`); `type_code` needs none because
-it is stored upper-case. They are rebuilt with the table on every promotion, which
-lengthens the promotion's single-writer swap: replaying a 900k-row swap measured 1.5 s
-without them and 3.4 s with them.
+it is stored upper-case. The promotion swap drops both before its bulk copy and rebuilds
+them after, inside the same transaction: maintained row by row they tripled the
+single-writer swap (a 900k-row replay on disk: ~20 s without them, ~62 s maintaining
+them), while a drop-and-rebuild measured ~21 s — within noise of not having them.
 
 Rebuilt whole on every metadata import — but **not** inside the promotion transaction.
 Resolving an airframe is Python work, and doing it for a million of them under the single
