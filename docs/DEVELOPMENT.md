@@ -24,7 +24,7 @@ compose.yaml Docker Compose deployment                      — arrives in slice
 | --- | --- |
 | Backend | Python 3.12, [uv](https://docs.astral.sh/uv/), FastAPI, Pydantic, SQLAlchemy 2.x (async, aiosqlite), Alembic |
 | Backend quality | ruff (format + lint), mypy (strict), pytest + pytest-asyncio, coverage (≥ 80% global) |
-| Frontend | Node 22 LTS, npm, Vite, React 18, TypeScript (strict), Tailwind CSS, shadcn/ui, Lucide, Zustand, TanStack Query, ECharts, MapLibre GL JS |
+| Frontend | Node 24 LTS (22 still supported), npm, Vite, React 18, TypeScript (strict), Tailwind CSS, shadcn/ui, Lucide, Zustand, TanStack Query, ECharts, MapLibre GL JS |
 | Frontend quality | ESLint, Prettier, tsc, Vitest + React Testing Library, coverage (≥ 70% global) |
 | E2E | Playwright (Chromium, Firefox, WebKit where practical) |
 | CI/CD | GitHub Actions; GHCR for images (`linux/arm64` + `linux/amd64`) |
@@ -40,7 +40,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                    # strict type checking
 uv run flightsite-serve        # serve on :8000 (or: python -m flightsite)
 
-# frontend (Node >= 22)
+# frontend (Node 24 LTS; >= 22 works)
 cd frontend
 npm install
 npm run test:coverage          # Vitest + RTL, coverage gate (>= 70%)
