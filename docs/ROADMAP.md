@@ -167,6 +167,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 076 | Site review remediation | 075 | opus | high | Fix every finding of the 2026-09-20 formal site review (`docs/reviews/2026-09-20-site-review.md`): rollup day keys from the live timezone, basemap layer loss, invisible status text, error boundaries, responsive shell, refresh/retry on every page, ordering and 'not yet' semantics, raw strings, and the per-page usefulness gaps |
 | 077 | Feeders page | 033, 042, 076 | opus | medium | `/receiver/feeders`: status of every network the receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, AeroDataBox, OpenSky) from their local status documents and, opt-in via the Docker socket, their container logs; links to each network and its stats page (URLs kept in secrets.yaml), gap timeline and connection statistics, and links to sibling local pages such as tar1090 and graphs1090 (issue #215; migration 0017; v0.10.0) |
 | 078 | Feeder writes survive a cancelled poll task | 077 | opus | low | Hotfix: the feeder service shields its write from the poll task's cancellation and settles it on stop(), so the writer connection is never stranded and no episode is left open (issue #218) |
+| 079 | Dependency upkeep | 078 | opus | low | Fix the time-of-day analytics test that failed every Dependabot PR's backend job; Dependabot watches the uv-managed backend and stops proposing Python 3.13+ and odd Node majors; vitest 5 with coverage-v8 5 together; Node 24 LTS for the builder image and CI (issue #221) |
 
 ## Parallelization Guide
 
