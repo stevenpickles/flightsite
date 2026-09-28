@@ -26,15 +26,13 @@ export interface NavItem {
  * The app's sidebar sections, in order. Live Map is the index route
  * (SPEC.md §10: the app is a live radar app first).
  *
- * The first seven are SPEC §10's fixed primary sections. Activity, Health
- * and Feeders (roadmap slice 082, issue #225) were routed from slices 035,
- * 042 and 077 onward but reached only from in-page links — a usability
- * review of the shipped app (`docs/design/080-feature-program.md` §1) found
- * this made all three effectively undiscoverable. They are listed here as
- * ordinary sidebar entries rather than folded into an eighth SPEC §10
- * "primary section": nothing about their own routes, layouts or in-page
- * entry points changes, only their reachability from the rail. `routes.tsx`
- * still hosts all three as it always did.
+ * SPEC §10's ten primary sections. Activity, Health and Feeders joined the
+ * original seven by the owner's §10 amendment of 2026-09-28 (roadmap slice
+ * 082, issue #225): routed since slices 035, 042 and 077 but reached only
+ * from in-page links, which the 080 survey
+ * (`docs/design/080-feature-program.md` §1) found made all three effectively
+ * undiscoverable. Their routes, layouts and in-page entry points are
+ * unchanged; Feeders keeps its `/receiver/feeders` path.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   {

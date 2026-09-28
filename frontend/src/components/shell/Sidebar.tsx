@@ -25,7 +25,7 @@ import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/useUiStore";
 
-/** The seven-section nav list, shared between the desktop sidebar and the
+/** The primary-section nav list, shared between the desktop sidebar and the
  * mobile drawer. Desktop alone gets the `collapsed` icon-only variant with
  * tooltips — the mobile drawer, opened deliberately by tapping the rail's
  * menu button, always shows full labels. */

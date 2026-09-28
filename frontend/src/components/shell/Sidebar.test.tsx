@@ -64,7 +64,7 @@ function installMatchMedia(initialMatches: boolean) {
 }
 
 describe("Sidebar", () => {
-  it("renders every nav section — SPEC §10's seven plus Activity, Health and Feeders — as links in a nav landmark", () => {
+  it("renders every primary section (SPEC §10, ten since 2026-09-28) as links in a nav landmark", () => {
     renderApp();
     const nav = screen.getByRole("navigation", { name: /primary/i });
     for (const item of NAV_ITEMS) {
@@ -208,7 +208,7 @@ describe("Sidebar below the md breakpoint (R1-07, R2-08, R3-07, R4-06)", () => {
     installMatchMedia(true);
     renderApp();
 
-    // Only the rail's menu button — the seven links are not directly
+    // Only the rail's menu button — the section links are not directly
     // reachable, unlike desktop where they're always in the tree.
     expect(
       screen.getByRole("button", { name: /open navigation menu/i }),
@@ -222,7 +222,7 @@ describe("Sidebar below the md breakpoint (R1-07, R2-08, R3-07, R4-06)", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
-  it("opens an overlay drawer with all seven links and moves focus into it", async () => {
+  it("opens an overlay drawer with every section link and moves focus into it", async () => {
     installMatchMedia(true);
     const user = userEvent.setup();
     renderApp();
