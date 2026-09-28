@@ -79,6 +79,7 @@ from flightsite.api.schemas import (
     SightingSortKey,
     SortOrder,
 )
+from flightsite.api.search import MAX_QUERY_LENGTH
 from flightsite.api.serializers import (
     airport_feature_collection_payload,
     analytics_aircraft_payload,
@@ -423,13 +424,27 @@ async def aircraft_history(
     ] = None,
     operator_group: Annotated[str | None, Query(description="Curated operator group slug.")] = None,
     type: Annotated[str | None, Query(description="Exact ICAO type designator match.")] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_QUERY_LENGTH,
+            description=(
+                "Case-insensitive, literal prefix over ICAO address, registration, "
+                "most recent callsign, type designator and operator. Trimmed; "
+                "blank is ignored. Filters this list only — not a global search."
+            ),
+            examples=["G-EZ"],
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Every airframe this receiver has ever sighted — ``docs/API.md`` §3.5.
 
     Sortable and filterable per §3.5; SPEC §56's columns. ``total`` is the
     exact count of rows matching the filters (see
     :mod:`flightsite.api.history` for why this endpoint does not exercise
-    §2.4's allowance to omit or approximate it).
+    §2.4's allowance to omit or approximate it). ``q`` (slice 083) is the
+    list-scoped prefix search :mod:`flightsite.api.search` defines; it
+    combines with the other filters and with sorting and pagination.
     """
     items, total = await _context(request).aircraft_history(
         limit=limit,
@@ -439,6 +454,7 @@ async def aircraft_history(
         classification=classification,
         operator_group=operator_group,
         type_code=type,
+        q=q,
     )
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
@@ -626,12 +642,26 @@ async def sightings_list(
         bool | None,
         Query(description="Restrict to sightings still open (`ended_at` is null)."),
     ] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_QUERY_LENGTH,
+            description=(
+                "Case-insensitive, literal prefix of the ICAO address or the last "
+                "callsign. Trimmed; blank is ignored. Filters this list only — not "
+                "a global search."
+            ),
+            examples=["BAW"],
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """The chronological sightings log — ``docs/API.md`` §3.6, SPEC §57.
 
     Sortable and filterable per §3.6; ``total`` is always ``null`` (see
     :mod:`flightsite.api.sightings` for why this endpoint does not exercise
-    §2.4's exact-count path the way ``/aircraft`` does).
+    §2.4's exact-count path the way ``/aircraft`` does). ``icao`` stays an
+    exact six-hex-digit match; ``q`` (slice 083) is the prefix search over
+    address or callsign that the Sightings page's filter box sends.
     """
     items = await _context(request).sighting_list(
         limit=limit,

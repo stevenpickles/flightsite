@@ -345,6 +345,7 @@ class LiveApiContext:
         classification: str | None = None,
         operator_group: str | None = None,
         type_code: str | None = None,
+        q: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """One page of the Aircraft page's list, serialized — §3.5."""
         rows, total = await self.history.list_aircraft(
@@ -355,6 +356,7 @@ class LiveApiContext:
             classification=classification,
             operator_group=operator_group,
             type_code=type_code,
+            q=q,
         )
         return [aircraft_history_row_payload(row) for row in rows], total
 
