@@ -2542,7 +2542,7 @@ slices:
     title: "Phone Live Map and installable shell"
     phase: 9
     branch: "084-phone-map-pwa"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Make the Live Map usable one-handed on a phone and let FlightSite install to a home screen (issue #227)."
     scope:
