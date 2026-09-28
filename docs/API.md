@@ -373,9 +373,30 @@ severity. Same aircraft object shape, `interesting` always non-null.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/aircraft` | Paginated historical aircraft list. Sort keys: `registration`, `icao`, `type`, `operator`, `classification`, `first_seen`, `last_seen`, `sighting_count`, `closest_approach_nm`, `max_range_nm`. Filters: `classification`, `operator_group`, `type`. |
+| `GET /api/v1/aircraft` | Paginated historical aircraft list. Sort keys: `registration`, `icao`, `type`, `operator`, `classification`, `first_seen`, `last_seen`, `sighting_count`, `closest_approach_nm`, `max_range_nm`. Filters: `classification`, `operator_group`, `type`, `q` (search, below). |
 | `GET /api/v1/aircraft/{icao}` | Full aircraft detail: identity, metadata with provenance, classification, lifetime records. |
 | `GET /api/v1/aircraft/{icao}/sightings` | Paginated sightings for one aircraft. |
+
+**Search: `q`** (slice 083). Finds airframes whose **ICAO address, registration, most
+recent callsign, ICAO type designator or operator name** starts with `q`:
+
+- **Prefix, not substring.** `q=G-EZ` finds `G-EZTH`; `q=EZTH` does not.
+- **Case-insensitive** for ASCII letters. `q=g-ez`, `q=A1B2` and `q=easyj` all match.
+- **Literal.** `%`, `_` and `\` match themselves; there is no pattern syntax.
+- **Trimmed**, and a blank `q` is ignored — `?q=%20` is the unfiltered list.
+- **At most 32 characters.** A longer `q` is a `422` validation error, not a truncation.
+- **Most recent callsign** is the `callsign_last` of the airframe's latest sighting: an
+  airliner that flew `BAW12` last month and `BAW7` today is found by `BAW7`, not by
+  `BAW12` (both by `BAW`).
+
+`q` combines with the other filters (`AND`), and sorting and pagination apply to the
+filtered set; `total` is the exact count of airframes matching every filter, `q`
+included. It is served from indexes (rev 0018), so its cost follows the number of
+matching rows rather than the size of history.
+
+`q` filters **this list only**. It is not a global search across aircraft, sightings,
+alerts or places — that is a deferred non-goal (SPEC §79); SPEC §37 scopes search to
+the list page it is typed on. `GET /api/v1/sightings` has its own `q` (§3.7).
 
 Lifetime record block (SPEC §53):
 
@@ -425,11 +446,21 @@ size class to include.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
 `started_at`. A value without a timezone is interpreted as UTC rather than rejected.
+
+**`icao` and `q`.** `icao` is an **exact** match on a lowercase six-hex-digit address
+(`^[0-9a-f]{6}$`; anything else is a `422`), unchanged since slice 030. `q` (slice 083)
+is the search the Sightings page's filter box sends: sightings whose **ICAO address or
+last callsign starts with `q`**, with the same rules as `/aircraft`'s `q` (§3.5) —
+prefix, ASCII case-insensitive, literal (`%`, `_`, `\` are not wildcards), trimmed,
+blank ignored, at most 32 characters (`422` beyond). `q=BAW` finds `BAW12` and `BAW7`;
+`q=ae14` finds every sighting of `ae1463`. Both may be given and combine with `AND`.
+Like `/aircraft`'s, this `q` filters this list only and is not a global search (SPEC
+§37, §79).
 
 **Open sightings.** Every list row and the detail object carry two fields that say
 whether the sighting is still running, and for how long:

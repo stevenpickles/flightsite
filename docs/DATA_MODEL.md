@@ -160,6 +160,7 @@ CREATE INDEX ix_sightings_aircraft ON sightings(aircraft_id, started_ms);
 CREATE INDEX ix_sightings_started  ON sightings(started_ms);
 CREATE INDEX ix_sightings_open     ON sightings(ended_ms) WHERE ended_ms IS NULL;
 CREATE INDEX ix_sightings_max_range ON sightings(max_range_nm, id);
+CREATE INDEX ix_sightings_callsign ON sightings(callsign_last COLLATE NOCASE, aircraft_id);
 ```
 
 The partial index on open sightings makes unclean-shutdown recovery (SPEC §71) and the
@@ -173,6 +174,14 @@ documented sorts — `duration_s` and `closest_approach_nm` — and the `interes
 stay unindexed on purpose: every index here is rewritten by the single writer on each
 30-second flush of an open sighting, and a second sort index measured about 2.6x the
 baseline per-sighting write cost again (issue #115; `docs/PERFORMANCE.md` §7.7).
+
+`ix_sightings_callsign` (rev 0018, slice 083) serves the case-insensitive callsign
+prefix in `docs/API.md`'s `q` search, on `/sightings` and on the Aircraft page's "most
+recent callsign"; `aircraft_id` rides along so "which airframes flew this prefix" is
+read from the index alone. It does not carry the flush cost above: `callsign_last` is
+written only when the callsign actually changes (the ORM leaves an unchanged column out
+of the flush's `UPDATE`), so it costs one entry per sighting. Without it, a prefix
+matching nothing read every sighting — 1.6 s over slice 050's 1.64M.
 
 ### 2.4 Track storage — slice 052 (`sighting_track_checkpoints`, `sighting_tracks`)
 
@@ -330,7 +339,15 @@ CREATE TABLE aircraft_metadata_resolved (
 CREATE INDEX ix_amr_registration ON aircraft_metadata_resolved(registration);
 CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
+CREATE INDEX ix_amr_registration_nocase ON aircraft_metadata_resolved(registration COLLATE NOCASE);
+CREATE INDEX ix_amr_operator_nocase     ON aircraft_metadata_resolved(operator_name COLLATE NOCASE);
 ```
+
+The two `NOCASE` indexes (rev 0018, slice 083) serve the Aircraft page's
+case-insensitive prefix search (`docs/API.md` §3.5 `q`); `type_code` needs none because
+it is stored upper-case. They are rebuilt with the table on every promotion, which
+lengthens the promotion's single-writer swap: replaying a 900k-row swap measured 1.5 s
+without them and 3.4 s with them.
 
 Rebuilt whole on every metadata import — but **not** inside the promotion transaction.
 Resolving an airframe is Python work, and doing it for a million of them under the single
@@ -1138,3 +1155,4 @@ field names; ingest normalizes before anything is persisted.
 | 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |
 | 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |
 | 077 | `feeder_episodes`, `feeder_samples` (rev 0017 — two new tables, no data movement; §6.6) |
+| 083 | `ix_amr_registration_nocase`, `ix_amr_operator_nocase`, `ix_sightings_callsign` (rev 0018 — three indexes for the list pages' `q` search, no data movement) |
