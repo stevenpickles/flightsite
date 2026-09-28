@@ -147,7 +147,35 @@ describe("SightingsPage", () => {
     });
   });
 
-  it("filters by icao and persists it in the URL", async () => {
+  it("searches by an address prefix and persists it in the URL as q (slice 083)", async () => {
+    const { fetchMock } = installSightingsApiMock({
+      list: {
+        items: [sightingRow()],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp("/sightings?page=3");
+    await screen.findByText("N302DN");
+
+    await user.type(screen.getByLabelText(/aircraft or callsign/i), "ae14");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(lastFetchedSightingsUrl(fetchMock).searchParams.get("q")).toBe(
+        "ae14",
+      );
+    });
+    expect(lastFetchedSightingsUrl(fetchMock).searchParams.has("icao")).toBe(
+      false,
+    );
+    expect(router.state.location.search).toContain("q=ae14");
+    expect(router.state.location.search).not.toContain("page=");
+  });
+
+  it("accepts a callsign prefix — what used to be rejected as not hex", async () => {
     const { fetchMock } = installSightingsApiMock({
       list: {
         items: [sightingRow()],
@@ -160,19 +188,23 @@ describe("SightingsPage", () => {
     const { router } = renderApp("/sightings");
     await screen.findByText("N302DN");
 
-    await user.type(screen.getByLabelText(/aircraft \(icao\)/i), "ae1463");
+    const field = screen.getByLabelText(/aircraft or callsign/i);
+    expect(field).toHaveAccessibleDescription(/icao address or callsign/i);
+    await user.type(field, "  baw ");
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(lastFetchedSightingsUrl(fetchMock).searchParams.get("icao")).toBe(
-        "ae1463",
+      expect(lastFetchedSightingsUrl(fetchMock).searchParams.get("q")).toBe(
+        "baw",
       );
     });
-    expect(router.state.location.search).toContain("icao=ae1463");
+    expect(field).toHaveValue("baw");
+    expect(field).not.toHaveAttribute("aria-invalid", "true");
+    expect(router.state.location.search).toContain("q=baw");
   });
 
-  it("rejects a malformed icao filter without changing the URL", async () => {
-    installSightingsApiMock({
+  it("keeps an exact icao link working, and replaces it once the box is edited", async () => {
+    const { fetchMock } = installSightingsApiMock({
       list: {
         items: [sightingRow()],
         total: null,
@@ -181,16 +213,42 @@ describe("SightingsPage", () => {
       },
     });
     const user = userEvent.setup();
-    const { router } = renderApp("/sightings");
+    // The aircraft detail page's "all sightings" link.
+    const { router } = renderApp("/sightings?icao=ae1463");
     await screen.findByText("N302DN");
 
-    await user.type(screen.getByLabelText(/aircraft \(icao\)/i), "not-hex");
+    expect(lastFetchedSightingsUrl(fetchMock).searchParams.get("icao")).toBe(
+      "ae1463",
+    );
+    const field = screen.getByLabelText(/aircraft or callsign/i);
+    expect(field).toHaveValue("ae1463");
+
+    await user.clear(field);
+    await user.type(field, "DAL");
     await user.keyboard("{Enter}");
 
-    expect(
-      await screen.findByText(/enter a 6-character hex icao address/i),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(lastFetchedSightingsUrl(fetchMock).searchParams.get("q")).toBe(
+        "DAL",
+      );
+    });
+    expect(lastFetchedSightingsUrl(fetchMock).searchParams.has("icao")).toBe(
+      false,
+    );
     expect(router.state.location.search).not.toContain("icao=");
+  });
+
+  it("says nothing matches when a search finds no sightings", async () => {
+    installSightingsApiMock({
+      list: { items: [], total: null, limit: PAGE_SIZE, offset: 0 },
+    });
+
+    renderApp("/sightings?q=ZZZ9");
+
+    expect(
+      await screen.findByText(/no sightings match these filters/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/aircraft or callsign/i)).toHaveValue("ZZZ9");
   });
 
   it("toggles the open-now filter and persists it in the URL", async () => {

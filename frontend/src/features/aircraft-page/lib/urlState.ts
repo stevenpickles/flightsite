@@ -8,9 +8,9 @@
  * shared link stays short.
  *
  * `q` is stored the way the API reads it (`docs/API.md` §3.5): trimmed,
- * blank meaning absent, at most {@link MAX_SEARCH_LENGTH} characters — so a
+ * blank meaning absent, at most `MAX_SEARCH_LENGTH` characters — so a
  * hand-edited or over-long link degrades to a search the server accepts
- * rather than a 422.
+ * rather than a 422 (`features/history/lib/search.ts`).
  *
  * Pure `URLSearchParams` in and out, mirroring
  * `features/filters/lib/urlSync.ts`'s split: the hook that touches
@@ -18,14 +18,19 @@
  * so this half is unit-testable without one.
  */
 
+import { normalizeSearch } from "@/features/history/lib/search";
 import type { AircraftSortKey, SortOrder } from "@/lib/api/aircraft";
+
+// Shared with the Sightings page's filter; re-exported so this module stays
+// the Aircraft page's one import for everything its URL holds.
+export {
+  MAX_SEARCH_LENGTH,
+  normalizeSearch,
+} from "@/features/history/lib/search";
 
 export const DEFAULT_SORT: AircraftSortKey = "last_seen";
 export const DEFAULT_ORDER: SortOrder = "desc";
 export const PAGE_SIZE = 50;
-
-/** The API's cap on `q` (`MAX_QUERY_LENGTH` in `flightsite.api.search`). */
-export const MAX_SEARCH_LENGTH = 32;
 
 const SORT_KEYS: readonly AircraftSortKey[] = [
   "registration",
@@ -61,16 +66,6 @@ export const DEFAULT_TABLE_STATE: AircraftTableState = {
 
 function isSortKey(value: string): value is AircraftSortKey {
   return (SORT_KEYS as readonly string[]).includes(value);
-}
-
-/** A search as the API will read it: trimmed, capped at
- * {@link MAX_SEARCH_LENGTH}, and `undefined` when nothing is left — so an
- * input holding only spaces is "no search", not a search for spaces. */
-export function normalizeSearch(
-  raw: string | null | undefined,
-): string | undefined {
-  const trimmed = (raw ?? "").trim().slice(0, MAX_SEARCH_LENGTH).trim();
-  return trimmed === "" ? undefined : trimmed;
 }
 
 /** Restores table state from a query string, defaulting anything absent or
