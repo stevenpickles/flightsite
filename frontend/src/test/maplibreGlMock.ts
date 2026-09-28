@@ -79,6 +79,9 @@ export class MapLibreMockMap {
   });
   jumpTo = vi.fn();
   fitBounds = vi.fn();
+  /** `RecenterButton` (roadmap slice 082's `H` shortcut) calls this on a
+   * recentre request. */
+  easeTo = vi.fn();
 
   /** When true, the next construction throws — simulating a browser with
    * no WebGL context (MapLibre throws from its constructor there). Reset by
