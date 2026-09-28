@@ -2482,7 +2482,7 @@ slices:
     title: "Shell, keyboard and sharing"
     phase: 9
     branch: "082-shell-keyboard-sharing"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Make every page reachable, every common action a keystroke away, and every view shareable (issue #225)."
     scope:
