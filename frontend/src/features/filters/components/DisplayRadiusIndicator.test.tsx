@@ -8,6 +8,7 @@ import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { defaultReceiverInfo } from "@/test/aircraftApiMock";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
 beforeEach(() => {
@@ -44,6 +45,19 @@ describe("DisplayRadiusIndicator", () => {
     render(<DisplayRadiusIndicator />);
     const indicator = screen.getByTestId("display-radius-indicator");
     expect(indicator).toHaveTextContent("1 aircraft beyond 250 nm hidden");
+  });
+
+  it("states the cap in the receiver's units", () => {
+    act(() => {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [makeAircraft({ icao: "bbbbbb", distance_nm: 400 })],
+        receiver: defaultReceiverInfo({ units: "metric" }),
+      });
+    });
+    render(<DisplayRadiusIndicator />);
+    expect(screen.getByTestId("display-radius-indicator")).toHaveTextContent(
+      "1 aircraft beyond 463 km hidden",
+    );
   });
 
   it("uses the display-radius config value, not always 250", () => {

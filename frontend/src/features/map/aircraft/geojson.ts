@@ -34,6 +34,7 @@ import {
   nextDensityLatched,
   ZOOM_LABELS_FULL,
 } from "@/features/map/labels/priority";
+import type { UnitSystem } from "@/lib/api/config";
 
 /** Opacity of a stale aircraft. SPEC §36 asks for staleness to read visually;
  * fading rather than hiding keeps a Mode S contact that has gone quiet on the
@@ -140,6 +141,10 @@ export interface AircraftFrameInput {
    * that hands over a picture without drawing a sequence.
    */
   densityLatched?: boolean;
+  /** The receiver's display units, for the altitude line of each label.
+   * Defaults to aviation units, which is also what the backend defaults to
+   * before a config has loaded. */
+  units?: UnitSystem;
 }
 
 function feature(
@@ -214,6 +219,7 @@ export function buildAircraftFeatureCollection(
     zoom = ZOOM_LABELS_FULL,
     visibleIcaos,
     dimmedIcaos,
+    units = "aviation",
   } = input;
   const features: AircraftFeature[] = [];
   // One decision for the whole frame, resolved once rather than per feature.
@@ -261,7 +267,7 @@ export function buildAircraftFeatureCollection(
         interesting,
         attention,
         severity: view.interesting?.severity ?? "",
-        label: renderLabelText(buildAircraftLabelLines(view), tier),
+        label: renderLabelText(buildAircraftLabelLines(view, units), tier),
       }),
     );
   }

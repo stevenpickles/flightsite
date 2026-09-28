@@ -21,8 +21,12 @@
  */
 
 import type { ActivityEvent } from "@/lib/api/activity";
+import type { UnitSystem } from "@/lib/api/config";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
-import { cardinalFromDegrees } from "@/features/receiver/lib/format";
+import {
+  cardinalFromDegrees,
+  formatDistance,
+} from "@/features/receiver/lib/format";
 
 export interface ActivityDescription {
   /** The row's headline. Never empty. */
@@ -62,11 +66,9 @@ function count(value: number): string {
   return value.toLocaleString();
 }
 
-function distance(value: number): string {
-  return `${value.toLocaleString(undefined, {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })} nm`;
+/** A one-decimal distance in the receiver's display units. */
+function distanceIn(units: UnitSystem): (valueNm: number) => string {
+  return (valueNm) => formatDistance(valueNm, units) ?? "";
 }
 
 /**
@@ -209,6 +211,7 @@ function describeMilestone(
 
 export function describeActivityEvent(
   event: ActivityEvent,
+  units: UnitSystem = "aviation",
 ): ActivityDescription {
   const { payload, icao } = event;
   switch (event.type) {
@@ -237,7 +240,7 @@ export function describeActivityEvent(
         detail: join([
           rangeNm === null
             ? null
-            : beating(rangeNm, num(payload, "previous_nm"), distance),
+            : beating(rangeNm, num(payload, "previous_nm"), distanceIn(units)),
           bearing === null
             ? null
             : `bearing ${Math.round(bearing)}° ${cardinalFromDegrees(bearing)}`,

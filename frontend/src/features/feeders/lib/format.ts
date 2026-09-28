@@ -19,6 +19,7 @@ import {
   formatCount,
   formatReceiverLocalDateTime,
 } from "@/features/receiver/lib/format";
+import type { UnitSystem } from "@/lib/api/config";
 import type { FeederAdsbOutStatus, FeederMlatStatus } from "@/lib/api/feeders";
 
 export { NOT_AVAILABLE };
@@ -79,9 +80,15 @@ export function formatPerMinute(count: number | null): string {
     : `${formatCount(Math.round(count))}/min`;
 }
 
-export function formatRangeNm(rangeNm: number | null): string {
-  return rangeNm === null
-    ? NOT_OBSERVED
+export function formatRangeNm(
+  rangeNm: number | null,
+  units: UnitSystem = "aviation",
+): string {
+  if (rangeNm === null) {
+    return NOT_OBSERVED;
+  }
+  return units === "metric"
+    ? `${formatCount(Math.round(rangeNm * 1.852))} km`
     : `${formatCount(Math.round(rangeNm))} nm`;
 }
 

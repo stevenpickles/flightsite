@@ -7,10 +7,13 @@
  */
 
 import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
+import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { formatRingLabel } from "@/features/map/geo/rings";
 
 export function DisplayRadiusIndicator() {
   const { distanceCappedCount, effectiveDistanceCapNm } =
     useFilteredLiveAircraft();
+  const units = useLiveAircraftStore((state) => state.receiver?.units);
 
   if (distanceCappedCount === 0) {
     return null;
@@ -22,7 +25,12 @@ export function DisplayRadiusIndicator() {
       data-testid="display-radius-indicator"
       className="pointer-events-none absolute bottom-3 right-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm"
     >
-      {distanceCappedCount} aircraft beyond {effectiveDistanceCapNm} nm hidden —
+      {distanceCappedCount} aircraft beyond{" "}
+      {formatRingLabel(
+        effectiveDistanceCapNm,
+        units === "metric" ? "km" : "nm",
+      )}{" "}
+      hidden —
       still tracked and recorded.
     </div>
   );

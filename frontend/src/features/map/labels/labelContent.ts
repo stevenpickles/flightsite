@@ -11,8 +11,9 @@
  * 2. **Operator** — renders only when the metadata field is non-null.
  *    Always null until slice 024 supplies it.
  * 3. **Altitude** — flight level above the ~FL180 transition altitude, feet
- *    with a thousands separator below it. `null` (and so no third line) for
- *    an altitude-unknown aircraft.
+ *    (or metres, when the receiver's units preference is metric) with a
+ *    thousands separator below it. `null` (and so no third line) for an
+ *    altitude-unknown aircraft.
  *
  * Kept as plain string functions, independent of MapLibre or a map
  * instance — the same split `icons/resolveIcon.ts` already uses for the
@@ -21,6 +22,7 @@
  */
 
 import type { LabelTier } from "@/features/map/labels/priority";
+import type { UnitSystem } from "@/lib/api/config";
 import type { LiveAircraft } from "@/lib/api/live";
 
 /** Prefixed onto line 1 when an aircraft carries an active interesting
@@ -45,6 +47,8 @@ export const INTERESTING_INDICATOR = "★";
 export const TRANSITION_ALTITUDE_FT = 18000;
 
 const THOUSANDS_FORMATTER = new Intl.NumberFormat("en-US");
+
+const FT_PER_M = 3.28084;
 
 /** The fields the label builder reads — a structural subset of
  * {@link LiveAircraft}, so callers (and tests) can build a label without a
@@ -95,26 +99,35 @@ export function buildOperatorLine(
 }
 
 /** Line 3: altitude, flight-level notation above the transition altitude,
- * feet with a thousands separator below it. `null` when altitude is
- * unknown. */
-export function formatAltitude(altitudeFt: number | null): string | null {
+ * feet (metres for `units = "metric"`) with a thousands separator below it.
+ * `null` when altitude is unknown. Flight levels stay flight levels in both
+ * systems: they are the feet-based aviation convention the detail panel also
+ * keeps (`aircraft-detail/lib/format.ts`), and the label has no room for the
+ * panel's "FL350 · 10,668 m" pair. */
+export function formatAltitude(
+  altitudeFt: number | null,
+  units: UnitSystem = "aviation",
+): string | null {
   if (altitudeFt === null) {
     return null;
   }
   if (altitudeFt >= TRANSITION_ALTITUDE_FT) {
     return `FL${Math.round(altitudeFt / 100)}`;
   }
-  return `${THOUSANDS_FORMATTER.format(Math.round(altitudeFt))} ft`;
+  return units === "metric"
+    ? `${THOUSANDS_FORMATTER.format(Math.round(altitudeFt / FT_PER_M))} m`
+    : `${THOUSANDS_FORMATTER.format(Math.round(altitudeFt))} ft`;
 }
 
 /** All three label lines for one aircraft. */
 export function buildAircraftLabelLines(
   aircraft: LabelSourceAircraft,
+  units: UnitSystem = "aviation",
 ): AircraftLabelLines {
   return {
     line1: buildIdentityLine(aircraft),
     line2: buildOperatorLine(aircraft),
-    line3: formatAltitude(aircraft.altitude_ft),
+    line3: formatAltitude(aircraft.altitude_ft, units),
   };
 }
 

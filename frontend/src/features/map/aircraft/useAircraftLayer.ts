@@ -67,6 +67,7 @@ export function useAircraftLayer(): void {
           includeTrack: true,
           filters: useFilterStore.getState().filters,
           displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
+          units: useLiveAircraftStore.getState().receiver?.units,
         });
       })
       .catch(() => {
@@ -95,6 +96,7 @@ export function useAircraftLayer(): void {
         includeTrack,
         filters: useFilterStore.getState().filters,
         displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
+        units: useLiveAircraftStore.getState().receiver?.units,
       });
     };
 
