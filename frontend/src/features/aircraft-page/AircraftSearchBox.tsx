@@ -1,7 +1,8 @@
 /**
  * The Aircraft page's filter box (roadmap slice 083, issue #226): find an
  * airframe by the identifier you remember — the start of its ICAO address,
- * registration, most recent callsign, type or operator.
+ * registration, any callsign it has flown, type or operator. It waits for
+ * {@link MIN_SEARCH_LENGTH} characters before searching.
  *
  * It filters *this list* and nothing else. A search box that also answered
  * sightings, alerts or places would be SPEC §79's deferred global search,
@@ -22,7 +23,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  isTooShort,
   MAX_SEARCH_LENGTH,
+  MIN_SEARCH_LENGTH,
   normalizeSearch,
 } from "@/features/aircraft-page/lib/urlState";
 
@@ -58,9 +61,13 @@ export function AircraftSearchBox({ value, onChange }: AircraftSearchBoxProps) {
     onChangeRef.current = onChange;
   });
 
+  const next = normalizeSearch(draft);
+  // One character is held back: no request, a hint instead, and whatever
+  // search is already committed stays until there is a better one.
+  const tooShort = isTooShort(next);
+
   useEffect(() => {
-    const next = normalizeSearch(draft);
-    if (next === value) {
+    if (next === value || tooShort) {
       return undefined;
     }
     const timer = setTimeout(() => {
@@ -69,12 +76,11 @@ export function AircraftSearchBox({ value, onChange }: AircraftSearchBoxProps) {
     return () => {
       clearTimeout(timer);
     };
-  }, [draft, value]);
+  }, [next, tooShort, value]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const next = normalizeSearch(draft);
-    if (next !== value) {
+    if (next !== value && !tooShort) {
       onChange(next);
     }
   }
@@ -128,6 +134,9 @@ export function AircraftSearchBox({ value, onChange }: AircraftSearchBoxProps) {
       <p id="aircraft-search-help" className="text-xs text-muted-foreground">
         Starts with an ICAO address, registration, callsign, type or operator.
         Not case-sensitive.
+      </p>
+      <p role="status" className="min-h-4 text-xs text-muted-foreground">
+        {tooShort ? `Type at least ${MIN_SEARCH_LENGTH} characters.` : ""}
       </p>
     </form>
   );

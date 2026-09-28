@@ -22,7 +22,7 @@
  * meaning exactly what it did.
  */
 
-import { normalizeSearch } from "@/features/history/lib/search";
+import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
 import type { SightingSortKey, SortOrder } from "@/lib/api/sightings";
 
 export const DEFAULT_SORT: SightingSortKey = "started_at";
@@ -105,7 +105,7 @@ export function parseSightingsTableState(
   const icao =
     icaoRaw !== undefined && ICAO_PATTERN.test(icaoRaw) ? icaoRaw : undefined;
 
-  const q = normalizeSearch(params.get(KEYS.q));
+  const q = searchFromUrl(params.get(KEYS.q));
 
   const fromRaw = params.get(KEYS.from);
   const from =

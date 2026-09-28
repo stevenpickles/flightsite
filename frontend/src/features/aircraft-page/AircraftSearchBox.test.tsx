@@ -131,4 +131,35 @@ describe("AircraftSearchBox", () => {
     );
     expect(screen.getByRole("search")).toBeInTheDocument();
   });
+
+  it("holds back a single character with a hint, and sends no request", () => {
+    const onChange = vi.fn();
+    render(<AircraftSearchBox value={undefined} onChange={onChange} />);
+
+    type(" a ");
+    act(() => vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2));
+    fireEvent.submit(input());
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Type at least 2 characters.",
+    );
+
+    type("ab");
+    act(() => vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS));
+
+    expect(onChange).toHaveBeenCalledWith("ab");
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("keeps the committed search while the box is cut back to one character", () => {
+    const onChange = vi.fn();
+    render(<AircraftSearchBox value="DAL" onChange={onChange} />);
+
+    type("D");
+    act(() => vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(/at least 2/);
+  });
 });

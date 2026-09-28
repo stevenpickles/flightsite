@@ -238,6 +238,31 @@ describe("SightingsPage", () => {
     expect(router.state.location.search).not.toContain("icao=");
   });
 
+  it("holds back a one-character search with a hint", async () => {
+    const { fetchMock } = installSightingsApiMock({
+      list: {
+        items: [sightingRow()],
+        total: null,
+        limit: PAGE_SIZE,
+        offset: 0,
+      },
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp("/sightings");
+    await screen.findByText("N302DN");
+
+    await user.type(screen.getByLabelText(/aircraft or callsign/i), "b");
+    await user.keyboard("{Enter}");
+
+    expect(
+      await screen.findByText("Type at least 2 characters."),
+    ).toBeInTheDocument();
+    expect(router.state.location.search).not.toContain("q=");
+    expect(lastFetchedSightingsUrl(fetchMock).searchParams.has("q")).toBe(
+      false,
+    );
+  });
+
   it("says nothing matches when a search finds no sightings", async () => {
     installSightingsApiMock({
       list: { items: [], total: null, limit: PAGE_SIZE, offset: 0 },

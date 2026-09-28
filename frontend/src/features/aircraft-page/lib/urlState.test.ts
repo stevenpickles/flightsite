@@ -129,6 +129,16 @@ describe("the q search key", () => {
     ).toHaveLength(MAX_SEARCH_LENGTH);
   });
 
+  it("drops a one-character search the filter box would never send", () => {
+    expect(
+      parseAircraftTableState(new URLSearchParams("q=a")).q,
+    ).toBeUndefined();
+    expect(parseAircraftTableState(new URLSearchParams("q=%20a%20")).q).toBe(
+      undefined,
+    );
+    expect(parseAircraftTableState(new URLSearchParams("q=ab")).q).toBe("ab");
+  });
+
   it("is kept literally — wildcards are the server's to escape", () => {
     expect(parseAircraftTableState(new URLSearchParams("q=N_%251")).q).toBe(
       "N_%1",

@@ -18,7 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  isTooShort,
   MAX_SEARCH_LENGTH,
+  MIN_SEARCH_LENGTH,
   normalizeSearch,
 } from "@/features/history/lib/search";
 import type { SightingsTableState } from "@/features/sightings/lib/urlState";
@@ -32,9 +34,15 @@ export interface SightingsFiltersProps {
 export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
   const [searchInput, setSearchInput] = useState(state.q ?? state.icao ?? "");
 
+  // One character is held back with a hint, as on the Aircraft page.
+  const tooShort = isTooShort(normalizeSearch(searchInput));
+
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const q = normalizeSearch(searchInput);
+    if (isTooShort(q)) {
+      return;
+    }
     setSearchInput(q ?? "");
     // The box replaces whatever aircraft filter the URL held: a prefix
     // search from here, or none — never both at once.
@@ -66,6 +74,9 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
           className="text-xs text-muted-foreground"
         >
           Start of an ICAO address or callsign; press Enter.
+        </p>
+        <p role="status" className="min-h-4 text-xs text-muted-foreground">
+          {tooShort ? `Type at least ${MIN_SEARCH_LENGTH} characters.` : ""}
         </p>
       </form>
 

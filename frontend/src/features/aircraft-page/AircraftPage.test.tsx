@@ -405,6 +405,28 @@ describe("AircraftPage filter box (slice 083)", () => {
     expect(searched).toHaveLength(1);
   });
 
+  it("sends nothing for a single character and says why", async () => {
+    const { fetchMock } = installAircraftApiMock({ list: listOf("N302DN") });
+    const user = userEvent.setup();
+    const { router } = renderApp("/aircraft");
+    await screen.findByText("N302DN");
+
+    await user.type(
+      screen.getByLabelText("Filter aircraft", { selector: "input" }),
+      "g",
+    );
+
+    expect(
+      await screen.findByText("Type at least 2 characters."),
+    ).toBeInTheDocument();
+    // Longer than the debounce: had it been going to search, it would have.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(listUrls(fetchMock).some((url) => url.searchParams.has("q"))).toBe(
+      false,
+    );
+    expect(router.state.location.search).not.toContain("q=");
+  });
+
   it("restores the search from a shared link", async () => {
     const { fetchMock } = installAircraftApiMock({ list: listOf("N302DN") });
 

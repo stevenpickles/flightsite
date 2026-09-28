@@ -18,13 +18,15 @@
  * so this half is unit-testable without one.
  */
 
-import { normalizeSearch } from "@/features/history/lib/search";
+import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
 import type { AircraftSortKey, SortOrder } from "@/lib/api/aircraft";
 
 // Shared with the Sightings page's filter; re-exported so this module stays
 // the Aircraft page's one import for everything its URL holds.
 export {
+  isTooShort,
   MAX_SEARCH_LENGTH,
+  MIN_SEARCH_LENGTH,
   normalizeSearch,
 } from "@/features/history/lib/search";
 
@@ -86,7 +88,7 @@ export function parseAircraftTableState(
       ? pageRaw
       : DEFAULT_TABLE_STATE.page;
 
-  const q = normalizeSearch(params.get(KEYS.q));
+  const q = searchFromUrl(params.get(KEYS.q));
 
   return { sort, order, page, q };
 }
