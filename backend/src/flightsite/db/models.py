@@ -296,6 +296,16 @@ class Sighting(Base):
         # each 30-second flush of an open sighting, and a second one measured
         # ~2.6x the baseline per-sighting write cost again (issue #115).
         Index("ix_sightings_max_range", "max_range_nm", "id"),
+        # Slice 083's callsign prefix search, on `/sightings` and on the
+        # Aircraft page (rev 0018). Unlike the extremes above, `callsign_last`
+        # is rewritten only when the callsign actually changes — the ORM
+        # leaves an unchanged attribute out of the flush's UPDATE — so this
+        # costs one entry per sighting, not one rewrite per flush.
+        # `aircraft_id` rides along so "which airframes flew this prefix"
+        # is answered from the index alone. Built `callsign_last COLLATE
+        # NOCASE` by the migration; declared by column alone for the reason
+        # given on `ix_amr_registration_nocase`.
+        Index("ix_sightings_callsign", "callsign_last", "aircraft_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -636,6 +646,16 @@ class AircraftMetadataResolved(_ResolvedColumns, Base):
         Index("ix_amr_registration", "registration"),
         Index("ix_amr_type", "type_code"),
         Index("ix_amr_opgroup", "operator_group_id"),
+        # The Aircraft page's `q` prefix search (slice 083). Rev 0018 builds
+        # both `COLLATE NOCASE`: neither column is case-normalized on import
+        # (unlike `type_code`), and a case-insensitive prefix can only be read
+        # from an index in the collation the comparison uses. Declared here
+        # by column alone because SQLite reflection does not report an index
+        # column's collation, so the collated form would be a permanent
+        # phantom diff in `alembic check`; `tests/db/test_migration_0018_*`
+        # pins the collation instead.
+        Index("ix_amr_registration_nocase", "registration"),
+        Index("ix_amr_operator_nocase", "operator_name"),
         {"sqlite_with_rowid": False},
     )
 
