@@ -3,7 +3,21 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NAV_ITEMS } from "@/components/shell/nav-items";
+import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
+import {
+  diagnostics,
+  installDiagnosticsApiMock,
+} from "@/test/diagnosticsApiMock";
 import { renderApp } from "@/test/test-utils";
+
+afterEach(() => {
+  // The shortcut sheet's `open` flag is module-level Zustand state, so a
+  // test that opens it (below) would otherwise leak it into the next one —
+  // whose "Close keyboard shortcuts" button then ambiguously matches any
+  // later `/keyboard shortcuts/i` query too.
+  useShortcutSheetStore.setState({ open: false });
+  vi.unstubAllGlobals();
+});
 
 /**
  * A scripted `window.matchMedia` stand-in — jsdom itself falls back to
@@ -50,7 +64,7 @@ function installMatchMedia(initialMatches: boolean) {
 }
 
 describe("Sidebar", () => {
-  it("renders all seven primary nav sections as links in a nav landmark", () => {
+  it("renders every primary section (SPEC §10, ten since 2026-09-28) as links in a nav landmark", () => {
     renderApp();
     const nav = screen.getByRole("navigation", { name: /primary/i });
     for (const item of NAV_ITEMS) {
@@ -59,6 +73,64 @@ describe("Sidebar", () => {
       ).toBeInTheDocument();
     }
     expect(within(nav).getAllByRole("link")).toHaveLength(NAV_ITEMS.length);
+  });
+
+  it("includes Activity, Health and Feeders (roadmap slice 082, issue #225)", () => {
+    renderApp();
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    expect(within(nav).getByRole("link", { name: "Activity" })).toHaveAttribute(
+      "href",
+      "/activity",
+    );
+    expect(within(nav).getByRole("link", { name: "Health" })).toHaveAttribute(
+      "href",
+      "/health",
+    );
+    expect(within(nav).getByRole("link", { name: "Feeders" })).toHaveAttribute(
+      "href",
+      "/receiver/feeders",
+    );
+  });
+
+  it("shows the Health nav item's roll-up status dot once diagnostics load, with text meaning beyond colour", async () => {
+    installDiagnosticsApiMock({
+      diagnostics: diagnostics({ status: "degraded" }),
+    });
+    renderApp();
+
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    const healthLink = within(nav).getByRole("link", { name: "Health" });
+    // The accessible name only gains the status once the dot has data —
+    // `findByRole` waits for the diagnostics fetch to resolve.
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: /Health.*Degraded/ })).toBe(
+        healthLink,
+      );
+    });
+    const dot = within(healthLink).getByTestId("health-status-dot");
+    expect(dot).toHaveAttribute("data-tone", "warn");
+    expect(dot).toHaveAttribute("title", "Health: Degraded");
+  });
+
+  it("renders no status dot before diagnostics has ever loaded", () => {
+    renderApp();
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    const healthLink = within(nav).getByRole("link", { name: "Health" });
+    expect(
+      within(healthLink).queryByTestId("health-status-dot"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a Keyboard shortcuts control that opens the shortcut sheet", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(
+      screen.getByRole("button", { name: /keyboard shortcuts/i }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: /keyboard shortcuts/i }),
+    ).toBeInTheDocument();
   });
 
   it("uses a main landmark for routed content", () => {
@@ -75,6 +147,19 @@ describe("Sidebar", () => {
     expect(screen.getByRole("link", { name: "Live Map" })).not.toHaveAttribute(
       "aria-current",
     );
+  });
+
+  it("marks Feeders, not Receiver, as current on /receiver/feeders", () => {
+    renderApp("/receiver/feeders");
+    // Scoped to the sidebar: the Feeders page has its own "Receiver" link.
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    expect(within(nav).getByRole("link", { name: "Feeders" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      within(nav).getByRole("link", { name: "Receiver" }),
+    ).not.toHaveAttribute("aria-current");
   });
 
   it("is keyboard-navigable in document order with visible focus styling", async () => {
@@ -136,7 +221,7 @@ describe("Sidebar below the md breakpoint (R1-07, R2-08, R3-07, R4-06)", () => {
     installMatchMedia(true);
     renderApp();
 
-    // Only the rail's menu button — the seven links are not directly
+    // Only the rail's menu button — the section links are not directly
     // reachable, unlike desktop where they're always in the tree.
     expect(
       screen.getByRole("button", { name: /open navigation menu/i }),
@@ -150,7 +235,7 @@ describe("Sidebar below the md breakpoint (R1-07, R2-08, R3-07, R4-06)", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
-  it("opens an overlay drawer with all seven links and moves focus into it", async () => {
+  it("opens an overlay drawer with every section link and moves focus into it", async () => {
     installMatchMedia(true);
     const user = userEvent.setup();
     renderApp();
@@ -250,10 +335,14 @@ describe("Sidebar below the md breakpoint (R1-07, R2-08, R3-07, R4-06)", () => {
     });
     expect(closeButton).toHaveFocus();
 
-    // Shift+Tab from the first focusable element wraps to the last.
+    // Shift+Tab from the first focusable element wraps to the last — the
+    // "Keyboard shortcuts" button, which now follows the theme toggle in
+    // the drawer's footer (roadmap slice 082).
     await user.tab({ shift: true });
-    const themeToggle = screen.getByRole("button", { name: /toggle theme/i });
-    expect(themeToggle).toHaveFocus();
+    const shortcutsButton = screen.getByRole("button", {
+      name: /keyboard shortcuts/i,
+    });
+    expect(shortcutsButton).toHaveFocus();
 
     // Tab from the last wraps back to the first.
     await user.tab();

@@ -12,15 +12,31 @@
         var theme = "dark";
         try {
           var stored = window.localStorage.getItem(STORAGE_KEY);
-          if (stored === "light" || stored === "dark") {
+          if (stored === "light" || stored === "dark" || stored === "system") {
             theme = stored;
           }
         } catch (_err) {
           theme = "dark";
         }
+        // "system" resolves against the OS preference right here, before
+        // React mounts — the same first-paint-flash guard this script
+        // already gave "dark"/"light", now covering roadmap slice 082's
+        // third option too. Falls back to dark, matching the app default,
+        // wherever `matchMedia` is unavailable.
+        var effective = theme;
+        if (theme === "system") {
+          try {
+            effective = window.matchMedia("(prefers-color-scheme: dark)")
+              .matches
+              ? "dark"
+              : "light";
+          } catch (_err) {
+            effective = "dark";
+          }
+        }
         var root = document.documentElement;
-        root.classList.toggle("dark", theme === "dark");
-        root.style.colorScheme = theme;
+        root.classList.toggle("dark", effective === "dark");
+        root.style.colorScheme = effective;
       })();
     </script>
   </head>

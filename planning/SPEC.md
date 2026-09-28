@@ -128,6 +128,15 @@ a live radar application with analytics, not an analytics dashboard containing a
 > primary section: the seven sections above stand unchanged. Recorded in ADR-0017;
 > implemented in slice 077.
 
+> **Amendment (2026-09-28, owner decision recorded by Fable):** primary navigation
+> grows to ten sections: Live Map, Aircraft, Sightings, Analytics, Receiver, Alerts,
+> Settings, **Activity**, **Health** and **Feeders**. The three pages were already
+> routed but reachable only through in-page links; putting them in the sidebar makes
+> every page reachable from anywhere. Feeders keeps its `/receiver/feeders` route. This
+> supersedes the 2026-09-26 note's "not an eighth primary section" wording and nothing
+> else in it. The Live Map remains the primary product experience. Implemented in slice
+> 082 (issue #225).
+
 # 11. ADS-B Decoder Boundary
 
 FlightSite does not decode RF or ADS-B messages itself in v1. It consumes an existing

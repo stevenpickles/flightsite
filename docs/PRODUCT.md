@@ -86,6 +86,18 @@ Live Map when complete.
   military/government/police, max range, busiest hour, new aircraft, new
   milestones/records (§59).
 - Activity feed access (§55).
+- Sidebar navigation covers every routed page, including Activity, Health and
+  Feeders (§10 amendment, roadmap slice 082); the primary sidebar itself
+  collapses to icon-only width, a preference remembered per browser. A `?`
+  shortcut sheet lists every keyboard shortcut, each with a visible control
+  equivalent: `/` focuses the live search, `L`/`F` toggle the Layers card and
+  filter drawer, `Esc` deselects, `H` recentres on the receiver, `[`/`]` step
+  through interesting aircraft, and `g` then a letter jumps to any section
+  (§80, roadmap slice 082).
+- Copy-link, `navigator.share` (where supported) and a QR code of the current
+  URL, on the aircraft detail, sighting detail, and Live Map (selected
+  aircraft) views — a copied or scanned link reopens the same view (roadmap
+  slice 082).
 
 ### 4.3 Aircraft Detail (§22–§24, §41, §50)
 
@@ -225,10 +237,11 @@ interesting aircraft, aircraft history, sightings, analytics, receiver statistic
 activity, health — via REST and WebSocket. Mutation endpoints used internally by the
 frontend are not part of the supported external contract.
 
-### 4.15 Feeders (§10, §67, §79 amendments; slice 077)
+### 4.15 Feeders (§10, §67, §79 amendments; slices 077, 082)
 
-One page, `/receiver/feeders`, reached from the Receiver page and from Health — a
-sub-route of Receiver, not an eighth sidebar section. It shows every network the
+One page, `/receiver/feeders` — a sub-route of Receiver, not an eighth SPEC §10
+primary section, but reached directly from the sidebar since roadmap slice 082 as
+well as from the Receiver page and Health. It shows every network the
 receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, OpenSky, AeroDataBox and
 similar), each as a card with its status (up / degraded / down / unknown), how long it
 has been in that state, when data was last sent, MLAT and ADS-B-out state where the

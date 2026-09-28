@@ -4,7 +4,7 @@ export interface PlaceholderPageProps {
 }
 
 /** Shared shape for a section that has no real content yet. Each of the
- * seven primary sections renders one of these until its own slice lands. */
+ * primary sections renders one of these until its own slice lands. */
 export function PlaceholderPage({ title, description }: PlaceholderPageProps) {
   return (
     <div className="flex h-full flex-col items-start justify-center gap-2 px-8">

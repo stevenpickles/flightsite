@@ -116,11 +116,11 @@ export const router = createBrowserRouter([
                   </Suspense>
                 ),
               },
-              // Sub-route of Receiver rather than a sidebar entry of its
-              // own (roadmap slice 077, design record's "Decisions taken
-              // with the owner": SPEC §10's seven sections stay unchanged).
-              // Reached from the Receiver and Health pages' own links, the
-              // same `/health` precedent below.
+              // A sub-route of Receiver, not its own top-level path (roadmap
+              // slice 077) — but it is a `NAV_ITEMS` sidebar entry since
+              // roadmap slice 082 (issue #225), alongside `/activity` and
+              // `/health` below, in addition to the Receiver and Health
+              // pages' own in-page links from before then.
               {
                 path: "receiver/feeders",
                 element: (
@@ -140,16 +140,16 @@ export const router = createBrowserRouter([
               },
               { path: "alerts", element: <AlertsPage /> },
               { path: "settings", element: <SettingsPage /> },
-              // Inside the shell but deliberately not in `NAV_ITEMS`: SPEC
-              // §10 fixes the sidebar at seven sections, so the activity
-              // feed's fuller view is reached from the Live Map panel's
-              // "View all" link, the way `sightings/:id` is reached from
-              // the log.
+              // A `NAV_ITEMS` sidebar entry since roadmap slice 082 (issue
+              // #225) — before that it was reachable only from the Live Map
+              // panel's "View all" link, the way `sightings/:id` is reached
+              // from the log; that link still works, it is just no longer
+              // the only way in.
               { path: "activity", element: <ActivityPage /> },
-              // Same reasoning for the health area (roadmap slice 042):
-              // SPEC §67 wants it reachable without SSH, not an eighth
-              // sidebar section, so the Receiver and Settings pages both
-              // link to it.
+              // Same history for the health area (roadmap slice 042, SPEC
+              // §67's "reachable without SSH"): a `NAV_ITEMS` entry since
+              // slice 082, on top of the Receiver and Settings pages' own
+              // links.
               { path: "health", element: <HealthPage /> },
               // Catch-all (R0-02/R2-16): any path under the shell that
               // matches none of the above. Last child so it never shadows

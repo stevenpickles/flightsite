@@ -13,6 +13,7 @@ import { AircraftDetailPage } from "@/pages/AircraftDetailPage";
 import { AircraftPage } from "@/pages/AircraftPage";
 import { AlertsPage } from "@/pages/AlertsPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
+import { FeedersPage } from "@/pages/FeedersPage";
 import { HealthPage } from "@/pages/HealthPage";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { ReceiverPage } from "@/pages/ReceiverPage";
@@ -47,6 +48,7 @@ export function renderApp(initialPath = "/") {
                   { path: "sightings/:id", element: <SightingDetailPage /> },
                   { path: "analytics", element: <AnalyticsPage /> },
                   { path: "receiver", element: <ReceiverPage /> },
+                  { path: "receiver/feeders", element: <FeedersPage /> },
                   { path: "alerts", element: <AlertsPage /> },
                   { path: "settings", element: <SettingsPage /> },
                   { path: "activity", element: <ActivityPage /> },

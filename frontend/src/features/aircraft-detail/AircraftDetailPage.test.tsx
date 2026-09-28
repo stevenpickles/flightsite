@@ -174,6 +174,29 @@ describe("AircraftDetailPage", () => {
     expect(headings).toContain("Manufacture & ownership");
   });
 
+  it("offers Copy link and QR code sharing for this exact URL (roadmap slice 082)", async () => {
+    installAircraftApiMock({
+      detail: {
+        ae1463: aircraftDetail({ icao: "ae1463", registration: "N302DN" }),
+      },
+    });
+
+    renderApp("/aircraft/ae1463");
+    await screen.findByText(/ICAO AE1463/);
+
+    expect(
+      screen.getByRole("button", { name: /copy link/i }),
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /qr code/i }));
+    const popover = screen.getByRole("dialog", { name: /qr code for n302dn/i });
+    expect(popover.querySelector("svg")).toHaveAttribute(
+      "aria-label",
+      `QR code encoding ${window.location.origin}/aircraft/ae1463`,
+    );
+  });
+
   it("shows a not-found message for a valid-format icao this receiver never sighted", async () => {
     installAircraftApiMock({ detail: {} });
 

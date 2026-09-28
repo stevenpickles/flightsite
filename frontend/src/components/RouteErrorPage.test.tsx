@@ -39,6 +39,7 @@ function renderThrowingApp(initialPath: string) {
                 children: [
                   { index: true, element: <div>Live Map placeholder</div> },
                   { path: "aircraft", element: <Boom /> },
+                  { path: "receiver/feeders", element: <Boom /> },
                 ],
               },
             ],
@@ -86,6 +87,19 @@ describe("RouteErrorPage — in-chrome (nested under AppShell)", () => {
     expect(
       screen.getByRole("link", { name: /go to live map/i }),
     ).toHaveAttribute("href", "/");
+  });
+
+  it("names a nested section by its own label, not its parent's", async () => {
+    // `/receiver/feeders` also starts with `/receiver`; the longer prefix
+    // wins (slice 082 made Feeders a primary section).
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderThrowingApp("/receiver/feeders");
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /feeders ran into a problem/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("logs the error to the console", async () => {

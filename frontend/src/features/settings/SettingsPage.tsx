@@ -74,9 +74,9 @@ export function SettingsPage() {
           <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {/* The health area (SPEC §67) has no sidebar entry of its own —
-              SPEC §10 fixes that at seven sections — so Settings and
-              Receiver are the two places a user looks for it. */}
+          {/* The health area (SPEC §67) has its own sidebar section since
+              the SPEC §10 amendment of 2026-09-28, and Settings is still
+              where a user troubleshooting a setup looks for it. */}
           <Link
             to="/health"
             className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"

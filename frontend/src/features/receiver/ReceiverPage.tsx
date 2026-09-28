@@ -66,9 +66,10 @@ export function ReceiverPage() {
             </p>
           )}
         </div>
-        {/* SPEC §10 fixes the sidebar at seven sections, so the health area
-            (SPEC §67) is reached from here — the page a user already opens
-            when they suspect something is wrong. */}
+        {/* Health (SPEC §67) is in the sidebar since roadmap slice 082, but
+            this link stays: it is the page a user already has open when
+            they suspect something is wrong, one click closer than the
+            rail. */}
         <Link
           to="/health"
           className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"

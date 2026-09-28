@@ -16,6 +16,7 @@ import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
+import { RecenterButton } from "@/features/map/RecenterButton";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useActiveBasemap } from "@/features/map/useActiveBasemap";
 import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
@@ -94,7 +95,11 @@ function SkipAircraftListLink() {
  * glance" card (slice 036), a top-center strip fed by the analytics summary
  * endpoint rather than by anything the live picture or the feed carry, and
  * the interesting-aircraft panel (slice 039, SPEC §49), which shares the
- * bottom-left column with the non-positioned list.
+ * bottom-left column with the non-positioned list, and, since roadmap slice
+ * 082, `RecenterButton` (the `H` shortcut's visible control) plus a full set
+ * of keyboard shortcuts (`/`, `L`, `F`, `H`, `[`, `]`) dispatched from
+ * `useKeyboardShortcuts` in `AppShell` and reaching this page's own
+ * components through `lib/shortcuts/mapShortcutTargets`.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -134,6 +139,7 @@ export function LiveMapPage() {
       <MapLibreMap config={config} basemap={basemap} className="h-full w-full">
         <OverlaysLayer />
         <AircraftLayer />
+        <RecenterButton receiver={config.receiver} />
       </MapLibreMap>
 
       <PanelRegion headingId="today-panel-heading" label="Today at a glance">

@@ -3,12 +3,11 @@
  * paginated server-side via `GET /api/v1/activity`, with the type filter and
  * page persisted in the URL.
  *
- * **Not a primary nav section.** SPEC §10 fixes the sidebar at seven, and the
- * roadmap gives the feed its home *in the Live Map experience* plus a fuller
- * view — so this route is reached from `ActivityPanel`'s "View all" link and
- * from a shared URL, exactly as `/sightings/:id` is reached from the sightings
- * log. That is also why this page builds its own heading rather than calling
- * `requireNavItem`, which throws for anything outside the seven.
+ * A SPEC §10 primary section since the owner's amendment of 2026-09-28
+ * (roadmap slice 082, issue #225), and still reached from `ActivityPanel`'s
+ * "View all" link — the feed's first home is the Live Map experience, and
+ * this route is its fuller view. The page builds its own heading rather than
+ * calling `requireNavItem`; the two never needed to be the same string.
  *
  * **REST only, deliberately.** The live socket belongs to the Live Map (see
  * `store/useActivityFeedStore.ts`), so this page shows what

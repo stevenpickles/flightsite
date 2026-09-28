@@ -35,11 +35,14 @@ import {
 import { useAircraftDetailQuery } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
 import { SightingsApiError, useSightingDetailQuery } from "@/lib/api/sightings";
+import { ShareControls } from "@/lib/share/ShareControls";
+import { useCurrentUrl } from "@/lib/share/useCurrentUrl";
 
 export function SightingDetailPage() {
   const { id: rawId } = useParams<{ id: string }>();
   const id =
     rawId !== undefined && /^\d+$/.test(rawId) ? Number(rawId) : undefined;
+  const shareUrl = useCurrentUrl();
 
   // The cadence applies only while the sighting is open — see
   // `useSightingDetailQuery` (review R2-03).
@@ -125,16 +128,22 @@ export function SightingDetailPage() {
           />
         )}
         <header className="border-b border-border pb-4">
-          <h1 className="text-lg font-semibold">
-            <Link
-              to={`/aircraft/${sighting.icao}`}
-              className="text-accent hover:underline"
-            >
-              {aircraft?.registration ??
-                sighting.callsign ??
-                sighting.icao.toUpperCase()}
-            </Link>
-          </h1>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h1 className="text-lg font-semibold">
+              <Link
+                to={`/aircraft/${sighting.icao}`}
+                className="text-accent hover:underline"
+              >
+                {aircraft?.registration ??
+                  sighting.callsign ??
+                  sighting.icao.toUpperCase()}
+              </Link>
+            </h1>
+            <ShareControls
+              url={shareUrl}
+              title={`Sighting ${id} — ${aircraft?.registration ?? sighting.callsign ?? sighting.icao.toUpperCase()}`}
+            />
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
             ICAO {sighting.icao.toUpperCase()}
             {sighting.callsign !== null && <> · Callsign {sighting.callsign}</>}

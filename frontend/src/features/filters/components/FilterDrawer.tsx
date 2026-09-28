@@ -25,6 +25,12 @@
  *
  * "Interesting only" was gated the same way until slice 038 started
  * populating `interesting` and slice 039 surfaced it.
+ *
+ * Registers `toggleFilterDrawer` and `focusLiveSearch` on
+ * `lib/shortcuts/mapShortcutTargets` (roadmap slice 082) so the `F` and `/`
+ * keyboard shortcuts — dispatched from `useKeyboardShortcuts`, mounted in
+ * `AppShell` far from this component — can reach this drawer's own
+ * open/closed state and its live-set query input.
  */
 
 import { Filter, X } from "lucide-react";
@@ -44,6 +50,7 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { useMetadataAvailable } from "@/lib/api/metadata";
+import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { cn } from "@/lib/utils";
 
 const CLASSIFICATION_OPTIONS: { value: ClassificationFlag; label: string }[] = [
@@ -187,6 +194,29 @@ export function FilterDrawer() {
   const headingId = useId();
   const activeCount = countActiveFilters(filters);
 
+  // The `/` shortcut's target (roadmap slice 082): the live-set query input,
+  // reachable even while the drawer starts closed. `focusLiveSearch` records
+  // the intent in a ref (not state — a second render here would just refire
+  // the focus effect below and steal focus right back off the input) and
+  // opens the drawer; the focus effect reads and clears that ref once, on
+  // the one commit the drawer actually opens.
+  const liveQueryInputRef = useRef<HTMLInputElement>(null);
+  const focusSearchOnOpenRef = useRef(false);
+
+  useEffect(() => {
+    setMapShortcutTarget("toggleFilterDrawer", () => {
+      setIsOpen((open) => !open);
+    });
+    setMapShortcutTarget("focusLiveSearch", () => {
+      focusSearchOnOpenRef.current = true;
+      setIsOpen(true);
+    });
+    return () => {
+      setMapShortcutTarget("toggleFilterDrawer", undefined);
+      setMapShortcutTarget("focusLiveSearch", undefined);
+    };
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -201,7 +231,13 @@ export function FilterDrawer() {
   }, [isOpen]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) {
+      return;
+    }
+    if (focusSearchOnOpenRef.current) {
+      focusSearchOnOpenRef.current = false;
+      liveQueryInputRef.current?.focus();
+    } else {
       panelRef.current?.focus();
     }
   }, [isOpen, panelRef]);
@@ -291,6 +327,7 @@ export function FilterDrawer() {
               </Label>
               <Input
                 id="filter-live-query"
+                ref={liveQueryInputRef}
                 placeholder="e.g. BAW, N12345, a1b2c3"
                 value={filters.liveSetQuery}
                 onChange={(event) => setLiveSetQuery(event.target.value)}

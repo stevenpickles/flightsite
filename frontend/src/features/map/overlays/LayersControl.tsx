@@ -1,6 +1,8 @@
-import { Layers } from "lucide-react";
+import { ChevronDown, ChevronUp, Layers } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
+import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useAirspaceQuery } from "@/lib/api/overlays";
 
 /**
@@ -15,6 +17,15 @@ import { useAirspaceQuery } from "@/lib/api/overlays";
  * simply renders an empty layer, so "on" costs nothing. The "(no data)"
  * suffix here is the only surfaced sign of that state; it is informational,
  * not an error, and it never disables the checkbox.
+ *
+ * The card collapses to just its header (roadmap slice 082's `L` shortcut):
+ * open by default — unlike `FilterDrawer`, which starts closed — since
+ * collapsing this card hides no functionality behind an extra click the way
+ * the drawer's many fields would; it only reclaims a little map space.
+ * Collapse is local, in-memory state, not persisted — a session-scoped
+ * convenience, not a preference. Registers `toggleLayersCard` on
+ * `lib/shortcuts/mapShortcutTargets` so `useKeyboardShortcuts` (mounted far
+ * away, in `AppShell`) can flip it.
  */
 export function LayersControl() {
   const airports = useOverlayVisibilityStore((state) => state.airports);
@@ -28,43 +39,72 @@ export function LayersControl() {
   const airspaceQuery = useAirspaceQuery();
   const airspaceHasData = (airspaceQuery.data?.features.length ?? 0) > 0;
 
+  const [open, setOpen] = useState(true);
+  const contentId = useId();
+
+  useEffect(() => {
+    setMapShortcutTarget("toggleLayersCard", () => {
+      setOpen((current) => !current);
+    });
+    return () => {
+      setMapShortcutTarget("toggleLayersCard", undefined);
+    };
+  }, []);
+
   return (
     <div className="absolute right-3 top-40 z-10 w-48 rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur-sm">
-      <div className="mb-1.5 flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
-        <Layers className="size-3.5" aria-hidden="true" />
-        <span>Layers</span>
-      </div>
-      <div
-        className="flex flex-col gap-0.5"
-        role="group"
-        aria-label="Map layers"
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-controls={open ? contentId : undefined}
+        className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-xs font-medium text-muted-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
-          <input
-            type="checkbox"
-            checked={airports}
-            onChange={(event) => {
-              setAirportsVisible(event.target.checked);
-            }}
-            className="size-3.5 accent-accent"
-          />
-          Airports
-        </label>
-        <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
-          <input
-            type="checkbox"
-            checked={airspace}
-            onChange={(event) => {
-              setAirspaceVisible(event.target.checked);
-            }}
-            className="size-3.5 accent-accent"
-          />
-          Airspace
-          {!airspaceHasData && (
-            <span className="text-[10px] text-muted-foreground">(no data)</span>
-          )}
-        </label>
-      </div>
+        <Layers className="size-3.5" aria-hidden="true" />
+        <span className="flex-1 text-left">Layers</span>
+        {open ? (
+          <ChevronUp className="size-3.5" aria-hidden="true" />
+        ) : (
+          <ChevronDown className="size-3.5" aria-hidden="true" />
+        )}
+        <span className="sr-only">{open ? "Collapse" : "Expand"}</span>
+      </button>
+      {open && (
+        <div
+          id={contentId}
+          className="mt-1.5 flex flex-col gap-0.5"
+          role="group"
+          aria-label="Map layers"
+        >
+          <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
+            <input
+              type="checkbox"
+              checked={airports}
+              onChange={(event) => {
+                setAirportsVisible(event.target.checked);
+              }}
+              className="size-3.5 accent-accent"
+            />
+            Airports
+          </label>
+          <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
+            <input
+              type="checkbox"
+              checked={airspace}
+              onChange={(event) => {
+                setAirspaceVisible(event.target.checked);
+              }}
+              className="size-3.5 accent-accent"
+            />
+            Airspace
+            {!airspaceHasData && (
+              <span className="text-[10px] text-muted-foreground">
+                (no data)
+              </span>
+            )}
+          </label>
+        </div>
+      )}
     </div>
   );
 }

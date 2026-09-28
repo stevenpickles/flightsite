@@ -17,8 +17,8 @@
  * the non-positioned list at `bottom-3 left-3`.
  *
  * "View all" hands off to `/activity`, which is the same feed unbounded and
- * filterable — the `RecentSightingsSection` affordance, and the reason this
- * slice adds no eighth primary nav section (SPEC §10 fixes them at seven).
+ * filterable — the `RecentSightingsSection` affordance. (Activity itself
+ * became a SPEC §10 primary section in slice 082.)
  */
 
 import { ChevronDown, ChevronUp } from "lucide-react";
