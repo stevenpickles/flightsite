@@ -14,8 +14,8 @@ import type { ReceiverPosition } from "@/features/map/types";
  * `AppShell`, only records *that* a recentre was asked for, since nothing
  * outside this subtree can reach the MapLibre instance itself.
  *
- * Positioned beneath `ConnectionStatusChip` (`left-3 top-3`) in the one
- * corner the Live Map's other floating cards do not already claim.
+ * Positioned beneath the quick-filter chip row, which sits under
+ * `ConnectionStatusChip` (`left-3 top-3`) in the top-left corner.
  */
 export function RecenterButton({ receiver }: { receiver: ReceiverPosition }) {
   const { map } = useMapInstance();
@@ -44,7 +44,7 @@ export function RecenterButton({ receiver }: { receiver: ReceiverPosition }) {
       onClick={requestRecenter}
       aria-label="Recentre the map on the receiver"
       title="Recentre on receiver"
-      className="pointer-events-auto absolute left-3 top-11 z-10 rounded-full border border-border bg-card/95 p-1.5 text-muted-foreground shadow-sm backdrop-blur-sm outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      className="pointer-events-auto absolute left-3 top-20 z-10 rounded-full border border-border bg-card/95 p-1.5 text-muted-foreground shadow-sm backdrop-blur-sm outline-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <LocateFixed className="size-3.5" aria-hidden="true" />
     </button>

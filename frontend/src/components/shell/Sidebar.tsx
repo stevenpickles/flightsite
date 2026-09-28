@@ -38,7 +38,9 @@ function NavList({ collapsed }: { collapsed: boolean }) {
           const link = (
             <NavLink
               to={item.to}
-              end={item.to === "/"}
+              // `/receiver` must not stay highlighted on `/receiver/feeders`,
+              // which is its own section (SPEC §10 amendment, 2026-09-28).
+              end={item.to === "/" || item.to === "/receiver"}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium outline-none transition-colors",

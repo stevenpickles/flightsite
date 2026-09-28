@@ -149,6 +149,19 @@ describe("Sidebar", () => {
     );
   });
 
+  it("marks Feeders, not Receiver, as current on /receiver/feeders", () => {
+    renderApp("/receiver/feeders");
+    // Scoped to the sidebar: the Feeders page has its own "Receiver" link.
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    expect(within(nav).getByRole("link", { name: "Feeders" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      within(nav).getByRole("link", { name: "Receiver" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
   it("is keyboard-navigable in document order with visible focus styling", async () => {
     const user = userEvent.setup();
     renderApp();
