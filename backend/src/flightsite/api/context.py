@@ -424,6 +424,7 @@ class LiveApiContext:
         to_ms: int | None = None,
         interesting: bool | None = None,
         open_only: bool | None = None,
+        q: str | None = None,
     ) -> list[dict[str, Any]]:
         """One page of the sightings log, serialized — §3.6.
 
@@ -441,6 +442,7 @@ class LiveApiContext:
             to_ms=to_ms,
             interesting=interesting,
             open_only=open_only,
+            q=q,
         )
         # One clock reading for the whole page, not one per row: an open
         # sighting's `elapsed_s` is measured against it, and two rows of one

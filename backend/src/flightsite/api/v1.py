@@ -673,6 +673,7 @@ async def sightings_list(
         to_ms=_bound_ms(to),
         interesting=interesting,
         open_only=open,
+        q=q,
     )
     return {"items": items, "total": None, "limit": limit, "offset": offset}
 
