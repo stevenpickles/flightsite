@@ -2455,7 +2455,7 @@ slices:
     title: "Units preference on every surface"
     phase: 9
     branch: "081-units-everywhere"
-    status: planned
+    status: merged
     depends_on: ["080"]
     objective: "Every altitude, speed and distance FlightSite prints honours the receiver's units preference, map labels included (issue #224)."
     scope:
