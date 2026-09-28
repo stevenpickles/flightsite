@@ -2736,6 +2736,31 @@ slices:
     risk_level: low
     notes: ""
 
+  - id: "091"
+    title: "Perf gates read a real p95 in CI"
+    phase: 9
+    branch: "091-perf-gate-tail"
+    status: merged
+    depends_on: ["083"]
+    objective: "Hotfix: one stalled shared-runner tick no longer fails the in-suite perf gates; the CLI contract test no longer judges a three-tick run against real budgets (issue #240)."
+    scope:
+      - "tests/perf/test_harness.py smoke run 15 -> 21 ticks, so the per-tick gates' nearest-rank p95 is the second-worst sample rather than the maximum (harness.DEFAULT_PROBE_EVERY's own n >= 20 note)"
+      - "tests/perf/test_cli.py pins every budget to one the tiny run cannot miss (exit 0) or cannot meet (exit 1, new test), so the CLI's exit-status contract is tested deterministically in both directions"
+      - "docs/PERFORMANCE.md smoke-run paragraph"
+    out_of_scope:
+      - "changing any budget, headroom or statistic; the sustained run"
+    acceptance_criteria:
+      - "tests/perf passes; the smoke run adds about six seconds"
+      - "`Closes #240` in the PR body"
+    required_tests: [tests/perf/test_harness.py, tests/perf/test_cli.py]
+    expected_artifacts:
+      - backend/tests/perf/test_harness.py
+      - backend/tests/perf/test_cli.py
+      - docs/PERFORMANCE.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "ws_fanout_ms failed three times on shared runners on 2026-09-28 (PR #235 CLI run; PR #246 twice, 562 ms and 650 ms against a 16-21 ms median) on PRs with no backend change. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
