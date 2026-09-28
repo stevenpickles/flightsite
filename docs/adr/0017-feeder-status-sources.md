@@ -17,7 +17,8 @@ and links to the other locally hosted pages.
 SPEC §79 lists *multi-receiver deployments* as a v1 non-goal. Monitoring the networks
 **one** receiver feeds is a different thing — nothing is ingested from them — and the
 owner admitted it explicitly (§79 amendment). SPEC §10 fixes seven primary sections; the
-owner chose a sub-route under Receiver rather than an eighth (§10 amendment). SPEC §67
+owner chose a sub-route under Receiver rather than an eighth (§10 amendment; the route
+stands, but a later §10 amendment of 2026-09-28 made Feeders a sidebar section, slice 082). SPEC §67
 wants the health area to answer "is FlightSite healthy?"; feeder status joins it (§67
 amendment).
 

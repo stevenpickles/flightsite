@@ -9,7 +9,7 @@ import { NAV_ITEMS } from "@/components/shell/nav-items";
  * sidebar stays usable; this is deliberately a plain "not found", not an
  * error, since nothing actually threw.
  *
- * Lists the seven primary sections directly rather than only pointing at
+ * Lists the primary sections (`NAV_ITEMS`) directly rather than only pointing at
  * the sidebar, matching the two in-app 404s this mirrors
  * (`AircraftDetailPage`'s invalid-ICAO state, `SightingDetailPage`'s
  * missing-id state) which name the specific thing that wasn't found.
