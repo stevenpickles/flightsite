@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_TABLE_STATE,
+  MAX_SEARCH_LENGTH,
+  normalizeSearch,
   parseAircraftTableState,
   serializeAircraftTableState,
 } from "@/features/aircraft-page/lib/urlState";
@@ -80,5 +82,84 @@ describe("serializeAircraftTableState", () => {
     );
 
     expect(roundTripped).toEqual(state);
+  });
+
+  it("round-trips a search alongside sort and page (slice 083)", () => {
+    const state = {
+      sort: "registration" as const,
+      order: "asc" as const,
+      page: 2,
+      q: "G-EZ",
+    };
+
+    const params = serializeAircraftTableState(state);
+
+    expect(params.get("q")).toBe("G-EZ");
+    expect(parseAircraftTableState(params)).toEqual(state);
+  });
+
+  it("writes no q for a blank search", () => {
+    expect(
+      serializeAircraftTableState({ ...DEFAULT_TABLE_STATE, q: "   " }).has(
+        "q",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("the q search key", () => {
+  it("is absent by default", () => {
+    expect(parseAircraftTableState(new URLSearchParams()).q).toBeUndefined();
+  });
+
+  it("is trimmed, and blank means no search", () => {
+    expect(
+      parseAircraftTableState(new URLSearchParams("q=%20%20baw%20")).q,
+    ).toBe("baw");
+    expect(
+      parseAircraftTableState(new URLSearchParams("q=%20%20")).q,
+    ).toBeUndefined();
+  });
+
+  it("is capped at the API's length, so a hand-edited link cannot 422", () => {
+    const long = "x".repeat(MAX_SEARCH_LENGTH + 10);
+
+    expect(
+      parseAircraftTableState(new URLSearchParams({ q: long })).q,
+    ).toHaveLength(MAX_SEARCH_LENGTH);
+  });
+
+  it("drops a one-character search the filter box would never send", () => {
+    expect(
+      parseAircraftTableState(new URLSearchParams("q=a")).q,
+    ).toBeUndefined();
+    expect(parseAircraftTableState(new URLSearchParams("q=%20a%20")).q).toBe(
+      undefined,
+    );
+    expect(parseAircraftTableState(new URLSearchParams("q=ab")).q).toBe("ab");
+  });
+
+  it("is kept literally — wildcards are the server's to escape", () => {
+    expect(parseAircraftTableState(new URLSearchParams("q=N_%251")).q).toBe(
+      "N_%1",
+    );
+  });
+});
+
+describe("normalizeSearch", () => {
+  it.each([
+    [undefined, undefined],
+    [null, undefined],
+    ["", undefined],
+    [" \t ", undefined],
+    ["  a1b2 ", "a1b2"],
+  ])("normalizes %j to %j", (raw, expected) => {
+    expect(normalizeSearch(raw)).toBe(expected);
+  });
+
+  it("trims again after capping, so the cap never leaves a trailing space", () => {
+    const raw = `${"x".repeat(MAX_SEARCH_LENGTH - 1)} tail`;
+
+    expect(normalizeSearch(raw)).toBe("x".repeat(MAX_SEARCH_LENGTH - 1));
   });
 });

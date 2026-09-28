@@ -2,11 +2,16 @@
  * The Aircraft page (roadmap slice 029, SPEC §56): every aircraft this
  * receiver has ever sighted, sorted and paginated server-side via
  * `GET /api/v1/aircraft`, with sort/page persisted in the URL. Rows open
- * the non-live aircraft detail route (`AircraftDetailPage`).
+ * the non-live aircraft detail route (`AircraftDetailPage`). Slice 083 adds
+ * the filter box (`AircraftSearchBox`), whose `q` lives in the URL beside
+ * sort and page.
  */
+
+import { useCallback } from "react";
 
 import { requireNavItem } from "@/components/shell/nav-items";
 import { AircraftPaginationControls } from "@/features/aircraft-page/AircraftPaginationControls";
+import { AircraftSearchBox } from "@/features/aircraft-page/AircraftSearchBox";
 import { AircraftTable } from "@/features/aircraft-page/AircraftTable";
 import { useAircraftTableState } from "@/features/aircraft-page/hooks/useAircraftTableState";
 import { PAGE_SIZE } from "@/features/aircraft-page/lib/urlState";
@@ -35,8 +40,13 @@ export function AircraftPage() {
       offset: (state.page - 1) * PAGE_SIZE,
       sort: state.sort,
       order: state.order,
+      q: state.q,
     },
     { refetchInterval },
+  );
+  const handleSearchChange = useCallback(
+    (q: string | undefined) => setState({ q }),
+    [setState],
   );
 
   const units = receiverQuery.data?.units ?? "aviation";
@@ -68,6 +78,8 @@ export function AircraftPage() {
         />
       </header>
 
+      <AircraftSearchBox value={state.q} onChange={handleSearchChange} />
+
       {listQuery.isPending ? (
         <p role="status" className="text-sm text-muted-foreground">
           Loading aircraft…
@@ -93,7 +105,11 @@ export function AircraftPage() {
           )}
           {listQuery.data.items.length === 0 ? (
             <EmptyResult
-              message="This receiver hasn’t sighted any aircraft yet."
+              message={
+                state.q === undefined
+                  ? "This receiver hasn’t sighted any aircraft yet."
+                  : `No aircraft match “${state.q}”. Try fewer characters, or clear the filter.`
+              }
               page={state.page}
               onBackToFirstPage={() => setState({ page: 1 })}
             />

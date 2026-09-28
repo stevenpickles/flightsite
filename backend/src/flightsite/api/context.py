@@ -345,6 +345,7 @@ class LiveApiContext:
         classification: str | None = None,
         operator_group: str | None = None,
         type_code: str | None = None,
+        q: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """One page of the Aircraft page's list, serialized — §3.5."""
         rows, total = await self.history.list_aircraft(
@@ -355,6 +356,7 @@ class LiveApiContext:
             classification=classification,
             operator_group=operator_group,
             type_code=type_code,
+            q=q,
         )
         return [aircraft_history_row_payload(row) for row in rows], total
 
@@ -422,6 +424,7 @@ class LiveApiContext:
         to_ms: int | None = None,
         interesting: bool | None = None,
         open_only: bool | None = None,
+        q: str | None = None,
     ) -> list[dict[str, Any]]:
         """One page of the sightings log, serialized — §3.6.
 
@@ -439,6 +442,7 @@ class LiveApiContext:
             to_ms=to_ms,
             interesting=interesting,
             open_only=open_only,
+            q=q,
         )
         # One clock reading for the whole page, not one per row: an open
         # sighting's `elapsed_s` is measured against it, and two rows of one
