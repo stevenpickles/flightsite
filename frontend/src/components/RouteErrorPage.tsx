@@ -11,18 +11,15 @@ import { NAV_ITEMS } from "@/components/shell/nav-items";
 import { Button } from "@/components/ui/button";
 
 /** Longest-prefix-first: a detail route (`/aircraft/:icao`) and its list
- * route (`/aircraft`) share a label, and `/activity`/`/health` are real
- * pages that just aren't one of the seven `NAV_ITEMS` (see
- * `nav-items.ts`'s own note on why). Checked in order, so `/aircraft/:icao`
+ * route (`/aircraft`) share a label, and `/receiver/feeders` must win over
+ * its `/receiver` prefix. Checked in order, so `/aircraft/:icao`
  * matches `/aircraft` correctly without a dedicated entry. */
 const SECTION_LABELS: ReadonlyArray<{ prefix: string; label: string }> = [
   ...NAV_ITEMS.filter((item) => item.to !== "/").map((item) => ({
     prefix: item.to,
     label: item.label,
   })),
-  { prefix: "/activity", label: "Activity" },
-  { prefix: "/health", label: "Health" },
-];
+].sort((a, b) => b.prefix.length - a.prefix.length);
 
 /** The page name a reader would recognise for a failed route, for the
  * boundary's heading (R0-01/R1-06/R3-04: "names the page that failed").
