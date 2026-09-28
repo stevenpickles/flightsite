@@ -14,7 +14,7 @@
 # Build stage: resolve the locked dependency set and build the package into
 # a self-contained virtualenv.
 # ---------------------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.12.8-python3.12-trixie-slim AS build
+FROM ghcr.io/astral-sh/uv:0.12.19-python3.12-trixie-slim AS build
 
 # UV_COMPILE_BYTECODE: pre-compile .pyc files so the runtime image starts
 #   faster instead of compiling on first import.
