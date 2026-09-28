@@ -59,6 +59,7 @@ export function ActivityPage() {
   );
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
+  const units = receiverQuery.data?.units ?? "aviation";
 
   return (
     <div className="flex h-full flex-col px-4 py-6 md:px-8">
@@ -139,6 +140,7 @@ export function ActivityPage() {
                           key={event.id}
                           event={event}
                           timezone={timezone}
+                          units={units}
                         />
                       ))}
                     </Fragment>

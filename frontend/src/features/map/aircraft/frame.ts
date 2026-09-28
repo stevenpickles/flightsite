@@ -27,6 +27,7 @@ import { updateDensityLatch } from "@/features/map/labels/densityLatch";
 import { DEFAULT_DISPLAY_RADIUS_NM } from "@/features/map/mapConfig";
 import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
+import type { UnitSystem } from "@/lib/api/config";
 
 /** The slice of the live store a frame is drawn from. */
 export interface AircraftFrameState {
@@ -49,6 +50,9 @@ export interface DrawFrameOptions {
   /** The display-radius default the distance cap falls back to when
    * `filters.maxDistanceNm` is unset. Defaults to the schema default. */
   displayRadiusNm?: number;
+  /** The receiver's display units for label altitudes. Defaults to aviation
+   * units. */
+  units?: UnitSystem;
 }
 
 /** Rebuilds and pushes the aircraft (and optionally track) sources for `now`.
@@ -78,6 +82,7 @@ export function drawAircraftFrame(
       zoom: map.getZoom(),
       visibleIcaos: filterResult.visibleIcaos,
       dimmedIcaos: filterResult.dimmedIcaos,
+      units: options.units,
       // The frame loop is the one caller that draws a *sequence*, so it is
       // the one that owns the label-density latch (issue #143). Advancing it
       // here — once per frame, on the same post-filter count `geojson.ts`

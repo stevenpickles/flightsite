@@ -102,6 +102,17 @@ describe("formatAltitude", () => {
   it("rounds to the nearest hundred feet for flight levels", () => {
     expect(formatAltitude(35050)).toBe("FL351");
   });
+
+  it("prints metres below the transition altitude in metric units", () => {
+    expect(formatAltitude(3200, "metric")).toBe("975 m");
+    expect(formatAltitude(TRANSITION_ALTITUDE_FT - 1, "metric")).toBe(
+      "5,486 m",
+    );
+  });
+
+  it("keeps flight levels above the transition altitude in metric units", () => {
+    expect(formatAltitude(35000, "metric")).toBe("FL350");
+  });
 });
 
 describe("buildAircraftLabelLines", () => {

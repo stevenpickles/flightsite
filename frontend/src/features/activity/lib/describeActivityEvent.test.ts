@@ -87,6 +87,14 @@ describe("describeActivityEvent", () => {
     expect(detail).toBe("412.8 nm (previous 401.2 nm) · bearing 271° W");
   });
 
+  it("describes a range record in the receiver's units", () => {
+    const { detail } = describeActivityEvent(
+      event("range_record", { range_nm: 100, previous_nm: 50 }),
+      "metric",
+    );
+    expect(detail).toBe("185.2 km (previous 92.6 km)");
+  });
+
   it("describes a first range record, which beat nothing", () => {
     const { detail } = describeActivityEvent(
       event("range_record", { range_nm: 120 }),

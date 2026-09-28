@@ -49,6 +49,8 @@ describe("receiver-uplink formatters render NOT_OBSERVED for null", () => {
   it("formatRangeNm", () => {
     expect(formatRangeNm(null)).toBe(NOT_OBSERVED);
     expect(formatRangeNm(87.3)).toBe("87 nm");
+    expect(formatRangeNm(87.3, "metric")).toBe("162 km");
+    expect(formatRangeNm(null, "metric")).toBe(NOT_OBSERVED);
   });
 });
 

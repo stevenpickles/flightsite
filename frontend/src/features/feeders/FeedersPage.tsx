@@ -131,7 +131,10 @@ export function FeedersPage() {
 
       <div>
         <h2 className="mb-2 text-base font-medium">Receiver uplink</h2>
-        <ReceiverUplinkTiles receiver={data.receiver} />
+        <ReceiverUplinkTiles
+          receiver={data.receiver}
+          units={receiver?.units ?? "aviation"}
+        />
       </div>
 
       {data.feeders.length === 0 ? (

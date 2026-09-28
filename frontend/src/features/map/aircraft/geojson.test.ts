@@ -391,6 +391,21 @@ describe("buildAircraftFeatureCollection", () => {
       expect(collection.features[0]?.properties.label).toBe("BAW123\nFL350");
     });
 
+    it("prints the altitude line in the receiver's units", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            altitude_ft: 3200,
+          }),
+          zoom: ZOOM_LABELS_FULL,
+          units: "metric",
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("BAW123\n975 m");
+    });
+
     it("drops a non-priority label to callsign-only when the live picture is dense, even at high zoom", () => {
       const dense = records(
         ...Array.from({ length: DENSITY_CALLSIGN_ENTER + 1 }, (_, i) => ({

@@ -5,10 +5,13 @@ import {
   formatPerMinute,
   formatRangeNm,
 } from "@/features/feeders/lib/format";
+import type { UnitSystem } from "@/lib/api/config";
 import type { FeederReceiverUplink } from "@/lib/api/feeders";
 
 interface ReceiverUplinkTilesProps {
   receiver: FeederReceiverUplink | null;
+  /** Display units for the range tile; defaults to aviation. */
+  units?: UnitSystem;
 }
 
 /**
@@ -18,7 +21,10 @@ interface ReceiverUplinkTilesProps {
  * Reuses `StatTile` from `features/health/components/HealthCard.tsx` so this
  * row reads as the same app as the Health page's own scorecard-style grid.
  */
-export function ReceiverUplinkTiles({ receiver }: ReceiverUplinkTilesProps) {
+export function ReceiverUplinkTiles({
+  receiver,
+  units = "aviation",
+}: ReceiverUplinkTilesProps) {
   if (receiver === null) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -55,7 +61,7 @@ export function ReceiverUplinkTiles({ receiver }: ReceiverUplinkTilesProps) {
       />
       <StatTile
         label="Max range"
-        value={formatRangeNm(receiver.max_range_nm)}
+        value={formatRangeNm(receiver.max_range_nm, units)}
       />
     </div>
   );

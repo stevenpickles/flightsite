@@ -21,12 +21,15 @@ import { ACTIVITY_ICONS, toneForSeverity } from "@/features/activity/lib/icons";
 import { formatReceiverLocalTitle } from "@/features/aircraft-detail/lib/format";
 import { formatReceiverLocalTime } from "@/features/receiver/lib/format";
 import type { ActivityEvent } from "@/lib/api/activity";
+import type { UnitSystem } from "@/lib/api/config";
 import { cn } from "@/lib/utils";
 
 export interface ActivityRowProps {
   event: ActivityEvent;
   /** IANA zone from `GET /api/v1/receiver`; timestamps are receiver-local. */
   timezone: string;
+  /** Display units from `GET /api/v1/receiver`; defaults to aviation. */
+  units?: UnitSystem;
   /** `true` on the Live Map panel, where the row has ~18rem to work with. */
   compact?: boolean;
 }
@@ -42,12 +45,17 @@ function linkTarget(event: ActivityEvent): string | null {
   return null;
 }
 
-export function ActivityRow({ event, timezone, compact }: ActivityRowProps) {
+export function ActivityRow({
+  event,
+  timezone,
+  units = "aviation",
+  compact,
+}: ActivityRowProps) {
   // An event type this build predates has no icon; the vocabulary's `Record`
   // is total, so this only fires against a backend ahead of this client, and
   // the generic milestone icon is a better answer than an empty cell.
   const Icon = ACTIVITY_ICONS[event.type] ?? ACTIVITY_ICONS.milestone;
-  const { label, detail } = describeActivityEvent(event);
+  const { label, detail } = describeActivityEvent(event, units);
   const target = linkTarget(event);
 
   return (

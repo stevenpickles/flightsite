@@ -47,6 +47,7 @@ export function ActivityPanel() {
   const liveEvents = useActivityFeedStore((state) => state.events);
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
+  const units = receiverQuery.data?.units ?? "aviation";
   const events = mergeActivityEvents(
     liveEvents,
     listQuery.data?.items ?? [],
@@ -100,6 +101,7 @@ export function ActivityPanel() {
                   key={event.id}
                   event={event}
                   timezone={timezone}
+                  units={units}
                   compact
                 />
               ))}
