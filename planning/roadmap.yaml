@@ -2428,7 +2428,7 @@ slices:
     title: "Feature program planning"
     phase: 9
     branch: "080-feature-program"
-    status: in_progress
+    status: merged
     depends_on: ["079"]
     objective: "Record the post-v0.10.0 usability and observatory expansion program: design record, Phase 9, the Wave A and Wave B slices, and the proposals that wait on an owner spec amendment (issue #223)."
     scope:
