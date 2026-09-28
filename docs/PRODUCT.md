@@ -259,6 +259,35 @@ restorations appear in the activity feed; feeder counts appear on Health. Monito
 the feeds of one receiver is not multi-receiver support, which stays a non-goal (§79).
 See [ADR-0017](adr/0017-feeder-status-sources.md).
 
+### 4.16 Phone Layout & Installable App (§80; roadmap slice 084)
+
+**Live Map on a phone.** Below 768 px the Live Map's floating cards collapse into a
+bottom toolbar of five toggles — **Today**, **Layers** (basemap and overlay toggles),
+**Filters**, **Aircraft** (the interesting and non-positioned lists) and **Activity** —
+each opening its card as a sheet directly above the toolbar, one at a time; tapping
+the open card's button again, or Escape, closes it. Selecting an aircraft replaces
+the open card with the aircraft detail panel as a draggable bottom sheet with three
+stops (peek: the header only; half; full), resized by dragging its handle or with its
+Expand/Collapse buttons; Escape or the close button deselects as on desktop. The
+connection chip, the quick-filter chips and the recentre button stay on the map, and
+nothing is drawn under another control: at 390 x 844 no card overlaps another and,
+with nothing open, the map keeps well over 60 % of the screen. The toolbar sits clear
+of the phone's home indicator (`env(safe-area-inset-bottom)`), and the `L`, `F` and
+`/` shortcuts open the matching sheets. From 768 px up the layout is unchanged.
+
+**Install to a home screen.** FlightSite ships a web app manifest (name, standalone
+display, the dark theme's colours, 192/512 px and maskable icons drawn from the brand
+mark), so a supporting browser offers **Install** / **Add to Home Screen** and the app
+opens in its own window. A small service worker keeps the app shell (the page, its
+scripts, styles, fonts and icons) so an installed app opens even while the server is
+unreachable — but it never stores live data: aircraft, history, analytics and alerts
+always come from the server, and map tiles are never cached by it (offline tiles
+remain out of scope, §32). When a new version is deployed, an open tab shows **"A
+new version of FlightSite is available — Reload"**; nothing changes until Reload is
+clicked. Browsers only install apps and run service workers in a secure context
+(HTTPS, or `localhost`), so an install reached over plain HTTP on a LAN address works
+exactly as before, without the install option.
+
 ## 5. Key Product Behaviors
 
 | Behavior | Policy |

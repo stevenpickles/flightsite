@@ -318,6 +318,38 @@ rings, and overlays are distinct layers; tile failure leaves a usable dark canva
 Charts: ECharts with shared dark/light theming (time series + polar
 range-by-bearing).
 
+Phone layout (roadmap slice 084): below the `md` breakpoint `LiveMapPage` swaps its
+floating cards for `features/map/phone/PhoneMapControls` — one bottom dock (status
+stack, at most one sheet, toolbar) whose cards render with `placement="docked"`, the
+open card held in `usePhoneMapStore`. Desktop rendering is untouched.
+
+**Service worker and installability** (roadmap slice 084, `frontend/src/sw/`). A
+hand-written worker, built to `dist/sw.js` by `vite-plugins/serviceWorker.ts` after
+the main build, which injects the precache list and a version hash derived from the
+shell's bytes. Scope and rules:
+
+- **Precached:** only the built app shell — `index.html`, the content-hashed files
+  under `/assets/` (JS, CSS, fonts, images), `/icons/`, the manifest and the favicon.
+  One cache per build (`flightsite-shell-<version>`); older ones are deleted when a
+  new worker activates.
+- **Never intercepted** (`src/sw/routing.ts`, an allowlist, unit-tested): anything
+  under `/api/` or `/ws/` — REST, the live WebSocket, and navigations into them —
+  every cross-origin request (basemap tiles, glyphs, sprites, external links), every
+  non-GET request, and any same-origin path the build did not list (such as the
+  un-hashed MapLibre worker scripts). For these the worker does not call
+  `respondWith`, so the browser handles them as if no worker existed. Live data is
+  therefore never served from a cache, before or after a reinstall.
+- **Navigations:** network-first; the precached `index.html` only when the network
+  fails. **Shell files:** cache-first (their names are content hashes).
+- **Updates:** a new build's worker installs and waits; it activates only when the user
+  clicks Reload on the update prompt (`SKIP_WAITING` message), and the page reloads on
+  `controllerchange`. Registration (`lib/pwa/registerServiceWorker.ts`) runs only in
+  production builds in a secure context, never under `npm run dev` or vitest, and a
+  failure is caught — the app runs exactly as before without a worker.
+- **Serving:** nginx sends `sw.js` and `manifest.webmanifest` with
+  `Cache-Control: no-cache` so a deploy is seen on the browser's next update check;
+  `/assets/` keep their immutable caching.
+
 The frontend holds no domain logic that the backend also implements (classification,
 rarity, alert matching, analytics all come computed from the API); it only formats,
 filters the live set, and renders.
