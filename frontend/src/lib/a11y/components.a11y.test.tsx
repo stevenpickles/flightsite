@@ -10,10 +10,12 @@
  * ARIA or labelling regression fails fast in the unit suite rather than
  * waiting on a Docker stack.
  */
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { axe } from "vitest-axe";
 import { describe, expect, it } from "vitest";
 
+import { ShortcutSheet } from "@/components/shell/ShortcutSheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PresetSelector } from "@/features/analytics/components/PresetSelector";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
@@ -22,6 +24,8 @@ import { ConfirmDangerDialog } from "@/features/settings/components/ConfirmDange
 import { RestartRequiredBadge } from "@/features/settings/components/RestartRequiredBadge";
 import { SectionSaveBar } from "@/features/settings/components/SectionSaveBar";
 import { SettingsSection } from "@/features/settings/components/SettingsSection";
+import { ShareControls } from "@/lib/share/ShareControls";
+import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
 
 /** axe's own async work plus jsdom is slower than the 5s default. */
 const AXE_TIMEOUT = 20_000;
@@ -173,6 +177,33 @@ describe("component accessibility", () => {
           <ClosureReasonTooltip reason="gap_timeout" />
         </TooltipProvider>,
       );
+      await expectNoViolations(container);
+    },
+    AXE_TIMEOUT,
+  );
+
+  it(
+    "the open '?' shortcut sheet is accessible (roadmap slice 082)",
+    async () => {
+      useShortcutSheetStore.setState({ open: true });
+      const { container } = render(<ShortcutSheet />);
+      await expectNoViolations(container);
+      useShortcutSheetStore.setState({ open: false });
+    },
+    AXE_TIMEOUT,
+  );
+
+  it(
+    "the share controls, including the open QR popover, are accessible (roadmap slice 082)",
+    async () => {
+      const user = userEvent.setup();
+      const { container } = render(
+        <ShareControls
+          url="https://flightsite.local/aircraft/ae1463"
+          title="RCH471"
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /qr code/i }));
       await expectNoViolations(container);
     },
     AXE_TIMEOUT,

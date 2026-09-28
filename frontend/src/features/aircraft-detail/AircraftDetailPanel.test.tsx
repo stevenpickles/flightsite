@@ -55,6 +55,24 @@ describe("AircraftDetailPanel", () => {
     expect(screen.getByRole("heading", { name: "RCH471" })).toBeInTheDocument();
   });
 
+  it("offers Copy link and QR code sharing for the selected aircraft (roadmap slice 082)", async () => {
+    renderPanel();
+    seedSnapshot([makeAircraft({ icao: "aaaaaa", callsign: "RCH471" })]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    expect(
+      screen.getByRole("button", { name: /copy link/i }),
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /qr code/i }));
+    expect(
+      screen.getByRole("dialog", { name: /qr code for rch471/i }),
+    ).toBeInTheDocument();
+  });
+
   it("links the History section to the full aircraft detail route", () => {
     renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa" })]);

@@ -16,6 +16,11 @@
  * opened it to watch an aircraft land or go stale still wants to see where
  * it ended up. Only an explicit close/Escape/re-click-elsewhere clears the
  * selection.
+ *
+ * Since roadmap slice 082, the header also carries `ShareControls` — Copy
+ * link, `navigator.share`, and a QR popover — reading the current address
+ * bar URL (`useCurrentUrl`), which already carries this selection as
+ * `?selected=<icao>` via `useSelectionUrlSync`.
  */
 
 import { X } from "lucide-react";
@@ -58,6 +63,8 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import type { LiveAircraft } from "@/lib/api/live";
+import { ShareControls } from "@/lib/share/ShareControls";
+import { useCurrentUrl } from "@/lib/share/useCurrentUrl";
 import { cn } from "@/lib/utils";
 
 /** Vertical-rate direction glyph. Text/symbol-first (▲/▼/—), not a bare
@@ -81,6 +88,10 @@ export function AircraftDetailPanel() {
   // arriving since selection, which the backfilled drawn track no longer is.
   const trackLive = useLiveAircraftStore((state) => state.trackLive);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
+  // The URL already carries `?selected=<icao>` via `useSelectionUrlSync`
+  // (mounted once at `LiveMapPage`), so sharing this panel is just sharing
+  // the address bar (roadmap slice 082).
+  const shareUrl = useCurrentUrl();
 
   const isOpen = selectedIcao !== null;
   // Non-modal (`aria-modal="false"`): the map behind stays interactive, so
@@ -157,6 +168,11 @@ export function AircraftDetailPanel() {
                   <EmergencySquawkBadge squawk={aircraft.squawk} />
                 )}
               </div>
+              <ShareControls
+                className="-ml-1.5"
+                url={shareUrl}
+                title={aircraft?.callsign ?? selectedIcao.toUpperCase()}
+              />
             </div>
             <button
               type="button"
