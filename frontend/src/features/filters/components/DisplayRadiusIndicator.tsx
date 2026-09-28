@@ -30,8 +30,7 @@ export function DisplayRadiusIndicator() {
         effectiveDistanceCapNm,
         units === "metric" ? "km" : "nm",
       )}{" "}
-      hidden —
-      still tracked and recorded.
+      hidden — still tracked and recorded.
     </div>
   );
 }
