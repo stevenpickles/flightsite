@@ -339,20 +339,21 @@ async def test_the_in_progress_day_takes_its_busiest_hour_from_the_hourly_metric
 ) -> None:
     """``docs/DATA_MODEL.md`` §6.5's dual source, from the slice-033 side."""
     await seed(harness)
-    peak_ms = harness.inside(harness.today, 0.5)
-    async with harness.database.writer_session() as session:
-        session.add_all(
-            [
-                ReceiverMetricHourly(
-                    hour_start_ms=hour_start_ms(harness.inside(harness.today, 0.1)),
-                    aircraft_max=4,
-                    sample_count=10,
-                ),
-                ReceiverMetricHourly(
-                    hour_start_ms=hour_start_ms(peak_ms), aircraft_max=41, sample_count=10
-                ),
-            ]
+    # Two hours that are distinct by construction: the day's first hour and
+    # the hour now falls in. Picking them as fractions of the elapsed day put
+    # both in the same hour whenever the suite ran within about two hours of
+    # the receiver's midnight (the 05:40 UTC Dependabot runs), and the two
+    # rows then collided on the hourly table's primary key. Run in the day's
+    # first hour, only the peak row exists — still a "today" hour to find.
+    first_hour_ms = hour_start_ms(harness.inside(harness.today, 0.0))
+    peak_ms = hour_start_ms(harness.inside(harness.today, 0.999))
+    rows = [ReceiverMetricHourly(hour_start_ms=peak_ms, aircraft_max=41, sample_count=10)]
+    if first_hour_ms != peak_ms:
+        rows.append(
+            ReceiverMetricHourly(hour_start_ms=first_hour_ms, aircraft_max=4, sample_count=10)
         )
+    async with harness.database.writer_session() as session:
+        session.add_all(rows)
 
     summary = (await get(rest, "/api/v1/analytics/summary", preset="today"))["summary"]
 
