@@ -353,3 +353,104 @@ describe("AircraftPage", () => {
     });
   });
 });
+
+describe("AircraftPage filter box (slice 083)", () => {
+  function listUrls(fetchMock: ReturnType<typeof vi.fn>): URL[] {
+    return fetchMock.mock.calls
+      .map(([raw]) => new URL(raw as string, "http://localhost"))
+      .filter((url) => url.pathname === "/api/v1/aircraft");
+  }
+
+  function listOf(...registrations: string[]) {
+    return {
+      items: registrations.map((registration, index) =>
+        aircraftListRow({ icao: `aa000${index}`, registration }),
+      ),
+      total: registrations.length,
+      limit: PAGE_SIZE,
+      offset: 0,
+    };
+  }
+
+  it("searches after typing, keeps q beside sort in the URL, and returns to page 1", async () => {
+    const { fetchMock } = installAircraftApiMock({
+      list: (url) =>
+        url.searchParams.get("q") === "g-ez"
+          ? listOf("G-EZTH")
+          : { ...listOf("N302DN"), total: PAGE_SIZE * 3 },
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp("/aircraft?sort=icao&page=2");
+    await screen.findByText("N302DN");
+
+    await user.type(
+      screen.getByLabelText("Filter aircraft", { selector: "input" }),
+      "g-ez",
+    );
+
+    expect(await screen.findByText("G-EZTH")).toBeInTheDocument();
+    const fetched =
+      listUrls(fetchMock).at(-1)?.searchParams ?? new URLSearchParams();
+    expect(fetched.get("q")).toBe("g-ez");
+    expect(fetched.get("sort")).toBe("icao");
+    expect(fetched.get("offset")).toBe("0");
+    const search = new URLSearchParams(router.state.location.search);
+    expect(search.get("q")).toBe("g-ez");
+    expect(search.get("sort")).toBe("icao");
+    expect(search.has("page")).toBe(false);
+    // One request for the whole word, not one per character.
+    const searched = listUrls(fetchMock).filter((url) =>
+      url.searchParams.has("q"),
+    );
+    expect(searched).toHaveLength(1);
+  });
+
+  it("restores the search from a shared link", async () => {
+    const { fetchMock } = installAircraftApiMock({ list: listOf("N302DN") });
+
+    renderApp("/aircraft?q=DAL");
+    await screen.findByText("N302DN");
+
+    expect(
+      screen.getByLabelText("Filter aircraft", { selector: "input" }),
+    ).toHaveValue("DAL");
+    expect(listUrls(fetchMock).map((url) => url.searchParams.get("q"))).toEqual(
+      ["DAL"],
+    );
+  });
+
+  it("says nothing matches — not that nothing was ever sighted", async () => {
+    installAircraftApiMock({
+      list: { items: [], total: 0, limit: PAGE_SIZE, offset: 0 },
+    });
+
+    renderApp("/aircraft?q=ZZZ9");
+
+    const status = await screen.findByText(/no aircraft match “ZZZ9”/i);
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.queryByText(/hasn.t sighted any aircraft yet/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the search from the box and the URL", async () => {
+    const { fetchMock } = installAircraftApiMock({ list: listOf("N302DN") });
+    const user = userEvent.setup();
+    const { router } = renderApp("/aircraft?q=N30&sort=registration");
+    await screen.findByText("N302DN");
+
+    await user.click(screen.getByRole("button", { name: "Clear filter" }));
+
+    await waitFor(() => {
+      expect(router.state.location.search).not.toContain("q=");
+    });
+    expect(router.state.location.search).toContain("sort=registration");
+    expect(
+      screen.getByLabelText("Filter aircraft", { selector: "input" }),
+    ).toHaveValue("");
+    await waitFor(() => {
+      expect(listUrls(fetchMock).at(-1)?.searchParams.has("q")).toBe(false);
+    });
+    expect(listUrls(fetchMock)[0]?.searchParams.get("q")).toBe("N30");
+  });
+});
