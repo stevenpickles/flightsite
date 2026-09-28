@@ -69,13 +69,43 @@ async def test_it_is_a_prefix_not_a_substring(roster: LiveApp, rest: AsyncClient
     assert body == {"items": [], "total": 0, "limit": 50, "offset": 0}
 
 
-async def test_only_the_most_recent_callsign_is_matched(roster: LiveApp, rest: AsyncClient) -> None:
-    """``a1b2c3`` flew ``QFA9`` weeks ago and ``UAL1`` since: ``UAL`` finds it."""
-    recent = (await rest.get("/api/v1/aircraft", params={"q": "UAL"})).json()
-    stale = (await rest.get("/api/v1/aircraft", params={"q": "QFA"})).json()
+@pytest.mark.parametrize(
+    "q",
+    [
+        pytest.param("UAL", id="latest-last-callsign"),
+        pytest.param("qfa", id="an-older-sightings-callsign"),
+        pytest.param("SKW", id="a-first-callsign-changed-mid-sighting"),
+    ],
+)
+async def test_any_callsign_the_airframe_has_flown_is_matched(
+    roster: LiveApp, rest: AsyncClient, q: str
+) -> None:
+    """``a1b2c3`` flew ``QFA9``, then ``SKW5`` that became ``UAL1``: all find it."""
+    body = (await rest.get("/api/v1/aircraft", params={"q": q})).json()
 
-    assert icaos(recent) == ["a1b2c3"]
-    assert icaos(stale) == []
+    assert icaos(body) == ["a1b2c3"]
+    assert body["total"] == 1
+
+
+async def test_an_airframe_with_many_matching_sightings_counts_once(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Twenty ``DAL`` sightings of one airframe are one row and a total of 1."""
+    await seed_sightings(
+        live_app.app.state.database,
+        [airframe("dd0001")],
+        [
+            SeedSighting(
+                icao24="dd0001", started_ms=BASE_MS - index * 60_000, callsign_last=f"DAL{index}"
+            )
+            for index in range(20)
+        ],
+    )
+
+    body = (await rest.get("/api/v1/aircraft", params={"q": "dal"})).json()
+
+    assert icaos(body) == ["dd0001"]
+    assert body["total"] == 1
 
 
 async def test_an_airframe_matching_on_two_fields_appears_once(

@@ -77,13 +77,14 @@ Search: ``q`` (slice 083)
 --------------------------
 
 ``q`` is a case-insensitive, literal *prefix* over five identifiers — ICAO
-address, registration, most recent callsign, ICAO type designator and
-operator name — with the shared semantics in :mod:`flightsite.api.search`.
-It filters this list only; it is not a global search (SPEC §37, §79).
+address, registration, any callsign the airframe has flown, ICAO type
+designator and operator name — with the shared semantics in
+:mod:`flightsite.api.search`. It filters this list only; it is not a global
+search (SPEC §37, §79).
 
 It is *not* one ``WHERE`` with five ``OR``-ed ``LIKE`` terms over the join.
-That shape reads every ``aircraft`` row, and the callsign term — which lives
-on the airframe's latest *sighting*, not on ``aircraft`` — adds an index seek
+That shape reads every ``aircraft`` row, and a callsign term — callsigns
+live on *sightings*, not on ``aircraft`` — adds an index seek
 into ``sightings`` per row on top: measured at about a second per query over
 120,640 airframes and 1.64M sightings (slice 050's three-year Scenario A row
 counts), paid twice because ``total`` counts the same filter. Instead
@@ -94,10 +95,16 @@ that each start from an index range, so the work is bounded by how many rows
 * the ICAO address, from ``aircraft``'s own unique index;
 * registration, type and operator, from the resolved-metadata indexes
   (rev 0018 adds the two ``NOCASE`` ones; type reads ``ix_amr_type``);
-* the callsign, from ``ix_sightings_callsign`` (rev 0018), narrowed to
-  airframes whose *most recent* sighting carries it — so an airframe that
-  flew ``BAW12`` last year and ``EZY34`` today is found by ``EZY``, the
-  callsign it is currently known by, and not by ``BAW``.
+* the callsign, from ``ix_sightings_callsign`` and
+  ``ix_sightings_callsign_first`` (rev 0018): every airframe with *any*
+  sighting whose first or last callsign starts with the query. An airliner
+  flies a different flight number most days, so the callsign someone
+  remembers from last week is rarely the one it flies today; "ever flown"
+  finds it, "most recent" would not. SQLite answers the two callsigns as a
+  multi-index ``OR`` over those ranges, so the work is the matching
+  sightings, not the table. Over the three-year row counts this measured
+  under 10 ms for a typical prefix, ~80 ms for an airline prefix matching
+  ~4,000 airframes, and ~430 ms page-plus-count for a single letter.
 
 ``total`` stays exact under ``q``: the count is taken over the same filtered
 join, exactly as for the other filters.
@@ -123,7 +130,7 @@ from sqlalchemy import ColumnElement, Select, UnaryExpression, func, or_, select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import aliased
 
-from flightsite.api.search import LIKE_ESCAPE, like_prefix, normalize_query, prefix_match
+from flightsite.api.search import normalize_query, prefix_match
 from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
@@ -269,9 +276,7 @@ def _search_condition(term: str) -> ColumnElement[bool]:
     by_icao = aliased(Aircraft)
     by_metadata = aliased(Aircraft)
     metadata = aliased(AircraftMetadataResolved)
-    by_callsign = aliased(Aircraft)
-    matching = aliased(Sighting)
-    latest = aliased(Sighting)
+    flown = aliased(Sighting)
 
     icao_branch = select(by_icao.id).where(prefix_match(by_icao.icao24, term, fold="lower"))
     metadata_branch = (
@@ -286,25 +291,14 @@ def _search_condition(term: str) -> ColumnElement[bool]:
             )
         )
     )
-    # The airframe's most recent callsign is its latest sighting's, read
-    # through `ix_sightings_aircraft` — and only for airframes that have
-    # *some* sighting under the prefix (found through `ix_sightings_callsign`),
-    # never for every airframe.
-    latest_callsign = (
-        select(latest.callsign_last)
-        .where(latest.aircraft_id == by_callsign.id)
-        .order_by(latest.started_ms.desc())
-        .limit(1)
-        .correlate(by_callsign)
-        .scalar_subquery()
-    )
-    callsign_branch = select(by_callsign.id).where(
-        by_callsign.id.in_(
-            select(matching.aircraft_id).where(
-                prefix_match(matching.callsign_last, term, fold="nocase")
-            )
-        ),
-        latest_callsign.like(like_prefix(term), escape=LIKE_ESCAPE),
+    # Any callsign ever flown: first or last of any sighting, answered as a
+    # multi-index `OR` over `ix_sightings_callsign` and
+    # `ix_sightings_callsign_first` — bounded by the matching sightings.
+    callsign_branch = select(flown.aircraft_id).where(
+        or_(
+            prefix_match(flown.callsign_last, term, fold="nocase"),
+            prefix_match(flown.callsign_first, term, fold="nocase"),
+        )
     )
     return Aircraft.id.in_(union_all(icao_branch, metadata_branch, callsign_branch))
 

@@ -40,11 +40,17 @@ ROSTER = (
 )
 
 #: Sightings for the roster. `e80000` has no metadata at all and is findable
-#: only by its callsign; `a1b2c3` flew `QFA9` long ago and `UAL1` most
-#: recently, which is what the "most recent callsign" rule is about.
+#: only by its callsign; `a1b2c3` flew `QFA9` weeks ago, then a sighting that
+#: began as `SKW5` and became `UAL1` — so each of its three callsigns, old or
+#: new, first or last, is one "any callsign ever flown" must find.
 SIGHTINGS = (
     SeedSighting(icao24="a1b2c3", started_ms=BASE_MS - 20 * DAY_MS, callsign_last="QFA9"),
-    SeedSighting(icao24="a1b2c3", started_ms=BASE_MS - 1 * DAY_MS, callsign_last="UAL1"),
+    SeedSighting(
+        icao24="a1b2c3",
+        started_ms=BASE_MS - 1 * DAY_MS,
+        callsign_first="SKW5",
+        callsign_last="UAL1",
+    ),
     SeedSighting(icao24="4ca7f1", started_ms=BASE_MS - 2 * DAY_MS, callsign_last="EZY42"),
     SeedSighting(icao24="e80000", started_ms=BASE_MS - 4 * DAY_MS, callsign_last="RCH871"),
 )

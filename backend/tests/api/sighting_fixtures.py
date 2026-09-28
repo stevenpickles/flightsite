@@ -42,6 +42,7 @@ class SeedSighting:
     ended_ms: int | None = None
     duration_ms: int | None = None
     closure_reason: str | None = None
+    callsign_first: str | None = None
     callsign_last: str | None = None
     squawk_last: str | None = None
     had_emergency: bool = False
@@ -68,6 +69,7 @@ def _sighting_row(aircraft_id: int, row: SeedSighting) -> dict[str, Any]:
         "ended_ms": row.ended_ms,
         "duration_ms": row.duration_ms,
         "closure_reason": row.closure_reason,
+        "callsign_first": row.callsign_first,
         "callsign_last": row.callsign_last,
         "squawk_last": row.squawk_last,
         "had_emergency": int(row.had_emergency),

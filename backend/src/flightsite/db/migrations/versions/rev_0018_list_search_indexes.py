@@ -4,15 +4,17 @@ Slice 083 (issue #226) adds ``q`` to ``GET /api/v1/aircraft`` and
 ``GET /api/v1/sightings``: a case-insensitive prefix over the identifiers a
 person remembers (:mod:`flightsite.api.search`). A case-insensitive prefix is
 a range under ``COLLATE NOCASE``, and SQLite can only read that range from an
-index built in the same collation. Three columns needed one:
+index built in the same collation. Four columns needed one:
 
 * **``ix_amr_registration_nocase``** and **``ix_amr_operator_nocase``** on
   ``aircraft_metadata_resolved`` — neither column is case-normalized on
   import (``type_code`` is, so the existing ``ix_amr_type`` serves it).
-* **``ix_sightings_callsign``** on ``sightings (callsign_last COLLATE NOCASE,
-  aircraft_id)`` — serving both ``/sightings``' callsign prefix and the
-  Aircraft page's "most recent callsign", with ``aircraft_id`` included so the
-  latter reads "which airframes flew this prefix" from the index alone.
+* **``ix_sightings_callsign``** and **``ix_sightings_callsign_first``** on
+  ``sightings (callsign_last | callsign_first COLLATE NOCASE, aircraft_id)``
+  — a sighting's callsign can change mid-flight, and a search matches either.
+  They serve ``/sightings``' callsign prefix and the Aircraft page's "any
+  callsign this airframe has flown", with ``aircraft_id`` included so the
+  latter reads "which airframes flew this prefix" from the indexes alone.
 
 Measured without them, over slice 050's three-year Scenario A row counts
 (120,640 airframes, 94,195 resolved rows, 1.64M sightings) on a development
@@ -25,10 +27,11 @@ possible — a single letter, matching a third of every airframe.
 
 Write cost, stated rather than assumed:
 
-* ``sightings`` — one index entry per sighting INSERT. Unlike the extremes
-  rev 0013 declined to index, ``callsign_last`` is not rewritten on every
+* ``sightings`` — two index entries per sighting INSERT. Unlike the extremes
+  rev 0013 declined to index, neither callsign is rewritten on every
   30-second flush: the ORM leaves an unchanged attribute out of the UPDATE,
-  so the entry moves only when the callsign actually changes.
+  so ``callsign_last``'s entry moves only when the callsign actually changes,
+  and ``callsign_first`` is set once.
 * ``aircraft_metadata_resolved`` — replaced wholesale by a metadata promotion
   (:mod:`flightsite.metadata.repository`), inside the writer-held swap slice
   075 worked to keep short. Maintained row by row through that swap's bulk
@@ -38,8 +41,8 @@ Write cost, stated rather than assumed:
   having them. The definitions there and here must match;
   ``tests/metadata/test_search_indexes_survive_promotion.py`` checks it.
 
-Building the indexes is a one-off sort of existing rows — about a second for
-all three at the sizes above. Every step is conditional, because SQLite DDL
+Building the indexes is a one-off sort of existing rows — a second or two for
+all four at the sizes above. Every step is conditional, because SQLite DDL
 is not transactional (``docs/DEVELOPMENT.md``, "SQLite DDL is not
 transactional") and a revision that failed halfway is re-run from the top.
 
@@ -78,6 +81,11 @@ _INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "ix_sightings_callsign",
         "sightings",
         ("callsign_last COLLATE NOCASE", "aircraft_id"),
+    ),
+    (
+        "ix_sightings_callsign_first",
+        "sightings",
+        ("callsign_first COLLATE NOCASE", "aircraft_id"),
     ),
 )
 

@@ -88,14 +88,16 @@ actually has to answer at.
 Search: ``q`` (slice 083)
 --------------------------
 
-``q`` finds sightings whose ICAO address *or* last callsign starts with the
-query — case-insensitive and literal, per :mod:`flightsite.api.search`. It is
+``q`` finds sightings whose ICAO address *or* callsign — the first or the
+last, since a callsign can change mid-sighting — starts with the query,
+case-insensitive and literal, per :mod:`flightsite.api.search`. It is
 added beside ``icao`` rather than loosening it: ``icao`` keeps its exact,
 six-hex-digit contract for every existing caller, and ``q`` is the one the
 Sightings page's filter box sends. Like ``/aircraft``'s ``q`` it filters this
 list only; it is not a global search (SPEC §37, §79).
 
-The callsign half is why rev 0018 adds ``ix_sightings_callsign``. Without it
+The callsign terms are why rev 0018 adds ``ix_sightings_callsign`` and
+``ix_sightings_callsign_first``. Without them
 a prefix that matched nothing walked every sighting newest-first before
 answering "none" — 1.6 s over slice 050's 1.64M three-year sightings — and
 with it that answer is an empty index range. The broadest query, one letter,
@@ -236,13 +238,14 @@ def _joined_query() -> Select[Any]:
 
 
 def _search_condition(term: str) -> ColumnElement[bool]:
-    """``q``: the sighting's ICAO address or its callsign starts with ``term``.
+    """``q``: the sighting's ICAO address or either callsign starts with ``term``.
 
-    Both halves are phrased on ``sightings`` itself — the address as
+    Every term is phrased on ``sightings`` itself — the address as
     ``aircraft_id IN (<airframes under the prefix>)`` rather than as a
     predicate on the joined ``aircraft`` row — so SQLite can answer the ``OR``
-    as a union of two index reads (``ix_sightings_aircraft`` and
-    ``ix_sightings_callsign``). A predicate on the joined table would leave it
+    as a union of index reads (``ix_sightings_aircraft``,
+    ``ix_sightings_callsign``, ``ix_sightings_callsign_first``). A predicate
+    on the joined table would leave it
     one plan: walk every sighting newest-first and test each, which is fast
     when the prefix is common and a full scan of a table retained forever
     when it matches nothing (see the module docstring's measurement).
@@ -254,6 +257,7 @@ def _search_condition(term: str) -> ColumnElement[bool]:
     return or_(
         Sighting.aircraft_id.in_(airframes),
         prefix_match(Sighting.callsign_last, term, fold="nocase"),
+        prefix_match(Sighting.callsign_first, term, fold="nocase"),
     )
 
 

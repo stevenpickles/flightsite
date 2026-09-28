@@ -3,7 +3,7 @@
 Slice 083 (issue #226). ``tests/db/test_migrations.py`` already proves the
 graph is linear, that head matches the models, and that a fixture database
 upgrades; what is left for this revision is what it specifically claims —
-three indexes, each in ``NOCASE`` collation (which the models cannot state:
+four indexes, each in ``NOCASE`` collation (which the models cannot state:
 SQLite reflection drops an index column's collation, so ``alembic check``
 cannot see it and this file is where it is pinned), a downgrade that removes
 exactly them, a re-run over a half-applied attempt that finishes, and an
@@ -29,6 +29,7 @@ NEW_INDEXES = {
     "ix_amr_registration_nocase": ("aircraft_metadata_resolved", "registration"),
     "ix_amr_operator_nocase": ("aircraft_metadata_resolved", "operator_name"),
     "ix_sightings_callsign": ("sightings", "callsign_last"),
+    "ix_sightings_callsign_first": ("sightings", "callsign_first"),
 }
 
 #: Every table a populated install has rows in that these indexes touch, and
@@ -42,7 +43,7 @@ SEEDED_TABLES = (
 )
 
 
-async def test_the_upgrade_creates_the_three_indexes(db_path: Path) -> None:
+async def test_the_upgrade_creates_the_four_indexes(db_path: Path) -> None:
     assert await upgrade_empty_database(db_path, REVISION) == REVISION
 
     for name, (table, _) in NEW_INDEXES.items():
@@ -57,17 +58,22 @@ async def test_each_index_is_nocase_on_its_column(db_path: Path) -> None:
         assert f"{column.upper()} COLLATE NOCASE" in sql, sql
 
 
-async def test_the_callsign_index_carries_the_aircraft_id(db_path: Path) -> None:
-    """So "which airframes flew this prefix" never visits the table."""
+async def test_the_callsign_indexes_carry_the_aircraft_id(db_path: Path) -> None:
+    """So "which airframes flew this prefix" is answered by the index entries."""
     await upgrade_empty_database(db_path, REVISION)
 
     with sqlite3.connect(db_path) as connection:
-        columns = [
-            row[2]
-            for row in connection.execute("PRAGMA index_info('ix_sightings_callsign')").fetchall()
-        ]
+        columns = {
+            index: [
+                row[2] for row in connection.execute(f"PRAGMA index_info('{index}')").fetchall()
+            ]
+            for index in ("ix_sightings_callsign", "ix_sightings_callsign_first")
+        }
 
-    assert columns == ["callsign_last", "aircraft_id"]
+    assert columns == {
+        "ix_sightings_callsign": ["callsign_last", "aircraft_id"],
+        "ix_sightings_callsign_first": ["callsign_first", "aircraft_id"],
+    }
 
 
 async def test_the_existing_indexes_are_untouched(db_path: Path) -> None:
@@ -178,7 +184,7 @@ def _counts(path: Path) -> dict[str, int]:
         }
 
 
-#: The first of revision 0018's three steps, as an interrupted attempt leaves it.
+#: The first of revision 0018's four steps, as an interrupted attempt leaves it.
 _HALF_APPLIED_SQL = (
     "CREATE INDEX ix_amr_registration_nocase "
     "ON aircraft_metadata_resolved (registration COLLATE NOCASE)"

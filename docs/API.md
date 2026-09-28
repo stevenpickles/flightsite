@@ -377,17 +377,17 @@ severity. Same aircraft object shape, `interesting` always non-null.
 | `GET /api/v1/aircraft/{icao}` | Full aircraft detail: identity, metadata with provenance, classification, lifetime records. |
 | `GET /api/v1/aircraft/{icao}/sightings` | Paginated sightings for one aircraft. |
 
-**Search: `q`** (slice 083). Finds airframes whose **ICAO address, registration, most
-recent callsign, ICAO type designator or operator name** starts with `q`:
+**Search: `q`** (slice 083). Finds airframes whose **ICAO address, registration, any
+callsign it has flown, ICAO type designator or operator name** starts with `q`:
 
 - **Prefix, not substring.** `q=G-EZ` finds `G-EZTH`; `q=EZTH` does not.
 - **Case-insensitive** for ASCII letters. `q=g-ez`, `q=A1B2` and `q=easyj` all match.
 - **Literal.** `%`, `_` and `\` match themselves; there is no pattern syntax.
 - **Trimmed**, and a blank `q` is ignored — `?q=%20` is the unfiltered list.
 - **At most 32 characters.** A longer `q` is a `422` validation error, not a truncation.
-- **Most recent callsign** is the `callsign_last` of the airframe's latest sighting: an
-  airliner that flew `BAW12` last month and `BAW7` today is found by `BAW7`, not by
-  `BAW12` (both by `BAW`).
+- **Any callsign it has flown** means the first or last callsign of *any* of its
+  sightings: an airliner that flew `BAW12` last month and `BAW7` today is found by
+  `BAW12`, `BAW7` and `BAW`, and one whose callsign changed mid-sighting by either.
 
 `q` combines with the other filters (`AND`), and sorting and pagination apply to the
 filtered set; `total` is the exact count of airframes matching every filter, `q`
@@ -454,8 +454,9 @@ size class to include.
 
 **`icao` and `q`.** `icao` is an **exact** match on a lowercase six-hex-digit address
 (`^[0-9a-f]{6}$`; anything else is a `422`), unchanged since slice 030. `q` (slice 083)
-is the search the Sightings page's filter box sends: sightings whose **ICAO address or
-last callsign starts with `q`**, with the same rules as `/aircraft`'s `q` (§3.5) —
+is the search the Sightings page's filter box sends: sightings whose **ICAO address,
+first callsign or last callsign starts with `q`** (a callsign can change mid-sighting;
+rows show the last one), with the same rules as `/aircraft`'s `q` (§3.5) —
 prefix, ASCII case-insensitive, literal (`%`, `_`, `\` are not wildcards), trimmed,
 blank ignored, at most 32 characters (`422` beyond). `q=BAW` finds `BAW12` and `BAW7`;
 `q=ae14` finds every sighting of `ae1463`. Both may be given and combine with `AND`.

@@ -19,7 +19,7 @@ plan that changes under a user overnight).
 Measured on the row counts of the three-year Scenario A run
 (``docs/PERFORMANCE.md`` §7.6.1) before and after rev 0018, on a development
 machine: the aircraft search went from ~1 s per query (twice, with the count)
-to under 10 ms for a three-character prefix and ~470 ms page-plus-count for a
+to under 10 ms for a three-character prefix and ~430 ms page-plus-count for a
 single letter; a ``/sightings`` prefix matching nothing went from 1.6 s to
 2 ms.
 """
@@ -96,10 +96,12 @@ def _assert_aircraft_search_is_indexed(rendered: str) -> None:
         "ix_amr_registration_nocase",
         "ix_amr_type",
         "ix_amr_operator_nocase",
-        "ix_sightings_callsign",
-        "ix_sightings_aircraft",
+        "ix_sightings_callsign ",
+        "ix_sightings_callsign_first",
     ):
         assert index in rendered, f"the aircraft search no longer reads {index}: {rendered}"
+    # "Any callsign ever flown" needs no per-airframe latest-sighting lookup.
+    assert "correlated" not in rendered, rendered
     for table in ("aircraft", "aircraft_metadata_resolved", "sightings"):
         assert not scans_without_an_index(rendered, table), (
             f"the aircraft search reads every {table} row: {rendered}"
@@ -111,7 +113,8 @@ def _assert_aircraft_search_is_indexed(rendered: str) -> None:
 
 
 def _assert_sightings_search_is_indexed(rendered: str) -> None:
-    assert "ix_sightings_callsign" in rendered, rendered
+    assert "ix_sightings_callsign " in rendered, rendered
+    assert "ix_sightings_callsign_first" in rendered, rendered
     assert "ix_sightings_aircraft" in rendered, rendered
     assert not scans_without_an_index(rendered, "sightings"), (
         f"the sightings search reads every sighting: {rendered}"

@@ -32,6 +32,17 @@ async def test_a_sighting_is_found_by_its_callsign_prefix(
     assert [item["callsign"] for item in body["items"]] == ["EZY42"]
 
 
+async def test_a_sighting_is_found_by_the_callsign_it_started_with(
+    roster: LiveApp, rest: AsyncClient
+) -> None:
+    """``SKW5`` became ``UAL1`` mid-sighting; either finds that sighting."""
+    first = (await rest.get("/api/v1/sightings", params={"q": "skw"})).json()
+    last = (await rest.get("/api/v1/sightings", params={"q": "ual"})).json()
+
+    assert [item["callsign"] for item in first["items"]] == ["UAL1"]
+    assert [item["callsign"] for item in last["items"]] == ["UAL1"]
+
+
 async def test_every_sighting_of_an_address_prefix_is_found(
     roster: LiveApp, rest: AsyncClient
 ) -> None:
