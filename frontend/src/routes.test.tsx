@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 import { NAV_ITEMS, requireNavItem } from "@/components/shell/nav-items";
 import { renderApp } from "@/test/test-utils";
 
+const OWN_HEADER_SECTIONS = new Set([
+  "/activity",
+  "/health",
+  "/receiver/feeders",
+]);
+
 describe("routing", () => {
   it("renders the Live Map (slice 013: a real map, no longer a placeholder) at the index route", () => {
     renderApp("/");
@@ -33,25 +39,33 @@ describe("routing", () => {
       // `useConfigQuery` state (loading/error/loaded) but only shows this
       // description text once config has actually loaded — this sweep
       // deliberately runs without a config API mock, so Settings exercises
-      // its no-fetch-mock (error) state here instead.
-      if (item.to !== "/" && item.to !== "/settings") {
+      // its no-fetch-mock (error) state here instead. Activity, Health and
+      // Feeders (primary since the SPEC §10 amendment of 2026-09-28) have
+      // their own page headers and never rendered the nav description.
+      if (
+        item.to !== "/" &&
+        item.to !== "/settings" &&
+        !OWN_HEADER_SECTIONS.has(item.to)
+      ) {
         expect(screen.getByText(item.description)).toBeInTheDocument();
       }
     }
   });
 
-  it("renders the activity feed at /activity, outside the seven nav sections", () => {
-    // Slice 035's standalone view. SPEC §10 fixes the primary navigation at
-    // seven sections, so this route is deliberately absent from `NAV_ITEMS` —
-    // the sweep above would otherwise demand a sidebar link for it — and is
-    // reached from the Live Map panel's "View all" link instead, the same
-    // shape as `/sightings/:id`.
+  it("puts Activity, Health and Feeders in the primary navigation", () => {
+    // SPEC §10 amendment of 2026-09-28 (slice 082): the three pages that were
+    // reachable only through in-page links are primary sections too.
+    for (const path of ["/activity", "/health", "/receiver/feeders"]) {
+      expect(NAV_ITEMS.some((item) => item.to === path)).toBe(true);
+    }
+  });
+
+  it("renders the activity feed at /activity", () => {
     renderApp("/activity");
 
     expect(
       screen.getByRole("heading", { level: 1, name: "Activity" }),
     ).toBeInTheDocument();
-    expect(NAV_ITEMS.some((item) => item.to === "/activity")).toBe(false);
   });
 
   it("renders NotFoundPage inside the shell for a path matching no route (R0-02, R2-16)", () => {
@@ -69,7 +83,7 @@ describe("routing", () => {
     ).toBeInTheDocument();
     expect(within(main).getByText("/nope-not-a-route")).toBeInTheDocument();
 
-    // Lists all seven sections as a way back, not just the Live Map.
+    // Lists every primary section as a way back, not just the Live Map.
     for (const item of NAV_ITEMS) {
       expect(
         within(main).getByRole("link", { name: item.label }),
