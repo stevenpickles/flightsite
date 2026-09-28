@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
-
 import { requireNavItem } from "@/components/shell/nav-items";
+import { useIsMobile } from "@/components/shell/useIsMobile";
 import { ActivityPanel } from "@/features/activity/ActivityPanel";
 import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
 import { DisplayRadiusIndicator } from "@/features/filters/components/DisplayRadiusIndicator";
@@ -16,6 +15,8 @@ import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
+import { PanelRegion } from "@/features/map/PanelRegion";
+import { PhoneMapControls } from "@/features/map/phone/PhoneMapControls";
 import { RecenterButton } from "@/features/map/RecenterButton";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useActiveBasemap } from "@/features/map/useActiveBasemap";
@@ -27,39 +28,6 @@ const item = requireNavItem("/");
 /** The skip link's landing spot — see {@link AIRCRAFT_LIST_SKIP_TARGET_ID}'s
  * doc comment on `SkipAircraftListLink` below. */
 const AIRCRAFT_LIST_SKIP_TARGET_ID = "aircraft-list-end";
-
-/**
- * A floating card's landmark, wrapped around it from the page rather than
- * edited into the card itself (R1-11): a `<section>` with an accessible
- * name computes to the ARIA `region` role, and the `<h2>` inside gives every
- * card a place in the page's heading hierarchy — previously just
- * `["H1: Live Map"]`, with the Basemap, Layers, Interesting, Non-positioned,
- * Activity and Today cards all unlabelled `div`s with a `button` header and
- * no heading or landmark route to any of them. `label` is visually hidden
- * (`sr-only`): every one of these cards already shows its own name in its
- * toggle button or header, so the heading exists for screen-reader
- * navigation without printing the name twice on screen.
- */
-function PanelRegion({
-  headingId,
-  label,
-  className,
-  children,
-}: {
-  headingId: string;
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section role="region" aria-labelledby={headingId} className={className}>
-      <h2 id={headingId} className="sr-only">
-        {label}
-      </h2>
-      {children}
-    </section>
-  );
-}
 
 /**
  * "Skip aircraft list" (R1-11): the interesting-aircraft panel is expanded
@@ -119,8 +87,17 @@ function SkipAircraftListLink() {
  * (usually much shorter) non-positioned list still needs only one extra tab
  * stop — is last, with `order-1`/`order-2` on the two cards keeping the
  * *visual* stack exactly as it was (interesting on top).
+ *
+ * **Phone layout (roadmap slice 084).** Below the `md` breakpoint
+ * (`useIsMobile`) the floating cards give way to `PhoneMapControls`: one
+ * bottom dock holding a toolbar that opens one card at a time as a sheet,
+ * and the aircraft detail panel as a draggable bottom sheet. The map, its
+ * layers, the connection chip, the quick-filter chips and the recentre
+ * button are shared by both layouts; everything else is one layout's or the
+ * other's, so the desktop render below is untouched by the phone one.
  */
 export function LiveMapPage() {
+  const isMobile = useIsMobile();
   const config = useMapConfigStore((state) => state.config);
   const basemap = useActiveBasemap();
   const hideNonPositioned = useFilterStore(
@@ -142,6 +119,31 @@ export function LiveMapPage() {
         <RecenterButton receiver={config.receiver} />
       </MapLibreMap>
 
+      {isMobile ? (
+        <>
+          <QuickFilterChips />
+          <PhoneMapControls />
+        </>
+      ) : (
+        <DesktopMapControls hideNonPositioned={hideNonPositioned} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The desktop (and tablet, from `md` up) floating cards — the Live Map's
+ * layout before roadmap slice 084, unchanged; only lifted out of
+ * `LiveMapPage` so the phone layout can replace it wholesale. The panel-order
+ * notes on `LiveMapPage` describe this JSX.
+ */
+function DesktopMapControls({
+  hideNonPositioned,
+}: {
+  hideNonPositioned: boolean;
+}) {
+  return (
+    <>
       <PanelRegion headingId="today-panel-heading" label="Today at a glance">
         <TodayPanel />
       </PanelRegion>
@@ -194,6 +196,6 @@ export function LiveMapPage() {
       />
 
       <AircraftDetailPanel />
-    </div>
+    </>
   );
 }
