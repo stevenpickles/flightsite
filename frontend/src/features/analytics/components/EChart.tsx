@@ -31,7 +31,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
 import { resolveChartTheme } from "@/features/analytics/lib/chartTheme";
-import { useUiStore } from "@/store/useUiStore";
+import { useResolvedTheme } from "@/store/useUiStore";
 
 export interface EChartClickParams {
   /** The clicked mark's `dataIndex`/`name`/`value` etc. — echarts' own
@@ -71,7 +71,10 @@ export function EChart({
   className,
   onMarkClick,
 }: EChartProps) {
-  const theme = useUiStore((state) => state.theme);
+  // The resolved (dark/light) appearance, not the raw "dark"/"light"/"system"
+  // preference — ECharts needs an actual color set, and a "System" user's
+  // charts must still repaint the instant the OS preference flips.
+  const theme = useResolvedTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const onMarkClickRef = useRef(onMarkClick);

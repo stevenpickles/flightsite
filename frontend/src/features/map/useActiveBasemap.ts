@@ -16,10 +16,13 @@
 import type { BasemapDefinition } from "@/features/map/basemaps";
 import { resolveActiveBasemap } from "@/features/map/basemaps";
 import { useBasemapStore } from "@/features/map/store/useBasemapStore";
-import { useUiStore } from "@/store/useUiStore";
+import { useResolvedTheme } from "@/store/useUiStore";
 
 export function useActiveBasemap(): BasemapDefinition {
   const explicitBasemapId = useBasemapStore((state) => state.explicitBasemapId);
-  const theme = useUiStore((state) => state.theme);
+  // The resolved (dark/light) appearance, not the raw preference — a
+  // "System" user's basemap default must follow the OS the same way an
+  // explicit Dark/Light choice already does (issue R1-14).
+  const theme = useResolvedTheme();
   return resolveActiveBasemap(explicitBasemapId, theme);
 }

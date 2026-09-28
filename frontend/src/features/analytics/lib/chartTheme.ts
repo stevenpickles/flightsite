@@ -14,10 +14,10 @@
  * fails — it degrades to a plausible default instead.
  */
 
-import type { Theme } from "@/lib/theme";
+import type { ResolvedTheme } from "@/lib/theme";
 
 export interface ChartTheme {
-  mode: Theme;
+  mode: ResolvedTheme;
   /** Primary text/axis-label ink (`--foreground`). */
   ink: string;
   /** Secondary ink for axis ticks and captions (`--muted-foreground`). */
@@ -28,7 +28,7 @@ export interface ChartTheme {
   series: readonly [string, string, string];
 }
 
-const FALLBACK: Record<Theme, ChartTheme> = {
+const FALLBACK: Record<ResolvedTheme, ChartTheme> = {
   light: {
     mode: "light",
     ink: "#20242d",
@@ -61,7 +61,7 @@ function cssVar(name: string, fallback: string): string {
  * is the CVD-safety mechanism (data-viz method) and never changes, but each
  * slot's exact step is still read live so it stays in sync with a token
  * edit in `index.css` without a code change here. */
-export function resolveChartTheme(mode: Theme): ChartTheme {
+export function resolveChartTheme(mode: ResolvedTheme): ChartTheme {
   const base = FALLBACK[mode];
   return {
     mode,
