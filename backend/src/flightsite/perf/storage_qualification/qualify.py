@@ -179,9 +179,27 @@ async def measure_queries(
                 "/api/v1/aircraft?limit=50&sort=sighting_count&order=desc",
             ),
             ("aircraft by closest approach", "/api/v1/aircraft?limit=50&sort=closest_approach_nm"),
+            # Slice 083's list search. A callsign prefix the generator's
+            # airline roster uses, the broadest possible query (one letter,
+            # which every branch of the aircraft search matches something
+            # for), and a sightings prefix that matches nothing — the case
+            # that walked the whole table before rev 0018's callsign index.
+            ("aircraft search, callsign prefix", "/api/v1/aircraft?limit=50&q=dal"),
+            ("aircraft search, one letter", "/api/v1/aircraft?limit=50&q=a"),
+            ("sightings search, callsign prefix", "/api/v1/sightings?limit=50&q=ual"),
+            ("sightings search, no match", "/api/v1/sightings?limit=50&q=zz9"),
         ]
         if icao is not None:
             history.append((f"aircraft detail ({icao})", f"/api/v1/aircraft/{icao}"))
+            # Synthetic registrations are `G-` plus the address's first four
+            # hex digits, so this prefix is guaranteed to find the sampled
+            # airframe — lower-cased, so the probe also exercises NOCASE.
+            history.append(
+                (
+                    f"aircraft search, registration prefix (g-{icao[:2]})",
+                    f"/api/v1/aircraft?limit=50&q=g-{icao[:2]}",
+                )
+            )
             history.append(
                 (
                     f"one aircraft's sightings ({icao})",

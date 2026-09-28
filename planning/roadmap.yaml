@@ -2513,7 +2513,7 @@ slices:
     title: "Aircraft and sightings list search"
     phase: 9
     branch: "083-list-search"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Find an aircraft or sighting from its list page by the identifier you remember (issue #226)."
     scope:

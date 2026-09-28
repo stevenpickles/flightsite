@@ -1,9 +1,15 @@
 /**
- * The Sightings page's filter bar: an exact-ICAO search field, a UTC date
+ * The Sightings page's filter bar: an aircraft search field, a UTC date
  * range, and an "open now" toggle — roadmap slice 030's scope item 2.
  * Uncontrolled `<input>`s that commit on blur/change/submit rather than a
  * value bound to every keystroke, so the URL (and therefore the query)
  * updates once per edit, not once per character.
+ *
+ * The search field took an exact six-hex-digit ICAO address until slice 083
+ * (issue #226); it now takes the start of an ICAO address *or* a callsign —
+ * `BAW`, `ae14` — and sends it as `q`. It still shows an exact `icao` that
+ * arrived in the URL from a link, and replaces it with `q` once edited. It
+ * filters this log only; it is not a global search (SPEC §37/§79).
  */
 
 import { type FormEvent, useState } from "react";
@@ -11,10 +17,14 @@ import { type FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  isTooShort,
+  MAX_SEARCH_LENGTH,
+  MIN_SEARCH_LENGTH,
+  normalizeSearch,
+} from "@/features/history/lib/search";
 import type { SightingsTableState } from "@/features/sightings/lib/urlState";
 import { cn } from "@/lib/utils";
-
-const ICAO_PATTERN = /^[0-9a-f]{6}$/i;
 
 export interface SightingsFiltersProps {
   state: SightingsTableState;
@@ -22,43 +32,52 @@ export interface SightingsFiltersProps {
 }
 
 export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
-  const [icaoInput, setIcaoInput] = useState(state.icao ?? "");
-  const [icaoInvalid, setIcaoInvalid] = useState(false);
+  const [searchInput, setSearchInput] = useState(state.q ?? state.icao ?? "");
 
-  function submitIcao(event: FormEvent<HTMLFormElement>) {
+  // One character is held back with a hint, as on the Aircraft page.
+  const tooShort = isTooShort(normalizeSearch(searchInput));
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = icaoInput.trim().toLowerCase();
-    if (trimmed.length === 0) {
-      setIcaoInvalid(false);
-      onChange({ icao: undefined });
+    const q = normalizeSearch(searchInput);
+    if (isTooShort(q)) {
       return;
     }
-    if (!ICAO_PATTERN.test(trimmed)) {
-      setIcaoInvalid(true);
-      return;
-    }
-    setIcaoInvalid(false);
-    setIcaoInput(trimmed);
-    onChange({ icao: trimmed });
+    setSearchInput(q ?? "");
+    // The box replaces whatever aircraft filter the URL held: a prefix
+    // search from here, or none — never both at once.
+    onChange({ q, icao: undefined });
   }
 
   return (
     <div className="mb-4 flex flex-wrap items-end gap-4">
-      <form onSubmit={submitIcao} className="flex flex-col gap-1">
-        <Label htmlFor="sightings-icao-filter">Aircraft (ICAO)</Label>
+      <form
+        role="search"
+        aria-label="Filter sightings by aircraft"
+        onSubmit={submitSearch}
+        className="flex flex-col gap-1"
+      >
+        <Label htmlFor="sightings-icao-filter">Aircraft or callsign</Label>
         <Input
           id="sightings-icao-filter"
-          placeholder="e.g. ae1463"
-          value={icaoInput}
-          onChange={(event) => setIcaoInput(event.target.value)}
-          aria-invalid={icaoInvalid}
-          className="w-36 font-mono"
+          placeholder="e.g. ae1463 or BAW"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          maxLength={MAX_SEARCH_LENGTH}
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby="sightings-icao-filter-help"
+          className="w-44 font-mono"
         />
-        {icaoInvalid && (
-          <p className="text-xs text-destructive">
-            Enter a 6-character hex ICAO address.
-          </p>
-        )}
+        <p
+          id="sightings-icao-filter-help"
+          className="text-xs text-muted-foreground"
+        >
+          Start of an ICAO address or callsign; press Enter.
+        </p>
+        <p role="status" className="min-h-4 text-xs text-muted-foreground">
+          {tooShort ? `Type at least ${MIN_SEARCH_LENGTH} characters.` : ""}
+        </p>
       </form>
 
       <div className="flex flex-col gap-1">
@@ -102,6 +121,7 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
       </Button>
 
       {(state.icao !== undefined ||
+        state.q !== undefined ||
         state.from !== undefined ||
         state.to !== undefined ||
         state.open) && (
@@ -111,10 +131,10 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
           size="sm"
           className={cn("text-muted-foreground")}
           onClick={() => {
-            setIcaoInput("");
-            setIcaoInvalid(false);
+            setSearchInput("");
             onChange({
               icao: undefined,
+              q: undefined,
               from: undefined,
               to: undefined,
               open: false,

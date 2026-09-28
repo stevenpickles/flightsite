@@ -13,8 +13,16 @@
  * receiver-local time from the server, and getting a local-day boundary
  * right would need the receiver's timezone threaded through this pure
  * module — a refinement left for a later slice, noted in the roadmap.
+ *
+ * Two aircraft filters, deliberately (slice 083): `q` is what the filter box
+ * writes — an ICAO-address *or* callsign prefix, normalized like the
+ * Aircraft page's (`features/history/lib/search.ts`) — and `icao` stays the
+ * exact six-hex-digit match that links such as the aircraft detail page's
+ * "all sightings" already put in the URL, so every existing link keeps
+ * meaning exactly what it did.
  */
 
+import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
 import type { SightingSortKey, SortOrder } from "@/lib/api/sightings";
 
 export const DEFAULT_SORT: SightingSortKey = "started_at";
@@ -36,6 +44,7 @@ const KEYS = {
   order: "order",
   page: "page",
   icao: "icao",
+  q: "q",
   from: "from",
   to: "to",
   open: "open",
@@ -48,6 +57,9 @@ export interface SightingsTableState {
   page: number;
   /** Exact lowercase ICAO match, or `undefined` for no filter. */
   icao: string | undefined;
+  /** ICAO-or-callsign prefix search (slice 083), normalized, or
+   * `undefined` for none. */
+  q?: string | undefined;
   /** `YYYY-MM-DD`, or `undefined`. */
   from: string | undefined;
   /** `YYYY-MM-DD`, or `undefined`. */
@@ -61,6 +73,7 @@ export const DEFAULT_TABLE_STATE: SightingsTableState = {
   order: DEFAULT_ORDER,
   page: 1,
   icao: undefined,
+  q: undefined,
   from: undefined,
   to: undefined,
   open: false,
@@ -92,6 +105,8 @@ export function parseSightingsTableState(
   const icao =
     icaoRaw !== undefined && ICAO_PATTERN.test(icaoRaw) ? icaoRaw : undefined;
 
+  const q = searchFromUrl(params.get(KEYS.q));
+
   const fromRaw = params.get(KEYS.from);
   const from =
     fromRaw !== null && DATE_PATTERN.test(fromRaw) ? fromRaw : undefined;
@@ -101,7 +116,7 @@ export function parseSightingsTableState(
 
   const open = params.get(KEYS.open) === "true";
 
-  return { sort, order, page, icao, from, to, open };
+  return { sort, order, page, icao, q, from, to, open };
 }
 
 /** Builds the query-string representation of `state` — only the fields that
@@ -121,6 +136,10 @@ export function serializeSightingsTableState(
   }
   if (state.icao !== undefined) {
     params.set(KEYS.icao, state.icao);
+  }
+  const q = normalizeSearch(state.q);
+  if (q !== undefined) {
+    params.set(KEYS.q, q);
   }
   if (state.from !== undefined) {
     params.set(KEYS.from, state.from);

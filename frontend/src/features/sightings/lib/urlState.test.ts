@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MAX_SEARCH_LENGTH } from "@/features/history/lib/search";
 import {
   DEFAULT_TABLE_STATE,
   endOfDayIso,
@@ -121,6 +122,47 @@ describe("serializeSightingsTableState", () => {
     );
 
     expect(roundTripped).toEqual(state);
+  });
+});
+
+describe("the q search key (slice 083)", () => {
+  it("round-trips beside the exact icao filter without disturbing it", () => {
+    const state = { ...DEFAULT_TABLE_STATE, q: "BAW", icao: "ae1463" };
+
+    const params = serializeSightingsTableState(state);
+
+    expect(params.get("q")).toBe("BAW");
+    expect(params.get("icao")).toBe("ae1463");
+    expect(parseSightingsTableState(params)).toEqual(state);
+  });
+
+  it("accepts what the exact icao filter rejects: a prefix, a callsign", () => {
+    expect(parseSightingsTableState(new URLSearchParams("q=ae14")).q).toBe(
+      "ae14",
+    );
+    expect(parseSightingsTableState(new URLSearchParams("q=dal12")).q).toBe(
+      "dal12",
+    );
+    expect(
+      parseSightingsTableState(new URLSearchParams("icao=ae14")).icao,
+    ).toBeUndefined();
+  });
+
+  it("is trimmed, capped, and absent when blank", () => {
+    expect(parseSightingsTableState(new URLSearchParams("q=%20ual%20")).q).toBe(
+      "ual",
+    );
+    expect(
+      parseSightingsTableState(new URLSearchParams("q=%20")).q,
+    ).toBeUndefined();
+    expect(
+      parseSightingsTableState(new URLSearchParams({ q: "x".repeat(40) })).q,
+    ).toHaveLength(MAX_SEARCH_LENGTH);
+    expect(
+      serializeSightingsTableState({ ...DEFAULT_TABLE_STATE, q: "  " }).has(
+        "q",
+      ),
+    ).toBe(false);
   });
 });
 

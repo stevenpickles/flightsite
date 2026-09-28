@@ -132,6 +132,18 @@ CLASSIFICATION_COLUMNS: Final[tuple[str, ...]] = tuple(
     AircraftClassification.__table__.columns.keys()
 )
 
+#: The resolved table's case-insensitive search indexes (rev 0018, slice 083),
+#: as ``(index, column)``. The swap drops and rebuilds them around its bulk
+#: ``INSERT ... SELECT`` rather than maintaining them row by row — see
+#: :meth:`MetadataRepository._install_resolution`. Spelled here as well as in
+#: the revision because a migration is frozen history and this is live code;
+#: ``tests/metadata/test_search_indexes_survive_promotion.py`` holds the two to
+#: the same definition.
+SEARCH_INDEXES: Final[tuple[tuple[str, str], ...]] = (
+    ("ix_amr_registration_nocase", "registration"),
+    ("ix_amr_operator_nocase", "operator_name"),
+)
+
 #: Rows per ``INSERT`` statement while loading staging. Large enough that
 #: per-statement overhead disappears, small enough that one statement's bound
 #: parameters stay well inside SQLite's limits.
@@ -535,13 +547,33 @@ class MetadataRepository:
         group rows are replaced and inserted *after* — which is also why the
         scratch table carries no such reference, since the group ids in it
         belong to a directory that is not installed yet.
+
+        The two search indexes (:data:`SEARCH_INDEXES`) are dropped for the
+        bulk copy and rebuilt after it. Maintained row by row they cost the
+        swap far more than they cost to build: a copy arrives in ``icao24``
+        order, so each ``NOCASE`` index takes its entries in random order,
+        page by page. Replaying a 900k-row swap on disk measured ~20 s with no
+        search indexes, ~62 s maintaining them, and ~21 s dropping and
+        rebuilding them (a sort-based build is one pass). The drop comes
+        *after* the ``DELETE`` on purpose: the driver opens the transaction
+        at the first DML statement, and DDL issued before one would run — and
+        commit — outside it, where a failed swap could not roll it back.
         """
         await session.execute(delete(AircraftMetadataResolved))
+        for index, _ in SEARCH_INDEXES:
+            await session.execute(text(f"DROP INDEX IF EXISTS {index}"))
         await clear_classifications(session)
         await sync_operator_directory(session, resolver)
         await _install_from_staging(
             session, AircraftMetadataResolved, AircraftMetadataResolvedStaging, RESOLVED_COLUMNS
         )
+        for index, column in SEARCH_INDEXES:
+            await session.execute(
+                text(
+                    f"CREATE INDEX IF NOT EXISTS {index} "
+                    f"ON aircraft_metadata_resolved ({column} COLLATE NOCASE)"
+                )
+            )
         await _install_from_staging(
             session, AircraftClassification, AircraftClassificationStaging, CLASSIFICATION_COLUMNS
         )

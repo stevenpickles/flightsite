@@ -137,6 +137,9 @@ export interface AircraftListParams {
   classification?: string;
   operatorGroup?: string;
   type?: string;
+  /** Case-insensitive prefix over ICAO, registration, most recent callsign,
+   * type and operator (`docs/API.md` §3.5, slice 083). */
+  q?: string | undefined;
 }
 
 function listPath(params: AircraftListParams): string {
@@ -154,6 +157,9 @@ function listPath(params: AircraftListParams): string {
   }
   if (params.type !== undefined) {
     query.set("type", params.type);
+  }
+  if (params.q !== undefined) {
+    query.set("q", params.q);
   }
   return `/api/v1/aircraft?${query.toString()}`;
 }

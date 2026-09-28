@@ -84,6 +84,25 @@ rewrites an open sighting's running columns, and a second sort index measured
 the numbers; issue #115). :mod:`tests.api.test_sightings_perf` is the sanity
 check against a large fixture — sighting volume being the scale ``/sightings``
 actually has to answer at.
+
+Search: ``q`` (slice 083)
+--------------------------
+
+``q`` finds sightings whose ICAO address *or* callsign — the first or the
+last, since a callsign can change mid-sighting — starts with the query,
+case-insensitive and literal, per :mod:`flightsite.api.search`. It is
+added beside ``icao`` rather than loosening it: ``icao`` keeps its exact,
+six-hex-digit contract for every existing caller, and ``q`` is the one the
+Sightings page's filter box sends. Like ``/aircraft``'s ``q`` it filters this
+list only; it is not a global search (SPEC §37, §79).
+
+The callsign terms are why rev 0018 adds ``ix_sightings_callsign`` and
+``ix_sightings_callsign_first``. Without them
+a prefix that matched nothing walked every sighting newest-first before
+answering "none" — 1.6 s over slice 050's 1.64M three-year sightings — and
+with it that answer is an empty index range. The broadest query, one letter,
+is a union of two index reads and a sort of what they found: ~400 ms at that
+scale, against a few milliseconds for a typical three-character prefix.
 """
 
 from __future__ import annotations
@@ -91,9 +110,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, UnaryExpression, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, or_, select
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.orm import aliased
 
+from flightsite.api.search import normalize_query, prefix_match
 from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
@@ -216,6 +237,30 @@ def _joined_query() -> Select[Any]:
     )
 
 
+def _search_condition(term: str) -> ColumnElement[bool]:
+    """``q``: the sighting's ICAO address or either callsign starts with ``term``.
+
+    Every term is phrased on ``sightings`` itself — the address as
+    ``aircraft_id IN (<airframes under the prefix>)`` rather than as a
+    predicate on the joined ``aircraft`` row — so SQLite can answer the ``OR``
+    as a union of index reads (``ix_sightings_aircraft``,
+    ``ix_sightings_callsign``, ``ix_sightings_callsign_first``). A predicate
+    on the joined table would leave it
+    one plan: walk every sighting newest-first and test each, which is fast
+    when the prefix is common and a full scan of a table retained forever
+    when it matches nothing (see the module docstring's measurement).
+    ``by_icao`` is an alias so the subquery is not correlated to the outer
+    join's ``aircraft``.
+    """
+    by_icao = aliased(Aircraft)
+    airframes = select(by_icao.id).where(prefix_match(by_icao.icao24, term, fold="lower"))
+    return or_(
+        Sighting.aircraft_id.in_(airframes),
+        prefix_match(Sighting.callsign_last, term, fold="nocase"),
+        prefix_match(Sighting.callsign_first, term, fold="nocase"),
+    )
+
+
 def _filters(
     *,
     icao: str | None,
@@ -223,11 +268,20 @@ def _filters(
     to_ms: int | None,
     interesting: bool | None,
     open_only: bool | None,
+    q: str | None = None,
 ) -> list[ColumnElement[bool]]:
-    """§3.6's documented filters, plus ``open`` (see the module docstring)."""
+    """§3.6's documented filters, plus ``open`` and slice 083's ``q``.
+
+    ``icao`` stays an *exact* address match, unchanged, so every existing
+    caller — the per-aircraft log among them — keeps its meaning; ``q`` is
+    the separate, prefix-shaped search (:func:`_search_condition`). Both may
+    be given, and combine with ``AND`` like every other filter.
+    """
     conditions: list[ColumnElement[bool]] = []
     if icao is not None:
         conditions.append(Aircraft.icao24 == icao)
+    if q is not None:
+        conditions.append(_search_condition(q))
     if from_ms is not None:
         conditions.append(Sighting.started_ms >= from_ms)
     if to_ms is not None:
@@ -264,6 +318,7 @@ class SightingsRepository:
         to_ms: int | None = None,
         interesting: bool | None = None,
         open_only: bool | None = None,
+        q: str | None = None,
     ) -> Sequence[RowMapping]:
         """One page of the sightings log — chronological by default (§3.6).
 
@@ -271,9 +326,17 @@ class SightingsRepository:
             sort: one of :data:`SORT_COLUMNS`'s keys — validated by the
                 caller (the endpoint's ``Literal`` query parameter).
             order: ``"asc"`` or ``"desc"``.
+            q: the slice-083 ICAO-or-callsign prefix, as the user typed it.
+                Trimmed here, and blank means no search
+                (:func:`flightsite.api.search.normalize_query`).
         """
         conditions = _filters(
-            icao=icao, from_ms=from_ms, to_ms=to_ms, interesting=interesting, open_only=open_only
+            icao=icao,
+            from_ms=from_ms,
+            to_ms=to_ms,
+            interesting=interesting,
+            open_only=open_only,
+            q=normalize_query(q),
         )
         direction = _direction(SORT_COLUMNS[sort], order)
 

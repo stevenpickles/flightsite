@@ -73,10 +73,46 @@ subquery in the shared join would be evaluated once per row of every page —
 a cost the Aircraft page would pay on every read for a column it never
 renders.
 
-Existing indexes only
-----------------------
+Search: ``q`` (slice 083)
+--------------------------
 
-No migration ships with this slice. ``ix_aircraft_first_seen``,
+``q`` is a case-insensitive, literal *prefix* over five identifiers — ICAO
+address, registration, any callsign the airframe has flown, ICAO type
+designator and operator name — with the shared semantics in
+:mod:`flightsite.api.search`. It filters this list only; it is not a global
+search (SPEC §37, §79).
+
+It is *not* one ``WHERE`` with five ``OR``-ed ``LIKE`` terms over the join.
+That shape reads every ``aircraft`` row, and a callsign term — callsigns
+live on *sightings*, not on ``aircraft`` — adds an index seek
+into ``sightings`` per row on top: measured at about a second per query over
+120,640 airframes and 1.64M sightings (slice 050's three-year Scenario A row
+counts), paid twice because ``total`` counts the same filter. Instead
+:func:`_search_condition` builds ``aircraft.id IN (…)`` from three branches
+that each start from an index range, so the work is bounded by how many rows
+*match* rather than by how much history exists:
+
+* the ICAO address, from ``aircraft``'s own unique index;
+* registration, type and operator, from the resolved-metadata indexes
+  (rev 0018 adds the two ``NOCASE`` ones; type reads ``ix_amr_type``);
+* the callsign, from ``ix_sightings_callsign`` and
+  ``ix_sightings_callsign_first`` (rev 0018): every airframe with *any*
+  sighting whose first or last callsign starts with the query. An airliner
+  flies a different flight number most days, so the callsign someone
+  remembers from last week is rarely the one it flies today; "ever flown"
+  finds it, "most recent" would not. SQLite answers the two callsigns as a
+  multi-index ``OR`` over those ranges, so the work is the matching
+  sightings, not the table. Over the three-year row counts this measured
+  under 10 ms for a typical prefix, ~80 ms for an airline prefix matching
+  ~4,000 airframes, and ~430 ms page-plus-count for a single letter.
+
+``total`` stays exact under ``q``: the count is taken over the same filtered
+join, exactly as for the other filters.
+
+Sorting indexes
+----------------
+
+No migration shipped with slice 029. ``ix_aircraft_first_seen``,
 ``ix_aircraft_last_seen`` and ``ix_aircraft_sightings`` (``docs/DATA_MODEL.md``
 §2.2) cover three of the ten documented sort keys directly; the rest —
 notably ``closest_approach_nm`` and ``max_range_nm``, which carry no index —
@@ -90,9 +126,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, UnaryExpression, func, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, func, or_, select, union_all
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.orm import aliased
 
+from flightsite.api.search import normalize_query, prefix_match
 from flightsite.db import Database
 from flightsite.db.models import (
     Aircraft,
@@ -221,13 +259,58 @@ def _joined_query() -> Select[Any]:
     )
 
 
+def _search_condition(term: str) -> ColumnElement[bool]:
+    """``q``: the airframe matches ``term`` on any of the five identifiers.
+
+    Built as ``aircraft.id IN (<union of index-driven branches>)`` — see the
+    module docstring for why, and for the measurement behind it. Every table
+    inside the ``IN`` is an alias: an un-aliased ``Aircraft`` there would be
+    auto-correlated to the outer query's ``aircraft`` and turn each branch
+    into a per-row subquery, which is precisely the plan this shape exists to
+    avoid.
+
+    ``UNION ALL`` rather than ``UNION``: an airframe matching on two fields
+    appears twice in the candidate list, which ``IN`` tolerates for free,
+    where ``UNION`` would sort the candidates to remove duplicates first.
+    """
+    by_icao = aliased(Aircraft)
+    by_metadata = aliased(Aircraft)
+    metadata = aliased(AircraftMetadataResolved)
+    flown = aliased(Sighting)
+
+    icao_branch = select(by_icao.id).where(prefix_match(by_icao.icao24, term, fold="lower"))
+    metadata_branch = (
+        select(by_metadata.id)
+        .select_from(metadata)
+        .join(by_metadata, by_metadata.icao24 == metadata.icao24)
+        .where(
+            or_(
+                prefix_match(metadata.registration, term, fold="nocase"),
+                prefix_match(metadata.type_code, term, fold="upper"),
+                prefix_match(metadata.operator_name, term, fold="nocase"),
+            )
+        )
+    )
+    # Any callsign ever flown: first or last of any sighting, answered as a
+    # multi-index `OR` over `ix_sightings_callsign` and
+    # `ix_sightings_callsign_first` — bounded by the matching sightings.
+    callsign_branch = select(flown.aircraft_id).where(
+        or_(
+            prefix_match(flown.callsign_last, term, fold="nocase"),
+            prefix_match(flown.callsign_first, term, fold="nocase"),
+        )
+    )
+    return Aircraft.id.in_(union_all(icao_branch, metadata_branch, callsign_branch))
+
+
 def _filters(
     *,
     classification: str | None,
     operator_group: str | None,
     type_code: str | None,
+    q: str | None = None,
 ) -> list[ColumnElement[bool]]:
-    """§3.5's documented filters as SQL predicates.
+    """§3.5's documented filters as SQL predicates, combined with ``AND``.
 
     ``classification`` matches ``mission_category`` exactly — the same
     column the ``classification`` sort key orders by, so a filtered,
@@ -235,7 +318,8 @@ def _filters(
     two. ``operator_group`` matches the curated group's *slug* (the stable,
     URL-safe identifier — ``docs/DATA_MODEL.md`` §3.5), not its display name.
     ``type`` matches the resolved ICAO type designator, normalized to
-    upper case the way every stored one is.
+    upper case the way every stored one is. ``q`` is slice 083's prefix
+    search (:func:`_search_condition`), already trimmed by the caller.
     """
     conditions: list[ColumnElement[bool]] = []
     if classification is not None:
@@ -244,6 +328,8 @@ def _filters(
         conditions.append(OperatorGroup.slug == operator_group)
     if type_code is not None:
         conditions.append(AircraftMetadataResolved.type_code == type_code.upper())
+    if q is not None:
+        conditions.append(_search_condition(q))
     return conditions
 
 
@@ -265,6 +351,7 @@ class AircraftHistoryRepository:
         classification: str | None = None,
         operator_group: str | None = None,
         type_code: str | None = None,
+        q: str | None = None,
     ) -> tuple[Sequence[RowMapping], int]:
         """One page of the historical aircraft list, plus the filtered total.
 
@@ -274,9 +361,15 @@ class AircraftHistoryRepository:
                 unrecognized key here would be a programming error, not user
                 input; :exc:`KeyError` is deliberately not caught.
             order: ``"asc"`` or ``"desc"``.
+            q: the slice-083 prefix search, as the user typed it. Trimmed
+                here, and blank means no search
+                (:func:`flightsite.api.search.normalize_query`).
         """
         conditions = _filters(
-            classification=classification, operator_group=operator_group, type_code=type_code
+            classification=classification,
+            operator_group=operator_group,
+            type_code=type_code,
+            q=normalize_query(q),
         )
         direction = _direction(SORT_COLUMNS[sort], order)
 

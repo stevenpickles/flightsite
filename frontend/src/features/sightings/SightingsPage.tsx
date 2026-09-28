@@ -46,6 +46,7 @@ export function SightingsPage() {
       sort: state.sort,
       order: state.order,
       icao: state.icao,
+      q: state.q,
       from: state.from === undefined ? undefined : startOfDayIso(state.from),
       to: state.to === undefined ? undefined : endOfDayIso(state.to),
       open: state.open ? true : undefined,
