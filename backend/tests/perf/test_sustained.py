@@ -11,7 +11,7 @@ amount of hardware makes it quick.
 What this adds over :mod:`tests.perf.test_harness`
 --------------------------------------------------
 
-The smoke run catches structural regressions; it runs for fifteen ticks and
+The smoke run catches structural regressions; it runs for twenty-one ticks and
 cannot, even in principle, see anything that develops slowly. Two properties
 here need duration and get it:
 
@@ -87,7 +87,7 @@ def test_the_sustained_run_reports(
 
 
 def test_every_hard_gate_holds_over_the_full_run(report: HarnessReport) -> None:
-    """The same gates as the smoke run, over hundreds of ticks instead of fifteen."""
+    """The same gates as the smoke run, over hundreds of ticks instead of twenty-one."""
     failures = [
         f"{verdict.budget.metric}: {verdict.observed:.3g} {verdict.budget.unit} "
         f"against {verdict.budget.asserted:.3g}"

@@ -12,7 +12,7 @@ Why a short run still gates honestly
 The gates here are structural, not statistical. A regression that put a
 database round trip on the hot path, lost the delta batching in the
 broadcaster, or turned an index scan into a table scan would blow through these
-bounds on fifteen ticks exactly as it would on six hundred. What a short run
+bounds on twenty-one ticks exactly as it would on six hundred. What a short run
 cannot see is slow drift — a leak, a queue that fills over minutes — which is
 precisely what the ``load``-marked sustained run and the Pi 4 procedure in
 ``docs/PERFORMANCE.md`` exist for.
@@ -54,9 +54,15 @@ from flightsite.perf.workload import WorkloadConfig
 #: gates depend on, over few enough ticks to keep an ordinary test run quick.
 #: Population is never reduced — 500 aircraft is the load being gated, and a
 #: run at fifty would measure something the product does not do.
-SMOKE = WorkloadConfig(population=500, ticks=15, warmup_ticks=3, ws_clients=2)
+#:
+#: Twenty-one ticks, not fewer: the per-tick gates (``ws_fanout_ms``,
+#: ``ingest_duty_cycle``, ...) take one sample a tick, and a nearest-rank p95
+#: only stops being the maximum at n >= 20 (``harness.DEFAULT_PROBE_EVERY``'s
+#: note). At fifteen ticks one stalled shared-runner tick decided the verdict
+#: on its own — issue #240, 562 ms and 650 ms against a 16-21 ms median.
+SMOKE = WorkloadConfig(population=500, ticks=21, warmup_ticks=3, ws_clients=2)
 
-#: Every tick is probed, so a fifteen-tick run still yields enough API samples
+#: Every tick is probed, so a twenty-one-tick run yields enough API samples
 #: to read a p95 from rather than collapsing it onto the single worst request.
 SMOKE_PROBE_EVERY = 1
 
