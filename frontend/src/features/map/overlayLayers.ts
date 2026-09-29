@@ -50,6 +50,56 @@ export function ensureOverlayLayers(
   ensureReceiverLayers(map, config);
 }
 
+/** The layers the Layers card's "Range rings" toggle shows and hides. */
+export const RANGE_RING_LAYER_IDS = [
+  RANGE_RING_LINE_LAYER_ID,
+  RANGE_RING_LABEL_LAYER_ID,
+] as const;
+
+/** The layers the Layers card's "Receiver" toggle shows and hides. */
+export const RECEIVER_LAYER_IDS = [
+  RECEIVER_HALO_LAYER_ID,
+  RECEIVER_DOT_LAYER_ID,
+] as const;
+
+function setLayersVisible(
+  map: MapLibreGlMap,
+  layerIds: readonly string[],
+  visible: boolean,
+): void {
+  const visibility = visible ? "visible" : "none";
+  for (const layerId of layerIds) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }
+}
+
+/**
+ * Shows or hides the range rings and their labels (roadmap slice 085) —
+ * the same `visibility` layout flip `setAirspaceLayersVisible` uses, so a
+ * toggle never touches the sources and the rings come back instantly with
+ * the geometry they already had. A no-op for a layer not on the current
+ * style; after a basemap switch the caller re-applies it once
+ * {@link ensureOverlayLayers} has put the layers back
+ * (`overlays/useDisplayLayerVisibility`).
+ */
+export function setRangeRingLayersVisible(
+  map: MapLibreGlMap,
+  visible: boolean,
+): void {
+  setLayersVisible(map, RANGE_RING_LAYER_IDS, visible);
+}
+
+/** Shows or hides the receiver marker (roadmap slice 085) — see
+ * {@link setRangeRingLayersVisible}. */
+export function setReceiverLayersVisible(
+  map: MapLibreGlMap,
+  visible: boolean,
+): void {
+  setLayersVisible(map, RECEIVER_LAYER_IDS, visible);
+}
+
 function upsertGeoJsonSource(
   map: MapLibreGlMap,
   id: string,

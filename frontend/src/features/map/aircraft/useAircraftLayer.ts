@@ -26,6 +26,7 @@ import { useEffect } from "react";
 import {
   aircraftIcaoAtPoint,
   ensureAircraftLayers,
+  setAircraftLabelsVisible,
 } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { registerAircraftIcons } from "@/features/map/aircraft/icons/registerIcons";
@@ -33,6 +34,7 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useMapInstance } from "@/features/map/MapInstanceContext";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 
 /**
  * Minimum gap between interpolation frames — ~12.5 fps.
@@ -50,6 +52,7 @@ export const FRAME_INTERVAL_MS = 80;
 
 export function useAircraftLayer(): void {
   const { map, styleEpoch } = useMapInstance();
+  const labelsVisible = useOverlayVisibilityStore((state) => state.labels);
 
   // 1. Attach after each style load.
   useEffect(() => {
@@ -63,6 +66,10 @@ export function useAircraftLayer(): void {
           return;
         }
         ensureAircraftLayers(map);
+        setAircraftLabelsVisible(
+          map,
+          useOverlayVisibilityStore.getState().labels,
+        );
         drawAircraftFrame(map, useLiveAircraftStore.getState(), Date.now(), {
           includeTrack: true,
           filters: useFilterStore.getState().filters,
@@ -137,6 +144,16 @@ export function useAircraftLayer(): void {
       }
     };
   }, [map, styleEpoch]);
+
+  // The Layers card's "Labels" toggle (roadmap slice 085). A no-op until the
+  // attach above has added the label layer — which then applies the stored
+  // choice itself, so neither ordering of the two effects loses it.
+  useEffect(() => {
+    if (!map || styleEpoch === 0) {
+      return;
+    }
+    setAircraftLabelsVisible(map, labelsVisible);
+  }, [map, styleEpoch, labelsVisible]);
 
   // 3. Selection.
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Layers } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
@@ -8,12 +8,42 @@ import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useAirspaceQuery } from "@/lib/api/overlays";
 import { cn } from "@/lib/utils";
 
+/** One checkbox row. `children` renders after the label text, inside the
+ * `<label>`, so it is part of the checkbox's accessible name. */
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+  children,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
+        className="size-3.5 accent-accent"
+      />
+      {label}
+      {children}
+    </label>
+  );
+}
+
 /**
- * Small map-overlay control toggling the Airports and Airspace layers.
- * Visibility is persisted per browser via `useOverlayVisibilityStore`
- * (localStorage, guarded), the same pattern `BasemapSwitcher` uses for the
- * basemap choice. Positioned as a floating card directly beneath it, so the
- * two read as one instrument panel.
+ * Small map-overlay control toggling the Airports and Airspace layers and,
+ * since roadmap slice 085 (issue #228), the range rings, the receiver marker
+ * and the aircraft labels. Every toggle is persisted per browser via
+ * `useOverlayVisibilityStore` (localStorage, guarded), the same pattern
+ * `BasemapSwitcher` uses for the basemap choice. Positioned directly beneath
+ * that switcher, so the two read as one instrument panel.
  *
  * Airspace defaults on, same as Airports (`DEFAULT_OVERLAY_VISIBILITY`) — an
  * install with no `airspace.geojson` supplied (roadmap slice 028, ADR-0012)
@@ -42,11 +72,23 @@ export function LayersControl({
 }) {
   const airports = useOverlayVisibilityStore((state) => state.airports);
   const airspace = useOverlayVisibilityStore((state) => state.airspace);
+  const rangeRings = useOverlayVisibilityStore((state) => state.rangeRings);
+  const receiver = useOverlayVisibilityStore((state) => state.receiver);
+  const labels = useOverlayVisibilityStore((state) => state.labels);
   const setAirportsVisible = useOverlayVisibilityStore(
     (state) => state.setAirportsVisible,
   );
   const setAirspaceVisible = useOverlayVisibilityStore(
     (state) => state.setAirspaceVisible,
+  );
+  const setRangeRingsVisible = useOverlayVisibilityStore(
+    (state) => state.setRangeRingsVisible,
+  );
+  const setReceiverVisible = useOverlayVisibilityStore(
+    (state) => state.setReceiverVisible,
+  );
+  const setLabelsVisible = useOverlayVisibilityStore(
+    (state) => state.setLabelsVisible,
   );
   const airspaceQuery = useAirspaceQuery();
   const airspaceHasData = (airspaceQuery.data?.features.length ?? 0) > 0;
@@ -102,33 +144,37 @@ export function LayersControl({
           role="group"
           aria-label="Map layers"
         >
-          <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
-            <input
-              type="checkbox"
-              checked={airports}
-              onChange={(event) => {
-                setAirportsVisible(event.target.checked);
-              }}
-              className="size-3.5 accent-accent"
-            />
-            Airports
-          </label>
-          <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground hover:bg-secondary">
-            <input
-              type="checkbox"
-              checked={airspace}
-              onChange={(event) => {
-                setAirspaceVisible(event.target.checked);
-              }}
-              className="size-3.5 accent-accent"
-            />
-            Airspace
+          <ToggleRow
+            label="Airports"
+            checked={airports}
+            onChange={setAirportsVisible}
+          />
+          <ToggleRow
+            label="Airspace"
+            checked={airspace}
+            onChange={setAirspaceVisible}
+          >
             {!airspaceHasData && (
               <span className="text-[10px] text-muted-foreground">
                 (no data)
               </span>
             )}
-          </label>
+          </ToggleRow>
+          <ToggleRow
+            label="Range rings"
+            checked={rangeRings}
+            onChange={setRangeRingsVisible}
+          />
+          <ToggleRow
+            label="Receiver"
+            checked={receiver}
+            onChange={setReceiverVisible}
+          />
+          <ToggleRow
+            label="Labels"
+            checked={labels}
+            onChange={setLabelsVisible}
+          />
         </div>
       )}
     </div>

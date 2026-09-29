@@ -3,10 +3,15 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
-import { AIRCRAFT_SOURCE_ID } from "@/features/map/aircraft/aircraftLayers";
+import {
+  AIRCRAFT_LABEL_LAYER_ID,
+  AIRCRAFT_SOURCE_ID,
+} from "@/features/map/aircraft/aircraftLayers";
 import type { AircraftFeatureProperties } from "@/features/map/aircraft/geojson";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
-import { getDefaultBasemap } from "@/features/map/basemaps";
+import { getBasemapById, getDefaultBasemap } from "@/features/map/basemaps";
+import { DEFAULT_OVERLAY_VISIBILITY } from "@/features/map/overlayVisibilityPersistence";
+import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import { DEV_PLACEHOLDER_MAP_CONFIG } from "@/features/map/mapConfig";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
 import { updateDensityLatch } from "@/features/map/labels/densityLatch";
@@ -217,5 +222,67 @@ describe("AircraftLayer teardown (ADR-0015)", () => {
     expect(state.connection).toBe("connecting");
     // And the same in-band count now reads "not dense".
     expect(updateDensityLatch(DENSITY_CALLSIGN_EXIT + 1)).toBe(false);
+  });
+});
+
+describe("AircraftLayer display toggles (roadmap slice 085)", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    useOverlayVisibilityStore.setState({ ...DEFAULT_OVERLAY_VISIBILITY });
+  });
+
+  function labelVisibility(map: MapLibreMockMap): unknown {
+    return (
+      map.layers.get(AIRCRAFT_LABEL_LAYER_ID)?.layout as
+        Record<string, unknown> | undefined
+    )?.visibility;
+  }
+
+  it("applies the stored labels choice on attach and follows the toggle", async () => {
+    useOverlayVisibilityStore.setState({ labels: false });
+    const { map } = await renderLoadedLayer();
+    expect(labelVisibility(map)).toBe("none");
+
+    act(() => {
+      useOverlayVisibilityStore.getState().setLabelsVisible(true);
+    });
+    expect(labelVisibility(map)).toBe("visible");
+  });
+
+  it("keeps labels hidden across a basemap switch", async () => {
+    useOverlayVisibilityStore.setState({ labels: false });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (basemapId: string) => (
+      <QueryClientProvider client={queryClient}>
+        <MapLibreMap
+          config={DEV_PLACEHOLDER_MAP_CONFIG}
+          basemap={getBasemapById(basemapId) ?? getDefaultBasemap()}
+        >
+          <AircraftLayer />
+        </MapLibreMap>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(getDefaultBasemap().id));
+    const map = getLastMockMap();
+    await act(async () => {
+      map.emit("load");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const before = map.layers.get(AIRCRAFT_LABEL_LAYER_ID);
+    expect(labelVisibility(map)).toBe("none");
+
+    await act(async () => {
+      rerender(tree("osm-raster"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(map.layers.get(AIRCRAFT_LABEL_LAYER_ID)).not.toBe(before);
+    expect(labelVisibility(map)).toBe("none");
   });
 });

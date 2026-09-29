@@ -520,6 +520,32 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
   }
 }
 
+/**
+ * Shows or hides the unselected aircraft labels — the Layers card's "Labels"
+ * toggle (roadmap slice 085). A `visibility` flip on the shared label layer
+ * only: the selected aircraft's label keeps its own always-visible layer,
+ * because selecting an aircraft is an explicit request to read it and slice
+ * 015's "selected aircraft always fully labeled" still holds. The label text
+ * is still built every frame either way — it is cheap next to everything
+ * else a frame does, and it means turning labels back on shows the current
+ * text on the very next paint rather than after a redraw.
+ *
+ * A no-op until the layer exists; `useAircraftLayer` re-applies it after
+ * every attach, which is how the choice survives a basemap switch.
+ */
+export function setAircraftLabelsVisible(
+  map: MapLibreGlMap,
+  visible: boolean,
+): void {
+  if (map.getLayer(AIRCRAFT_LABEL_LAYER_ID)) {
+    map.setLayoutProperty(
+      AIRCRAFT_LABEL_LAYER_ID,
+      "visibility",
+      visible ? "visible" : "none",
+    );
+  }
+}
+
 /** Replaces the aircraft symbol source's data in place. */
 export function setAircraftData(
   map: MapLibreGlMap,

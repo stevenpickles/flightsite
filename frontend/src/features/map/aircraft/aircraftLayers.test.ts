@@ -24,6 +24,7 @@ import {
   aircraftIcaoAtPoint,
   ensureAircraftLayers,
   setAircraftData,
+  setAircraftLabelsVisible,
   setTrackData,
 } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
@@ -405,6 +406,27 @@ describe("setAircraftData / setTrackData", () => {
       setAircraftData(map, EMPTY_COLLECTION);
       setTrackData(map, EMPTY_COLLECTION);
     }).not.toThrow();
+  });
+});
+
+describe("setAircraftLabelsVisible (roadmap slice 085)", () => {
+  function visibility(id: string): unknown {
+    return (mock.layers.get(id)?.layout as Record<string, unknown>).visibility;
+  }
+
+  it("hides the shared label layer but never the selected aircraft's", () => {
+    ensureAircraftLayers(map);
+    setAircraftLabelsVisible(map, false);
+    expect(visibility(AIRCRAFT_LABEL_LAYER_ID)).toBe("none");
+    expect(visibility(AIRCRAFT_SELECTED_LABEL_LAYER_ID)).toBeUndefined();
+
+    setAircraftLabelsVisible(map, true);
+    expect(visibility(AIRCRAFT_LABEL_LAYER_ID)).toBe("visible");
+  });
+
+  it("is a no-op before the layers exist", () => {
+    expect(() => setAircraftLabelsVisible(map, false)).not.toThrow();
+    expect(mock.layers.size).toBe(0);
   });
 });
 

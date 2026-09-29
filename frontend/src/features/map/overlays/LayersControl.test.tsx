@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
-import { DEFAULT_OVERLAY_VISIBILITY } from "@/features/map/overlayVisibilityPersistence";
+import {
+  DEFAULT_OVERLAY_VISIBILITY,
+  OVERLAY_VISIBILITY_STORAGE_KEY,
+} from "@/features/map/overlayVisibilityPersistence";
 import {
   getMapShortcutTargets,
   setMapShortcutTarget,
@@ -13,6 +16,7 @@ import { installOverlaysApiMock } from "@/test/overlaysApiMock";
 import { renderWithProviders } from "@/test/test-utils";
 
 afterEach(() => {
+  window.localStorage.clear();
   useOverlayVisibilityStore.setState(DEFAULT_OVERLAY_VISIBILITY);
   setMapShortcutTarget("toggleLayersCard", undefined);
   vi.unstubAllGlobals();
@@ -82,4 +86,58 @@ describe("LayersControl", () => {
     expect(airports).not.toBeChecked();
     expect(useOverlayVisibilityStore.getState().airports).toBe(false);
   });
+
+  describe.each(["floating", "docked"] as const)(
+    "slice 085 display toggles (%s placement)",
+    (placement) => {
+      it.each([
+        ["Range rings", "rangeRings"],
+        ["Receiver", "receiver"],
+        ["Labels", "labels"],
+      ] as const)(
+        "toggles %s through the store and persists it",
+        async (name, member) => {
+          const user = userEvent.setup();
+          installOverlaysApiMock();
+          renderWithProviders(<LayersControl placement={placement} />);
+
+          const checkbox = screen.getByRole("checkbox", { name });
+          expect(checkbox).toBeChecked();
+          await user.click(checkbox);
+
+          expect(checkbox).not.toBeChecked();
+          expect(useOverlayVisibilityStore.getState()[member]).toBe(false);
+          expect(
+            JSON.parse(
+              window.localStorage.getItem(OVERLAY_VISIBILITY_STORAGE_KEY) ??
+                "{}",
+            ),
+          ).toMatchObject({ [member]: false });
+
+          await user.click(checkbox);
+          expect(useOverlayVisibilityStore.getState()[member]).toBe(true);
+        },
+      );
+
+      it("reflects a stored choice on first render", () => {
+        useOverlayVisibilityStore.setState({
+          rangeRings: false,
+          receiver: true,
+          labels: false,
+        });
+        installOverlaysApiMock();
+        renderWithProviders(<LayersControl placement={placement} />);
+
+        expect(
+          screen.getByRole("checkbox", { name: "Range rings" }),
+        ).not.toBeChecked();
+        expect(
+          screen.getByRole("checkbox", { name: "Receiver" }),
+        ).toBeChecked();
+        expect(
+          screen.getByRole("checkbox", { name: "Labels" }),
+        ).not.toBeChecked();
+      });
+    },
+  );
 });
