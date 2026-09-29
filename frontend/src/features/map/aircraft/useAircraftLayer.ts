@@ -15,7 +15,8 @@
  *    animation loop draws interpolated frames in between at
  *    {@link FRAME_INTERVAL_MS}.
  * 3. **Select.** One map click handler resolves the aircraft under the cursor,
- *    or clears the selection when the click hit nothing.
+ *    or clears the selection when the click hit nothing — unless the measure
+ *    tool is on (slice 085), which owns every click while it is.
  *
  * None of this re-renders React. The store is read through `getState()` and
  * written to MapLibre directly, because a component that re-rendered at the
@@ -38,6 +39,7 @@ import { registerAircraftIcons } from "@/features/map/aircraft/icons/registerIco
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { useMapInstance } from "@/features/map/MapInstanceContext";
+import { useMeasureStore } from "@/features/map/measure/useMeasureStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 
@@ -190,6 +192,12 @@ export function useAircraftLayer(): void {
       return undefined;
     }
     const handleClick = (event: MapMouseEvent) => {
+      // While the measure tool is on (roadmap slice 085) every click is a
+      // measure point: it neither selects the aircraft under it nor, landing
+      // on empty map, clears the current selection.
+      if (useMeasureStore.getState().active) {
+        return;
+      }
       useLiveAircraftStore
         .getState()
         .selectAircraft(aircraftIcaoAtPoint(map, event.point));

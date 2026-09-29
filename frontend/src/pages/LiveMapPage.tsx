@@ -13,6 +13,7 @@ import { InterestingPanel } from "@/features/interesting/InterestingPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
+import { MeasureControl } from "@/features/map/measure/MeasureControl";
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
 import { PanelRegion } from "@/features/map/PanelRegion";
@@ -67,7 +68,9 @@ function SkipAircraftListLink() {
  * 082, `RecenterButton` (the `H` shortcut's visible control) plus a full set
  * of keyboard shortcuts (`/`, `L`, `F`, `H`, `[`, `]`) dispatched from
  * `useKeyboardShortcuts` in `AppShell` and reaching this page's own
- * components through `lib/shortcuts/mapShortcutTargets`.
+ * components through `lib/shortcuts/mapShortcutTargets`. Roadmap slice 085
+ * adds the distance/bearing `MeasureControl` beside the recentre button,
+ * shared by both layouts like it.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -117,6 +120,9 @@ export function LiveMapPage() {
         <OverlaysLayer />
         <AircraftLayer />
         <RecenterButton receiver={config.receiver} />
+        <MeasureControl
+          receiver={config.receiverConfigured ? config.receiver : null}
+        />
       </MapLibreMap>
 
       {isMobile ? (
