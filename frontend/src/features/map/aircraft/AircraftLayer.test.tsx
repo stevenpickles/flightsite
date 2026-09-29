@@ -249,6 +249,32 @@ describe("AircraftLayer display toggles (roadmap slice 085)", () => {
     expect(labelVisibility(map)).toBe("visible");
   });
 
+  it("redraws the labels at once when the label preset changes", async () => {
+    const { map } = await renderLoadedLayer();
+    map.zoom = ZOOM_LABELS_FULL;
+    act(() => {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [
+          makeAircraft({
+            icao: "aaaaaa",
+            callsign: "BAW123",
+            operator: "British Airways",
+            altitude_ft: 35000,
+          }),
+        ],
+        receiver: null,
+      });
+    });
+    expect(features(map)[0]?.properties.label).toBe(
+      "BAW123\nBritish Airways\nFL350",
+    );
+
+    act(() => {
+      useOverlayVisibilityStore.getState().setLabelPreset("compact");
+    });
+    expect(features(map)[0]?.properties.label).toBe("BAW123");
+  });
+
   it("keeps labels hidden across a basemap switch", async () => {
     useOverlayVisibilityStore.setState({ labels: false });
     const queryClient = new QueryClient({

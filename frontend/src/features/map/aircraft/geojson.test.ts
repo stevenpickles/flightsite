@@ -598,6 +598,94 @@ describe("buildAircraftFeatureCollection", () => {
       expect(collection.features[0]?.properties.severity).toBe("");
     });
   });
+
+  describe("label presets (roadmap slice 085)", () => {
+    const withOperator = {
+      icao: "aaaaaa",
+      callsign: "BAW123",
+      operator: "British Airways",
+      altitude_ft: 35000,
+    };
+
+    function labelFor(overrides: Partial<AircraftFrameInput>): string {
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: records(withOperator), ...overrides }),
+      );
+      return collection.features[0]?.properties.label ?? "<missing>";
+    }
+
+    it("defaults to the full stack — the labels as they were", () => {
+      expect(labelFor({ zoom: ZOOM_LABELS_FULL })).toBe(
+        "BAW123\nBritish Airways\nFL350",
+      );
+    });
+
+    it.each([
+      ["full", "BAW123\nBritish Airways\nFL350"],
+      ["compact", "BAW123"],
+      ["altitude", "BAW123\nFL350"],
+    ] as const)(
+      "narrows a full-tier label to the %s preset",
+      (labelPreset, expected) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_FULL, labelPreset })).toBe(
+          expected,
+        );
+      },
+    );
+
+    it.each(["full", "compact", "altitude"] as const)(
+      "never widens a callsign-tier label (%s preset)",
+      (labelPreset) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_MIN, labelPreset })).toBe("BAW123");
+        // The density latch lands on the same tier, and the preset still
+        // cannot undo it.
+        expect(
+          labelFor({
+            zoom: ZOOM_LABELS_FULL,
+            densityLatched: true,
+            labelPreset,
+          }),
+        ).toBe("BAW123");
+      },
+    );
+
+    it.each(["full", "compact", "altitude"] as const)(
+      "never labels a none-tier aircraft (%s preset)",
+      (labelPreset) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_MIN - 1, labelPreset })).toBe("");
+      },
+    );
+
+    it.each(["compact", "altitude"] as const)(
+      "keeps the selected aircraft's label complete under the %s preset",
+      (labelPreset) => {
+        expect(
+          labelFor({
+            zoom: ZOOM_LABELS_MIN - 1,
+            selectedIcao: "aaaaaa",
+            labelPreset,
+          }),
+        ).toBe("BAW123\nBritish Airways\nFL350");
+      },
+    );
+
+    it("keeps an attention-worthy aircraft's priority tier, narrowed by the preset", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            ...withOperator,
+            interesting: { severity: "high", reasons: ["test"] },
+          }),
+          // Below the labelling zoom *and* latched dense: only the priority
+          // tier keeps this aircraft labelled at all.
+          zoom: ZOOM_LABELS_MIN - 1,
+          densityLatched: true,
+          labelPreset: "altitude",
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("★ BAW123\nFL350");
+    });
+  });
 });
 
 describe("filtering (features/filters integration)", () => {

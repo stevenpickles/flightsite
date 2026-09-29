@@ -1,12 +1,23 @@
 import { ChevronDown, ChevronUp, Layers } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 
+import {
+  LABEL_PRESETS,
+  type LabelPreset,
+} from "@/features/map/labels/labelContent";
 import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useAirspaceQuery } from "@/lib/api/overlays";
 import { cn } from "@/lib/utils";
+
+/** Display names for the label content presets (`labels/labelContent.ts`). */
+const LABEL_PRESET_NAMES: Record<LabelPreset, string> = {
+  full: "Full",
+  compact: "Compact",
+  altitude: "Altitude only",
+};
 
 /** One checkbox row. `children` renders after the label text, inside the
  * `<label>`, so it is part of the checkbox's accessible name. */
@@ -40,7 +51,8 @@ function ToggleRow({
 /**
  * Small map-overlay control toggling the Airports and Airspace layers and,
  * since roadmap slice 085 (issue #228), the range rings, the receiver marker
- * and the aircraft labels. Every toggle is persisted per browser via
+ * and the aircraft labels, plus the label content preset (full / compact /
+ * altitude only). Every choice is persisted per browser via
  * `useOverlayVisibilityStore` (localStorage, guarded), the same pattern
  * `BasemapSwitcher` uses for the basemap choice. Positioned directly beneath
  * that switcher, so the two read as one instrument panel.
@@ -90,6 +102,14 @@ export function LayersControl({
   const setLabelsVisible = useOverlayVisibilityStore(
     (state) => state.setLabelsVisible,
   );
+  const labelPreset = useOverlayVisibilityStore((state) => state.labelPreset);
+  const setLabelPreset = useOverlayVisibilityStore(
+    (state) => state.setLabelPreset,
+  );
+  // Radio group name, unique per mounted card: the desktop card and the
+  // phone dock's docked card are never mounted together today, but two
+  // groups sharing a name would silently become one.
+  const presetGroupName = useId();
   const airspaceQuery = useAirspaceQuery();
   const airspaceHasData = (airspaceQuery.data?.features.length ?? 0) > 0;
 
@@ -175,6 +195,29 @@ export function LayersControl({
             checked={labels}
             onChange={setLabelsVisible}
           />
+          <fieldset className="mt-1 border-t border-border pt-1.5">
+            <legend className="px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Label content
+            </legend>
+            {LABEL_PRESETS.map((preset) => (
+              <label
+                key={preset}
+                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-foreground hover:bg-secondary"
+              >
+                <input
+                  type="radio"
+                  name={presetGroupName}
+                  value={preset}
+                  checked={labelPreset === preset}
+                  onChange={() => {
+                    setLabelPreset(preset);
+                  }}
+                  className="size-3.5 accent-accent"
+                />
+                {LABEL_PRESET_NAMES[preset]}
+              </label>
+            ))}
+          </fieldset>
         </div>
       )}
     </div>

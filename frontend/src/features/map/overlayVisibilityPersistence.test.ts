@@ -19,6 +19,7 @@ const EVERYTHING_OFF: OverlayVisibility = {
   rangeRings: false,
   receiver: false,
   labels: false,
+  labelPreset: "compact",
 };
 
 describe("overlay visibility persistence", () => {
@@ -51,6 +52,21 @@ describe("overlay visibility persistence", () => {
     expect(readStoredOverlayVisibility()).toEqual(EVERYTHING_OFF);
   });
 
+  it.each(["full", "compact", "altitude"] as const)(
+    "round-trips the %s label preset",
+    (labelPreset) => {
+      writeStoredOverlayVisibility({
+        ...DEFAULT_OVERLAY_VISIBILITY,
+        labelPreset,
+      });
+      expect(readStoredOverlayVisibility().labelPreset).toBe(labelPreset);
+    },
+  );
+
+  it("defaults the label preset to full", () => {
+    expect(DEFAULT_OVERLAY_VISIBILITY.labelPreset).toBe("full");
+  });
+
   it("keeps a pre-085 stored value's choices and defaults the new members", () => {
     // Every browser that used the Layers card before slice 085 has exactly
     // this shape stored; it must not reset their Airports/Airspace choice.
@@ -74,6 +90,7 @@ describe("overlay visibility persistence", () => {
         rangeRings: false,
         receiver: 0,
         labels: null,
+        labelPreset: "operator-only",
       }),
     );
     expect(readStoredOverlayVisibility()).toEqual({
@@ -82,6 +99,7 @@ describe("overlay visibility persistence", () => {
       rangeRings: false,
       receiver: DEFAULT_OVERLAY_VISIBILITY.receiver,
       labels: DEFAULT_OVERLAY_VISIBILITY.labels,
+      labelPreset: DEFAULT_OVERLAY_VISIBILITY.labelPreset,
     });
   });
 

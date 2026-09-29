@@ -3,7 +3,7 @@
  * slice 028) — Airports and Airspace, alongside the basemap choice
  * (`basemapPersistence.ts`) — and, since roadmap slice 085 (issue #228), the
  * rest of the Layers card's display controls: the range rings, the receiver
- * marker and the aircraft labels.
+ * marker, the aircraft labels and the label content preset.
  *
  * Same guarded-localStorage shape as that module: falls back to the
  * documented default on any error (private browsing, disabled storage) or a
@@ -12,6 +12,12 @@
  * the Layers card before slice 085 — keeps the choices it made and picks up
  * the new members' defaults.
  */
+
+import {
+  DEFAULT_LABEL_PRESET,
+  isLabelPreset,
+  type LabelPreset,
+} from "@/features/map/labels/labelContent";
 
 export const OVERLAY_VISIBILITY_STORAGE_KEY =
   "flightsite-map-overlay-visibility";
@@ -35,6 +41,11 @@ export interface OverlayVisibility {
    * an aircraft is an explicit request to read it (slice 015's "selected
    * aircraft always fully labeled"). */
   labels: boolean;
+  /** What each label says (`labels/labelContent.ts`'s {@link LabelPreset}).
+   * Defaults to `"full"`. Not a visibility, strictly, but it is chosen on
+   * the same card, for the same map, with the same per-browser lifetime —
+   * one record and one key keep it with the choices it sits beside. */
+  labelPreset: LabelPreset;
 }
 
 export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
@@ -43,6 +54,7 @@ export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   rangeRings: true,
   receiver: true,
   labels: true,
+  labelPreset: DEFAULT_LABEL_PRESET,
 };
 
 function booleanOr(value: unknown, fallback: boolean): boolean {
@@ -72,6 +84,9 @@ export function readStoredOverlayVisibility(): OverlayVisibility {
       rangeRings: booleanOr(candidate.rangeRings, fallback.rangeRings),
       receiver: booleanOr(candidate.receiver, fallback.receiver),
       labels: booleanOr(candidate.labels, fallback.labels),
+      labelPreset: isLabelPreset(candidate.labelPreset)
+        ? candidate.labelPreset
+        : fallback.labelPreset,
     };
   } catch {
     return DEFAULT_OVERLAY_VISIBILITY;

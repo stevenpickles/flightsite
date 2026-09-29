@@ -24,6 +24,7 @@ import type {
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
 import { updateDensityLatch } from "@/features/map/labels/densityLatch";
+import type { LabelPreset } from "@/features/map/labels/labelContent";
 import { DEFAULT_DISPLAY_RADIUS_NM } from "@/features/map/mapConfig";
 import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
@@ -53,6 +54,9 @@ export interface DrawFrameOptions {
   /** The receiver's display units for label altitudes. Defaults to aviation
    * units. */
   units?: UnitSystem;
+  /** The user's label content preset (roadmap slice 085). Defaults to
+   * `"full"`. */
+  labelPreset?: LabelPreset;
 }
 
 /** Rebuilds and pushes the aircraft (and optionally track) sources for `now`.
@@ -83,6 +87,7 @@ export function drawAircraftFrame(
       visibleIcaos: filterResult.visibleIcaos,
       dimmedIcaos: filterResult.dimmedIcaos,
       units: options.units,
+      labelPreset: options.labelPreset,
       // The frame loop is the one caller that draws a *sequence*, so it is
       // the one that owns the label-density latch (issue #143). Advancing it
       // here — once per frame, on the same post-filter count `geojson.ts`

@@ -67,6 +67,7 @@ describe("useOverlayVisibilityStore", () => {
     state.setRangeRingsVisible(false);
     state.setReceiverVisible(false);
     state.setLabelsVisible(false);
+    state.setLabelPreset("altitude");
     state.setReceiverVisible(true);
 
     const expected = {
@@ -75,8 +76,19 @@ describe("useOverlayVisibilityStore", () => {
       rangeRings: false,
       receiver: true,
       labels: false,
+      labelPreset: "altitude",
     };
     expect(useOverlayVisibilityStore.getState()).toMatchObject(expected);
     expect(stored()).toEqual(expected);
+  });
+
+  it("setLabelPreset updates and persists the preset alone", () => {
+    useOverlayVisibilityStore.getState().setLabelPreset("compact");
+
+    expect(useOverlayVisibilityStore.getState().labelPreset).toBe("compact");
+    expect(stored()).toEqual({
+      ...DEFAULT_OVERLAY_VISIBILITY,
+      labelPreset: "compact",
+    });
   });
 });

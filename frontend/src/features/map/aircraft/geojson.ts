@@ -27,7 +27,9 @@ import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftSt
 import type { SelectedTrack } from "@/features/map/aircraft/track";
 import {
   buildAircraftLabelLines,
+  DEFAULT_LABEL_PRESET,
   renderLabelText,
+  type LabelPreset,
 } from "@/features/map/labels/labelContent";
 import {
   deriveLabelTier,
@@ -145,6 +147,11 @@ export interface AircraftFrameInput {
    * Defaults to aviation units, which is also what the backend defaults to
    * before a config has loaded. */
   units?: UnitSystem;
+  /** The user's label content preset (roadmap slice 085,
+   * `labels/labelContent.ts`), applied on top of each aircraft's tier to
+   * every aircraft except the selected one, whose label stays complete.
+   * Defaults to `"full"` — the labels as they were before presets existed. */
+  labelPreset?: LabelPreset;
 }
 
 function feature(
@@ -220,6 +227,7 @@ export function buildAircraftFeatureCollection(
     visibleIcaos,
     dimmedIcaos,
     units = "aviation",
+    labelPreset = DEFAULT_LABEL_PRESET,
   } = input;
   const features: AircraftFeature[] = [];
   // One decision for the whole frame, resolved once rather than per feature.
@@ -267,7 +275,15 @@ export function buildAircraftFeatureCollection(
         interesting,
         attention,
         severity: view.interesting?.severity ?? "",
-        label: renderLabelText(buildAircraftLabelLines(view, units), tier),
+        label: renderLabelText(
+          buildAircraftLabelLines(view, units),
+          tier,
+          // The preset narrows every label but the selected one (see
+          // `renderLabelText`); an attention-worthy aircraft keeps its
+          // priority *tier* — labelled at any zoom and density — under
+          // whatever content the user chose.
+          selected ? "full" : labelPreset,
+        ),
       }),
     );
   }

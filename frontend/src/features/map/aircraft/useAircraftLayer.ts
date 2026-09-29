@@ -7,9 +7,11 @@
  *    add the sources and layers, then draw once so the map is never briefly
  *    empty after a basemap switch. Icons are registered *before* the layers
  *    because a symbol layer naming an unregistered image renders nothing and
- *    warns per feature per frame.
+ *    warns per feature per frame. The Layers card's "Labels" toggle (roadmap
+ *    slice 085) is re-applied here too, so it survives a basemap switch.
  * 2. **Feed.** A store subscription draws immediately whenever the picture
- *    changes (~1 Hz) or the live filters (`features/filters`) do, and an
+ *    changes (~1 Hz), the live filters (`features/filters`) do, or the
+ *    Layers card's display choices (label preset, slice 085) do, and an
  *    animation loop draws interpolated frames in between at
  *    {@link FRAME_INTERVAL_MS}.
  * 3. **Select.** One map click handler resolves the aircraft under the cursor,
@@ -28,7 +30,10 @@ import {
   ensureAircraftLayers,
   setAircraftLabelsVisible,
 } from "@/features/map/aircraft/aircraftLayers";
-import { drawAircraftFrame } from "@/features/map/aircraft/frame";
+import {
+  drawAircraftFrame,
+  type DrawFrameOptions,
+} from "@/features/map/aircraft/frame";
 import { registerAircraftIcons } from "@/features/map/aircraft/icons/registerIcons";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
@@ -49,6 +54,18 @@ import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibi
  * 450 kt airliner is about a tenth of the icon's own width.
  */
 export const FRAME_INTERVAL_MS = 80;
+
+/** Everything a frame reads from outside the live store, read fresh at call
+ * time — every caller is a callback that runs long after the render that
+ * registered it. */
+function currentFrameOptions(): DrawFrameOptions {
+  return {
+    filters: useFilterStore.getState().filters,
+    displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
+    units: useLiveAircraftStore.getState().receiver?.units,
+    labelPreset: useOverlayVisibilityStore.getState().labelPreset,
+  };
+}
 
 export function useAircraftLayer(): void {
   const { map, styleEpoch } = useMapInstance();
@@ -71,10 +88,8 @@ export function useAircraftLayer(): void {
           useOverlayVisibilityStore.getState().labels,
         );
         drawAircraftFrame(map, useLiveAircraftStore.getState(), Date.now(), {
+          ...currentFrameOptions(),
           includeTrack: true,
-          filters: useFilterStore.getState().filters,
-          displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
-          units: useLiveAircraftStore.getState().receiver?.units,
         });
       })
       .catch(() => {
@@ -100,10 +115,8 @@ export function useAircraftLayer(): void {
     const draw = (now: number, includeTrack: boolean) => {
       lastDrawnAt = now;
       drawAircraftFrame(map, useLiveAircraftStore.getState(), now, {
+        ...currentFrameOptions(),
         includeTrack,
-        filters: useFilterStore.getState().filters,
-        displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
-        units: useLiveAircraftStore.getState().receiver?.units,
       });
     };
 
@@ -123,6 +136,14 @@ export function useAircraftLayer(): void {
     const unsubscribeFilters = useFilterStore.subscribe(() => {
       draw(Date.now(), false);
     });
+    // The Layers card's label preset (roadmap slice 085) changes what every
+    // label says, so it redraws at once for the same reason a filter edit
+    // does. The other members of that store are layer visibility flips that
+    // need no redraw at all; redrawing for them anyway costs one frame per
+    // click, which is not worth a selector to avoid.
+    const unsubscribeDisplay = useOverlayVisibilityStore.subscribe(() => {
+      draw(Date.now(), false);
+    });
 
     const canAnimate = typeof requestAnimationFrame === "function";
     const tick = () => {
@@ -139,6 +160,7 @@ export function useAircraftLayer(): void {
     return () => {
       unsubscribe();
       unsubscribeFilters();
+      unsubscribeDisplay();
       if (canAnimate) {
         cancelAnimationFrame(frame);
       }

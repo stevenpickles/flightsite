@@ -1,4 +1,4 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -137,6 +137,43 @@ describe("LayersControl", () => {
         expect(
           screen.getByRole("checkbox", { name: "Labels" }),
         ).not.toBeChecked();
+      });
+
+      it("offers the three label presets, Full checked by default", () => {
+        installOverlaysApiMock();
+        renderWithProviders(<LayersControl placement={placement} />);
+
+        const group = screen.getByRole("group", { name: "Label content" });
+        const radios = within(group).getAllByRole("radio");
+        expect(radios.map((radio) => radio.getAttribute("value"))).toEqual([
+          "full",
+          "compact",
+          "altitude",
+        ]);
+        expect(
+          within(group).getByRole("radio", { name: "Full" }),
+        ).toBeChecked();
+      });
+
+      it("chooses a label preset through the store and persists it", async () => {
+        const user = userEvent.setup();
+        installOverlaysApiMock();
+        renderWithProviders(<LayersControl placement={placement} />);
+
+        await user.click(screen.getByRole("radio", { name: "Altitude only" }));
+
+        expect(useOverlayVisibilityStore.getState().labelPreset).toBe(
+          "altitude",
+        );
+        expect(
+          screen.getByRole("radio", { name: "Altitude only" }),
+        ).toBeChecked();
+        expect(screen.getByRole("radio", { name: "Full" })).not.toBeChecked();
+        expect(
+          JSON.parse(
+            window.localStorage.getItem(OVERLAY_VISIBILITY_STORAGE_KEY) ?? "{}",
+          ),
+        ).toMatchObject({ labelPreset: "altitude" });
       });
     },
   );
