@@ -9,8 +9,18 @@
 import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { formatRingLabel } from "@/features/map/geo/rings";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
+import { cn } from "@/lib/utils";
 
-export function DisplayRadiusIndicator() {
+/**
+ * `placement="docked"` (roadmap slice 084) drops the bottom-right anchor so
+ * the phone layout can stack the hint in its dock above the bottom toolbar.
+ */
+export function DisplayRadiusIndicator({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
   const { distanceCappedCount, effectiveDistanceCapNm } =
     useFilteredLiveAircraft();
   const units = useLiveAircraftStore((state) => state.receiver?.units);
@@ -23,7 +33,12 @@ export function DisplayRadiusIndicator() {
     <div
       role="status"
       data-testid="display-radius-indicator"
-      className="pointer-events-none absolute bottom-3 right-3 z-10 max-w-xs rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm"
+      className={cn(
+        placement === "floating"
+          ? "absolute bottom-3 right-3 z-10 max-w-xs"
+          : "w-full",
+        "pointer-events-none rounded-md border border-border bg-card/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm",
+      )}
     >
       {distanceCappedCount} aircraft beyond{" "}
       {formatRingLabel(

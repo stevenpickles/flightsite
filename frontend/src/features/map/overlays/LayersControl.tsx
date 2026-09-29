@@ -1,9 +1,12 @@
 import { ChevronDown, ChevronUp, Layers } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
+import type { MapCardPlacement } from "@/features/map/phone/placement";
+import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useAirspaceQuery } from "@/lib/api/overlays";
+import { cn } from "@/lib/utils";
 
 /**
  * Small map-overlay control toggling the Airports and Airspace layers.
@@ -26,8 +29,17 @@ import { useAirspaceQuery } from "@/lib/api/overlays";
  * convenience, not a preference. Registers `toggleLayersCard` on
  * `lib/shortcuts/mapShortcutTargets` so `useKeyboardShortcuts` (mounted far
  * away, in `AppShell`) can flip it.
+ *
+ * Docked on a phone (`placement="docked"`, roadmap slice 084) the card sits
+ * in the bottom toolbar's Layers sheet, and that sheet is what `L` opens and
+ * closes there — so the docked card registers the shortcut against the sheet
+ * (`usePhoneMapStore`) instead of its own collapse flag.
  */
-export function LayersControl() {
+export function LayersControl({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
   const airports = useOverlayVisibilityStore((state) => state.airports);
   const airspace = useOverlayVisibilityStore((state) => state.airspace);
   const setAirportsVisible = useOverlayVisibilityStore(
@@ -43,16 +55,30 @@ export function LayersControl() {
   const contentId = useId();
 
   useEffect(() => {
-    setMapShortcutTarget("toggleLayersCard", () => {
-      setOpen((current) => !current);
-    });
+    setMapShortcutTarget(
+      "toggleLayersCard",
+      placement === "docked"
+        ? () => {
+            usePhoneMapStore.getState().toggleCard("layers");
+          }
+        : () => {
+            setOpen((current) => !current);
+          },
+    );
     return () => {
       setMapShortcutTarget("toggleLayersCard", undefined);
     };
-  }, []);
+  }, [placement]);
 
   return (
-    <div className="absolute right-3 top-40 z-10 w-48 rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur-sm">
+    <div
+      className={cn(
+        placement === "floating"
+          ? "absolute right-3 top-40 z-10 w-48"
+          : "w-full",
+        "rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur-sm",
+      )}
+    >
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}

@@ -33,6 +33,7 @@
 import { BellOff, ShieldAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import type { MapCardPlacement } from "@/features/map/phone/placement";
 import {
   canRequest,
   type NotificationPermissionState,
@@ -60,7 +61,16 @@ function suppressedPrefix(suppressed: number): string | null {
     : `${suppressed.toLocaleString()} alerts not notified`;
 }
 
-export function NotificationStatusPill() {
+/**
+ * `placement="docked"` (roadmap slice 084) drops the bottom-centre anchor so
+ * the phone layout can stack the pill in its dock above the bottom toolbar,
+ * where it can never sit under a toolbar sheet.
+ */
+export function NotificationStatusPill({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
   const { permission, isRequesting, request } = useNotificationPermission();
   const suppressed = useNotificationStore((state) => state.suppressed);
 
@@ -77,8 +87,11 @@ export function NotificationStatusPill() {
       data-testid="notification-status-pill"
       data-permission={permission}
       className={cn(
-        "pointer-events-auto absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 flex-wrap items-center gap-x-2 gap-y-1",
-        "max-w-[min(28rem,92vw)] rounded-full border border-border bg-card/95 px-3 py-1.5",
+        placement === "floating"
+          ? "absolute bottom-3 left-1/2 z-10 max-w-[min(28rem,92vw)] -translate-x-1/2"
+          : "self-center",
+        "pointer-events-auto flex flex-wrap items-center gap-x-2 gap-y-1",
+        "rounded-full border border-border bg-card/95 px-3 py-1.5",
         "text-[11px] font-medium text-muted-foreground shadow-md backdrop-blur-sm",
       )}
     >

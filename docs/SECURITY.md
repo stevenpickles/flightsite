@@ -67,6 +67,12 @@ Enforced rules (tested, not aspirational — see slices 004, 019, 026, 042, 043)
 - Diagnostics/support output provably contains no secrets (automated test).
 - Backups include secrets only when explicitly requested, and the backup manifest
   states whether they are included.
+- The frontend's service worker (roadmap slice 084) caches no API response: it stores
+  only the built app shell (HTML, hashed JS/CSS/fonts, icons) and never intercepts
+  `/api/`, `/ws/` or any cross-origin request (`frontend/src/sw/routing.ts`, with unit
+  tests asserting each of those passes straight through), so nothing an API returns —
+  configuration, masked secret state, diagnostics — is ever written to the browser's
+  Cache Storage.
 
 ## 4. Untrusted Input: Decoder Ingestion
 

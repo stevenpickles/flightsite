@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import { UpdatePrompt } from "@/components/shell/UpdatePrompt";
 import { applyServerConfigToNotificationStore } from "@/features/notifications/lib/configSync";
 import { applyServerConfigToMapStore } from "@/features/setup/lib/mapConfigSync";
 import { useConfigQuery } from "@/lib/api/config";
@@ -46,5 +47,11 @@ export function RootLayout() {
     }
   }, [data]);
 
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      {/* Every route, the setup wizard included (roadmap slice 084). */}
+      <UpdatePrompt />
+    </>
+  );
 }

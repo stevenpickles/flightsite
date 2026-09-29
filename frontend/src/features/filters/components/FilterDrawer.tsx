@@ -31,10 +31,26 @@
  * keyboard shortcuts — dispatched from `useKeyboardShortcuts`, mounted in
  * `AppShell` far from this component — can reach this drawer's own
  * open/closed state and its live-set query input.
+ *
+ * On a phone (`placement="docked"`, roadmap slice 084) the drawer has no
+ * trigger of its own: the bottom toolbar's Filters button is the trigger,
+ * the open flag is the toolbar's `usePhoneMapStore.openCard === "filters"`
+ * rather than this component's state, and the panel flows full width in the
+ * toolbar's sheet instead of sliding over the right edge of the map. The
+ * shortcuts keep working unchanged, because they go through the same
+ * `setIsOpen` either way.
  */
 
 import { Filter, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +63,8 @@ import type {
   GroundTrafficMode,
 } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
+import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { useMetadataAvailable } from "@/lib/api/metadata";
@@ -148,8 +166,35 @@ function FilterMatchCount({ shown, total }: { shown: number; total: number }) {
   );
 }
 
-export function FilterDrawer() {
-  const [isOpen, setIsOpen] = useState(false);
+export function FilterDrawer({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const docked = placement === "docked";
+  const [floatingOpen, setFloatingOpen] = useState(false);
+  const dockedOpen = usePhoneMapStore((state) => state.openCard === "filters");
+  const isOpen = docked ? dockedOpen : floatingOpen;
+  // One setter for both placements, with `useState`'s own signature, so the
+  // shortcut registrations and the Escape handler below never need to know
+  // which one they are driving. The docked branch reads the store at call
+  // time rather than closing over `dockedOpen`, since the shortcut callbacks
+  // are registered once and would otherwise toggle against a stale value.
+  const setIsOpen = useCallback(
+    (next: SetStateAction<boolean>) => {
+      if (!docked) {
+        setFloatingOpen(next);
+        return;
+      }
+      const store = usePhoneMapStore.getState();
+      const current = store.openCard === "filters";
+      const value = typeof next === "function" ? next(current) : next;
+      if (value !== current) {
+        store.setOpenCard(value ? "filters" : null);
+      }
+    },
+    [docked],
+  );
   const metadataAvailable = useMetadataAvailable();
   const filters = useFilterStore((state) => state.filters);
   const total = useLiveAircraftStore(
@@ -215,7 +260,7 @@ export function FilterDrawer() {
       setMapShortcutTarget("toggleFilterDrawer", undefined);
       setMapShortcutTarget("focusLiveSearch", undefined);
     };
-  }, []);
+  }, [setIsOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -228,7 +273,7 @@ export function FilterDrawer() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+  }, [isOpen, setIsOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -253,34 +298,36 @@ export function FilterDrawer() {
 
   return (
     <>
-      <button
-        type="button"
-        aria-expanded={isOpen}
-        // Only while the panel is actually mounted: `aria-controls` pointing
-        // at an id that is not in the document is an invalid reference.
-        aria-controls={isOpen ? headingId : undefined}
-        onClick={() => setIsOpen((open) => !open)}
-        className={cn(
-          // Below `BasemapSwitcher` (right-3 top-3, up to three rows tall)
-          // so the two floating map controls never overlap.
-          "absolute right-3 top-40 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
-          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-          activeCount > 0
-            ? "text-accent"
-            : "text-foreground hover:bg-secondary",
-        )}
-      >
-        <Filter className="size-3.5" aria-hidden="true" />
-        Filters
-        {activeCount > 0 && (
-          <span
-            data-testid="filter-active-count"
-            className="inline-flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground"
-          >
-            {activeCount}
-          </span>
-        )}
-      </button>
+      {!docked && (
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          // Only while the panel is actually mounted: `aria-controls` pointing
+          // at an id that is not in the document is an invalid reference.
+          aria-controls={isOpen ? headingId : undefined}
+          onClick={() => setIsOpen((open) => !open)}
+          className={cn(
+            // Below `BasemapSwitcher` (right-3 top-3, up to three rows tall)
+            // so the two floating map controls never overlap.
+            "absolute right-3 top-40 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
+            "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+            activeCount > 0
+              ? "text-accent"
+              : "text-foreground hover:bg-secondary",
+          )}
+        >
+          <Filter className="size-3.5" aria-hidden="true" />
+          Filters
+          {activeCount > 0 && (
+            <span
+              data-testid="filter-active-count"
+              className="inline-flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground"
+            >
+              {activeCount}
+            </span>
+          )}
+        </button>
+      )}
 
       {isOpen && (
         <div
@@ -291,8 +338,10 @@ export function FilterDrawer() {
           tabIndex={-1}
           data-testid="filter-drawer"
           className={cn(
-            "absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col",
-            "border-l border-border bg-card text-card-foreground shadow-lg outline-none",
+            docked
+              ? "flex max-h-full w-full flex-col rounded-lg border"
+              : "absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col border-l",
+            "border-border bg-card text-card-foreground shadow-lg outline-none",
           )}
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">

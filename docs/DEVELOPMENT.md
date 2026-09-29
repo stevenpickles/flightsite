@@ -69,6 +69,21 @@ daemon, so a second stack fails with a name conflict even under a different
 `docker compose -p` project. Bring one stack down before starting another from
 another worktree.
 
+### Service worker and app icons (roadmap slice 084)
+
+`npm run dev` never registers a service worker, so the dev server always serves live
+code. Only `npm run build` emits `dist/sw.js` (`vite-plugins/serviceWorker.ts` prints
+how many shell files it precached and the cache version), and only a production build
+opened in a secure context registers it — `npm run preview` on `localhost` qualifies,
+which is the way to exercise installability or the update prompt locally. The worker
+precaches the built shell only and never intercepts `/api/`, `/ws/` or cross-origin
+requests; its scope and rules are in `ARCHITECTURE.md` §5. To clear it while testing,
+use the browser's Application → Service workers → Unregister.
+
+The PNG icons in `frontend/public/icons/` are generated from `public/favicon.svg` by
+`npm run icons` (a dependency-free rasterizer, `scripts/generate-icons.mjs`) and
+committed; re-run it only when the mark changes.
+
 ### Running E2E locally
 
 The `e2e/` workspace (Playwright — Chromium, Firefox, WebKit) drives the composed

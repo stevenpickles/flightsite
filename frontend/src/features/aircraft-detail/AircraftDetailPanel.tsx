@@ -21,12 +21,21 @@
  * link, `navigator.share`, and a QR popover — reading the current address
  * bar URL (`useCurrentUrl`), which already carries this selection as
  * `?selected=<icao>` via `useSelectionUrlSync`.
+ *
+ * On a phone (`placement="docked"`, roadmap slice 084) the panel is a
+ * draggable bottom sheet inside the Live Map's bottom dock rather than the
+ * viewport-wide `fixed` sheet it used to be below `md`: it sits above the
+ * bottom toolbar instead of over it, snaps between peek, half and full
+ * (`lib/sheetSnap.ts`), and carries `BottomSheetHandle` — a grabber for
+ * pointers plus Expand/Collapse buttons for keyboards and screen readers.
+ * Escape and the close button deselect exactly as they do on desktop.
  */
 
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { BottomSheetHandle } from "@/features/aircraft-detail/components/BottomSheetHandle";
 import {
   DetailSection,
   DetailSectionHeadingLevel,
@@ -58,8 +67,10 @@ import {
   isEmergencySquawk,
   verticalTrend,
 } from "@/features/aircraft-detail/lib/format";
+import type { SheetSnap } from "@/features/aircraft-detail/lib/sheetSnap";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import type { LiveAircraft } from "@/lib/api/live";
@@ -75,7 +86,22 @@ const TREND_GLYPH: Record<"climb" | "descend" | "level", string> = {
   level: "—",
 };
 
-export function AircraftDetailPanel() {
+/** The docked sheet's resting height per snap. `h-44` is
+ * `PEEK_HEIGHT_PX`; the fractions are of the dock, which the sheet shares
+ * with the toolbar, so `h-full` shrinks (`shrink`, `min-h-0`) to what is
+ * left rather than pushing the toolbar off screen. */
+const SNAP_HEIGHT_CLASS: Record<SheetSnap, string> = {
+  peek: "h-44",
+  half: "h-1/2",
+  full: "h-full",
+};
+
+export function AircraftDetailPanel({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const docked = placement === "docked";
   const selectedIcao = useLiveAircraftStore((state) => state.selectedIcao);
   const record = useLiveAircraftStore((state) =>
     state.selectedIcao ? state.aircraft[state.selectedIcao] : undefined,
@@ -92,6 +118,10 @@ export function AircraftDetailPanel() {
   // (mounted once at `LiveMapPage`), so sharing this panel is just sharing
   // the address bar (roadmap slice 082).
   const shareUrl = useCurrentUrl();
+  // Kept across selections: a height the user dragged to is a preference for
+  // how much of the map to give up, not a property of one aircraft.
+  const [snap, setSnap] = useState<SheetSnap>("half");
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
 
   const isOpen = selectedIcao !== null;
   // Non-modal (`aria-modal="false"`): the map behind stays interactive, so
@@ -143,14 +173,35 @@ export function AircraftDetailPanel() {
           aria-labelledby={headingId}
           tabIndex={-1}
           data-testid="aircraft-detail-panel"
-          className={cn(
-            "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
-            "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
-            "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
-            "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
-            "outline-none",
-          )}
+          data-snap={docked ? snap : undefined}
+          style={
+            docked && dragHeight !== null ? { height: dragHeight } : undefined
+          }
+          className={
+            docked
+              ? cn(
+                  "pointer-events-auto flex min-h-0 w-full shrink flex-col",
+                  "rounded-t-xl border border-border bg-card text-card-foreground shadow-lg outline-none",
+                  dragHeight === null && SNAP_HEIGHT_CLASS[snap],
+                )
+              : cn(
+                  "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
+                  "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
+                  "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
+                  "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
+                  "outline-none",
+                )
+          }
         >
+          {docked && (
+            <BottomSheetHandle
+              sheetRef={panelRef}
+              snap={snap}
+              onSnapChange={setSnap}
+              onDragHeight={setDragHeight}
+              label="aircraft detail"
+            />
+          )}
           <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
             <div className="flex min-w-0 flex-col gap-1.5">
               <h2 id={headingId} className="truncate text-lg font-semibold">
@@ -184,7 +235,7 @@ export function AircraftDetailPanel() {
             </button>
           </header>
 
-          <div className="overflow-y-auto">
+          <div className={cn("overflow-y-auto", docked && "min-h-0 flex-1")}>
             {aircraft === null ? (
               <p className="px-4 py-4 text-sm text-muted-foreground">
                 No live data for this aircraft.
