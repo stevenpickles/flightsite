@@ -20,6 +20,16 @@ describe("shortcut registry", () => {
     }
   });
 
+  it("lists the slice 085 Live Map shortcuts, clear of the navigation letters' own sequence", () => {
+    const liveMapKeys = SHORTCUTS.filter(
+      (shortcut) => shortcut.group === "Live Map",
+    ).map((shortcut) => shortcut.keys);
+    expect(liveMapKeys).toContain("M");
+    expect(liveMapKeys).toContain("T");
+    // Every single-key Live Map binding is distinct.
+    expect(new Set(liveMapKeys).size).toBe(liveMapKeys.length);
+  });
+
   it("has one 'Go to…' row per navigation letter", () => {
     const goToRows = SHORTCUTS.filter(
       (shortcut) => shortcut.group === "Go to…",

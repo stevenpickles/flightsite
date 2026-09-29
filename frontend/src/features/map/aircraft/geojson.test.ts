@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { AircraftFrameInput } from "@/features/map/aircraft/geojson";
+import type {
+  AircraftFrameInput,
+  TrailFrameInput,
+} from "@/features/map/aircraft/geojson";
 import {
   buildAircraftFeatureCollection,
   buildTrackFeatureCollection,
+  buildTrailFeatureCollection,
   countLabelledAircraft,
   GROUND_DIM_OPACITY,
   STALE_OPACITY,
@@ -14,6 +18,7 @@ import type {
   LiveAircraftRecord,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { TrailSource } from "@/features/map/aircraft/trails";
 import {
   DENSITY_CALLSIGN_ENTER,
   ZOOM_LABELS_FULL,
@@ -598,6 +603,94 @@ describe("buildAircraftFeatureCollection", () => {
       expect(collection.features[0]?.properties.severity).toBe("");
     });
   });
+
+  describe("label presets (roadmap slice 085)", () => {
+    const withOperator = {
+      icao: "aaaaaa",
+      callsign: "BAW123",
+      operator: "British Airways",
+      altitude_ft: 35000,
+    };
+
+    function labelFor(overrides: Partial<AircraftFrameInput>): string {
+      const collection = buildAircraftFeatureCollection(
+        input({ aircraft: records(withOperator), ...overrides }),
+      );
+      return collection.features[0]?.properties.label ?? "<missing>";
+    }
+
+    it("defaults to the full stack — the labels as they were", () => {
+      expect(labelFor({ zoom: ZOOM_LABELS_FULL })).toBe(
+        "BAW123\nBritish Airways\nFL350",
+      );
+    });
+
+    it.each([
+      ["full", "BAW123\nBritish Airways\nFL350"],
+      ["compact", "BAW123"],
+      ["altitude", "BAW123\nFL350"],
+    ] as const)(
+      "narrows a full-tier label to the %s preset",
+      (labelPreset, expected) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_FULL, labelPreset })).toBe(
+          expected,
+        );
+      },
+    );
+
+    it.each(["full", "compact", "altitude"] as const)(
+      "never widens a callsign-tier label (%s preset)",
+      (labelPreset) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_MIN, labelPreset })).toBe("BAW123");
+        // The density latch lands on the same tier, and the preset still
+        // cannot undo it.
+        expect(
+          labelFor({
+            zoom: ZOOM_LABELS_FULL,
+            densityLatched: true,
+            labelPreset,
+          }),
+        ).toBe("BAW123");
+      },
+    );
+
+    it.each(["full", "compact", "altitude"] as const)(
+      "never labels a none-tier aircraft (%s preset)",
+      (labelPreset) => {
+        expect(labelFor({ zoom: ZOOM_LABELS_MIN - 1, labelPreset })).toBe("");
+      },
+    );
+
+    it.each(["compact", "altitude"] as const)(
+      "keeps the selected aircraft's label complete under the %s preset",
+      (labelPreset) => {
+        expect(
+          labelFor({
+            zoom: ZOOM_LABELS_MIN - 1,
+            selectedIcao: "aaaaaa",
+            labelPreset,
+          }),
+        ).toBe("BAW123\nBritish Airways\nFL350");
+      },
+    );
+
+    it("keeps an attention-worthy aircraft's priority tier, narrowed by the preset", () => {
+      const collection = buildAircraftFeatureCollection(
+        input({
+          aircraft: records({
+            ...withOperator,
+            interesting: { severity: "high", reasons: ["test"] },
+          }),
+          // Below the labelling zoom *and* latched dense: only the priority
+          // tier keeps this aircraft labelled at all.
+          zoom: ZOOM_LABELS_MIN - 1,
+          densityLatched: true,
+          labelPreset: "altitude",
+        }),
+      );
+      expect(collection.features[0]?.properties.label).toBe("★ BAW123\nFL350");
+    });
+  });
 });
 
 describe("filtering (features/filters integration)", () => {
@@ -691,6 +784,124 @@ describe("filtering (features/filters integration)", () => {
       }),
     );
     expect(collection.features).toHaveLength(1);
+  });
+});
+
+describe("buildTrailFeatureCollection (roadmap slice 085)", () => {
+  /** A trail source that serves canned coordinates and records nothing —
+   * the builder must only read it. */
+  function source(
+    trails: Record<string, [number, number][]>,
+  ): TrailSource & { reads: string[] } {
+    const reads: string[] = [];
+    return {
+      reads,
+      coordinates: (icao) => {
+        reads.push(icao);
+        return trails[icao] ?? [];
+      },
+    };
+  }
+
+  const LINE: [number, number][] = [
+    [-122.2, 47.4],
+    [-122.1, 47.5],
+    [-122.0, 47.6],
+  ];
+
+  function trailInput(
+    overrides: Partial<TrailFrameInput> = {},
+  ): TrailFrameInput {
+    return {
+      aircraft: records({ icao: "aaaaaa" }, { icao: "bbbbbb" }),
+      trails: source({ aaaaaa: LINE, bbbbbb: LINE }),
+      selectedIcao: null,
+      now: NOW,
+      ...overrides,
+    };
+  }
+
+  it("emits one LineString per aircraft, in the order the buffer holds", () => {
+    const collection = buildTrailFeatureCollection(trailInput());
+    expect(collection.features.map((f) => f.properties.icao)).toEqual([
+      "aaaaaa",
+      "bbbbbb",
+    ]);
+    expect(collection.features[0]?.geometry).toEqual({
+      type: "LineString",
+      coordinates: LINE,
+    });
+    expect(collection.features[0]?.properties.opacity).toBe(1);
+  });
+
+  it("leaves the selected aircraft to its full track", () => {
+    const collection = buildTrailFeatureCollection(
+      trailInput({ selectedIcao: "aaaaaa" }),
+    );
+    expect(collection.features.map((f) => f.properties.icao)).toEqual([
+      "bbbbbb",
+    ]);
+  });
+
+  it("draws no trail for an aircraft the filters exclude", () => {
+    const collection = buildTrailFeatureCollection(
+      trailInput({ visibleIcaos: new Set(["bbbbbb"]) }),
+    );
+    expect(collection.features.map((f) => f.properties.icao)).toEqual([
+      "bbbbbb",
+    ]);
+  });
+
+  it("skips a trail with fewer than two points — not a valid LineString", () => {
+    const collection = buildTrailFeatureCollection(
+      trailInput({
+        trails: source({ aaaaaa: [[-122, 47]], bbbbbb: [] }),
+      }),
+    );
+    expect(collection.features).toEqual([]);
+  });
+
+  it("draws nothing for an aircraft that has left the live store", () => {
+    // Its ring may still be in the buffer until the next record; the
+    // builder never looks, because it iterates the live picture.
+    const trails = source({ aaaaaa: LINE, gone00: LINE });
+    const collection = buildTrailFeatureCollection(
+      trailInput({ aircraft: records({ icao: "aaaaaa" }), trails }),
+    );
+    expect(collection.features).toHaveLength(1);
+    expect(trails.reads).not.toContain("gone00");
+  });
+
+  it("fades a stale aircraft's trail and a ground-dimmed one, like its icon", () => {
+    const collection = buildTrailFeatureCollection(
+      trailInput({
+        aircraft: records(
+          { icao: "aaaaaa", state: "stale" },
+          { icao: "bbbbbb" },
+        ),
+        dimmedIcaos: new Set(["aaaaaa", "bbbbbb"]),
+      }),
+    );
+    const opacity = Object.fromEntries(
+      collection.features.map((f) => [f.properties.icao, f.properties.opacity]),
+    );
+    expect(opacity.aaaaaa).toBeCloseTo(STALE_OPACITY * GROUND_DIM_OPACITY);
+    expect(opacity.bbbbbb).toBeCloseTo(GROUND_DIM_OPACITY);
+  });
+
+  it("asks the buffer for points as of the frame's own time", () => {
+    const seen: number[] = [];
+    buildTrailFeatureCollection(
+      trailInput({
+        trails: {
+          coordinates: (_icao, now) => {
+            seen.push(now);
+            return LINE;
+          },
+        },
+      }),
+    );
+    expect(seen).toEqual([NOW, NOW]);
   });
 });
 

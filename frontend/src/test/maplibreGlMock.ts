@@ -209,6 +209,15 @@ export class MapLibreMockMap {
     return this.zoom;
   }
 
+  /** The canvas element — `MeasureControl` (roadmap slice 085) sets its
+   * `style.cursor` to a crosshair while measuring, so tests can read it
+   * back here. */
+  canvas: HTMLCanvasElement = document.createElement("canvas");
+
+  getCanvas(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
   isStyleLoaded(): boolean {
     return this.styleLoaded;
   }

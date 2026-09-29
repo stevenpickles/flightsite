@@ -4,8 +4,11 @@ import {
   buildAircraftLabelLines,
   buildIdentityLine,
   buildOperatorLine,
+  DEFAULT_LABEL_PRESET,
   formatAltitude,
   INTERESTING_INDICATOR,
+  isLabelPreset,
+  LABEL_PRESETS,
   renderLabelText,
   TRANSITION_ALTITUDE_FT,
   type LabelSourceAircraft,
@@ -166,4 +169,60 @@ describe("renderLabelText", () => {
       renderLabelText({ line1: "RCH471", line2: null, line3: null }, "full"),
     ).toBe("RCH471");
   });
+
+  describe("presets (roadmap slice 085)", () => {
+    // The full preset x tier matrix: a preset is a ceiling on what the tier
+    // shows, so every cell is the *narrower* of the two.
+    it.each([
+      ["none", "full", ""],
+      ["none", "compact", ""],
+      ["none", "altitude", ""],
+      ["callsign", "full", "RCH471"],
+      ["callsign", "compact", "RCH471"],
+      ["callsign", "altitude", "RCH471"],
+      ["full", "full", "RCH471\nRepublic Airlines\nFL350"],
+      ["full", "compact", "RCH471"],
+      ["full", "altitude", "RCH471\nFL350"],
+    ] as const)("tier %s with the %s preset", (tier, preset, expected) => {
+      expect(renderLabelText(lines, tier, preset)).toBe(expected);
+    });
+
+    it("defaults to the full preset", () => {
+      expect(renderLabelText(lines, "full")).toBe(
+        renderLabelText(lines, "full", DEFAULT_LABEL_PRESET),
+      );
+      expect(DEFAULT_LABEL_PRESET).toBe("full");
+    });
+
+    it("drops a missing altitude under the altitude preset rather than leaving a blank line", () => {
+      expect(
+        renderLabelText(
+          { line1: "RCH471", line2: "Republic Airlines", line3: null },
+          "full",
+          "altitude",
+        ),
+      ).toBe("RCH471");
+    });
+
+    it("never shows the operator under the altitude preset", () => {
+      expect(renderLabelText(lines, "full", "altitude")).not.toContain(
+        "Republic",
+      );
+    });
+  });
+});
+
+describe("isLabelPreset", () => {
+  it("accepts every listed preset", () => {
+    for (const preset of LABEL_PRESETS) {
+      expect(isLabelPreset(preset)).toBe(true);
+    }
+  });
+
+  it.each([null, undefined, 1, "", "FULL", "operator", {}])(
+    "rejects %s",
+    (value) => {
+      expect(isLabelPreset(value)).toBe(false);
+    },
+  );
 });

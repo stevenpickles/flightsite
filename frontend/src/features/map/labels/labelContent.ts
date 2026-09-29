@@ -15,6 +15,11 @@
  *    thousands separator below it. `null` (and so no third line) for an
  *    altitude-unknown aircraft.
  *
+ * Which of those slots a label actually shows is decided twice: by the
+ * zoom/density tier (`priority.ts`), and then by the user's label content
+ * preset (roadmap slice 085, {@link LabelPreset}), which can only narrow the
+ * tier's answer.
+ *
  * Kept as plain string functions, independent of MapLibre or a map
  * instance — the same split `icons/resolveIcon.ts` already uses for the
  * icon hierarchy, and for the same reason: the fallback chain is the
@@ -132,22 +137,73 @@ export function buildAircraftLabelLines(
 }
 
 /**
+ * The user's label content preset (roadmap slice 085, issue #228), chosen in
+ * the Layers card and persisted per browser:
+ *
+ * - `"full"` — every line the tier allows (the behaviour before the slice);
+ * - `"compact"` — the identity line only;
+ * - `"altitude"` — identity plus altitude, never the operator.
+ *
+ * A preset is a *ceiling*, not a tier: {@link renderLabelText} applies it on
+ * top of whatever `priority.ts` decided for this zoom and density, so it can
+ * only ever take lines away. The zoom/density declutter and its hysteresis
+ * latch (`densityLatch.ts`) are untouched by it — a crowded picture still
+ * drops to callsign-only under any preset, and a wide zoom still hides
+ * labels entirely.
+ */
+export type LabelPreset = "full" | "compact" | "altitude";
+
+/** Every preset, in the order the Layers card lists them. */
+export const LABEL_PRESETS: readonly LabelPreset[] = [
+  "full",
+  "compact",
+  "altitude",
+];
+
+/** The preset a new browser starts with — today's labels, unchanged. */
+export const DEFAULT_LABEL_PRESET: LabelPreset = "full";
+
+export function isLabelPreset(value: unknown): value is LabelPreset {
+  return (
+    typeof value === "string" &&
+    (LABEL_PRESETS as readonly string[]).includes(value)
+  );
+}
+
+/**
  * Joins the label lines into the newline-delimited string a MapLibre
- * `text-field` renders, respecting `tier` (`priority.ts`): `"none"` is the
- * empty string (the layer filters those features out entirely), `"callsign"`
- * keeps line 1 only, and `"full"` keeps every line the aircraft has data
- * for — `line2`/`line3` being `null` already drops them, so no aircraft
- * shows a blank line for a field it does not have.
+ * `text-field` renders, respecting `tier` (`priority.ts`) first and the
+ * user's `preset` second:
+ *
+ * - tier `"none"` is the empty string whatever the preset (the layer filters
+ *   those features out entirely);
+ * - tier `"callsign"` keeps line 1 only whatever the preset — every preset
+ *   includes the identity line, so none can add anything back;
+ * - tier `"full"` keeps every line the preset allows and the aircraft has
+ *   data for — `line2`/`line3` being `null` already drops them, so no
+ *   aircraft shows a blank line for a field it does not have.
+ *
+ * So a preset narrows what the tier would show and never widens it. The
+ * *selected* aircraft is the one exception, and it is the caller's
+ * (`aircraft/geojson.ts` passes `"full"` for it): selecting an aircraft is
+ * an explicit request to read it, and slice 015 promises its label is always
+ * complete.
  */
 export function renderLabelText(
   lines: AircraftLabelLines,
   tier: LabelTier,
+  preset: LabelPreset = DEFAULT_LABEL_PRESET,
 ): string {
   if (tier === "none") {
     return "";
   }
-  if (tier === "callsign") {
+  if (tier === "callsign" || preset === "compact") {
     return lines.line1;
+  }
+  if (preset === "altitude") {
+    return lines.line3 === null
+      ? lines.line1
+      : `${lines.line1}\n${lines.line3}`;
   }
   return [lines.line1, lines.line2, lines.line3]
     .filter((line): line is string => line !== null)

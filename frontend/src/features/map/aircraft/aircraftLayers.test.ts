@@ -21,10 +21,14 @@ import {
   AIRCRAFT_SYMBOL_LAYER_ID,
   AIRCRAFT_TRACK_LAYER_ID,
   AIRCRAFT_TRACK_SOURCE_ID,
+  AIRCRAFT_TRAILS_LAYER_ID,
+  AIRCRAFT_TRAILS_SOURCE_ID,
   aircraftIcaoAtPoint,
   ensureAircraftLayers,
   setAircraftData,
+  setAircraftLabelsVisible,
   setTrackData,
+  setTrailData,
 } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { MLAT_RING_IMAGE_ID } from "@/features/map/aircraft/icons/silhouettes";
@@ -52,12 +56,17 @@ beforeEach(() => {
 });
 
 describe("ensureAircraftLayers", () => {
-  it("adds both sources and all seven layers", () => {
+  it("adds all three sources and all eight layers", () => {
     ensureAircraftLayers(map);
     expect([...mock.sources.keys()].sort()).toEqual(
-      [AIRCRAFT_SOURCE_ID, AIRCRAFT_TRACK_SOURCE_ID].sort(),
+      [
+        AIRCRAFT_SOURCE_ID,
+        AIRCRAFT_TRACK_SOURCE_ID,
+        AIRCRAFT_TRAILS_SOURCE_ID,
+      ].sort(),
     );
     expect([...mock.layers.keys()]).toEqual([
+      AIRCRAFT_TRAILS_LAYER_ID,
       AIRCRAFT_TRACK_LAYER_ID,
       AIRCRAFT_ATTENTION_LAYER_ID,
       AIRCRAFT_SELECTION_LAYER_ID,
@@ -97,7 +106,7 @@ describe("ensureAircraftLayers", () => {
     ensureAircraftLayers(map);
     const first = mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID);
     ensureAircraftLayers(map);
-    expect(mock.layers.size).toBe(7);
+    expect(mock.layers.size).toBe(8);
     expect(mock.layers.get(AIRCRAFT_SYMBOL_LAYER_ID)).toBe(first);
   });
 
@@ -405,6 +414,67 @@ describe("setAircraftData / setTrackData", () => {
       setAircraftData(map, EMPTY_COLLECTION);
       setTrackData(map, EMPTY_COLLECTION);
     }).not.toThrow();
+  });
+});
+
+describe("trail layer (roadmap slice 085)", () => {
+  it("draws the trails beneath everything else, the selected track included", () => {
+    ensureAircraftLayers(map);
+    expect([...mock.layers.keys()][0]).toBe(AIRCRAFT_TRAILS_LAYER_ID);
+  });
+
+  it("is a faint line whose opacity follows each trail's stale/dim factor", () => {
+    ensureAircraftLayers(map);
+    const layer = mock.layers.get(AIRCRAFT_TRAILS_LAYER_ID);
+    expect(layer?.type).toBe("line");
+    expect(layer?.source).toBe(AIRCRAFT_TRAILS_SOURCE_ID);
+    const opacity = (layer?.paint as Record<string, unknown>)[
+      "line-opacity"
+    ] as unknown[];
+    expect(opacity[0]).toBe("*");
+    expect(opacity[1]).toBeLessThan(1);
+    expect(opacity[2]).toEqual(["get", "opacity"]);
+  });
+
+  it("is never hit by a selection click", () => {
+    // Selection queries the symbol layer only, so a click on a trail is a
+    // click on empty map.
+    ensureAircraftLayers(map);
+    const query = vi.spyOn(mock, "queryRenderedFeatures");
+    aircraftIcaoAtPoint(map, [0, 0]);
+    const options = query.mock.calls[0]?.[1 as never] as
+      { layers?: string[] } | undefined;
+    expect(options?.layers).toEqual([AIRCRAFT_SYMBOL_LAYER_ID]);
+  });
+
+  it("setTrailData pushes through the trail source, and no-ops before attach", () => {
+    expect(() => setTrailData(map, EMPTY_COLLECTION)).not.toThrow();
+    ensureAircraftLayers(map);
+    setTrailData(map, EMPTY_COLLECTION);
+    expect(
+      mock.getSource(AIRCRAFT_TRAILS_SOURCE_ID)?.setData,
+    ).toHaveBeenCalledWith(EMPTY_COLLECTION);
+  });
+});
+
+describe("setAircraftLabelsVisible (roadmap slice 085)", () => {
+  function visibility(id: string): unknown {
+    return (mock.layers.get(id)?.layout as Record<string, unknown>).visibility;
+  }
+
+  it("hides the shared label layer but never the selected aircraft's", () => {
+    ensureAircraftLayers(map);
+    setAircraftLabelsVisible(map, false);
+    expect(visibility(AIRCRAFT_LABEL_LAYER_ID)).toBe("none");
+    expect(visibility(AIRCRAFT_SELECTED_LABEL_LAYER_ID)).toBeUndefined();
+
+    setAircraftLabelsVisible(map, true);
+    expect(visibility(AIRCRAFT_LABEL_LAYER_ID)).toBe("visible");
+  });
+
+  it("is a no-op before the layers exist", () => {
+    expect(() => setAircraftLabelsVisible(map, false)).not.toThrow();
+    expect(mock.layers.size).toBe(0);
   });
 });
 

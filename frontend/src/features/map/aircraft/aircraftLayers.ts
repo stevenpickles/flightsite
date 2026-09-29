@@ -7,8 +7,11 @@
  * 500-aircraft target unreachable; `setData` on an existing source is the one
  * cheap update path MapLibre offers.
  *
- * Seven layers, bottom to top:
+ * Eight layers, bottom to top:
  *
+ * 0. every other visible aircraft's short trail (roadmap slice 085, off by
+ *    default — `trails.ts`): faint, thin and non-interactive, and lowest of
+ *    all, so a trail never covers an icon, a ring or the selected track;
  * 1. the selected aircraft's track polyline;
  * 2. the attention ring — a severity-scaled ring under any aircraft with an
  *    active alert match (SPEC §36 "interesting/alerting: distinct attention
@@ -57,6 +60,8 @@ import {
 
 export const AIRCRAFT_SOURCE_ID = "flightsite-aircraft";
 export const AIRCRAFT_TRACK_SOURCE_ID = "flightsite-aircraft-track";
+export const AIRCRAFT_TRAILS_SOURCE_ID = "flightsite-aircraft-trails";
+export const AIRCRAFT_TRAILS_LAYER_ID = "flightsite-aircraft-trails-line";
 export const AIRCRAFT_TRACK_LAYER_ID = "flightsite-aircraft-track-line";
 export const AIRCRAFT_ATTENTION_LAYER_ID = "flightsite-aircraft-attention";
 export const AIRCRAFT_SELECTION_LAYER_ID = "flightsite-aircraft-selection";
@@ -70,6 +75,17 @@ export const AIRCRAFT_SELECTED_LABEL_LAYER_ID =
  * range rings are: it has to read identically on every basemap. Deliberately
  * distinct from the ring teal and the receiver red already on the map. */
 const SELECTION_COLOR = "#8ab4ff";
+
+/** Trail stroke (roadmap slice 085). A desaturated mid-tone rather than the
+ * selection blue — a trail must never read as "selected" — and mid rather
+ * than light so it still shows on the light aviation basemap and on OSM
+ * imagery, not only the dark default. */
+const TRAIL_COLOR = "#7f93b5";
+
+/** Base trail opacity, before the per-feature stale/dim factor. Faint by
+ * design: a trail is context behind the picture, and 500 of them at full
+ * strength would bury the icons they belong to. */
+const TRAIL_OPACITY = 0.55;
 
 /** Label text fill and halo. Deliberately the same values as the aircraft
  * icon palette (`icons/silhouettes.ts`'s `BODY`/`INK`) rather than importing
@@ -337,6 +353,26 @@ function upsertGeoJsonSource(
 export function ensureAircraftLayers(map: MapLibreGlMap): void {
   upsertGeoJsonSource(map, AIRCRAFT_SOURCE_ID, EMPTY);
   upsertGeoJsonSource(map, AIRCRAFT_TRACK_SOURCE_ID, EMPTY);
+  upsertGeoJsonSource(map, AIRCRAFT_TRAILS_SOURCE_ID, EMPTY);
+
+  if (!map.getLayer(AIRCRAFT_TRAILS_LAYER_ID)) {
+    // Non-interactive by construction: selection queries only the symbol
+    // layer (`aircraftIcaoAtPoint`), so a click on a trail is a click on the
+    // map. Empty while trails are off — `frame.ts` pushes an empty
+    // collection rather than toggling visibility, so turning trails off also
+    // stops the per-frame serialization they cost.
+    map.addLayer({
+      id: AIRCRAFT_TRAILS_LAYER_ID,
+      type: "line",
+      source: AIRCRAFT_TRAILS_SOURCE_ID,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": TRAIL_COLOR,
+        "line-width": 1.25,
+        "line-opacity": ["*", TRAIL_OPACITY, ["get", "opacity"]],
+      },
+    });
+  }
 
   if (!map.getLayer(AIRCRAFT_TRACK_LAYER_ID)) {
     map.addLayer({
@@ -520,6 +556,32 @@ export function ensureAircraftLayers(map: MapLibreGlMap): void {
   }
 }
 
+/**
+ * Shows or hides the unselected aircraft labels — the Layers card's "Labels"
+ * toggle (roadmap slice 085). A `visibility` flip on the shared label layer
+ * only: the selected aircraft's label keeps its own always-visible layer,
+ * because selecting an aircraft is an explicit request to read it and slice
+ * 015's "selected aircraft always fully labeled" still holds. The label text
+ * is still built every frame either way — it is cheap next to everything
+ * else a frame does, and it means turning labels back on shows the current
+ * text on the very next paint rather than after a redraw.
+ *
+ * A no-op until the layer exists; `useAircraftLayer` re-applies it after
+ * every attach, which is how the choice survives a basemap switch.
+ */
+export function setAircraftLabelsVisible(
+  map: MapLibreGlMap,
+  visible: boolean,
+): void {
+  if (map.getLayer(AIRCRAFT_LABEL_LAYER_ID)) {
+    map.setLayoutProperty(
+      AIRCRAFT_LABEL_LAYER_ID,
+      "visibility",
+      visible ? "visible" : "none",
+    );
+  }
+}
+
 /** Replaces the aircraft symbol source's data in place. */
 export function setAircraftData(
   map: MapLibreGlMap,
@@ -528,6 +590,16 @@ export function setAircraftData(
   (map.getSource(AIRCRAFT_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
     data,
   );
+}
+
+/** Replaces every aircraft's trail (roadmap slice 085) in place. */
+export function setTrailData(
+  map: MapLibreGlMap,
+  data: FeatureCollection<Geometry>,
+): void {
+  (
+    map.getSource(AIRCRAFT_TRAILS_SOURCE_ID) as GeoJSONSource | undefined
+  )?.setData(data);
 }
 
 /** Replaces the selected aircraft's track polyline in place. */

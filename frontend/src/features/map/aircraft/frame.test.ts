@@ -12,7 +12,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
+import { AIRCRAFT_TRAILS_SOURCE_ID } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
+import type { TrailFeature } from "@/features/map/aircraft/geojson";
+import { liveTrails, resetTrails } from "@/features/map/aircraft/trails";
 import { resetDensityLatch } from "@/features/map/labels/densityLatch";
 import {
   DENSITY_CALLSIGN_ENTER,
@@ -198,5 +201,80 @@ describe("drawAircraftFrame label-density hysteresis", () => {
     drawAircraftFrame(map, state([]), 0);
     drawAircraftFrame(map, state(crowd(DENSITY_CALLSIGN_ENTER)), 0);
     expect(firstLabel()).toBe(FULL);
+  });
+});
+
+describe("drawAircraftFrame trails (roadmap slice 085)", () => {
+  beforeEach(() => {
+    resetTrails();
+  });
+
+  /** A map recording each source's last payload by id. */
+  function sourceMap(): {
+    map: MapLibreGlMap;
+    trailIcaos: () => string[] | undefined;
+  } {
+    const data = new Map<string, { features: TrailFeature[] }>();
+    const map = {
+      getSource: (id: string) => ({
+        setData: (payload: { features: TrailFeature[] }) => {
+          data.set(id, payload);
+        },
+      }),
+      getZoom: () => 10,
+    } as unknown as MapLibreGlMap;
+    return {
+      map,
+      trailIcaos: () =>
+        data
+          .get(AIRCRAFT_TRAILS_SOURCE_ID)
+          ?.features.map((feature) => feature.properties.icao),
+    };
+  }
+
+  /** Two fixes a second apart for each ICAO, fed through the frame loop. */
+  function drawTwoFixes(
+    map: MapLibreGlMap,
+    icaos: string[],
+    options: Parameters<typeof drawAircraftFrame>[3],
+  ): void {
+    for (const [tick, lat] of [
+      [1000, 47.0],
+      [2000, 47.1],
+    ] as const) {
+      const frame = state(
+        icaos.map((icao) =>
+          makeAircraft({ icao, position: { lat, lon: -122 } }),
+        ),
+      );
+      for (const record of Object.values(frame.aircraft)) {
+        record.positionChangedAt = tick;
+      }
+      drawAircraftFrame(map, frame, tick, options);
+    }
+  }
+
+  it("leaves the trail source alone unless asked to rebuild it", () => {
+    const { map, trailIcaos } = sourceMap();
+    drawTwoFixes(map, ["aaaaaa"], { trailsEnabled: true });
+    expect(trailIcaos()).toBeUndefined();
+  });
+
+  it("pushes an empty trail collection while trails are off, still recording", () => {
+    const { map, trailIcaos } = sourceMap();
+    drawTwoFixes(map, ["aaaaaa"], { includeTrails: true });
+    expect(trailIcaos()).toEqual([]);
+    // Recorded all the same, so switching trails on draws the wake at once.
+    expect(liveTrails.pointCount("aaaaaa")).toBe(2);
+  });
+
+  it("draws a trail per visible aircraft once enabled, honouring the filters", () => {
+    const { map, trailIcaos } = sourceMap();
+    drawTwoFixes(map, ["aaaaaa", "bbbbbb"], {
+      includeTrails: true,
+      trailsEnabled: true,
+      filters: { ...DEFAULT_FILTERS, liveSetQuery: "aaaaaa" },
+    });
+    expect(trailIcaos()).toEqual(["aaaaaa"]);
   });
 });

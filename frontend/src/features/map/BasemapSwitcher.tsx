@@ -12,7 +12,9 @@ import { cn } from "@/lib/utils";
  * Small map-overlay control listing every registered basemap. Selection is
  * persisted per browser via `useBasemapStore` (localStorage, guarded).
  * Positioned as a floating card so it reads as part of the map instrument
- * panel rather than a page-level settings control — or, on a phone
+ * panel rather than a page-level settings control — the top of
+ * `LiveMapPage`'s right-hand control column (issue #245), which is what
+ * positions it — or, on a phone
  * (`placement="docked"`, roadmap slice 084), as a full-width block in the
  * toolbar's Layers sheet.
  */
@@ -38,7 +40,7 @@ export function BasemapSwitcher({
     <div
       className={cn(
         placement === "floating"
-          ? "absolute right-3 top-3 z-10 w-48"
+          ? "pointer-events-auto relative z-10 w-48"
           : "w-full",
         "rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur-sm",
       )}
