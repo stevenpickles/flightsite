@@ -2570,7 +2570,7 @@ slices:
     title: "Map display controls"
     phase: 9
     branch: "085-map-display-controls"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Let the user choose what the Live Map draws: overlay and label toggles, label content, trails for every aircraft, and a measure tool (issue #228)."
     scope:
