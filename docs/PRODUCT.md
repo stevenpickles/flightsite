@@ -62,6 +62,23 @@ Live Map when complete.
   aviation-style default, opportunistic caching of recently used tiles; core function
   survives tile outage (§32).
 - Aviation overlays: airports, airspace boundaries, receiver range rings (§33).
+- Map display controls (roadmap slice 085): the Layers card toggles airports,
+  airspace, range rings, the receiver marker, aircraft labels and aircraft
+  trails, and picks the label content — **Full** (identity, operator,
+  altitude), **Compact** (identity only) or **Altitude only** (identity and
+  altitude). Every choice is remembered per browser and survives a reload
+  and a basemap switch. A preset only ever trims what the zoom/density
+  declutter would show; attention-worthy aircraft keep their priority, and
+  turning labels off or picking a preset never hides the selected aircraft's
+  full label. **Trails** (off by default) draw a short, faint wake behind every
+  visible aircraft — the last 30 positions, at most 2 minutes old — while
+  the selected aircraft keeps its full current-sighting track. The **measure
+  tool** (ruler button or `M`) measures great-circle distance, in the
+  receiver's units, and initial bearing, in degrees and as a compass point:
+  click point A then point B (or start **From receiver**); a third click
+  starts over, and Escape or the button again leaves it. While it is on,
+  clicks never select aircraft. On desktop the Basemap card, the Layers card
+  and the Filters button stack down the right edge without overlapping.
 - Live aircraft with hierarchical silhouette icons (specific type → category →
   generic), rotated to heading; extensible, license-documented icon set (§34).
 - Labels (callsign → tail fallback, operator, altitude, interesting indicator) with
@@ -92,7 +109,8 @@ Live Map when complete.
   shortcut sheet lists every keyboard shortcut, each with a visible control
   equivalent: `/` focuses the live search, `L`/`F` toggle the Layers card and
   filter drawer, `Esc` deselects, `H` recentres on the receiver, `[`/`]` step
-  through interesting aircraft, and `g` then a letter jumps to any section
+  through interesting aircraft, `M` toggles the measure tool and `T` toggles
+  trails (roadmap slice 085), and `g` then a letter jumps to any section
   (§80, roadmap slice 082).
 - Copy-link, `navigator.share` (where supported) and a QR code of the current
   URL, on the aircraft detail, sighting detail, and Live Map (selected
