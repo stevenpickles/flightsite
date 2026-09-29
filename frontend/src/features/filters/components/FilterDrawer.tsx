@@ -39,6 +39,15 @@
  * toolbar's sheet instead of sliding over the right edge of the map. The
  * shortcuts keep working unchanged, because they go through the same
  * `setIsOpen` either way.
+ *
+ * On desktop the trigger is the last item in `LiveMapPage`'s right-hand
+ * control column, in flow below the Basemap and Layers cards (issue #245),
+ * rather than at a fixed offset the Layers card could grow into. The open
+ * panel is still absolutely positioned: the column is itself a full-height,
+ * right-edge box, so `inset-y-0 right-0` against it is the map's right edge,
+ * exactly where the panel always slid in. The column carries no z-index of
+ * its own, so the panel's `z-20` still ranks against the page's other cards
+ * as it did before.
  */
 
 import { Filter, X } from "lucide-react";
@@ -307,9 +316,11 @@ export function FilterDrawer({
           aria-controls={isOpen ? headingId : undefined}
           onClick={() => setIsOpen((open) => !open)}
           className={cn(
-            // Below `BasemapSwitcher` (right-3 top-3, up to three rows tall)
-            // so the two floating map controls never overlap.
-            "absolute right-3 top-40 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
+            // In flow, last in `LiveMapPage`'s right-hand control column,
+            // below the Basemap and Layers cards (issue #245) — not at a
+            // fixed offset, which is how it came to sit on the Layers card's
+            // header once that card grew.
+            "pointer-events-auto relative z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
             "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
             activeCount > 0
               ? "text-accent"
@@ -340,7 +351,7 @@ export function FilterDrawer({
           className={cn(
             docked
               ? "flex max-h-full w-full flex-col rounded-lg border"
-              : "absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col border-l",
+              : "pointer-events-auto absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col border-l",
             "border-border bg-card text-card-foreground shadow-lg outline-none",
           )}
         >

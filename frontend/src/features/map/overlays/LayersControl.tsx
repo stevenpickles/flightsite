@@ -55,8 +55,11 @@ function ToggleRow({
  * label content preset (full / compact / altitude only). Every choice is
  * persisted per browser via
  * `useOverlayVisibilityStore` (localStorage, guarded), the same pattern
- * `BasemapSwitcher` uses for the basemap choice. Positioned directly beneath
- * that switcher, so the two read as one instrument panel.
+ * `BasemapSwitcher` uses for the basemap choice. Directly beneath that
+ * switcher, so the two read as one instrument panel: both flow in
+ * `LiveMapPage`'s right-hand control column rather than claiming fixed
+ * offsets, so this card can grow (slice 085's extra rows) or collapse
+ * without landing on the Filters button below it (issue #245).
  *
  * Airspace defaults on, same as Airports (`DEFAULT_OVERLAY_VISIBILITY`) — an
  * install with no `airspace.geojson` supplied (roadmap slice 028, ADR-0012)
@@ -141,7 +144,7 @@ export function LayersControl({
     <div
       className={cn(
         placement === "floating"
-          ? "absolute right-3 top-40 z-10 w-48"
+          ? "pointer-events-auto relative z-10 w-48"
           : "w-full",
         "rounded-lg border border-border bg-card/95 p-2 shadow-md backdrop-blur-sm",
       )}

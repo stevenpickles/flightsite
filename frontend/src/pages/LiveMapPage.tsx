@@ -138,10 +138,42 @@ export function LiveMapPage() {
 }
 
 /**
+ * The right-hand control column (issue #245): Basemap, then Layers, then the
+ * Filters button, stacked in flow down the map's right edge.
+ *
+ * Each of the three used to claim its own fixed offset (`right-3 top-3`,
+ * `right-3 top-40`, and `right-3 top-40` again), and the Layers card and the
+ * Filters button ended up sharing a corner: the button sat over the right end
+ * of the card's header (around x 1355-1427, y 162-188 at 1440 x 900). A fixed
+ * offset for the button could only ever be right for one height of the card
+ * above it, and that card changes height — it collapses (slice 082's `L`) and
+ * slice 085 gave it more rows. As flex items in one column they cannot
+ * overlap at any height: collapsing the Layers card lifts the button with
+ * it.
+ *
+ * - `absolute inset-y-0 right-0 p-3` keeps the cards exactly where
+ *   `right-3 top-3` put the first one, and makes the column a full-height,
+ *   right-edge box — which is also what `FilterDrawer`'s open panel
+ *   (`absolute inset-y-0 right-0`) positions against, so it still slides in
+ *   over the whole right edge of the map.
+ * - `pointer-events-none`, with each card turning pointer events back on for
+ *   itself, keeps the gaps and the empty column below the button
+ *   click-through to the map.
+ * - No `z-index`: an absolutely positioned box without one opens no stacking
+ *   context, so each card's own `z-10` and the drawer panel's `z-20` still
+ *   rank against every other card on the page exactly as before.
+ */
+const RIGHT_CONTROL_COLUMN_CLASSES =
+  "pointer-events-none absolute inset-y-0 right-0 flex flex-col items-end gap-2 p-3";
+
+/**
  * The desktop (and tablet, from `md` up) floating cards — the Live Map's
- * layout before roadmap slice 084, unchanged; only lifted out of
- * `LiveMapPage` so the phone layout can replace it wholesale. The panel-order
- * notes on `LiveMapPage` describe this JSX.
+ * layout before roadmap slice 084, lifted out of `LiveMapPage` so the phone
+ * layout can replace it wholesale, with the right-hand column grouped since
+ * slice 085 (issue #245, {@link RIGHT_CONTROL_COLUMN_CLASSES}) — which also
+ * puts the Filters button right after the Layers card in tab order, ahead of
+ * the quick-filter chips. The panel-order notes on `LiveMapPage` describe
+ * this JSX.
  */
 function DesktopMapControls({
   hideNonPositioned,
@@ -153,14 +185,20 @@ function DesktopMapControls({
       <PanelRegion headingId="today-panel-heading" label="Today at a glance">
         <TodayPanel />
       </PanelRegion>
-      <PanelRegion headingId="basemap-heading" label="Basemap">
-        <BasemapSwitcher />
-      </PanelRegion>
-      <PanelRegion headingId="layers-heading" label="Map layers">
-        <LayersControl />
-      </PanelRegion>
+      {/* The right-hand control column — see RIGHT_CONTROL_COLUMN_CLASSES. */}
+      <div
+        data-testid="map-right-controls"
+        className={RIGHT_CONTROL_COLUMN_CLASSES}
+      >
+        <PanelRegion headingId="basemap-heading" label="Basemap">
+          <BasemapSwitcher />
+        </PanelRegion>
+        <PanelRegion headingId="layers-heading" label="Map layers">
+          <LayersControl />
+        </PanelRegion>
+        <FilterDrawer />
+      </div>
       <QuickFilterChips />
-      <FilterDrawer />
       <PanelRegion headingId="activity-heading" label="Activity">
         <ActivityPanel />
       </PanelRegion>
