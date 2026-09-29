@@ -298,8 +298,11 @@ cd backend && uv run pytest tests/perf
 `tests/perf/test_harness.py` drives a short smoke run of the whole pipeline at
 the full 500-aircraft population and asserts every hard gate. The gates are
 structural rather than statistical — a database round trip on the hot path or a
-lost delta batching blows through them on fifteen ticks exactly as on six
+lost delta batching blows through them on twenty-one ticks exactly as on six
 hundred — so a regression fails the required check on the PR that causes it.
+Twenty-one, because the per-tick gates take one sample a tick and a nearest-rank
+p95 is simply the maximum below twenty samples: at fifteen, one stalled
+shared-runner tick decided the verdict (issue #240).
 
 The **sustained** run is excluded from the default suite (`-m 'not load'`), and
 is the one marker in this repo that is. It catches what a short run cannot see

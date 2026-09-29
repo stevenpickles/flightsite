@@ -13,18 +13,40 @@ the cost.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
 
 import pytest
 
-from flightsite.perf.budgets import TARGET_AIRCRAFT
+from flightsite.perf import harness
+from flightsite.perf.budgets import BUDGETS, TARGET_AIRCRAFT, Budget
 from flightsite.perf.cli import build_arg_parser, main
 from flightsite.perf.workload import DEFAULT_WS_CLIENTS
 
 #: The cheapest run that still exercises every code path in the CLI.
 TINY = ("--ticks", "3", "--warmup-ticks", "1", "--ws-clients", "1", "--skip-recovery")
+
+
+def _pin_budgets(monkeypatch: pytest.MonkeyPatch, *, met: bool) -> None:
+    """Replace every budget with one this tiny run cannot miss (``met``) or
+    cannot meet.
+
+    These tests check the CLI's contract — the exit status follows the
+    verdict — not the numbers: a three-tick run's "p95" is its worst tick, so
+    judging it against the real budgets made the test fail whenever a shared
+    runner stalled once (issue #240). The real bounds are gated by
+    :mod:`tests.perf.test_harness` on a run long enough to read a p95 from.
+    """
+    loose = 1e9 if met else 1e-9
+
+    def pinned(budget: Budget) -> Budget:
+        # A ceiling asserts value x headroom and a floor value / headroom, so
+        # one factor loosens (or tightens) both directions.
+        return dataclasses.replace(budget, ci_headroom=loose)
+
+    monkeypatch.setattr(harness, "BUDGETS", tuple(pinned(b) for b in BUDGETS))
 
 
 def test_the_defaults_are_the_documented_envelope() -> None:
@@ -43,8 +65,9 @@ def test_realtime_is_opt_in() -> None:
 
 
 def test_a_run_that_meets_its_budgets_exits_zero(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _pin_budgets(monkeypatch, met=True)
     report_path = tmp_path / "report.json"
     status = main(
         [
@@ -69,6 +92,15 @@ def test_a_run_that_meets_its_budgets_exits_zero(
     # among the verdicts: a gap in the report rather than a silent pass.
     assert "recovery_s" not in payload["metrics"]
     assert payload["verdicts"]["recovery_s"]["measured"] is False
+
+
+def test_a_run_that_misses_a_budget_exits_one_and_names_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_budgets(monkeypatch, met=False)
+    status = main([*TINY, "--data-dir", str(tmp_path / "data")])
+    assert status == 1
+    assert "HARD GATE FAILURES" in capsys.readouterr().err
 
 
 def test_an_impossible_configuration_is_rejected_before_any_load_runs(
