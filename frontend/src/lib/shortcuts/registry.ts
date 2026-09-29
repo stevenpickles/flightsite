@@ -5,7 +5,9 @@
  * source, so the sheet can never claim a binding that does not exist or omit
  * one that does. `Esc` is included for documentation even though
  * `AircraftDetailPanel` implements it directly (existing behaviour, kept
- * unchanged by this slice) rather than through this dispatcher.
+ * unchanged by this slice) rather than through this dispatcher — as does
+ * `MeasureControl` (roadmap slice 085), which takes Escape first while the
+ * measure tool is on.
  */
 
 export type ShortcutGroup = "Live Map" | "Go to…" | "General";
@@ -41,13 +43,25 @@ export const SHORTCUTS: readonly ShortcutDescriptor[] = [
   {
     id: "deselect",
     keys: "Esc",
-    description: "Deselect the current aircraft",
+    description: "Deselect the current aircraft, or leave the measure tool",
     group: "Live Map",
   },
   {
     id: "recenter",
     keys: "H",
     description: "Recentre the map on the receiver",
+    group: "Live Map",
+  },
+  {
+    id: "toggle-measure",
+    keys: "M",
+    description: "Toggle the distance and bearing measure tool",
+    group: "Live Map",
+  },
+  {
+    id: "toggle-trails",
+    keys: "T",
+    description: "Toggle aircraft trails",
     group: "Live Map",
   },
   {

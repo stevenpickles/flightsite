@@ -11,7 +11,10 @@ import { resetFilteredLiveAircraftCache } from "@/features/filters/lib/filteredL
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { useMeasureStore } from "@/features/map/measure/useMeasureStore";
+import { DEFAULT_OVERLAY_VISIBILITY } from "@/features/map/overlayVisibilityPersistence";
 import { useMapCenterRequestStore } from "@/features/map/store/useMapCenterRequestStore";
+import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import type { LiveAircraft } from "@/lib/api/live";
 import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
@@ -33,6 +36,9 @@ afterEach(() => {
   useLiveAircraftStore.getState().reset();
   useFilterStore.setState({ filters: DEFAULT_FILTERS });
   useMapCenterRequestStore.setState({ nonce: 0 });
+  useMeasureStore.getState().exit();
+  window.localStorage.clear();
+  useOverlayVisibilityStore.setState({ ...DEFAULT_OVERLAY_VISIBILITY });
   resetFilteredLiveAircraftCache();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -225,5 +231,67 @@ describe("useKeyboardShortcuts", () => {
 
     pressKey("]");
     expect(useLiveAircraftStore.getState().selectedIcao).toBeNull();
+  });
+
+  it("toggles the measure tool on 'M', end to end through MeasureControl", async () => {
+    renderApp("/");
+    const button = await screen.findByRole("button", {
+      name: "Measure distance and bearing",
+    });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    act(() => {
+      pressKey("m");
+    });
+    expect(useMeasureStore.getState().active).toBe(true);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+
+    act(() => {
+      pressKey("M", { shiftKey: true });
+    });
+    expect(useMeasureStore.getState().active).toBe(false);
+  });
+
+  it("toggles trails on 'T' and persists the choice", async () => {
+    renderApp("/");
+    await screen.findByRole("checkbox", { name: "Trails" });
+
+    act(() => {
+      pressKey("t");
+    });
+    expect(useOverlayVisibilityStore.getState().trails).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "Trails" })).toBeChecked();
+
+    act(() => {
+      pressKey("t");
+    });
+    expect(useOverlayVisibilityStore.getState().trails).toBe(false);
+  });
+
+  it("reads 'g' then 'm' as navigation, never as the measure shortcut", async () => {
+    renderApp("/");
+    pressKey("g");
+    pressKey("m");
+    expect(useMeasureStore.getState().active).toBe(false);
+  });
+
+  it("dispatches neither 'M' nor 'T' off the Live Map, or while typing", async () => {
+    renderApp("/aircraft");
+    pressKey("m");
+    pressKey("t");
+    expect(useMeasureStore.getState().active).toBe(false);
+    expect(useOverlayVisibilityStore.getState().trails).toBe(false);
+  });
+
+  it("suspends 'M' and 'T' while focus is in a text field on the Live Map", async () => {
+    renderApp("/");
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "m" });
+    fireEvent.keyDown(input, { key: "t" });
+    input.remove();
+    expect(useMeasureStore.getState().active).toBe(false);
+    expect(useOverlayVisibilityStore.getState().trails).toBe(false);
   });
 });

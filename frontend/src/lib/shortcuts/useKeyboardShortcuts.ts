@@ -18,10 +18,17 @@
  * itself a shifted key on most layouts, and `event.key` already reports the
  * shifted character, so nothing here needs to special-case it.
  *
- * The Live-Map-only bindings (`/`, `L`, `F`, `H`, `[`, `]`) act only on the
- * Live Map route (`/`) and only reach into whatever `FilterDrawer` and
- * `LayersControl` currently have registered via `mapShortcutTargets` — on
- * every other route they are simply never dispatched. `Esc` is deliberately
+ * The Live-Map-only bindings (`/`, `L`, `F`, `H`, `[`, `]`, and since
+ * roadmap slice 085 `M` and `T`) act only on the Live Map route (`/`) and
+ * only reach into whatever `FilterDrawer` and `LayersControl` currently
+ * have registered via `mapShortcutTargets`, or into the Live Map's own
+ * stores (`H` recentres, `M` toggles the measure tool, `T` toggles
+ * trails) — on every other route they are simply never dispatched. `M` and
+ * `T` go straight to their stores, like `H`, because both are persisted or
+ * shared state the map reads rather than a component's local flag. A bare
+ * `m` never collides with the `g`-sequence's `g` then `m` ("go to the Live
+ * Map"): a pending `g` is resolved above, before any single-key binding is
+ * consulted. `Esc` is deliberately
  * not handled here: `AircraftDetailPanel` already owns it (existing
  * behaviour, unchanged by this slice); it appears in `registry.ts` and the
  * `?` sheet as documentation of what is bound, not as a second
@@ -34,8 +41,10 @@ import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAirc
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { orderInterestingAircraft } from "@/features/interesting/lib/ordering";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { useMeasureStore } from "@/features/map/measure/useMeasureStore";
 import { useMapCenterRequestStore } from "@/features/map/store/useMapCenterRequestStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
+import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
 import { isTypingTarget } from "@/lib/shortcuts/isTypingTarget";
 import { getMapShortcutTargets } from "@/lib/shortcuts/mapShortcutTargets";
 import { NAVIGATION_LETTERS } from "@/lib/shortcuts/registry";
@@ -167,6 +176,14 @@ export function useKeyboardShortcuts(): void {
         case "h":
           event.preventDefault();
           useMapCenterRequestStore.getState().requestRecenter();
+          break;
+        case "m":
+          event.preventDefault();
+          useMeasureStore.getState().toggle();
+          break;
+        case "t":
+          event.preventDefault();
+          useOverlayVisibilityStore.getState().toggleTrails();
           break;
         default:
           break;
