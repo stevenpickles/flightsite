@@ -3,7 +3,7 @@
  * slice 028) — Airports and Airspace, alongside the basemap choice
  * (`basemapPersistence.ts`) — and, since roadmap slice 085 (issue #228), the
  * rest of the Layers card's display controls: the range rings, the receiver
- * marker, the aircraft labels and the label content preset.
+ * marker, the aircraft labels, aircraft trails and the label content preset.
  *
  * Same guarded-localStorage shape as that module: falls back to the
  * documented default on any error (private browsing, disabled storage) or a
@@ -41,6 +41,10 @@ export interface OverlayVisibility {
    * an aircraft is an explicit request to read it (slice 015's "selected
    * aircraft always fully labeled"). */
   labels: boolean;
+  /** Short trails behind every visible aircraft (`aircraft/trails.ts`).
+   * Defaults OFF — the one display choice that adds to the map rather than
+   * keeping what was already there, and the one with a real per-frame cost. */
+  trails: boolean;
   /** What each label says (`labels/labelContent.ts`'s {@link LabelPreset}).
    * Defaults to `"full"`. Not a visibility, strictly, but it is chosen on
    * the same card, for the same map, with the same per-browser lifetime —
@@ -54,6 +58,7 @@ export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   rangeRings: true,
   receiver: true,
   labels: true,
+  trails: false,
   labelPreset: DEFAULT_LABEL_PRESET,
 };
 
@@ -84,6 +89,7 @@ export function readStoredOverlayVisibility(): OverlayVisibility {
       rangeRings: booleanOr(candidate.rangeRings, fallback.rangeRings),
       receiver: booleanOr(candidate.receiver, fallback.receiver),
       labels: booleanOr(candidate.labels, fallback.labels),
+      trails: booleanOr(candidate.trails, fallback.trails),
       labelPreset: isLabelPreset(candidate.labelPreset)
         ? candidate.labelPreset
         : fallback.labelPreset,

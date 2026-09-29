@@ -139,6 +139,24 @@ describe("LayersControl", () => {
         ).not.toBeChecked();
       });
 
+      it("offers Trails, off by default, and turns it on through the store", async () => {
+        const user = userEvent.setup();
+        installOverlaysApiMock();
+        renderWithProviders(<LayersControl placement={placement} />);
+
+        const trails = screen.getByRole("checkbox", { name: "Trails" });
+        expect(trails).not.toBeChecked();
+        await user.click(trails);
+
+        expect(trails).toBeChecked();
+        expect(useOverlayVisibilityStore.getState().trails).toBe(true);
+        expect(
+          JSON.parse(
+            window.localStorage.getItem(OVERLAY_VISIBILITY_STORAGE_KEY) ?? "{}",
+          ),
+        ).toMatchObject({ trails: true });
+      });
+
       it("offers the three label presets, Full checked by default", () => {
         installOverlaysApiMock();
         renderWithProviders(<LayersControl placement={placement} />);

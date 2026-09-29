@@ -50,9 +50,10 @@ function ToggleRow({
 
 /**
  * Small map-overlay control toggling the Airports and Airspace layers and,
- * since roadmap slice 085 (issue #228), the range rings, the receiver marker
- * and the aircraft labels, plus the label content preset (full / compact /
- * altitude only). Every choice is persisted per browser via
+ * since roadmap slice 085 (issue #228), the range rings, the receiver marker,
+ * the aircraft labels and short aircraft trails (off by default), plus the
+ * label content preset (full / compact / altitude only). Every choice is
+ * persisted per browser via
  * `useOverlayVisibilityStore` (localStorage, guarded), the same pattern
  * `BasemapSwitcher` uses for the basemap choice. Positioned directly beneath
  * that switcher, so the two read as one instrument panel.
@@ -87,6 +88,7 @@ export function LayersControl({
   const rangeRings = useOverlayVisibilityStore((state) => state.rangeRings);
   const receiver = useOverlayVisibilityStore((state) => state.receiver);
   const labels = useOverlayVisibilityStore((state) => state.labels);
+  const trails = useOverlayVisibilityStore((state) => state.trails);
   const setAirportsVisible = useOverlayVisibilityStore(
     (state) => state.setAirportsVisible,
   );
@@ -101,6 +103,9 @@ export function LayersControl({
   );
   const setLabelsVisible = useOverlayVisibilityStore(
     (state) => state.setLabelsVisible,
+  );
+  const setTrailsVisible = useOverlayVisibilityStore(
+    (state) => state.setTrailsVisible,
   );
   const labelPreset = useOverlayVisibilityStore((state) => state.labelPreset);
   const setLabelPreset = useOverlayVisibilityStore(
@@ -194,6 +199,11 @@ export function LayersControl({
             label="Labels"
             checked={labels}
             onChange={setLabelsVisible}
+          />
+          <ToggleRow
+            label="Trails"
+            checked={trails}
+            onChange={setTrailsVisible}
           />
           <fieldset className="mt-1 border-t border-border pt-1.5">
             <legend className="px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

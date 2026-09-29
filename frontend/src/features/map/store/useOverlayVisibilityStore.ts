@@ -13,6 +13,9 @@ export interface OverlayVisibilityState extends OverlayVisibility {
   setRangeRingsVisible: (visible: boolean) => void;
   setReceiverVisible: (visible: boolean) => void;
   setLabelsVisible: (visible: boolean) => void;
+  setTrailsVisible: (visible: boolean) => void;
+  /** Flips trails — the `T` keyboard shortcut's action (roadmap slice 085). */
+  toggleTrails: () => void;
   setLabelPreset: (preset: LabelPreset) => void;
 }
 
@@ -25,13 +28,14 @@ function persistedSlice(state: OverlayVisibility): OverlayVisibility {
     rangeRings: state.rangeRings,
     receiver: state.receiver,
     labels: state.labels,
+    trails: state.trails,
     labelPreset: state.labelPreset,
   };
 }
 
 /** Per-browser Layers card toggles (Airports / Airspace since slice 028;
- * range rings, receiver marker, labels and the label preset since slice
- * 085) — mirrors `useBasemapStore`'s shape and persistence discipline
+ * range rings, receiver marker, labels, trails and the label preset since
+ * slice 085) — mirrors `useBasemapStore`'s shape and persistence discipline
  * exactly. Every setter persists the whole record, so each choice is stored
  * independently and no setter can reset another's. */
 export const useOverlayVisibilityStore = create<OverlayVisibilityState>(
@@ -57,6 +61,12 @@ export const useOverlayVisibilityStore = create<OverlayVisibilityState>(
       },
       setLabelsVisible: (visible) => {
         update({ labels: visible });
+      },
+      setTrailsVisible: (visible) => {
+        update({ trails: visible });
+      },
+      toggleTrails: () => {
+        update({ trails: !get().trails });
       },
       setLabelPreset: (preset) => {
         update({ labelPreset: preset });

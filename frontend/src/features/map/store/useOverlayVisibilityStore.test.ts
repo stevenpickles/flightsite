@@ -68,6 +68,7 @@ describe("useOverlayVisibilityStore", () => {
     state.setReceiverVisible(false);
     state.setLabelsVisible(false);
     state.setLabelPreset("altitude");
+    state.setTrailsVisible(true);
     state.setReceiverVisible(true);
 
     const expected = {
@@ -76,10 +77,25 @@ describe("useOverlayVisibilityStore", () => {
       rangeRings: false,
       receiver: true,
       labels: false,
+      trails: true,
       labelPreset: "altitude",
     };
     expect(useOverlayVisibilityStore.getState()).toMatchObject(expected);
     expect(stored()).toEqual(expected);
+  });
+
+  it("setTrailsVisible and toggleTrails update and persist trails alone", () => {
+    expect(useOverlayVisibilityStore.getState().trails).toBe(false);
+
+    useOverlayVisibilityStore.getState().toggleTrails();
+    expect(useOverlayVisibilityStore.getState().trails).toBe(true);
+    expect(stored()).toEqual({ ...DEFAULT_OVERLAY_VISIBILITY, trails: true });
+
+    useOverlayVisibilityStore.getState().toggleTrails();
+    expect(useOverlayVisibilityStore.getState().trails).toBe(false);
+
+    useOverlayVisibilityStore.getState().setTrailsVisible(true);
+    expect(stored()).toEqual({ ...DEFAULT_OVERLAY_VISIBILITY, trails: true });
   });
 
   it("setLabelPreset updates and persists the preset alone", () => {

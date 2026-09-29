@@ -13,12 +13,13 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-const EVERYTHING_OFF: OverlayVisibility = {
+const EVERY_DEFAULT_FLIPPED: OverlayVisibility = {
   airports: false,
   airspace: false,
   rangeRings: false,
   receiver: false,
   labels: false,
+  trails: true,
   labelPreset: "compact",
 };
 
@@ -47,9 +48,9 @@ describe("overlay visibility persistence", () => {
     );
   });
 
-  it("round-trips the range-ring, receiver and label toggles", () => {
-    writeStoredOverlayVisibility(EVERYTHING_OFF);
-    expect(readStoredOverlayVisibility()).toEqual(EVERYTHING_OFF);
+  it("round-trips the range-ring, receiver, label and trail toggles", () => {
+    writeStoredOverlayVisibility(EVERY_DEFAULT_FLIPPED);
+    expect(readStoredOverlayVisibility()).toEqual(EVERY_DEFAULT_FLIPPED);
   });
 
   it.each(["full", "compact", "altitude"] as const)(
@@ -62,6 +63,10 @@ describe("overlay visibility persistence", () => {
       expect(readStoredOverlayVisibility().labelPreset).toBe(labelPreset);
     },
   );
+
+  it("defaults trails off", () => {
+    expect(DEFAULT_OVERLAY_VISIBILITY.trails).toBe(false);
+  });
 
   it("defaults the label preset to full", () => {
     expect(DEFAULT_OVERLAY_VISIBILITY.labelPreset).toBe("full");
@@ -90,6 +95,7 @@ describe("overlay visibility persistence", () => {
         rangeRings: false,
         receiver: 0,
         labels: null,
+        trails: "yes",
         labelPreset: "operator-only",
       }),
     );
@@ -99,6 +105,7 @@ describe("overlay visibility persistence", () => {
       rangeRings: false,
       receiver: DEFAULT_OVERLAY_VISIBILITY.receiver,
       labels: DEFAULT_OVERLAY_VISIBILITY.labels,
+      trails: DEFAULT_OVERLAY_VISIBILITY.trails,
       labelPreset: DEFAULT_OVERLAY_VISIBILITY.labelPreset,
     });
   });
@@ -138,13 +145,17 @@ describe("overlay visibility persistence", () => {
       throw new Error("SecurityError");
     });
     expect(readStoredOverlayVisibility()).toEqual(DEFAULT_OVERLAY_VISIBILITY);
-    expect(() => writeStoredOverlayVisibility(EVERYTHING_OFF)).not.toThrow();
+    expect(() =>
+      writeStoredOverlayVisibility(EVERY_DEFAULT_FLIPPED),
+    ).not.toThrow();
   });
 
   it("silently no-ops when localStorage.setItem throws", () => {
     vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("storage disabled");
     });
-    expect(() => writeStoredOverlayVisibility(EVERYTHING_OFF)).not.toThrow();
+    expect(() =>
+      writeStoredOverlayVisibility(EVERY_DEFAULT_FLIPPED),
+    ).not.toThrow();
   });
 });

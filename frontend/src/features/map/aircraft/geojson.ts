@@ -1,5 +1,7 @@
 /**
- * Turning the live store into the two GeoJSON payloads the map draws.
+ * Turning the live store into the GeoJSON payloads the map draws: the
+ * aircraft symbols, the selected aircraft's track and, since roadmap slice
+ * 085, every other visible aircraft's short trail.
  *
  * This is the hot path: it runs on every rendered frame for every positioned
  * aircraft, so it is deliberately plain — one pass, no intermediate arrays, no
@@ -25,6 +27,7 @@ import type {
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { REMOVAL_FADE_MS } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
+import type { TrailSource } from "@/features/map/aircraft/trails";
 import {
   buildAircraftLabelLines,
   DEFAULT_LABEL_PRESET,
@@ -326,6 +329,92 @@ export function buildAircraftFeatureCollection(
     );
   }
 
+  return { type: "FeatureCollection", features };
+}
+
+/** Feature properties for one trail (roadmap slice 085). */
+export interface TrailFeatureProperties {
+  icao: string;
+  /** Staleness and the ground-dim filter folded into one multiplier — the
+   * same factors the aircraft's icon opacity carries, so a stale or dimmed
+   * aircraft's trail recedes with it. The layer multiplies this by its own
+   * base opacity. */
+  opacity: number;
+}
+
+export type TrailFeature = Feature<LineString, TrailFeatureProperties>;
+
+export interface TrailFrameInput {
+  aircraft: Record<string, LiveAircraftRecord>;
+  /** The recorded trails (`trails.ts`), read and never written here. */
+  trails: TrailSource;
+  selectedIcao: string | null;
+  /** UTC milliseconds this frame is being drawn for — trail points older
+   * than `TRAIL_MAX_AGE_MS` before it are not drawn. */
+  now: number;
+  /** Same meaning as {@link AircraftFrameInput.visibleIcaos}: a filtered-out
+   * aircraft draws no trail. */
+  visibleIcaos?: ReadonlySet<string>;
+  /** Same meaning as {@link AircraftFrameInput.dimmedIcaos}. */
+  dimmedIcaos?: ReadonlySet<string>;
+}
+
+/**
+ * Every visible aircraft's trail as one LineString per aircraft, drawn as a
+ * single layer beneath the icons (`aircraftLayers.ts`).
+ *
+ * Skipped, deliberately:
+ *
+ * - the **selected** aircraft, which already draws its full sighting track
+ *   (`buildTrackFeatureCollection`) — two lines over the same path would just
+ *   thicken the newer part of it;
+ * - any aircraft the **filters** exclude, like its icon;
+ * - **departing** aircraft: `departing` is not even an input, since a removed
+ *   aircraft's ring is dropped from the buffer the moment it leaves the store
+ *   (`TrailBuffer.record`);
+ * - a trail with fewer than two points, which is not a valid LineString.
+ *
+ * Trails end at the last *reported* position, not the interpolated one the
+ * icon is drawn at, so this only needs rebuilding when the picture changes
+ * (`frame.ts`'s `includeTrails`), not on every interpolation frame — at
+ * 500 aircraft x 30 points that is the difference between re-serializing
+ * 15,000 vertices once a second and a dozen times a second. The gap it leaves
+ * is at most the ~1 s of dead reckoning in front of the last fix, a few pixels
+ * at the zooms where a trail is legible at all.
+ */
+export function buildTrailFeatureCollection(
+  input: TrailFrameInput,
+): FeatureCollection<LineString, TrailFeatureProperties> {
+  const { aircraft, trails, selectedIcao, now, visibleIcaos, dimmedIcaos } =
+    input;
+  const features: TrailFeature[] = [];
+  for (const icao in aircraft) {
+    if (icao === selectedIcao) {
+      continue;
+    }
+    if (visibleIcaos && !visibleIcaos.has(icao)) {
+      continue;
+    }
+    const record = aircraft[icao];
+    if (!record) {
+      continue;
+    }
+    const coordinates = trails.coordinates(icao, now);
+    if (coordinates.length < 2) {
+      continue;
+    }
+    const stale = record.aircraft.state === "stale";
+    const dimmed = dimmedIcaos?.has(icao) ?? false;
+    features.push({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates },
+      properties: {
+        icao,
+        opacity:
+          (stale ? STALE_OPACITY : 1) * (dimmed ? GROUND_DIM_OPACITY : 1),
+      },
+    });
+  }
   return { type: "FeatureCollection", features };
 }
 

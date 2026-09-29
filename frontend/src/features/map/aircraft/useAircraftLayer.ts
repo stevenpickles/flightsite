@@ -64,6 +64,7 @@ function currentFrameOptions(): DrawFrameOptions {
     displayRadiusNm: useMapConfigStore.getState().config.displayRadiusNm,
     units: useLiveAircraftStore.getState().receiver?.units,
     labelPreset: useOverlayVisibilityStore.getState().labelPreset,
+    trailsEnabled: useOverlayVisibilityStore.getState().trails,
   };
 }
 
@@ -90,6 +91,7 @@ export function useAircraftLayer(): void {
         drawAircraftFrame(map, useLiveAircraftStore.getState(), Date.now(), {
           ...currentFrameOptions(),
           includeTrack: true,
+          includeTrails: true,
         });
       })
       .catch(() => {
@@ -112,19 +114,23 @@ export function useAircraftLayer(): void {
     let frame = 0;
     let lastDrawnAt = 0;
 
-    const draw = (now: number, includeTrack: boolean) => {
+    const draw = (
+      now: number,
+      rebuild: Pick<DrawFrameOptions, "includeTrack" | "includeTrails">,
+    ) => {
       lastDrawnAt = now;
       drawAircraftFrame(map, useLiveAircraftStore.getState(), now, {
         ...currentFrameOptions(),
-        includeTrack,
+        ...rebuild,
       });
     };
 
     // A store change is real new data, so it is drawn without waiting for the
     // throttle — the throttle exists to cap *interpolation*, not to delay the
-    // picture the server just sent. The track is rebuilt here and only here.
+    // picture the server just sent. The track is rebuilt here and only here;
+    // the trails (roadmap slice 085) here and on the two redraws below.
     const unsubscribe = useLiveAircraftStore.subscribe(() => {
-      draw(Date.now(), true);
+      draw(Date.now(), { includeTrack: true, includeTrails: true });
     });
     // A filter edit changes what the *same* live picture should draw, so it
     // gets the same immediate, un-throttled redraw as new data rather than
@@ -132,24 +138,25 @@ export function useAircraftLayer(): void {
     // it up — the map, the drawer's counts, and the non-positioned panel
     // (all reading `getFilteredLiveAircraft` through the same memo) settle
     // on the new set together. The track is unaffected by filters, so this
-    // never rebuilds it.
+    // never rebuilds it; the trails follow the filtered set, so it does
+    // rebuild those.
     const unsubscribeFilters = useFilterStore.subscribe(() => {
-      draw(Date.now(), false);
+      draw(Date.now(), { includeTrails: true });
     });
-    // The Layers card's label preset (roadmap slice 085) changes what every
-    // label says, so it redraws at once for the same reason a filter edit
-    // does. The other members of that store are layer visibility flips that
-    // need no redraw at all; redrawing for them anyway costs one frame per
-    // click, which is not worth a selector to avoid.
+    // The Layers card's label preset and trails toggle (roadmap slice 085)
+    // change what this layer draws, so they redraw at once for the same
+    // reason a filter edit does. The other members of that store are layer
+    // visibility flips that need no redraw at all; redrawing for them anyway
+    // costs one frame per click, which is not worth a selector to avoid.
     const unsubscribeDisplay = useOverlayVisibilityStore.subscribe(() => {
-      draw(Date.now(), false);
+      draw(Date.now(), { includeTrails: true });
     });
 
     const canAnimate = typeof requestAnimationFrame === "function";
     const tick = () => {
       const now = Date.now();
       if (now - lastDrawnAt >= FRAME_INTERVAL_MS) {
-        draw(now, false);
+        draw(now, {});
       }
       frame = requestAnimationFrame(tick);
     };
