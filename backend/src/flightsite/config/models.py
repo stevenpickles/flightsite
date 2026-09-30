@@ -307,6 +307,38 @@ class AlertSettings(_ConfigModel):
         return cleaned
 
 
+class SelfAlertSettings(_ConfigModel):
+    """Receiver self-alerts — slice 088, issue #231. Hot-applied on save.
+
+    Three built-in conditions that tell the owner the *station* is unhealthy,
+    as opposed to an interesting aircraft having appeared. Each raises one
+    ``self_alert_raised`` activity event (or, for feeders, reuses slice 077's
+    ``feeder_offline``) and one browser notification per episode, and one
+    restore on recovery (:mod:`flightsite.alerts.self_alerts`). Delivery is
+    the browser only (SPEC §48).
+
+    * ``message_rate_*`` — the message rate has stayed below
+      ``message_rate_share_pct`` percent of this hour-of-week's learned
+      baseline for ``message_rate_minutes``. It never fires while the baseline
+      is still learning (fewer than two weeks of that hour).
+    * ``decoder_down_*`` — the decoder has been ``down`` for longer than
+      ``decoder_down_minutes``.
+    * ``feeder_offline_enabled`` — a monitored feeder went ``down``; the
+      detection and its debounce are slice 077's, so there is no threshold.
+
+    Read late by the monitor on every evaluation, so saving is applying: there
+    is no restart and no apply step (the ``_alert_radius`` pattern in
+    :mod:`flightsite.app`).
+    """
+
+    message_rate_enabled: bool = True
+    message_rate_share_pct: int = Field(default=40, ge=5, le=95)
+    message_rate_minutes: int = Field(default=15, ge=5, le=240)
+    decoder_down_enabled: bool = True
+    decoder_down_minutes: int = Field(default=5, ge=1, le=240)
+    feeder_offline_enabled: bool = True
+
+
 #: The ``feeders`` entry-name shape: a lowercase slug, so a name is safe in a
 #: URL path segment (``/api/v1/feeders/{name}/history``), a dedupe key and a
 #: ``secrets.yaml`` key without any escaping.
@@ -557,6 +589,7 @@ class Settings(BaseSettings):
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     feeders: FeederSettings = Field(default_factory=FeederSettings)
+    self_alerts: SelfAlertSettings = Field(default_factory=SelfAlertSettings)
 
     @classmethod
     def settings_customise_sources(

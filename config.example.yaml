@@ -181,3 +181,21 @@ feeders:
   # - { label: graphs1090,  url: "http://fermi.local:8080/graphs1090/" }
   # - { label: SkyAware,    url: "http://fermi.local:8081/" }
   # - { label: FR24 feeder, url: "http://fermi.local:8754/" }
+
+# Receiver self-alerts (slice 088): tell you when the station itself is
+# unhealthy. Each condition raises one activity event and one browser
+# notification per episode, and a "restored" one on recovery. Browser
+# notifications only (SPEC §48), subject to the `notifications` switches above
+# (an outage is `high`). Applies immediately on save.
+self_alerts:
+  # Message rate below this share of the same hour-of-week's baseline (the
+  # median of that weekday and hour over the last eight weeks) for this long.
+  # Stays silent until at least two weeks of that hour have been recorded.
+  message_rate_enabled: true
+  message_rate_share_pct: 40 # 5–95 (%)
+  message_rate_minutes: 15 # 5–240
+  # Decoder connection down for longer than this.
+  decoder_down_enabled: true
+  decoder_down_minutes: 5 # 1–240
+  # A monitored feeder went down (see `feeders` above, and its own debounce).
+  feeder_offline_enabled: true
