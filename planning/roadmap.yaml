@@ -2597,7 +2597,7 @@ slices:
     title: "Decoder emitter category, selected altitude and emergency state"
     phase: 9
     branch: "086-decoder-field-capture"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Use readsb fields FlightSite discards today: emitter category, autopilot-selected altitude and the decoder's emergency state (issue #229)."
     scope:
