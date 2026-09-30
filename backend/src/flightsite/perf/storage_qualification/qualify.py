@@ -52,7 +52,8 @@ from sqlalchemy import text
 
 from flightsite.app import create_app
 from flightsite.backup import create_backup, restore_backup, verify_archive
-from flightsite.db import Database
+from flightsite.db import Database, from_epoch_ms
+from flightsite.ingest import Position
 from flightsite.live import LiveStore
 from flightsite.maintenance.policy import vacuum_decision
 from flightsite.maintenance.stats import gather_stats
@@ -67,7 +68,7 @@ from flightsite.perf.storage_qualification.generator import (
 )
 from flightsite.perf.storage_qualification.report import ProbeResult, StorageReport
 from flightsite.perf.storage_qualification.scenarios import BYTES_PER_GB
-from flightsite.perf.storage_qualification.traffic import SECONDS_PER_RETAINED_POINT
+from flightsite.perf.storage_qualification.traffic import SECONDS_PER_RETAINED_POINT, TRACK_CENTRE
 from flightsite.receiver_metrics.service import ReceiverMetricsService
 
 #: Times each query is issued. The median of three is enough to shake off a
@@ -143,6 +144,17 @@ async def _sample_keys(database: Database) -> tuple[str | None, int | None, int]
     )
 
 
+async def _sighting_start(database: Database, sighting_id: int) -> str:
+    """``sighting_id``'s start as a query-string-safe UTC instant."""
+    async with database.read_session() as session:
+        started_ms = (
+            await session.execute(
+                text("SELECT started_ms FROM sightings WHERE id = :id"), {"id": sighting_id}
+            )
+        ).scalar_one()
+    return from_epoch_ms(int(started_ms)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 async def measure_queries(
     data_dir: Path, *, repeats: int = DEFAULT_PROBE_REPEATS
 ) -> tuple[list[Measurement], list[ProbeResult]]:
@@ -208,6 +220,17 @@ async def measure_queries(
             )
         if sighting_id is not None:
             history.append(("sighting detail with track", f"/api/v1/sightings/{sighting_id}"))
+            # Slice 090's "What was that?", +/-10 min around the sampled
+            # sighting's start — a moment with traffic, mid-history. It
+            # measures from the receiver, which a generated data directory
+            # has none of, so the one the generator's tracks are drawn
+            # around is set on the live store the endpoint reads.
+            live: LiveStore = app.state.live
+            live.set_receiver_location(
+                Position(latitude=TRACK_CENTRE[0], longitude=TRACK_CENTRE[1])
+            )
+            at = await _sighting_start(database, sighting_id)
+            history.append(("overhead lookup, +/-10 min", f"/api/v1/overhead?at={at}&window=10"))
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
