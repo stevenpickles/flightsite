@@ -209,6 +209,74 @@ function describeMilestone(
   }
 }
 
+/** `"12 msg/s"` — one decimal below ten, where a decimal still means something. */
+function rate(value: number): string {
+  return `${value.toFixed(value < 10 ? 1 : 0)} msg/s`;
+}
+
+/**
+ * A receiver self-alert (roadmap slice 088) — `self_alert_raised` /
+ * `self_alert_restored`.
+ *
+ * Payloads per `activity.producers.self_alert_events`: `{condition,
+ * since_ms, duration_s, ...detail}`, where `decoder_down`'s detail is
+ * `{minutes, error}` and `message_rate`'s is `{rate_msgs_s, baseline_msgs_s,
+ * share_pct, minutes, baseline_weeks}`. Exported because the browser
+ * notification for the same event says the same thing
+ * (`features/notifications/lib/compose.ts`) — one wording, two surfaces.
+ */
+export function describeSelfAlert(
+  payload: Payload,
+  raised: boolean,
+): ActivityDescription {
+  const condition = str(payload, "condition");
+  const minutes = num(payload, "minutes");
+  const duration = num(payload, "duration_s");
+  const lasted =
+    duration === null ? null : `lasted ${formatSightingDuration(duration)}`;
+
+  if (condition === "decoder_down") {
+    return raised
+      ? {
+          label: "Self-alert: decoder down",
+          detail: join([
+            minutes === null ? null : `disconnected for over ${minutes} min`,
+            str(payload, "error"),
+          ]),
+        }
+      : { label: "Self-alert cleared: decoder back", detail: lasted };
+  }
+
+  if (condition === "message_rate") {
+    if (!raised) {
+      return {
+        label: "Self-alert cleared: message rate recovered",
+        detail: lasted,
+      };
+    }
+    const current = num(payload, "rate_msgs_s");
+    const baseline = num(payload, "baseline_msgs_s");
+    const share = num(payload, "share_pct");
+    return {
+      label: "Self-alert: message rate collapsed",
+      detail: join([
+        current === null || baseline === null
+          ? null
+          : `${rate(current)} against a usual ${rate(baseline)} for this hour`,
+        share === null || minutes === null
+          ? null
+          : `below ${share}% for ${minutes} min`,
+      ]),
+    };
+  }
+
+  // A condition this build predates: still say which way it went.
+  return {
+    label: raised ? "Self-alert raised" : "Self-alert cleared",
+    detail: condition === null ? lasted : join([humanize(condition), lasted]),
+  };
+}
+
 export function describeActivityEvent(
   event: ActivityEvent,
   units: UnitSystem = "aviation",
@@ -346,6 +414,13 @@ export function describeActivityEvent(
           outage === null ? null : `down for ${formatSightingDuration(outage)}`,
       };
     }
+
+    // Roadmap slice 088. One pair for every self-alert condition the backend
+    // detects itself; `payload.condition` says which (a feeder outage is
+    // announced by `feeder_offline` instead).
+    case "self_alert_raised":
+    case "self_alert_restored":
+      return describeSelfAlert(payload, event.type === "self_alert_raised");
 
     case "emergency_squawk": {
       const squawk = str(payload, "squawk");

@@ -44,6 +44,9 @@ export const FILTERABLE_TYPES: readonly ActivityEventType[] = [
   // outage is a different fact than a decoder outage.
   "feeder_offline",
   "feeder_restored",
+  // Slice 088 — the receiver's own health warnings.
+  "self_alert_raised",
+  "self_alert_restored",
 ];
 
 /** Every type a URL may name. Identical to {@link FILTERABLE_TYPES} today,
