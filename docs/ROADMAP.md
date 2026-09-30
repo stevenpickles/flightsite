@@ -192,6 +192,7 @@ owner decision and are not scheduled.
 | 089 | Richer alert conditions | 086 | opus | medium | Squawk set, callsign/registration glob, speed and vertical-rate bounds, emitter category and a drawn polygon area, still flat AND (issue #232) |
 | 090 | What was that? | 081 | opus | low | The aircraft that passed closest overhead near any chosen moment, from stored tracks (issue #233) |
 | 091 | Perf gates read a real p95 in CI | 083 | opus | low | Hotfix: the in-suite smoke run takes 21 ticks so a per-tick p95 is not its single worst tick, and the CLI contract test pins budgets instead of judging a three-tick run against real ones (issue #240) |
+| 092 | undici audit hotfix | 091 | opus | low | Hotfix: undici 8.10.1 → 8.11.2 in the frontend lockfile (transitive, under jsdom) to clear the 2026-09-30 advisories failing security/audit on every PR |
 
 ## Parallelization Guide
 
