@@ -2660,7 +2660,7 @@ slices:
     title: "Receiver self-alerts"
     phase: 9
     branch: "088-receiver-self-alerts"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Tell the owner when the station itself is unhealthy, not only when an interesting aircraft appears (issue #231)."
     scope:
