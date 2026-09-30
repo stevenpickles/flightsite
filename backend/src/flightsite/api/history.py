@@ -178,6 +178,7 @@ _COLUMNS: Final[tuple[Any, ...]] = (
     Aircraft.max_range_nm,
     Aircraft.lowest_alt_ft,
     Aircraft.highest_alt_ft,
+    Aircraft.emitter_category,
     AircraftMetadataResolved.registration,
     AircraftMetadataResolved.registration_src,
     AircraftMetadataResolved.type_code,

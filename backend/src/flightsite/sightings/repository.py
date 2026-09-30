@@ -595,6 +595,13 @@ class SightingRepository:
         if _better(aircraft.highest_alt_ft, active.highest_alt_ft, larger=True):
             aircraft.highest_alt_ft = active.highest_alt_ft
             aircraft.highest_alt_ms = active.highest_alt_ms
+        # Not a record but the airframe's latest self-description (slice 086):
+        # the newest category wins, and a sighting that saw none leaves the
+        # stored one alone. Compared first so an unchanged category stays out
+        # of the flush's UPDATE.
+        category = active.emitter_category
+        if category is not None and category != aircraft.emitter_category:
+            aircraft.emitter_category = category
 
     @staticmethod
     async def _require_sighting(session: AsyncSession, ids: SightingIds) -> Sighting:

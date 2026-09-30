@@ -245,6 +245,12 @@ class Aircraft(Base):
     highest_alt_ft: Mapped[int | None] = mapped_column(Integer)
     highest_alt_ms: Mapped[int | None] = mapped_column(Integer)
 
+    #: The last ADS-B emitter category (``A0``-``D7``) this airframe
+    #: transmitted (slice 086, rev 0019). Written by the persistence worker
+    #: whenever a sighting has seen one; ``NULL`` for an airframe that never
+    #: sent one. A property of the airframe, not of a flight, hence here.
+    emitter_category: Mapped[str | None] = mapped_column(Text)
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Aircraft(id={self.id!r}, icao24={self.icao24!r})"
 

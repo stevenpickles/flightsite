@@ -264,6 +264,9 @@ class AircraftHistoryRow(_Model):
     operator: str | None = None
     operator_group: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086);
+    #: decoder-reported, so it has no ``provenance`` entry.
+    emitter_category: EmitterCategoryField | None = None
     first_seen: IsoTimestamp
     last_seen: IsoTimestamp
     sighting_count: int
@@ -302,6 +305,8 @@ class AircraftDetail(_Model):
     operator_group: str | None = None
     owner: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086).
+    emitter_category: EmitterCategoryField | None = None
     #: True when this airframe is in the live picture right now — the
     #: frontend's cue to offer a jump to its Live Map selection.
     live: bool

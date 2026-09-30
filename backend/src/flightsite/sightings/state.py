@@ -193,6 +193,14 @@ class ActiveSighting:
     #: ``emergency_end`` that closes it; ``None`` outside an episode.
     emergency_declared: tuple[str, str] | None = None
 
+    #: The latest ADS-B emitter category this sighting has seen (slice 086).
+    #: Not a sighting column: it is written to the *airframe*
+    #: (``aircraft.emitter_category``) on every flush, because the category
+    #: describes the aircraft rather than the flight. ``None`` until one
+    #: arrives, and then never cleared — the live record's own merge is sticky
+    #: for it, so an update without one is not a statement that it changed.
+    emitter_category: str | None = None
+
     #: Externally reported route (slice 026). Never written by
     #: :meth:`observe` — no decoder transmits a route — and never guessed:
     #: these stay ``None`` unless a provider actually named an airport.
@@ -336,6 +344,8 @@ class ActiveSighting:
             self.last_seen_ms = at_ms
 
         self._observe_flight_context(record, at_ms)
+        if record.emitter_category is not None:
+            self.emitter_category = record.emitter_category
         self._observe_position_character(record)
         self._observe_extremes(record, at_ms)
         if counted:
