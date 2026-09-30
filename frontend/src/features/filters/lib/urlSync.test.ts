@@ -22,6 +22,33 @@ describe("serializeFiltersToSearchParams", () => {
   });
 });
 
+describe("emitter categories in the URL (slice 086)", () => {
+  it("writes the selection under `ecat`", () => {
+    const params = serializeFiltersToSearchParams({
+      ...DEFAULT_FILTERS,
+      emitterCategories: ["A7", "B1"],
+    });
+    expect(params.get("ecat")).toBe("A7,B1");
+  });
+
+  it("round-trips", () => {
+    const original: LiveFilters = {
+      ...DEFAULT_FILTERS,
+      emitterCategories: ["A3", "A7"],
+    };
+    expect(
+      parseFiltersFromSearchParams(serializeFiltersToSearchParams(original)),
+    ).toEqual(original);
+  });
+
+  it("normalizes case and drops junk and duplicates from a hand-edited URL", () => {
+    const parsed = parseFiltersFromSearchParams(
+      new URLSearchParams("ecat=a7,zz,A7,E1,b6"),
+    );
+    expect(parsed.emitterCategories).toEqual(["A7", "B6"]);
+  });
+});
+
 describe("parseFiltersFromSearchParams", () => {
   it("returns the defaults for an empty query string", () => {
     expect(parseFiltersFromSearchParams(new URLSearchParams())).toEqual(

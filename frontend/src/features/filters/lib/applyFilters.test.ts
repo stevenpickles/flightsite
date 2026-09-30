@@ -305,6 +305,72 @@ describe("applyFilters", () => {
       );
       expect(result.aircraft).toHaveLength(1);
     });
+
+    it("passes an aircraft whose decoder reports an emergency (slice 086)", () => {
+      const aircraft = [
+        makeAircraft({
+          icao: "aaaaaa",
+          squawk: "2341",
+          emergency: null,
+          decoder_emergency: "minfuel",
+        }),
+      ];
+      const result = applyFilters(
+        aircraft,
+        filters({ emergencyOnly: true }),
+        CONFIG,
+      );
+      expect(result.aircraft).toHaveLength(1);
+    });
+  });
+
+  describe("emitter category (slice 086)", () => {
+    const aircraft = [
+      makeAircraft({ icao: "heli01", emitter_category: "A7" }),
+      makeAircraft({ icao: "large1", emitter_category: "A3" }),
+      makeAircraft({ icao: "heavy1", emitter_category: "A5" }),
+      makeAircraft({ icao: "silent", emitter_category: null }),
+    ];
+
+    it("filters nothing when no category is selected", () => {
+      expect(applyFilters(aircraft, filters(), CONFIG).aircraft).toHaveLength(
+        4,
+      );
+    });
+
+    it("keeps exactly the selected categories, OR-matched", () => {
+      const result = applyFilters(
+        aircraft,
+        filters({ emitterCategories: ["A7", "A5"] }),
+        CONFIG,
+      );
+      expect(result.visibleIcaos).toEqual(new Set(["heli01", "heavy1"]));
+    });
+
+    it("hides an aircraft that never transmitted a category", () => {
+      const result = applyFilters(
+        aircraft,
+        filters({ emitterCategories: ["A3"] }),
+        CONFIG,
+      );
+      expect(result.visibleIcaos).toEqual(new Set(["large1"]));
+    });
+
+    it("AND-composes with the other filters", () => {
+      const result = applyFilters(
+        [
+          ...aircraft,
+          makeAircraft({
+            icao: "heli02",
+            emitter_category: "A7",
+            altitude_ft: 500,
+          }),
+        ],
+        filters({ emitterCategories: ["A7"], altitudeMinFt: 1000 }),
+        CONFIG,
+      );
+      expect(result.visibleIcaos).toEqual(new Set(["heli01"]));
+    });
   });
 
   describe("hide non-positioned", () => {

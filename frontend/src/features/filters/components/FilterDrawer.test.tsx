@@ -143,7 +143,7 @@ describe("FilterDrawer", () => {
     renderDrawer();
     await userEvent.click(screen.getByRole("button", { name: /filters/i }));
     await userEvent.click(
-      screen.getByRole("checkbox", { name: /emergency squawk only/i }),
+      screen.getByRole("checkbox", { name: /emergency only/i }),
     );
     await userEvent.click(
       screen.getByRole("checkbox", { name: /interesting only/i }),
@@ -152,6 +152,64 @@ describe("FilterDrawer", () => {
       emergencyOnly: true,
       interestingOnly: true,
     });
+  });
+
+  it("offers the emitter categories in the live picture, in words (slice 086)", async () => {
+    act(() => {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [
+          makeAircraft({ icao: "aaaaaa", emitter_category: "A7" }),
+          makeAircraft({ icao: "bbbbbb", emitter_category: "A3" }),
+          makeAircraft({ icao: "cccccc", emitter_category: "A3" }),
+          makeAircraft({ icao: "dddddd", emitter_category: null }),
+        ],
+        receiver: null,
+      });
+    });
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+
+    const section = screen
+      .getByRole("heading", { name: "Emitter category" })
+      .closest("section") as HTMLElement;
+    const boxes = within(section).getAllByRole("checkbox");
+    expect(boxes.map((box) => box.closest("label")?.textContent)).toEqual([
+      "A3 · Large aircraft",
+      "A7 · Rotorcraft",
+    ]);
+
+    await userEvent.click(
+      within(section).getByRole("checkbox", { name: "A7 · Rotorcraft" }),
+    );
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual(["A7"]);
+    expect(screen.getByTestId("filter-match-count")).toHaveTextContent(
+      "Showing 1 of 4 aircraft.",
+    );
+  });
+
+  it("keeps a selected emitter category removable after its aircraft leave", async () => {
+    useFilterStore.setState({
+      filters: { ...DEFAULT_FILTERS, emitterCategories: ["B1"] },
+    });
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+
+    const box = screen.getByRole("checkbox", {
+      name: "B1 · Glider / sailplane",
+    });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual([]);
+  });
+
+  it("says so when no aircraft has transmitted a category", async () => {
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+    expect(
+      screen.getByText(
+        /no aircraft in the live picture has transmitted a category/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("toggles a classification checkbox and explains that it needs a metadata import", async () => {

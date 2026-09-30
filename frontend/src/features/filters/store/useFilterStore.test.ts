@@ -56,6 +56,13 @@ describe("useFilterStore", () => {
     expect(useFilterStore.getState().filters.missionCategories).toEqual([]);
   });
 
+  it("toggleEmitterCategory adds then removes a category (slice 086)", () => {
+    useFilterStore.getState().toggleEmitterCategory("A7");
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual(["A7"]);
+    useFilterStore.getState().toggleEmitterCategory("A7");
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual([]);
+  });
+
   it("boolean setters toggle their own field", () => {
     const state = useFilterStore.getState();
     state.setInterestingOnly(true);
