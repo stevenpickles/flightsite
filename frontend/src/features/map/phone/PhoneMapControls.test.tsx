@@ -16,6 +16,7 @@ import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
+import { useOverheadStore } from "@/features/overhead/useOverheadStore";
 import { getMapShortcutTargets } from "@/lib/shortcuts/mapShortcutTargets";
 import { LiveMapPage } from "@/pages/LiveMapPage";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
@@ -225,6 +226,30 @@ describe("LiveMapPage below the md breakpoint", () => {
     ).toHaveFocus();
   });
 
+  it("opens 'What was that?' from the Activity sheet, keeping five toolbar buttons", async () => {
+    installMatchMedia(true);
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(within(toolbar()).getAllByRole("button")).toHaveLength(5);
+    // Not a floating map pill on phones: the dock's top edge sits there.
+    expect(screen.getAllByTestId("overhead-open")).toHaveLength(1);
+
+    await user.click(toolbarButton("Activity"));
+    await user.click(
+      within(sheet("activity")).getByRole("button", {
+        name: "What was that?",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "What was that?" }),
+    ).toBeInTheDocument();
+    act(() => {
+      useOverheadStore.getState().close();
+    });
+  });
+
   it("switches back to the floating cards when the viewport widens", () => {
     const media = installMatchMedia(true);
     renderPage();
@@ -248,5 +273,25 @@ describe("LiveMapPage at desktop width", () => {
       screen.queryByRole("navigation", { name: "Map panels" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("phone-map-dock")).not.toBeInTheDocument();
+  });
+
+  it("puts 'What was that?' on the map under the recentre button", async () => {
+    installMatchMedia(false);
+    const user = userEvent.setup();
+    renderPage();
+
+    const pill = screen.getByRole("button", {
+      name: "What was that? Find what passed closest overhead",
+    });
+    expect(pill.className).toContain("left-3");
+    expect(pill.className).toContain("top-28");
+
+    await user.click(pill);
+    expect(
+      await screen.findByRole("dialog", { name: "What was that?" }),
+    ).toBeInTheDocument();
+    act(() => {
+      useOverheadStore.getState().close();
+    });
   });
 });

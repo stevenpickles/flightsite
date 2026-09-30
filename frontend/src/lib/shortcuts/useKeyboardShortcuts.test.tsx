@@ -15,6 +15,7 @@ import { useMeasureStore } from "@/features/map/measure/useMeasureStore";
 import { DEFAULT_OVERLAY_VISIBILITY } from "@/features/map/overlayVisibilityPersistence";
 import { useMapCenterRequestStore } from "@/features/map/store/useMapCenterRequestStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
+import { useOverheadStore } from "@/features/overhead/useOverheadStore";
 import type { LiveAircraft } from "@/lib/api/live";
 import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
@@ -37,6 +38,7 @@ afterEach(() => {
   useFilterStore.setState({ filters: DEFAULT_FILTERS });
   useMapCenterRequestStore.setState({ nonce: 0 });
   useMeasureStore.getState().exit();
+  useOverheadStore.setState({ open: false });
   window.localStorage.clear();
   useOverlayVisibilityStore.setState({ ...DEFAULT_OVERLAY_VISIBILITY });
   resetFilteredLiveAircraftCache();
@@ -281,6 +283,33 @@ describe("useKeyboardShortcuts", () => {
     pressKey("t");
     expect(useMeasureStore.getState().active).toBe(false);
     expect(useOverlayVisibilityStore.getState().trails).toBe(false);
+  });
+
+  it("does not dispatch 'W' off the Live Map", async () => {
+    renderApp("/aircraft");
+    pressKey("w");
+    expect(useOverheadStore.getState().open).toBe(false);
+  });
+
+  it("suspends 'W' while focus is in a text field on the Live Map", async () => {
+    renderApp("/");
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "w" });
+    input.remove();
+    expect(useOverheadStore.getState().open).toBe(false);
+  });
+
+  it("opens the dialog from 'W' on the Live Map", async () => {
+    renderApp("/");
+    act(() => {
+      pressKey("W");
+    });
+    expect(useOverheadStore.getState().open).toBe(true);
+    expect(
+      await screen.findByRole("dialog", { name: "What was that?" }),
+    ).toBeInTheDocument();
   });
 
   it("suspends 'M' and 'T' while focus is in a text field on the Live Map", async () => {

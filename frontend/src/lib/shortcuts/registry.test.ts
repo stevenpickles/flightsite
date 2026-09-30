@@ -26,6 +26,8 @@ describe("shortcut registry", () => {
     ).map((shortcut) => shortcut.keys);
     expect(liveMapKeys).toContain("M");
     expect(liveMapKeys).toContain("T");
+    // Slice 090's "What was that?".
+    expect(liveMapKeys).toContain("W");
     // Every single-key Live Map binding is distinct.
     expect(new Set(liveMapKeys).size).toBe(liveMapKeys.length);
   });

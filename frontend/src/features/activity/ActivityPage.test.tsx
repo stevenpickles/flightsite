@@ -55,6 +55,20 @@ describe("ActivityPage", () => {
     );
   });
 
+  it("opens 'What was that?' from the page header (slice 090)", async () => {
+    installActivityApiMock({ list: page(1) });
+    const user = userEvent.setup();
+    renderApp("/activity");
+
+    await user.click(screen.getByRole("button", { name: "What was that?" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "What was that?" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("dates the rows by grouping them under a receiver-local day (R2-06)", async () => {
     installActivityApiMock({ list: page(3) });
     renderApp("/activity");
