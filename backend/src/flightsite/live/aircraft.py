@@ -34,6 +34,14 @@ fabricate, and it does not forget either). Three consequences worth naming:
   as the ``"ground"`` altitude sentinel, which the adapter normalizes to
   ``on_ground=True`` with no altitude). That update clears ``altitude_ft``
   rather than leaving a stale cruise level attached to a parked aircraft.
+* **The decoder's emergency state is not sticky either** (slice 086).
+  ``decoder_emergency`` is replaced by every update, ``None`` included. A
+  decoder lists the emergency/priority status only while it holds a valid one
+  — it expires the status itself once the aircraft stops broadcasting it — so
+  an update without it *is* the decoder saying the emergency is over, not a
+  poll that happened to omit it. Holding it would keep an aircraft declaring
+  minimum fuel for the rest of its flight. ``emitter_category`` and
+  ``selected_altitude_ft`` are ordinary sticky fields.
 
 Observation age
 ---------------
@@ -93,6 +101,7 @@ from types import MappingProxyType
 from typing import Final
 
 from flightsite.ingest import AircraftStateUpdate, Position, PositionSource
+from flightsite.ingest.types import DecoderEmergency
 from flightsite.live.geo import distance_and_bearing
 from flightsite.live.track import DEFAULT_TRACK_CAPACITY, CurrentTrack, TrackPoint
 
@@ -177,6 +186,9 @@ CHANGE_TRACKED_FIELDS: Final[tuple[str, ...]] = (
     "bearing_deg",
     "rssi_db",
     "messages",
+    "emitter_category",
+    "selected_altitude_ft",
+    "decoder_emergency",
 )
 
 _NO_PROVENANCE: Final[MappingProxyType[str, Provenance]] = MappingProxyType({})
@@ -227,6 +239,14 @@ class LiveAircraft:
     vertical_rate_fpm: float | None = None
     on_ground: bool | None = None
     ground_state: GroundState = GroundState.UNKNOWN
+
+    #: ADS-B emitter category, ``A0``-``D7`` (slice 086). Sticky.
+    emitter_category: str | None = None
+    #: Autopilot/FMS selected altitude in feet (slice 086). Sticky.
+    selected_altitude_ft: float | None = None
+    #: The emergency state the decoder reports *now* (slice 086). Not sticky —
+    #: see the module docstring.
+    decoder_emergency: DecoderEmergency | None = None
 
     rssi_db: float | None = None
     messages: int | None = None
@@ -436,6 +456,9 @@ def appear(
         vertical_rate_fpm=update.vertical_rate_fpm,
         on_ground=update.on_ground,
         ground_state=ground_state,
+        emitter_category=update.emitter_category,
+        selected_altitude_ft=update.selected_altitude_ft,
+        decoder_emergency=update.decoder_emergency,
         rssi_db=update.rssi_db,
         messages=update.messages,
         seen_s=update.seen_s,
@@ -537,6 +560,18 @@ def merge(
         ),
         on_ground=on_ground,
         ground_state=ground_state,
+        emitter_category=(
+            update.emitter_category
+            if update.emitter_category is not None
+            else current.emitter_category
+        ),
+        selected_altitude_ft=(
+            update.selected_altitude_ft
+            if update.selected_altitude_ft is not None
+            else current.selected_altitude_ft
+        ),
+        # Deliberately not sticky — see the module docstring.
+        decoder_emergency=update.decoder_emergency,
         rssi_db=update.rssi_db if update.rssi_db is not None else current.rssi_db,
         messages=update.messages if update.messages is not None else current.messages,
         seen_s=update.seen_s,

@@ -54,10 +54,10 @@ const AIRLINER_PATH =
 
 /**
  * Rotorcraft: a stubby fuselage, a tail boom with a stabiliser, and a rotor
- * disc suggested by two crossed blades. Unreachable from live data alone — no
- * heuristic guesses at rotorcraft from position reports — and wired to the
- * `helicopter` / `rotorcraft` icon categories that slice 024's metadata will
- * start supplying.
+ * disc suggested by two crossed blades. No heuristic guesses at rotorcraft
+ * from position reports; it is wired to the `helicopter` / `rotorcraft` icon
+ * categories slice 024's metadata supplies and, since slice 086, to the
+ * aircraft's own ADS-B emitter category `A7` when metadata has no opinion.
  */
 const ROTORCRAFT_BODY =
   `<path d="M29.5 33h5v17h-5z" fill="${BODY}" stroke="${INK}" stroke-width="2" stroke-linejoin="round"/>` +

@@ -92,7 +92,8 @@ CREATE TABLE aircraft (
   lowest_alt_ft       INTEGER,
   lowest_alt_ms       INTEGER,
   highest_alt_ft      INTEGER,
-  highest_alt_ms      INTEGER
+  highest_alt_ms      INTEGER,
+  emitter_category    TEXT                 -- last ADS-B emitter category, 'A0'..'D7' (rev 0019)
 );
 CREATE INDEX ix_aircraft_first_seen ON aircraft(first_seen_ms);
 CREATE INDEX ix_aircraft_last_seen  ON aircraft(last_seen_ms);
@@ -104,6 +105,16 @@ clean escape hatch for the (rare) ICAO reassignment problem and future multi-rec
 work. Record columns carry their `_ms` moments so the UI can say *when* the record was
 set. Rarity ("never seen", "seen fewer than N times", SPEC §44) reads
 `sighting_count` / `first_seen_ms` directly.
+
+`emitter_category` (slice 086, rev 0019) is not a record but the airframe's own
+latest self-description: the ADS-B emitter category it last transmitted (`A3` large,
+`A7` rotorcraft, … — the full list is in `docs/API.md` §3.3). The persistence worker
+writes it on every flush of a sighting that has seen one, the newest value winning;
+a sighting that saw none leaves it alone. `NULL` is "never transmitted one" (Mode
+S-only and MLAT-only aircraft, legacy dump1090-fa feeds). It lives here rather than
+on the sighting because it describes the airframe, not the flight. No `CHECK` and no
+index: the ingest adapter already refuses anything outside `A0`–`D7`, and nothing
+filters or sorts on it.
 
 ### 2.3 `sightings` — slice 009
 
@@ -271,6 +282,14 @@ CREATE TABLE sighting_events (
 );
 CREATE INDEX ix_sevents_sighting ON sighting_events(sighting_id, ts_ms);
 ```
+
+`emergency_start` / `emergency_end` bracket an *emergency episode*: the span during
+which either an emergency squawk or (since slice 086) the decoder's emergency state
+declares one. Their payload is `{"squawk", "source", "kind"}` — `source` is `squawk`
+or `decoder`, `kind` the `docs/API.md` §2.8 emergency kind (7600 is `nordo`, 7700
+`general`, 7500 `unlawful`); the squawk is named when both declare. Rows written
+before slice 086 carry `squawk` alone. `sightings.had_emergency` latches for either
+source.
 
 ---
 
@@ -557,6 +576,16 @@ The unique indexes are the once-per-sighting-per-rule dedupe guarantee (SPEC §4
 the storage layer, surviving restarts. Severity upgrades of built-ins use distinct
 `builtin_key`s, which is exactly the allowed "higher-priority condition may notify
 again" path.
+
+Since slice 086 the decoder's emergency state is a second built-in source, and
+built-in keys name the emergency *kind* rather than the source: a kind a squawk also
+declares keeps that squawk's key (`nordo` → `emergency_7600`, `general` →
+`emergency_7700`, `unlawful` → `emergency_7500`), and the three kinds no squawk can
+express get their own (`emergency_minfuel`, `emergency_lifeguard`,
+`emergency_downed`). So one emergency reported by both the transponder and the
+decoder is one row whichever arrives first, and the unique index keeps it that way;
+the row's `reason` names the source ("Emergency squawk 7600 (radio failure)" or
+"Decoder emergency state: no radio").
 
 `notified` is the one column here that is not a fact about the match: it records that
 at least one FlightSite client actually showed a browser `Notification` for the row.
@@ -1159,3 +1188,4 @@ field names; ingest normalizes before anything is persisted.
 | 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |
 | 077 | `feeder_episodes`, `feeder_samples` (rev 0017 — two new tables, no data movement; §6.6) |
 | 083 | `ix_amr_registration_nocase`, `ix_amr_operator_nocase`, `ix_sightings_callsign`, `ix_sightings_callsign_first` (rev 0018 — four indexes for the list pages' `q` search, no data movement) |
+| 086 | `aircraft` gains `emitter_category` (rev 0019 — one nullable `TEXT` column by plain `ADD COLUMN`, no rebuild, no data movement; the downgrade drops it the same way) |

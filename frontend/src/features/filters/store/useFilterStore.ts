@@ -25,6 +25,8 @@ export interface FilterState {
   setAltitudeRange: (minFt: number | null, maxFt: number | null) => void;
   setMaxDistanceNm: (nm: number | null) => void;
   setCategoryText: (text: string) => void;
+  /** Adds or removes one emitter category (`"A7"`) — slice 086. */
+  toggleEmitterCategory: (category: string) => void;
   setOperatorText: (text: string) => void;
   setOperatorGroupText: (text: string) => void;
   toggleClassification: (flag: ClassificationFlag) => void;
@@ -60,6 +62,17 @@ export const useFilterStore = create<FilterState>((set) => ({
   },
   setCategoryText: (text) => {
     set((state) => ({ filters: { ...state.filters, categoryText: text } }));
+  },
+  toggleEmitterCategory: (category) => {
+    set((state) => ({
+      filters: {
+        ...state.filters,
+        emitterCategories: toggleMember(
+          state.filters.emitterCategories,
+          category,
+        ),
+      },
+    }));
   },
   setOperatorText: (text) => {
     set((state) => ({ filters: { ...state.filters, operatorText: text } }));

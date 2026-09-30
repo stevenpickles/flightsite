@@ -43,16 +43,46 @@ code that appears, clears and appears again within one sighting produces one
 match: the key is the same, so the sighting's dedupe already covers it — which
 is the same shape :meth:`flightsite.sightings.state.ActiveSighting.
 _observe_emergency` gives the ``emergency_start`` sighting event.
+
+Two sources, one emergency (slice 086)
+--------------------------------------
+
+The decoder's emergency state — the ADS-B emergency/priority status, which an
+aircraft broadcasts independently of its squawk — is a second source. An
+aircraft reporting ``nordo`` with no 7600 on the transponder raises an
+emergency exactly as 7600 would, at the same severity and with the same
+once-per-sighting dedupe, and its reason names the decoder as the source.
+
+What must not happen is one emergency notifying twice because both sources
+report it, and two rules together guarantee it cannot:
+
+* **One proposal per evaluation.** The squawk is consulted first and the
+  decoder only when the squawk declares nothing
+  (:func:`~flightsite.sightings.vocabulary.declared_emergency`), so a single
+  instant never yields two emergency matches.
+* **One key per kind.** A kind a squawk can declare is keyed by that squawk
+  whichever source raised it (:func:`~flightsite.alerts.vocabulary.
+  emergency_kind_builtin_key`): ``nordo`` from the decoder is
+  ``emergency_7600``. So the order the two sources arrive in does not matter
+  either — ``nordo`` first and 7600 a poll later is the same key, which the
+  sighting has already fired.
+
+A decoder kind no squawk can express (``minfuel``, ``lifeguard``, ``downed``)
+has a key of its own, and a different kind arriving later in the sighting is a
+new match — the same "a newly matched condition may notify again" path as 7600
+followed by 7700.
 """
 
 from __future__ import annotations
 
 from flightsite.alerts.model import AlertSubject, MatchProposal
 from flightsite.alerts.vocabulary import (
+    DECODER_EMERGENCY_MEANINGS,
     EMERGENCY_MEANINGS,
     EMERGENCY_SEVERITY,
-    emergency_builtin_key,
+    emergency_kind_builtin_key,
 )
+from flightsite.sightings.vocabulary import EMERGENCY_SOURCE_SQUAWK, declared_emergency
 
 
 def emergency_reason(squawk: str) -> str:
@@ -65,26 +95,49 @@ def emergency_reason(squawk: str) -> str:
     return f"Emergency squawk {squawk} ({EMERGENCY_MEANINGS[squawk]})"
 
 
-def emergency_match(subject: AlertSubject) -> MatchProposal | None:
-    """The built-in match this aircraft's current squawk justifies, if any.
+def decoder_emergency_reason(kind: str) -> str:
+    """The reason for an emergency the decoder's emergency state declared.
 
-    Pure, total and independent of every rule: given a subject it looks at one
-    field. ``None`` covers "no squawk reported this poll" and "an ordinary
-    squawk" alike — the decoder omitting a squawk is not a statement that an
-    emergency ended (:mod:`flightsite.live.aircraft`'s merge semantics), and
-    the live record keeps the last one it heard, so a code that is still
-    standing keeps producing this match until the sighting's dedupe stops it.
+    Names the source as well as the kind, because the one thing a reader of
+    "minimum fuel" cannot otherwise tell is that no emergency squawk was set.
     """
-    squawk = subject.squawk
-    if squawk is None or squawk not in EMERGENCY_MEANINGS:
+    return f"Decoder emergency state: {DECODER_EMERGENCY_MEANINGS[kind]}"
+
+
+def emergency_match(subject: AlertSubject) -> MatchProposal | None:
+    """The built-in match this aircraft's current emergency justifies, if any.
+
+    Pure, total and independent of every rule: given a subject it looks at two
+    fields, the squawk first. ``None`` covers "nothing declared" in all its
+    forms. For the squawk that includes "no squawk reported this poll" — the
+    decoder omitting a squawk is not a statement that an emergency ended
+    (:mod:`flightsite.live.aircraft`'s merge semantics), and the live record
+    keeps the last one it heard, so a code that is still standing keeps
+    producing this match until the sighting's dedupe stops it. The decoder's
+    emergency state is its current statement, so it produces the match exactly
+    while the decoder reports it.
+    """
+    declared = declared_emergency(subject.squawk, subject.decoder_emergency)
+    if declared is None:
         return None
-    key = emergency_builtin_key(squawk)
+    source, kind = declared
+    if kind not in DECODER_EMERGENCY_MEANINGS:  # pragma: no cover - vocabularies pinned by test
+        return None
+    key = emergency_kind_builtin_key(kind)
+    squawk = subject.squawk
+    reason = (
+        emergency_reason(squawk)
+        if source == EMERGENCY_SOURCE_SQUAWK and squawk is not None
+        else decoder_emergency_reason(kind)
+    )
     return MatchProposal(
         key=f"builtin:{key}",
         severity=EMERGENCY_SEVERITY,
-        reason=emergency_reason(squawk),
+        reason=reason,
         builtin_key=key,
+        emergency_source=source,
+        emergency_kind=kind,
     )
 
 
-__all__ = ["emergency_match", "emergency_reason"]
+__all__ = ["decoder_emergency_reason", "emergency_match", "emergency_reason"]

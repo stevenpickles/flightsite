@@ -42,6 +42,42 @@ class ClosureReason(StrEnum):
 #: severities and notifications are slice 038's.
 EMERGENCY_SQUAWKS: Final[frozenset[str]] = frozenset({"7500", "7600", "7700"})
 
+#: The two ways an aircraft declares an emergency (slice 086): an emergency
+#: squawk, or the ADS-B emergency/priority status the decoder reports as
+#: ``decoder_emergency``. ``docs/API.md`` §2.8's ``emergency_source``.
+EMERGENCY_SOURCE_SQUAWK: Final = "squawk"
+EMERGENCY_SOURCE_DECODER: Final = "decoder"
+
+#: The emergency *kind* each emergency squawk declares, in the decoder's
+#: emergency-state vocabulary (:data:`flightsite.ingest.types.DecoderEmergency`).
+#: The two sources share one vocabulary of kinds because they describe the
+#: same thing: a transponder set to 7600 also broadcasts the ``nordo`` status,
+#: and naming both "nordo" is what lets every layer see one emergency rather
+#: than two (``docs/API.md`` §2.8's ``emergency_kind``).
+SQUAWK_EMERGENCY_KINDS: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {"7500": "unlawful", "7600": "nordo", "7700": "general"}
+)
+
+
+def declared_emergency(squawk: str | None, decoder_emergency: str | None) -> tuple[str, str] | None:
+    """The emergency an aircraft is declaring right now, as ``(source, kind)``.
+
+    The squawk wins when both declare one. It is the older, universally
+    understood signal, it is what every existing record of an emergency
+    (``emergency_7700``, the ``squawk`` on an ``emergency_start``) already
+    names, and when the two agree — the ordinary case, since a transponder
+    squawking 7700 broadcasts ``general`` too — naming the squawk loses
+    nothing. ``None`` when neither declares one.
+    """
+    if squawk is not None:
+        kind = SQUAWK_EMERGENCY_KINDS.get(squawk)
+        if kind is not None:
+            return EMERGENCY_SOURCE_SQUAWK, kind
+    if decoder_emergency is not None:
+        return EMERGENCY_SOURCE_DECODER, decoder_emergency
+    return None
+
+
 #: ``docs/API.md`` §2.8's severity ladder, lowest first — the ordering behind
 #: ``sightings.max_alert_severity`` (slice 038's column on this slice's table).
 #:
@@ -111,9 +147,12 @@ class SightingEventType(StrEnum):
     CALLSIGN_CHANGE = "callsign_change"
     #: The transponder code changed.
     SQUAWK_CHANGE = "squawk_change"
-    #: An emergency squawk (:data:`EMERGENCY_SQUAWKS`) appeared.
+    #: An emergency was declared — an emergency squawk
+    #: (:data:`EMERGENCY_SQUAWKS`) or, since slice 086, the decoder's
+    #: emergency state. The payload names which (``source``) and what
+    #: (``kind``).
     EMERGENCY_START = "emergency_start"
-    #: The squawk left the emergency set again.
+    #: Neither the squawk nor the decoder declares an emergency any longer.
     EMERGENCY_END = "emergency_end"
     #: Route enrichment answered for this sighting (slice 026).
     ROUTE_ENRICHED = "route_enriched"
@@ -188,11 +227,15 @@ def position_source_name(code: int) -> PositionSource:
 
 __all__ = [
     "ALERT_SEVERITIES",
+    "EMERGENCY_SOURCE_DECODER",
+    "EMERGENCY_SOURCE_SQUAWK",
     "EMERGENCY_SQUAWKS",
+    "SQUAWK_EMERGENCY_KINDS",
     "ClosureReason",
     "PositionSourceCode",
     "SightingEventType",
     "alert_severity_rank",
+    "declared_emergency",
     "outranks_severity",
     "position_source_code",
     "position_source_name",

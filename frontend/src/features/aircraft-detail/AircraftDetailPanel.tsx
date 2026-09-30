@@ -29,13 +29,20 @@
  * (`lib/sheetSnap.ts`), and carries `BottomSheetHandle` — a grabber for
  * pointers plus Expand/Collapse buttons for keyboards and screen readers.
  * Escape and the close button deselect exactly as they do on desktop.
+ *
+ * Since roadmap slice 086 the Live section also shows what the aircraft's own
+ * transmitter says about it: the emitter category in words ("A7 ·
+ * Rotorcraft", `lib/emitterCategory.ts`), the autopilot-selected altitude
+ * beside the altitude, and — in the header — the decoder's emergency state as
+ * a text badge whenever it says something the squawk badge does not.
  */
 
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { BottomSheetHandle } from "@/features/aircraft-detail/components/BottomSheetHandle";
+import { DecoderEmergencyBadge } from "@/features/aircraft-detail/components/DecoderEmergencyBadge";
 import {
   DetailSection,
   DetailSectionHeadingLevel,
@@ -73,7 +80,10 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
+import type { UnitSystem } from "@/lib/api/config";
 import type { LiveAircraft } from "@/lib/api/live";
+import { decoderEmergencyAddsToSquawk } from "@/lib/emergency";
+import { formatEmitterCategory } from "@/lib/emitterCategory";
 import { ShareControls } from "@/lib/share/ShareControls";
 import { useCurrentUrl } from "@/lib/share/useCurrentUrl";
 import { cn } from "@/lib/utils";
@@ -218,6 +228,13 @@ export function AircraftDetailPanel({
                 {aircraft && isEmergencySquawk(aircraft.squawk) && (
                   <EmergencySquawkBadge squawk={aircraft.squawk} />
                 )}
+                {aircraft &&
+                  decoderEmergencyAddsToSquawk(
+                    aircraft.decoder_emergency,
+                    aircraft.squawk,
+                  ) && (
+                    <DecoderEmergencyBadge kind={aircraft.decoder_emergency} />
+                  )}
               </div>
               <ShareControls
                 className="-ml-1.5"
@@ -250,7 +267,7 @@ export function AircraftDetailPanel({
                 <DetailSection title="Live">
                   <FieldRow
                     label="Altitude"
-                    value={formatAltitude(aircraft.altitude_ft, units)}
+                    value={altitudeWithSelected(aircraft, units)}
                     provenanceSource={
                       aircraft.provenance.altitude_ft ?? "decoder"
                     }
@@ -348,6 +365,13 @@ export function AircraftDetailPanel({
                     label="On ground"
                     value={formatOnGround(aircraft.on_ground)}
                   />
+                  {/* Slice 086: what the aircraft's own transmitter says it
+                   * is — distinct from the metadata type below, which is
+                   * what a registry says. */}
+                  <FieldRow
+                    label="Emitter category"
+                    value={formatEmitterCategory(aircraft.emitter_category)}
+                  />
                 </DetailSection>
 
                 <IdentityMetadataSection aircraft={aircraft} />
@@ -395,6 +419,34 @@ export function AircraftDetailPanel({
         </div>
       </TooltipProvider>
     </DetailSectionHeadingLevel>
+  );
+}
+
+/**
+ * The Altitude row's value: the barometric altitude, with the autopilot's
+ * selected altitude beside it when the decoder reported one (slice 086) —
+ * "where it is" and "where it is going" read together, which is why this is
+ * one row rather than two. Both go through `formatAltitude`, so a metric
+ * install reads metres for both. `null` (→ Unknown) only when neither is
+ * known; an unknown current altitude with a known target still shows the
+ * target, labelled, beside the Unknown.
+ */
+function altitudeWithSelected(
+  aircraft: LiveAircraft,
+  units: UnitSystem,
+): ReactNode | null {
+  const current = formatAltitude(aircraft.altitude_ft, units);
+  const selected = formatAltitude(aircraft.selected_altitude_ft ?? null, units);
+  if (selected === null) {
+    return current;
+  }
+  return (
+    <span className="inline-flex flex-col items-end">
+      <span>{current ?? <UnknownValue />}</span>
+      <span className="text-xs font-normal text-muted-foreground">
+        Selected {selected}
+      </span>
+    </span>
   );
 }
 

@@ -11,7 +11,7 @@
 
 import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
 
-/** Number of filter groups that differ from the defaults, 0–12. */
+/** Number of filter groups that differ from the defaults, 0–14. */
 export function countActiveFilters(filters: LiveFilters): number {
   let count = 0;
   if (
@@ -24,6 +24,9 @@ export function countActiveFilters(filters: LiveFilters): number {
     count += 1;
   }
   if (filters.categoryText.trim().length > 0) {
+    count += 1;
+  }
+  if (filters.emitterCategories.length > 0) {
     count += 1;
   }
   if (filters.operatorText.trim().length > 0) {

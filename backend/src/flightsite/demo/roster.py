@@ -29,18 +29,44 @@ scenario types observable within the first simulated 10 minutes" acceptance
 criterion holds regardless of population size or random chance. The bulk of
 the roster (mostly :attr:`Category.COMMERCIAL`) spawns throughout the whole
 period, which is what gives the population its ongoing rotation.
+
+What aircraft say about themselves (slice 086)
+----------------------------------------------
+
+Profiles also carry an ADS-B emitter category, an autopilot-selected altitude
+and, for one aircraft, a decoder emergency state — the three fields slice 086
+captures — so the demo, the e2e suite and the visual baselines can see them:
+
+* **Emitter categories** follow the scenario category
+  (:data:`EMITTER_CATEGORIES`): airliners ``A3``, government jets ``A2``,
+  police helicopters ``A7``, GA traffic ``A1``. Mode S-only and MLAT-only
+  aircraft carry none, because neither is heard over ADS-B, and military
+  traffic carries none either, which keeps "no category" visible in the demo.
+* **Selected altitude** is set on airline traffic at cruise: the cruise level
+  it was assigned, rounded to the thousand feet a crew would dial in.
+* **One rotorcraft with no metadata** (:attr:`Category.ROTORCRAFT`): an ``A7``
+  that no demo registry row describes, so the Live Map draws the helicopter
+  silhouette from the emitter category alone.
+* **One decoder-only emergency**: an airliner that broadcasts the ``nordo``
+  emergency state for two minutes while its squawk stays ordinary — the case
+  that raises an emergency naming the decoder as its source.
+
+All of it is derived without drawing from the seeded
+:class:`random.Random` for the existing profiles, and the two new profiles are
+built *after* the weighted bulk, so every profile an earlier build produced is
+byte-for-byte the same one.
 """
 
 from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
 
 from flightsite.demo.motion import offset_position
-from flightsite.ingest.types import Position, PositionSource
+from flightsite.ingest.types import DecoderEmergency, Position, PositionSource
 
 #: How much larger the roster is than the requested concurrent population, to
 #: account for aircraft that are only transmitting part of the time. See the
@@ -82,15 +108,36 @@ class Category(StrEnum):
     GROUND = "ground"
     RARE = "rare"
     FIRST_EVER = "first_ever"
+    #: A helicopter no demo registry row describes (slice 086).
+    ROTORCRAFT = "rotorcraft"
+
+
+#: The ADS-B emitter category each scenario category transmits (slice 086).
+#: Absent means none — see the module docstring for why those three.
+EMITTER_CATEGORIES: Final[dict[Category, str]] = {
+    Category.COMMERCIAL: "A3",
+    Category.GOVERNMENT: "A2",
+    Category.POLICE: "A7",
+    Category.RARE: "A2",
+    Category.FIRST_EVER: "A1",
+    Category.ROTORCRAFT: "A7",
+}
 
 
 @dataclass(frozen=True, slots=True)
 class EmergencyEvent:
-    """A temporary squawk override applied within an aircraft's active window."""
+    """A temporary emergency applied within an aircraft's active window.
 
-    squawk: str
+    ``squawk`` overrides the transponder code for the window; ``None`` leaves
+    the ordinary code in place, which is how a decoder-only emergency (slice
+    086) is expressed — ``decoder_emergency`` is then the emergency state the
+    decoder reports for the same window.
+    """
+
+    squawk: str | None
     start_offset_s: float
     duration_s: float
+    decoder_emergency: DecoderEmergency | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +179,10 @@ class AircraftProfile:
     squawk: str
     rssi_db: float
     emergency: EmergencyEvent | None = None
+    #: ADS-B emitter category (slice 086); ``None`` transmits none.
+    emitter_category: str | None = None
+    #: Autopilot-selected altitude (slice 086); ``None`` reports none.
+    selected_altitude_ft: float | None = None
 
 
 AIRLINE_CALLSIGN_PREFIXES: Final[tuple[str, ...]] = (
@@ -565,6 +616,78 @@ def _build_emergency(
     )
 
 
+def _build_rotorcraft(rng: random.Random, used_icao: set[str], center: Position) -> AircraftProfile:
+    """A local helicopter that no demo registry row describes (slice 086).
+
+    Its only statement of what it is is the ``A7`` emitter category, which is
+    the point: the Live Map draws it as a rotorcraft from that alone.
+    """
+    start = _local_start(rng, center)
+    spawn_tick, active_ticks = _spawn_schedule(rng, early=True, active_range_s=(600, 1200))
+    turn_rate = rng.uniform(1.0, 3.0) * rng.choice((-1.0, 1.0))
+    return AircraftProfile(
+        icao=_unique_icao(rng, used_icao),
+        callsign=_general_aviation_callsign(rng),
+        category=Category.ROTORCRAFT,
+        position_source="adsb",
+        spawn_tick=spawn_tick,
+        active_ticks=active_ticks,
+        rare_loop_modulus=1,
+        once=False,
+        start=start,
+        heading_deg=rng.uniform(0.0, 360.0),
+        speed_kt=rng.uniform(70.0, 110.0),
+        turn_rate_deg_s=turn_rate,
+        reports_speed_and_track=True,
+        base_altitude_ft=rng.uniform(800.0, 1_800.0),
+        climb_fpm=0.0,
+        min_altitude_ft=500.0,
+        max_altitude_ft=2_000.0,
+        on_ground=False,
+        squawk=_octal_squawk(rng),
+        rssi_db=rng.uniform(-16.0, -3.0),
+    )
+
+
+def _build_decoder_emergency(
+    rng: random.Random, used_icao: set[str], center: Position
+) -> AircraftProfile:
+    """An airliner declaring ``nordo`` with no 7600 on its transponder (slice 086).
+
+    Built like the squawk emergencies, but its :class:`EmergencyEvent` leaves
+    the squawk alone and sets the decoder's emergency state instead — the case
+    that raises an emergency naming the decoder as its source. Its squawk is
+    kept clear of the emergency codes so the demo can never turn it into a
+    squawk emergency by chance.
+    """
+    profile = _build_emergency(rng, used_icao, center, squawk="7600", event_offset_s=150.0)
+    ordinary = profile.squawk if profile.squawk not in ("7500", "7600", "7700") else "2000"
+    return replace(
+        profile,
+        squawk=ordinary,
+        emergency=EmergencyEvent(
+            squawk=None, start_offset_s=150.0, duration_s=120.0, decoder_emergency="nordo"
+        ),
+    )
+
+
+def _with_self_description(profile: AircraftProfile) -> AircraftProfile:
+    """Add the emitter category and selected altitude a profile transmits.
+
+    Derived from what the profile already is, with no draw from the roster's
+    random stream — see the module docstring.
+    """
+    category = EMITTER_CATEGORIES.get(profile.category)
+    if profile.category is Category.GROUND and profile.callsign is not None:
+        # Parked airline traffic and GA share the category; the callsign is
+        # what tells them apart (`N123AB` is a US registration, i.e. GA).
+        category = "A1" if profile.callsign.startswith("N") else "A3"
+    selected = None
+    if profile.category is Category.COMMERCIAL and profile.base_altitude_ft is not None:
+        selected = float(round(profile.base_altitude_ft / 1_000.0) * 1_000)
+    return replace(profile, emitter_category=category, selected_altitude_ft=selected)
+
+
 #: ``(builder, weight)`` pairs used to size the bulk of the roster. Weights
 #: are relative, not percentages — see ``_category_counts``.
 _WEIGHTED_CATEGORIES: Final[tuple[tuple[Category, float], ...]] = (
@@ -605,7 +728,10 @@ def build_roster(*, seed: int, population: int, center: Position) -> tuple[Aircr
         representative (each guaranteed to spawn within
         :data:`EARLY_SPAWN_WINDOW_S`) plus the weighted bulk population, plus
         exactly one first-ever aircraft and two dedicated emergency-squawk
-        aircraft (7700 then 7600).
+        aircraft (7700 then 7600), plus — since slice 086 — one rotorcraft
+        with no metadata and one decoder-only (``nordo``) emergency, all of
+        them carrying the emitter category and selected altitude
+        :func:`_with_self_description` gives them.
     """
     if population < 1:
         raise ValueError("population must be at least 1")
@@ -646,12 +772,17 @@ def build_roster(*, seed: int, population: int, center: Position) -> tuple[Aircr
         for _ in range(count):
             profiles.append(builder())
 
-    return tuple(profiles)
+    # Slice 086's two, after the bulk so every draw above is what it was.
+    profiles.append(_build_rotorcraft(rng, used_icao, center))
+    profiles.append(_build_decoder_emergency(rng, used_icao, center))
+
+    return tuple(_with_self_description(profile) for profile in profiles)
 
 
 __all__ = [
     "AIRLINE_CALLSIGN_PREFIXES",
     "EARLY_SPAWN_WINDOW_S",
+    "EMITTER_CATEGORIES",
     "GOVERNMENT_CALLSIGN_PREFIXES",
     "MILITARY_ALTITUDE_BLOCKS_FT",
     "MILITARY_CALLSIGN_PREFIXES",

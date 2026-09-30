@@ -28,6 +28,13 @@ from pydantic import BaseModel, ConfigDict, Field
 #: position (Mode S only), which is a first-class live entry, not an error.
 PositionSourceLiteral = Literal["adsb", "mlat", "none", "other"]
 
+#: ``docs/API.md`` §2.8's decoder emergency-state vocabulary (slice 086);
+#: :data:`flightsite.ingest.types.DecoderEmergency` is the same six values.
+DecoderEmergencyLiteral = Literal["general", "lifeguard", "minfuel", "nordo", "unlawful", "downed"]
+
+#: An ADS-B emitter category, ``A0``-``D7`` (slice 086, ``docs/API.md`` §3.3).
+EmitterCategoryField = Annotated[str, Field(pattern=r"^[A-D][0-7]$", examples=["A3"])]
+
 #: §2.2: UTC ISO-8601 with a ``Z`` suffix and millisecond precision.
 IsoTimestamp = Annotated[str, Field(examples=["2026-08-31T14:03:22.418Z"])]
 
@@ -147,6 +154,13 @@ class AircraftView(_Model):
     vertical_rate_fpm: float | None = None
     squawk: str | None = None
     emergency: Literal["7500", "7600", "7700"] | None = None
+    #: The ADS-B emergency/priority status, independent of the squawk
+    #: (slice 086). ``null`` when none is declared or none was received.
+    decoder_emergency: DecoderEmergencyLiteral | None = None
+    #: ADS-B emitter category (slice 086).
+    emitter_category: EmitterCategoryField | None = None
+    #: Autopilot-selected altitude, feet: the MCP/FCU value, else the FMS one.
+    selected_altitude_ft: float | None = None
     on_ground: bool | None = None
 
     distance_nm: float | None = None
@@ -250,6 +264,9 @@ class AircraftHistoryRow(_Model):
     operator: str | None = None
     operator_group: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086);
+    #: decoder-reported, so it has no ``provenance`` entry.
+    emitter_category: EmitterCategoryField | None = None
     first_seen: IsoTimestamp
     last_seen: IsoTimestamp
     sighting_count: int
@@ -288,6 +305,8 @@ class AircraftDetail(_Model):
     operator_group: str | None = None
     owner: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086).
+    emitter_category: EmitterCategoryField | None = None
     #: True when this airframe is in the live picture right now — the
     #: frontend's cue to offer a jump to its Live Map selection.
     live: bool

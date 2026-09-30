@@ -23,6 +23,7 @@ const KEYS = {
   altitudeMaxFt: "alt_max",
   maxDistanceNm: "dist",
   categoryText: "cat",
+  emitterCategories: "ecat",
   operatorText: "op",
   operatorGroupText: "opg",
   classifications: "cls",
@@ -41,6 +42,10 @@ const CLASSIFICATION_FLAGS: readonly ClassificationFlag[] = [
   "law_enforcement",
 ];
 const GROUND_MODES: readonly GroundTrafficMode[] = ["show", "dim", "hide"];
+
+/** `A0`–`D7` (slice 086). A hand-edited `ecat=a3,zz` keeps `A3` and drops
+ * the junk, like every other list here. */
+const EMITTER_CATEGORY_PATTERN = /^[A-D][0-7]$/;
 
 function parseFiniteNumber(value: string | null): number | null {
   if (value === null || value.trim().length === 0) {
@@ -80,6 +85,9 @@ export function serializeFiltersToSearchParams(
   }
   if (filters.categoryText.trim().length > 0) {
     params.set(KEYS.categoryText, filters.categoryText);
+  }
+  if (filters.emitterCategories.length > 0) {
+    params.set(KEYS.emitterCategories, filters.emitterCategories.join(","));
   }
   if (filters.operatorText.trim().length > 0) {
     params.set(KEYS.operatorText, filters.operatorText);
@@ -138,6 +146,13 @@ export function parseFiltersFromSearchParams(
     altitudeMaxFt: parseFiniteNumber(params.get(KEYS.altitudeMaxFt)),
     maxDistanceNm: parseFiniteNumber(params.get(KEYS.maxDistanceNm)),
     categoryText: params.get(KEYS.categoryText) ?? DEFAULT_FILTERS.categoryText,
+    emitterCategories: [
+      ...new Set(
+        parseList(params.get(KEYS.emitterCategories))
+          .map((entry) => entry.toUpperCase())
+          .filter((entry) => EMITTER_CATEGORY_PATTERN.test(entry)),
+      ),
+    ],
     operatorText: params.get(KEYS.operatorText) ?? DEFAULT_FILTERS.operatorText,
     operatorGroupText:
       params.get(KEYS.operatorGroupText) ?? DEFAULT_FILTERS.operatorGroupText,

@@ -61,6 +61,7 @@ from flightsite.sightings.vocabulary import (
     EMERGENCY_SQUAWKS,
     ClosureReason,
     SightingEventType,
+    declared_emergency,
     outranks_severity,
 )
 
@@ -183,6 +184,22 @@ class ActiveSighting:
     #: is what makes ``emergency_start`` fire once per episode rather than once
     #: per observation.
     emergency_active: bool = False
+    #: The emergency state the decoder currently reports (slice 086), the
+    #: second emergency source beside the squawk. Not persisted: it is the
+    #: decoder's live statement, not a fact about the flight —
+    #: :attr:`had_emergency` is that fact, and it latches for either source.
+    decoder_emergency: str | None = None
+    #: ``(source, kind)`` of the emergency episode currently open, for the
+    #: ``emergency_end`` that closes it; ``None`` outside an episode.
+    emergency_declared: tuple[str, str] | None = None
+
+    #: The latest ADS-B emitter category this sighting has seen (slice 086).
+    #: Not a sighting column: it is written to the *airframe*
+    #: (``aircraft.emitter_category``) on every flush, because the category
+    #: describes the aircraft rather than the flight. ``None`` until one
+    #: arrives, and then never cleared — the live record's own merge is sticky
+    #: for it, so an update without one is not a statement that it changed.
+    emitter_category: str | None = None
 
     #: Externally reported route (slice 026). Never written by
     #: :meth:`observe` — no decoder transmits a route — and never guessed:
@@ -327,6 +344,8 @@ class ActiveSighting:
             self.last_seen_ms = at_ms
 
         self._observe_flight_context(record, at_ms)
+        if record.emitter_category is not None:
+            self.emitter_category = record.emitter_category
         self._observe_position_character(record)
         self._observe_extremes(record, at_ms)
         if counted:
@@ -367,27 +386,57 @@ class ActiveSighting:
             self.squawk_last = squawk
             self.flush_immediately = True
 
-        self._observe_emergency(squawk, at_ms)
+        self._observe_emergency(squawk, record.decoder_emergency, at_ms)
 
-    def _observe_emergency(self, squawk: str | None, at_ms: int) -> None:
-        """Record an emergency squawk appearing, and clearing again.
+    def _observe_emergency(
+        self, squawk: str | None, decoder_emergency: str | None, at_ms: int
+    ) -> None:
+        """Record an emergency being declared, and no longer being declared.
 
-        A ``None`` squawk means the decoder did not report one on this poll,
-        never that the code was cancelled, so it ends nothing — the same rule
-        the live record's merge semantics apply to every field.
+        Two sources declare one (slice 086): an emergency squawk, and the
+        decoder's emergency state. An *episode* is the span during which
+        either does, so an aircraft squawking 7600 that also broadcasts
+        ``nordo`` — the ordinary case — opens one episode, not two, and
+        ``had_emergency`` latches the same way for both.
+
+        The two sources are read differently, each by its own merge rule in
+        :mod:`flightsite.live.aircraft`. A ``None`` squawk means the decoder did
+        not report one on this poll, never that the code was cancelled, so it
+        changes nothing. The decoder's emergency state is its current
+        statement, so ``None`` there *is* the decoder saying it has ended.
+
+        The ``emergency_start`` payload names the declaring ``source``
+        (``squawk`` or ``decoder``) and the ``kind``, squawk first when both
+        declare (:func:`~flightsite.sightings.vocabulary.declared_emergency`);
+        ``emergency_end`` repeats the pair for the episode it closes.
         """
-        if squawk is None:
-            return
-        emergency = squawk in EMERGENCY_SQUAWKS
-        if emergency and not self.emergency_active:
-            self.emergency_active = True
+        if squawk is not None:
+            self.emergency_active = squawk in EMERGENCY_SQUAWKS
+        self.decoder_emergency = decoder_emergency
+        declared = declared_emergency(
+            self.squawk_last if self.emergency_active else None, self.decoder_emergency
+        )
+        previous = self.emergency_declared
+        if declared is not None:
+            self.emergency_declared = declared
+        if declared is not None and previous is None:
             self.had_emergency = True
             self.flush_immediately = True
-            self._emit(SightingEventType.EMERGENCY_START, at_ms, {"squawk": squawk})
-        elif not emergency and self.emergency_active:
-            self.emergency_active = False
+            source, kind = declared
+            self._emit(
+                SightingEventType.EMERGENCY_START,
+                at_ms,
+                {"squawk": squawk, "source": source, "kind": kind},
+            )
+        elif declared is None and previous is not None:
+            self.emergency_declared = None
             self.flush_immediately = True
-            self._emit(SightingEventType.EMERGENCY_END, at_ms, {"squawk": squawk})
+            source, kind = previous
+            self._emit(
+                SightingEventType.EMERGENCY_END,
+                at_ms,
+                {"squawk": squawk, "source": source, "kind": kind},
+            )
 
     def _observe_position_character(self, record: LiveAircraft) -> None:
         """Record what *kind* of observation this sighting has contained.
