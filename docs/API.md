@@ -570,6 +570,98 @@ Sighting detail sketch:
 SPEC §19). Active sightings return the live full-resolution track instead, with
 `ended_at: null` and `open: true`.
 
+#### 3.7.1 What was that? — `GET /api/v1/overhead` (slice 090)
+
+"What just flew over?" for any moment: the sightings whose **closest stored position
+fix** within `window` minutes either side of `at` came nearest the receiver, nearest
+first (issue #233).
+
+| Param | Default | Bounds | Meaning |
+|---|---|---|---|
+| `at` | now | ISO-8601 | The moment asked about. A value without an offset is UTC (§2.2). |
+| `window` | `10` | `1`–`60` | Minutes either side of `at`; the window `[at − window, at + window]` is inclusive. |
+| `limit` | `10` | `1`–`50` | Ranked results returned. |
+
+Anything outside those bounds, or an unparseable `at`, is a `422`.
+
+```json
+{
+  "at": "2026-08-30T22:10:00.000Z",
+  "window_minutes": 10,
+  "window_start": "2026-08-30T22:00:00.000Z",
+  "window_end": "2026-08-30T22:20:00.000Z",
+  "method": "closest_position_fix",
+  "receiver_configured": true,
+  "reason": null,
+  "candidates": 14,
+  "truncated": false,
+  "items": [
+    {
+      "sighting_id": 88213,
+      "icao": "ae1463",
+      "callsign": "RCH492",
+      "registration": "05-5140",
+      "aircraft_type": "C17",
+      "model": "C-17A Globemaster III",
+      "operator": "United States Air Force",
+      "open": false,
+      "fix_at": "2026-08-30T22:12:41.000Z",
+      "lat": 47.49712,
+      "lon": -122.30215,
+      "altitude_ft": 4200,
+      "distance_nm": 2.968,
+      "distance_kind": "slant",
+      "ground_distance_nm": 2.831,
+      "bearing_deg": 5.12,
+      "position_source": "adsb"
+    }
+  ]
+}
+```
+
+**Closest position fix, never interpolated.** Every row is one point the sighting
+actually stored — a closed sighting's simplified packed track, an open one's
+checkpointed tail — with that point's own time (`fix_at`), altitude and
+`position_source`. Nothing is interpolated between two stored points or extrapolated
+beyond the first or last, which is what keeps this a single-moment lookup rather than
+the animated playback SPEC §79 keeps out of scope. `method` is always
+`closest_position_fix` so a client can say so beside the numbers. The price, stated
+rather than hidden: a straight leg that simplification kept only as its two
+endpoints can pass overhead with neither endpoint inside the window, and such a
+sighting is left out rather than represented by a position it never reported.
+
+**Distance.** `ground_distance_nm` is the great-circle distance from the receiver,
+measured exactly as every other receiver-relative range is. Results are ranked by
+`distance_nm`, which is the **slant** (line-of-sight) distance when the fix carries an
+altitude — ground distance and height above the antenna as the two legs of a flat right
+triangle, the height being the reported altitude minus the configured
+`antenna_height_ft` (or the altitude itself when that is unset) — and the ground
+distance when it does not (`distance_kind` says which). A missing altitude is unknown,
+not zero (§2.7). Ties go to the earlier fix, then the lower sighting id.
+
+**Which sightings are considered.** Sightings with a position whose span overlaps the
+window: any still open that began before the window's end, plus any that began within
+24 hours before the window's start and had not ended before it. `candidates` counts
+them. A closed sighting that began more than 24 hours earlier — a day of continuous
+reception with no ten-minute gap, i.e. a parked, transmitting aircraft — is outside the
+lookup. At most 2,000 candidates are considered, keeping those whose recorded closest
+approach could come nearest; `truncated: true` says the cap was reached. Open sightings
+are read from their stored checkpoints, never from the live picture, so the last flush
+interval (about 30 s) of a sighting in progress is not visible yet.
+
+**No receiver location.** With no receiver position set there is nothing to measure
+from, and the answer is an empty `200` — `receiver_configured: false`,
+`reason: "receiver_location_unset"`, `items: []` — the way every other
+receiver-relative field degrades to unknown rather than failing (§2.7). The window is
+still echoed.
+
+**Cost.** The lookup's cost follows the traffic around the window, not the length of
+history: both candidate reads are bounded index ranges (`ix_sightings_started`,
+`ix_sightings_open`), and packed tracks are decoded only for candidates whose recorded
+closest approach could still beat the results already found. The analytics query
+budget (500 ms, `docs/PERFORMANCE.md`) applies to a ±10-minute window;
+`flightsite-storage-qual` probes it on the multi-year synthetic history.
+
 ### 3.8 Analytics — slice 031
 
 All analytics endpoints accept `preset=today|7d|30d|ytd|t0` (default `today`), or

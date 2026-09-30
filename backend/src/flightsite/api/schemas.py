@@ -402,6 +402,64 @@ class SightingListResponse(_Model):
     offset: int
 
 
+class OverheadPassRow(_Model):
+    """One ranked result of ``GET /api/v1/overhead`` (roadmap slice 090).
+
+    The sighting, who it was, and its **closest stored position fix** inside
+    the window — a point the sighting actually stored, with that point's own
+    time, altitude and source; never an interpolated position
+    (:mod:`flightsite.sightings.overhead`). Identity fields follow
+    :class:`SightingRow`'s names.
+    """
+
+    sighting_id: int
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    callsign: str | None = None
+    registration: str | None = None
+    aircraft_type: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    #: The sighting has not closed; its fixes come from the checkpointed tail.
+    open: bool
+    #: When the closest stored fix was recorded (§2.2).
+    fix_at: IsoTimestamp
+    lat: float
+    lon: float
+    #: ``null`` where the fix carried no altitude (§2.7).
+    altitude_ft: int | None = None
+    #: What results are ranked by: slant distance when ``altitude_ft`` is
+    #: known, ground distance otherwise — ``distance_kind`` says which.
+    distance_nm: float
+    distance_kind: Literal["slant", "ground"]
+    #: Great-circle distance over the ground, always present.
+    ground_distance_nm: float
+    #: Degrees true from the receiver to the fix.
+    bearing_deg: float
+    position_source: PositionSourceLiteral
+
+
+class OverheadResponse(_Model):
+    """``GET /api/v1/overhead`` — "What was that?" (roadmap slice 090)."""
+
+    #: The moment asked about, and the window around it (§2.2, inclusive).
+    at: IsoTimestamp
+    window_minutes: int
+    window_start: IsoTimestamp
+    window_end: IsoTimestamp
+    #: Always ``closest_position_fix``: every row is a stored fix, never an
+    #: interpolated position.
+    method: Literal["closest_position_fix"] = "closest_position_fix"
+    #: ``false`` when no receiver location is set; ``items`` is then empty
+    #: and ``reason`` says why, rather than the request failing (§2.7).
+    receiver_configured: bool
+    reason: Literal["receiver_location_unset"] | None = None
+    #: Sightings with a position whose span overlapped the window.
+    candidates: int
+    #: ``true`` if the candidate cap cut the search short.
+    truncated: bool = False
+    items: list[OverheadPassRow] = Field(default_factory=list)
+
+
 class ReceptionStats(_Model):
     """Reception statistics for one sighting — ``docs/API.md`` §3.6, SPEC §51."""
 
@@ -1721,6 +1779,8 @@ __all__ = [
     "IsoTimestamp",
     "LifetimeRecord",
     "NearestAirportView",
+    "OverheadPassRow",
+    "OverheadResponse",
     "PositionSourceLiteral",
     "ReceiverBearingSector",
     "ReceiverBusiestDay",

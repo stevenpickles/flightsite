@@ -65,6 +65,12 @@ export const SHORTCUTS: readonly ShortcutDescriptor[] = [
     group: "Live Map",
   },
   {
+    id: "what-was-that",
+    keys: "W",
+    description: "What was that? — what passed closest overhead",
+    group: "Live Map",
+  },
+  {
     id: "prev-interesting",
     keys: "[",
     description: "Select the previous interesting aircraft",

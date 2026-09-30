@@ -118,8 +118,18 @@ Live Map when complete.
   equivalent: `/` focuses the live search, `L`/`F` toggle the Layers card and
   filter drawer, `Esc` deselects, `H` recentres on the receiver, `[`/`]` step
   through interesting aircraft, `M` toggles the measure tool and `T` toggles
-  trails (roadmap slice 085), and `g` then a letter jumps to any section
-  (§80, roadmap slice 082).
+  trails (roadmap slice 085), `W` opens "What was that?" (roadmap slice 090),
+  and `g` then a letter jumps to any section (§80, roadmap slice 082).
+- **What was that?** (roadmap slice 090, issue #233): pick a moment — now by
+  default, in the receiver's timezone — and a window of ±5, ±10 or ±30
+  minutes, and get the aircraft that passed closest to the receiver, nearest
+  first, with altitude, distance, bearing, the time of the closest fix and
+  links to the sighting and the aircraft. Distances are to each aircraft's
+  **closest stored position fix**, never an interpolated position, and the
+  dialog says so. Opened from a button under the recentre control on the
+  Live Map (at the top of the Activity sheet on phones), from the Activity
+  page header, or with `W`. A single-moment lookup; animated playback stays
+  out of scope (§79).
 - Copy-link, `navigator.share` (where supported) and a QR code of the current
   URL, on the aircraft detail, sighting detail, and Live Map (selected
   aircraft) views — a copied or scanned link reopens the same view (roadmap

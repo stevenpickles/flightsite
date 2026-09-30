@@ -58,6 +58,7 @@ import {
   type PhoneCardId,
 } from "@/features/map/phone/usePhoneMapStore";
 import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
+import { OverheadButton } from "@/features/overhead/OverheadButton";
 import { TodayPanel } from "@/features/today/TodayPanel";
 import { cn } from "@/lib/utils";
 
@@ -181,6 +182,8 @@ export function PhoneMapControls() {
         </PanelRegion>
       </Sheet>
       <Sheet card="activity" openCard={openCard}>
+        {/* Slice 090's phone opener — see `OverheadButton`. */}
+        <OverheadButton placement="sheet" className="shrink-0" />
         <PanelRegion headingId="activity-heading" label="Activity">
           <ActivityPanel placement="docked" />
         </PanelRegion>

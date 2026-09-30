@@ -22,6 +22,8 @@ import { RecenterButton } from "@/features/map/RecenterButton";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useActiveBasemap } from "@/features/map/useActiveBasemap";
 import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
+import { OverheadButton } from "@/features/overhead/OverheadButton";
+import { OverheadDialog } from "@/features/overhead/OverheadDialog";
 import { TodayPanel } from "@/features/today/TodayPanel";
 
 const item = requireNavItem("/");
@@ -70,7 +72,10 @@ function SkipAircraftListLink() {
  * `useKeyboardShortcuts` in `AppShell` and reaching this page's own
  * components through `lib/shortcuts/mapShortcutTargets`. Roadmap slice 085
  * adds the distance/bearing `MeasureControl` beside the recentre button,
- * shared by both layouts like it.
+ * shared by both layouts like it. Roadmap slice 090 adds "What was that?"
+ * (`features/overhead`): one dialog for both layouts, opened by `W`, by a
+ * pill under the recentre button on desktop, and from the top of the
+ * Activity sheet on phones.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -133,6 +138,7 @@ export function LiveMapPage() {
       ) : (
         <DesktopMapControls hideNonPositioned={hideNonPositioned} />
       )}
+      <OverheadDialog />
     </div>
   );
 }
@@ -199,6 +205,7 @@ function DesktopMapControls({
         <FilterDrawer />
       </div>
       <QuickFilterChips />
+      <OverheadButton placement="map" />
       <PanelRegion headingId="activity-heading" label="Activity">
         <ActivityPanel />
       </PanelRegion>

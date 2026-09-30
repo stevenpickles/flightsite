@@ -36,6 +36,15 @@ from flightsite.analytics.queries import (
 )
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
+from flightsite.api.overhead import (
+    DEFAULT_OVERHEAD_LIMIT,
+    DEFAULT_WINDOW_MINUTES,
+    MAX_OVERHEAD_LIMIT,
+    MAX_WINDOW_MINUTES,
+    MINUTE_MS,
+    OverheadRepository,
+    overhead_payload,
+)
 from flightsite.api.receiver_stats import (
     DEFAULT_SIGNAL_BUCKET_WIDTH_DB,
     MAX_SIGNAL_BUCKET_WIDTH_DB,
@@ -66,6 +75,7 @@ from flightsite.api.schemas import (
     FeederHistoryWindowLiteral,
     FeedersResponse,
     InterestingAircraftResponse,
+    OverheadResponse,
     ReceiverInfo,
     ReceiverLifetimeStats,
     ReceiverMetricSeries,
@@ -92,7 +102,7 @@ from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
 from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
-from flightsite.db import to_epoch_ms, utc_now_ms
+from flightsite.db import Database, to_epoch_ms, utc_now_ms
 from flightsite.diagnostics import collect_diagnostics
 from flightsite.feeders import FeederService, empty_report
 from flightsite.readiness import ReadinessRegistry
@@ -817,6 +827,64 @@ async def sighting_detail(
             },
         )
     return detail
+
+
+@router.get(
+    "/overhead",
+    response_model=OverheadResponse,
+    tags=["history"],
+    summary="What passed closest to the receiver around a moment",
+)
+async def overhead(
+    request: Request,
+    at: Annotated[
+        datetime | None,
+        Query(description="The moment asked about (§2.2). Defaults to now; no offset means UTC."),
+    ] = None,
+    window: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=MAX_WINDOW_MINUTES,
+            description="Minutes either side of `at` to search.",
+        ),
+    ] = DEFAULT_WINDOW_MINUTES,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_OVERHEAD_LIMIT, description="Ranked results to return.")
+    ] = DEFAULT_OVERHEAD_LIMIT,
+) -> dict[str, Any]:
+    """The "What was that?" lookup — roadmap slice 090, issue #233, ``docs/API.md`` §3.7.1.
+
+    The sightings whose **closest stored position fix** inside
+    ``[at - window, at + window]`` came nearest the receiver, nearest first.
+    Every row is a point a sighting actually stored — never a position
+    interpolated between stored points or beyond them — so a single-moment
+    lookup stays one (SPEC §79 keeps playback out of scope). How candidates
+    are found and how distance is measured: :mod:`flightsite.api.overhead`
+    and :mod:`flightsite.sightings.overhead`.
+
+    Measured from the position the live store measures every other range
+    from. With no receiver location set there is nothing to measure from:
+    the answer is an empty 200 with ``receiver_configured: false`` and a
+    ``reason``, the way every other receiver-relative field degrades to
+    unknown rather than an error (§2.7).
+    """
+    context = _context(request)
+    at_ms = _bound_ms(at)
+    if at_ms is None:
+        at_ms = utc_now_ms()
+    receiver = context.live.receiver_location
+    if receiver is None:
+        return overhead_payload(at_ms=at_ms, window_minutes=window, result=None)
+    database: Database = request.app.state.database
+    result = await OverheadRepository(database).closest_passes(
+        receiver=receiver,
+        from_ms=at_ms - window * MINUTE_MS,
+        to_ms=at_ms + window * MINUTE_MS,
+        limit=limit,
+        antenna_height_ft=context.settings.location.antenna_height_ft,
+    )
+    return overhead_payload(at_ms=at_ms, window_minutes=window, result=result)
 
 
 # ---------------------------------------------------------------- analytics
