@@ -15,6 +15,17 @@
  * only), which is a first-class live entry rather than an error. */
 export type PositionSource = "adsb" | "mlat" | "none" | "other";
 
+/** §2.8's decoder emergency-state vocabulary (slice 086): the ADS-B
+ * emergency/priority status, broadcast independently of the squawk. "No
+ * emergency" is `null`, not a member. */
+export type DecoderEmergency =
+  | "general"
+  | "lifeguard"
+  | "minfuel"
+  | "nordo"
+  | "unlawful"
+  | "downed";
+
 /** Lifecycle state of a live record; `stale` aircraft fade rather than vanish. */
 export type AircraftState = "live" | "stale";
 
@@ -103,6 +114,15 @@ export interface LiveAircraft {
   vertical_rate_fpm: number | null;
   squawk: string | null;
   emergency: "7500" | "7600" | "7700" | null;
+  /** The decoder's emergency state (slice 086) — separate from `emergency`,
+   * which only ever restates the squawk. Optional because a backend older
+   * than slice 086 does not send it; read it as `?? null`. */
+  decoder_emergency?: DecoderEmergency | null;
+  /** ADS-B emitter category, `"A0"`–`"D7"` (slice 086). Optional for the
+   * same reason as `decoder_emergency`. */
+  emitter_category?: string | null;
+  /** Autopilot-selected altitude in feet — MCP/FCU, else FMS (slice 086). */
+  selected_altitude_ft?: number | null;
   on_ground: boolean | null;
 
   distance_nm: number | null;

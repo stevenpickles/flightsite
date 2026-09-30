@@ -73,6 +73,16 @@ difference matters to the cache, not to a client.
 ``emergency`` is not a separate decoder field — it is the squawk restated when
 the squawk is one of the three emergency codes (:data:`EMERGENCY_SQUAWKS`), so
 a client does not have to carry the code list to render an emergency.
+``decoder_emergency`` (slice 086) *is* a separate decoder field — the ADS-B
+emergency/priority status, which an aircraft broadcasts independently of its
+squawk — and it stays separate here rather than being folded into
+``emergency``: the two can disagree (``minfuel`` has no squawk at all), and
+§3.3's ``emergency`` has always meant "the squawk says so". A client that
+wants "is this aircraft declaring an emergency at all" reads both.
+``emitter_category`` and ``selected_altitude_ft`` are decoder-direct too, and
+all three are ``null`` whenever the decoder has not reported them — the same
+present-and-``null`` shape as every other optional field, so the per-aircraft,
+per-second payload grows by three short keys and nothing else.
 
 Provenance
 ----------
@@ -395,6 +405,9 @@ def aircraft_payload(
         "vertical_rate_fpm": record.vertical_rate_fpm,
         "squawk": record.squawk,
         "emergency": _emergency(record.squawk),
+        "decoder_emergency": record.decoder_emergency,
+        "emitter_category": record.emitter_category,
+        "selected_altitude_ft": record.selected_altitude_ft,
         "on_ground": record.on_ground,
         "distance_nm": _round(record.distance_nm, DISTANCE_DECIMALS),
         "bearing_deg": _round(record.bearing_deg, BEARING_DECIMALS),
