@@ -49,6 +49,14 @@ export interface NotificationState {
   permission: NotificationPermissionState;
   /** The user's choices, mirrored from `config.notifications`. */
   preferences: NotificationConfig;
+  /**
+   * Whether feeder outages notify, mirrored from
+   * `config.self_alerts.feeder_offline_enabled` (roadmap slice 088). The one
+   * self-alert toggle the client has to apply itself: slice 077's
+   * `feeder_offline` events are emitted whatever it says, while the other
+   * two conditions' events exist only while their toggle is on.
+   */
+  feederSelfAlerts: boolean;
   /** Notifications actually shown this session. */
   delivered: number;
   /**
@@ -66,6 +74,8 @@ export interface NotificationState {
   setPermission: (permission: NotificationPermissionState) => void;
   /** Mirrors the server's notification settings. */
   setPreferences: (preferences: NotificationConfig) => void;
+  /** Mirrors `self_alerts.feeder_offline_enabled`. */
+  setFeederSelfAlerts: (enabled: boolean) => void;
   recordDelivered: () => void;
   recordSuppressed: () => void;
   recordError: (message: string) => void;
@@ -74,13 +84,21 @@ export interface NotificationState {
 
 function initialState(): Pick<
   NotificationState,
-  "permission" | "preferences" | "delivered" | "suppressed" | "lastError"
+  | "permission"
+  | "preferences"
+  | "feederSelfAlerts"
+  | "delivered"
+  | "suppressed"
+  | "lastError"
 > {
   return {
     // A plain property read of `Notification.permission`, which is why it is
     // safe at module scope: it neither prompts nor can it.
     permission: readPermissionState(),
     preferences: NO_NOTIFICATIONS,
+    // Off until the config document says otherwise, for the reason
+    // `preferences` starts at nothing (see the module comment).
+    feederSelfAlerts: false,
     delivered: 0,
     suppressed: 0,
     lastError: null,
@@ -102,6 +120,10 @@ export const useNotificationStore = create<NotificationState>((set) => ({
 
   setPreferences: (preferences) => {
     set({ preferences });
+  },
+
+  setFeederSelfAlerts: (feederSelfAlerts) => {
+    set({ feederSelfAlerts });
   },
 
   recordDelivered: () => {
