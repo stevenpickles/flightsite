@@ -23,7 +23,8 @@
  * only reach into whatever `FilterDrawer` and `LayersControl` currently
  * have registered via `mapShortcutTargets`, or into the Live Map's own
  * stores (`H` recentres, `M` toggles the measure tool, `T` toggles
- * trails) — on every other route they are simply never dispatched. `M` and
+ * trails; since roadmap slice 090 `W` opens "What was that?") — on every
+ * other route they are simply never dispatched. `M` and
  * `T` go straight to their stores, like `H`, because both are persisted or
  * shared state the map reads rather than a component's local flag. A bare
  * `m` never collides with the `g`-sequence's `g` then `m` ("go to the Live
@@ -45,6 +46,7 @@ import { useMeasureStore } from "@/features/map/measure/useMeasureStore";
 import { useMapCenterRequestStore } from "@/features/map/store/useMapCenterRequestStore";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useOverlayVisibilityStore } from "@/features/map/store/useOverlayVisibilityStore";
+import { useOverheadStore } from "@/features/overhead/useOverheadStore";
 import { isTypingTarget } from "@/lib/shortcuts/isTypingTarget";
 import { getMapShortcutTargets } from "@/lib/shortcuts/mapShortcutTargets";
 import { NAVIGATION_LETTERS } from "@/lib/shortcuts/registry";
@@ -184,6 +186,10 @@ export function useKeyboardShortcuts(): void {
         case "t":
           event.preventDefault();
           useOverlayVisibilityStore.getState().toggleTrails();
+          break;
+        case "w":
+          event.preventDefault();
+          useOverheadStore.getState().openDialog();
           break;
         default:
           break;
