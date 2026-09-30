@@ -12,6 +12,7 @@ import { MetadataSection } from "@/features/settings/sections/MetadataSection";
 import { NotificationsSection } from "@/features/settings/sections/NotificationsSection";
 import { ReceiverSection } from "@/features/settings/sections/ReceiverSection";
 import { RetentionSection } from "@/features/settings/sections/RetentionSection";
+import { SelfAlertsSection } from "@/features/settings/sections/SelfAlertsSection";
 import { UnitsTimeSection } from "@/features/settings/sections/UnitsTimeSection";
 import { useConfigQuery } from "@/lib/api/config";
 
@@ -101,6 +102,7 @@ export function SettingsPage() {
         <DisplaySection config={config} />
         <AlertsSection config={config} />
         <NotificationsSection config={config} />
+        <SelfAlertsSection config={config} />
         <EnrichmentSection config={config} hasStoredKey={hasStoredKey} />
         <MetadataSection timezone={config.timezone} config={config} />
         <RetentionSection config={config} />
