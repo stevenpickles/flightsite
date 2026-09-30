@@ -2714,7 +2714,7 @@ slices:
     title: "What was that?"
     phase: 9
     branch: "090-what-was-that"
-    status: planned
+    status: merged
     depends_on: ["081"]
     objective: "Answer 'what just flew over?' for any moment: the aircraft that passed closest overhead near a chosen time (issue #233)."
     scope:
