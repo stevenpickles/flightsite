@@ -18,6 +18,9 @@
  * Reuses the Aircraft page's pagination controls, which already handle the
  * `null` total (§2.4) this endpoint always returns by falling back to "a full
  * page came back" as the signal there is a next one.
+ *
+ * The header's "What was that?" (roadmap slice 090) opens the same closest-
+ * pass lookup as the Live Map's control.
  */
 
 import { Fragment } from "react";
@@ -36,6 +39,8 @@ import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
+import { OverheadButton } from "@/features/overhead/OverheadButton";
+import { OverheadDialog } from "@/features/overhead/OverheadDialog";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
 
@@ -63,7 +68,11 @@ export function ActivityPage() {
   return (
     <div className="flex h-full flex-col px-4 py-6 md:px-8">
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+          {/* Roadmap slice 090 — see `features/overhead/OverheadButton`. */}
+          <OverheadButton placement="header" />
+        </div>
         <p className="text-sm text-muted-foreground">
           Firsts, records and milestones — what happened while you weren&rsquo;t
           watching.
@@ -158,6 +167,7 @@ export function ActivityPage() {
           )}
         </>
       )}
+      <OverheadDialog />
     </div>
   );
 }
