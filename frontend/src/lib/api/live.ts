@@ -19,12 +19,7 @@ export type PositionSource = "adsb" | "mlat" | "none" | "other";
  * emergency/priority status, broadcast independently of the squawk. "No
  * emergency" is `null`, not a member. */
 export type DecoderEmergency =
-  | "general"
-  | "lifeguard"
-  | "minfuel"
-  | "nordo"
-  | "unlawful"
-  | "downed";
+  "general" | "lifeguard" | "minfuel" | "nordo" | "unlawful" | "downed";
 
 /** Lifecycle state of a live record; `stale` aircraft fade rather than vanish. */
 export type AircraftState = "live" | "stale";
