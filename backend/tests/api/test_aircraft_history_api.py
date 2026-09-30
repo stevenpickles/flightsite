@@ -723,3 +723,30 @@ async def test_the_reserved_current_segment_never_reaches_the_detail_route(
 
     assert response.status_code == 200
     assert "error" not in response.json()
+
+
+# ------------------------------------------------------- emitter category
+
+
+async def test_the_list_and_detail_carry_the_last_emitter_category(
+    live_app: LiveApp, rest: AsyncClient
+) -> None:
+    """Slice 086: the airframe's last transmitted category (rev 0019)."""
+    await seed(
+        live_app,
+        SeedAircraft(
+            icao24="ae1463", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS, emitter_category="A7"
+        ),
+        SeedAircraft(icao24="bbbbbb", first_seen_ms=BASE_MS, last_seen_ms=BASE_MS - DAY_MS),
+    )
+
+    listed = {item["icao"]: item for item in (await rest.get("/api/v1/aircraft")).json()["items"]}
+    detail = (await rest.get("/api/v1/aircraft/ae1463")).json()
+
+    assert listed["ae1463"]["emitter_category"] == "A7"
+    assert listed["bbbbbb"]["emitter_category"] is None
+    assert detail["emitter_category"] == "A7"
+    AircraftDetail.model_validate(detail)
+    AircraftHistoryRow.model_validate(listed["ae1463"])
+    # Decoder-reported, so there is nothing to attribute.
+    assert "emitter_category" not in detail["provenance"]

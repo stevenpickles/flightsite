@@ -22,8 +22,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from flightsite.demo.motion import altitude_at, position_at
-from flightsite.demo.roster import PERIOD_S, AircraftProfile
-from flightsite.ingest.types import AircraftStateBatch, AircraftStateUpdate
+from flightsite.demo.roster import PERIOD_S, AircraftProfile, EmergencyEvent
+from flightsite.ingest.types import AircraftStateBatch, AircraftStateUpdate, DecoderEmergency
 
 #: Default reference instant a batch's timestamp is computed from
 #: (``epoch + tick_index`` seconds). A demo scenario is defined purely in terms
@@ -56,14 +56,30 @@ def _active_age_s(profile: AircraftProfile, tick_index: int) -> float | None:
     return float(phase - profile.spawn_tick)
 
 
-def _squawk_at(profile: AircraftProfile, age_s: float) -> str:
+def _emergency_active(profile: AircraftProfile, age_s: float) -> EmergencyEvent | None:
+    """The profile's emergency event if it is in progress at ``age_s``."""
     event = profile.emergency
     if event is None:
-        return profile.squawk
+        return None
     event_end = event.start_offset_s + event.duration_s
-    if event.start_offset_s <= age_s < event_end:
-        return event.squawk
-    return profile.squawk
+    return event if event.start_offset_s <= age_s < event_end else None
+
+
+def _squawk_at(profile: AircraftProfile, age_s: float) -> str:
+    event = _emergency_active(profile, age_s)
+    if event is None or event.squawk is None:
+        return profile.squawk
+    return event.squawk
+
+
+def _decoder_emergency_at(profile: AircraftProfile, age_s: float) -> DecoderEmergency | None:
+    """The decoder emergency state, reported only while the event runs.
+
+    ``None`` outside it is the decoder saying the emergency is over — the
+    field is not sticky (:mod:`flightsite.live.aircraft`).
+    """
+    event = _emergency_active(profile, age_s)
+    return None if event is None else event.decoder_emergency
 
 
 def update_at(
@@ -128,6 +144,10 @@ def update_at(
         messages=int(age_s) + 1,
         seen_s=0.0,
         seen_pos_s=0.0 if position is not None else None,
+        emitter_category=profile.emitter_category,
+        # A selected altitude is an autopilot's, so only while airborne.
+        selected_altitude_ft=None if profile.on_ground else profile.selected_altitude_ft,
+        decoder_emergency=_decoder_emergency_at(profile, age_s),
     )
 
 

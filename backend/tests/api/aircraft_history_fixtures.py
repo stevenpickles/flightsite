@@ -56,6 +56,7 @@ class SeedAircraft:
     max_range_nm: float | None = None
     lowest_alt_ft: int | None = None
     highest_alt_ft: int | None = None
+    emitter_category: str | None = None
 
     registration: str | None = None
     registration_src: str | None = "mictronics"
@@ -118,6 +119,7 @@ class SeedAircraft:
             "max_range_nm": self.max_range_nm,
             "lowest_alt_ft": self.lowest_alt_ft,
             "highest_alt_ft": self.highest_alt_ft,
+            "emitter_category": self.emitter_category,
         }
 
     def resolved_row(self, group_ids: dict[str, int]) -> dict[str, Any] | None:

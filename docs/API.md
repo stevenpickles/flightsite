@@ -202,6 +202,9 @@ and the roadmap. Any document using different spellings is wrong and must be fix
 | Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `opensky` (opt-in, default off) \| `vrs` \| `aerodatabox` \| `heuristic` |
 | Route source | `route_source` / `provenance.route`: `"vrs"` (offline directory) \| `"aerodatabox"` (online provider) |
 | Alert severity | `info` \| `interesting` \| `high` \| `critical` |
+| Decoder emergency state | `decoder_emergency`: `"general"` \| `"lifeguard"` \| `"minfuel"` \| `"nordo"` \| `"unlawful"` \| `"downed"` (slice 086; no emergency is `null`) |
+| Emitter category | `emitter_category`: `"A0"`–`"D7"` (slice 086; ADS-B emitter category set letter + digit) |
+| Emergency source | `emergency_source`: `"squawk"` \| `"decoder"`; `emergency_kind`: the `decoder_emergency` vocabulary (slice 086) |
 
 ### 2.9 Path parameter constraints
 
@@ -308,6 +311,9 @@ Aircraft object (the same shape used by the WebSocket):
   "vertical_rate_fpm": -640,
   "squawk": "4521",
   "emergency": null,
+  "decoder_emergency": null,
+  "emitter_category": "A5",
+  "selected_altitude_ft": 25000,
   "on_ground": false,
   "distance_nm": 18.4,
   "bearing_deg": 31.7,
@@ -359,7 +365,34 @@ Aircraft object (the same shape used by the WebSocket):
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.
 - `state`: `live` | `stale` (past the 15 s threshold, not yet removed).
-- `emergency`: `null` | `"7500"` | `"7600"` | `"7700"`.
+- `emergency`: `null` | `"7500"` | `"7600"` | `"7700"` — the squawk, restated when it
+  is an emergency code. It keeps meaning exactly that; the decoder's own emergency
+  state is the separate `decoder_emergency`.
+- `decoder_emergency` (slice 086): the ADS-B emergency/priority status the aircraft
+  broadcasts, independently of its squawk — `general`, `lifeguard`, `minfuel`,
+  `nordo` (no communications), `unlawful` or `downed`; `null` when it declares none,
+  when the status is a reserved code, or when the decoder has not received one. Not
+  sticky: it is the decoder's *current* statement, and a decoder drops the status
+  once the aircraft stops broadcasting it. Either field being non-null means the
+  aircraft is declaring an emergency; both feed the built-in emergency alert (§3.10).
+- `emitter_category` (slice 086): the ADS-B emitter category, `A0`–`D7`, exactly as
+  the aircraft transmits it (`null` when never received, including on every
+  legacy dump1090-fa feed). Set A is powered aircraft by size/performance, B
+  unpowered and lighter-than-air, C surface vehicles and obstacles, D reserved:
+  `A0` no category information, `A1` light (< 15 500 lb), `A2` small (15 500–75 000
+  lb), `A3` large (75 000–300 000 lb), `A4` high-vortex large (e.g. B757), `A5`
+  heavy (> 300 000 lb), `A6` high performance (> 5 g, > 400 kt), `A7` rotorcraft;
+  `B0` no information, `B1` glider/sailplane, `B2` lighter-than-air, `B3`
+  parachutist/skydiver, `B4` ultralight/hang-glider/paraglider, `B5` reserved, `B6`
+  unmanned aerial vehicle, `B7` space/trans-atmospheric vehicle; `C0` no
+  information, `C1` surface emergency vehicle, `C2` surface service vehicle, `C3`
+  point obstacle, `C4` cluster obstacle, `C5` line obstacle, `C6`–`C7` reserved;
+  `D0`–`D7` reserved. Sticky like other decoder fields.
+- `selected_altitude_ft` (slice 086): the altitude selected on the autopilot, in
+  feet — the mode control panel / flight control unit value when received, else the
+  flight management system's target altitude. The MCP value is preferred because it
+  is what the crew has actually set and what the aircraft will level at; the FMS
+  value is the programmed profile. Sticky; `null` when neither was received.
 - `interesting`: `null` when no active alert match (fields populated from phase 6).
 
 ### 3.4 Interesting aircraft — slice 038/039
@@ -376,6 +409,11 @@ severity. Same aircraft object shape, `interesting` always non-null.
 | `GET /api/v1/aircraft` | Paginated historical aircraft list. Sort keys: `registration`, `icao`, `type`, `operator`, `classification`, `first_seen`, `last_seen`, `sighting_count`, `closest_approach_nm`, `max_range_nm`. Filters: `classification`, `operator_group`, `type`, `q` (search, below). |
 | `GET /api/v1/aircraft/{icao}` | Full aircraft detail: identity, metadata with provenance, classification, lifetime records. |
 | `GET /api/v1/aircraft/{icao}/sightings` | Paginated sightings for one aircraft. |
+
+Both the list rows and the detail carry `emitter_category` (slice 086): the last ADS-B
+emitter category the airframe transmitted (`A0`–`D7`, §3.3 lists them), or `null` if
+it never sent one. It is decoder-reported, so it has no `provenance` entry, and it
+answers "what is this" for an airframe no metadata registry describes.
 
 **Search: `q`** (slice 083). Finds airframes whose **ICAO address, registration, any
 callsign it has flown, ICAO type designator or operator name** starts with `q`:
@@ -745,6 +783,20 @@ The `alert_triggered` and `emergency_squawk` activity events carry `match_id` on
 their payload — the `alert_matches` row the event is about. It is what lets a client
 holding a live event name the match it needs to mark notified; every other payload
 member is described where its producer builds it.
+
+**Emergency sources (slice 086).** A built-in emergency is raised by an emergency
+squawk *or* by the decoder's emergency state (§3.3 `decoder_emergency`) — an aircraft
+declaring `nordo` on an ordinary squawk alerts exactly as 7600 would, at `critical`,
+once per sighting. Built-in keys name the emergency's kind, and a kind a squawk also
+declares keeps that squawk's key, so the full set is `emergency_7500`,
+`emergency_7600`, `emergency_7700`, `emergency_minfuel`, `emergency_lifeguard` and
+`emergency_downed`; a squawk and a decoder reporting the same emergency are one match,
+never two, and when both declare at once the squawk is the one named. The
+`emergency_squawk` event keeps its type for both sources and adds `emergency_source`
+(`squawk` | `decoder`) and `emergency_kind` (§2.8) to its payload; its `squawk` is the
+emergency code, `null` for a decoder-declared emergency. The match `reason` names the
+source: `"Emergency squawk 7600 (radio failure)"` or `"Decoder emergency state: no
+radio"`.
 
 ### 3.11 Diagnostics — slice 042
 

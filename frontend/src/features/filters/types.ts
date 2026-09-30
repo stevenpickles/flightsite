@@ -47,6 +47,13 @@ export interface LiveFilters {
   maxDistanceNm: number | null;
   /** Case-insensitive substring match against `aircraft_type`. */
   categoryText: string;
+  /** OR-matched against `emitter_category` (`"A3"`, `"A7"`, …; roadmap
+   * slice 086) — the aircraft's own ADS-B statement of what it is, the half
+   * of SPEC §37's "aircraft category/type" that needs no metadata import.
+   * Empty means no filtering; a non-empty selection excludes every aircraft
+   * that has not transmitted a category, the same null-excludes rule as
+   * `classifications`. */
+  emitterCategories: string[];
   /** Case-insensitive substring match against `operator`. */
   operatorText: string;
   /** Case-insensitive substring match against `operator_group`. */
@@ -61,8 +68,10 @@ export interface LiveFilters {
   /** Only aircraft with an active alert match (`interesting !== null`,
    * slice 038). */
   interestingOnly: boolean;
-  /** Only aircraft broadcasting an emergency squawk (`emergency !== null`)
-   * — real decoder data today, unlike the metadata-gated fields above. */
+  /** Only aircraft declaring an emergency — an emergency squawk
+   * (`emergency !== null`) or, since slice 086, the decoder's emergency
+   * state (`decoder_emergency !== null`). Real decoder data, unlike the
+   * metadata-gated fields above. */
   emergencyOnly: boolean;
   /** Excludes aircraft with no position (Mode S only). */
   hideNonPositioned: boolean;
@@ -79,6 +88,7 @@ export const DEFAULT_FILTERS: LiveFilters = {
   altitudeMaxFt: null,
   maxDistanceNm: null,
   categoryText: "",
+  emitterCategories: [],
   operatorText: "",
   operatorGroupText: "",
   classifications: [],

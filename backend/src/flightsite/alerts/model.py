@@ -416,6 +416,9 @@ class AlertSubject:
     aircraft_id: int | None = None
 
     squawk: str | None = None
+    #: The decoder's current emergency state (slice 086) — the second built-in
+    #: emergency source beside the squawk.
+    decoder_emergency: str | None = None
     distance_nm: float | None = None
     altitude_ft: float | None = None
     ground_state: GroundState = GroundState.UNKNOWN
@@ -469,6 +472,11 @@ class MatchProposal:
     reason: str
     rule_id: int | None = None
     builtin_key: str | None = None
+    #: For a built-in emergency match (slice 086): what declared it —
+    #: ``squawk`` or ``decoder`` — and the emergency kind, in the decoder's
+    #: emergency-state vocabulary. ``None`` for every rule match.
+    emergency_source: str | None = None
+    emergency_kind: str | None = None
 
     @property
     def is_builtin(self) -> bool:

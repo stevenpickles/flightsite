@@ -20,7 +20,9 @@
  * `null` (it arrives with slice 024), so turning on any classification or
  * mission filter selects nothing rather than everything — the UI
  * (`components/FilterDrawer.tsx`) says so next to those controls, rather
- * than leaving an empty map unexplained.
+ * than leaving an empty map unexplained. The emitter-category filter (slice
+ * 086) is categorical in the same sense and follows the same rule: an
+ * aircraft that never transmitted a category is not shown under one.
  *
  * Perf: one pass, `continue`-based short-circuiting, no per-aircraft
  * allocation beyond the output array/sets. `applyFilters.perf.test.ts`
@@ -71,6 +73,19 @@ function matchesMission(
     return false;
   }
   return missions.includes(classification.mission);
+}
+
+/** Emitter category (roadmap slice 086) is categorical like
+ * `classification`: an aircraft that never transmitted one cannot honestly
+ * be shown under "A7 · Rotorcraft", so a non-empty selection excludes it. */
+function matchesEmitterCategory(
+  emitterCategory: string | null | undefined,
+  categories: readonly string[],
+): boolean {
+  if (emitterCategory === null || emitterCategory === undefined) {
+    return false;
+  }
+  return categories.includes(emitterCategory);
 }
 
 function matchesLiveSetQuery(view: LiveAircraft, rawQuery: string): boolean {
@@ -126,6 +141,12 @@ export function passesFilters(
     return false;
   }
   if (
+    filters.emitterCategories.length > 0 &&
+    !matchesEmitterCategory(view.emitter_category, filters.emitterCategories)
+  ) {
+    return false;
+  }
+  if (
     filters.operatorText.trim().length > 0 &&
     !matchesText(view.operator, filters.operatorText)
   ) {
@@ -152,7 +173,11 @@ export function passesFilters(
   if (filters.interestingOnly && view.interesting === null) {
     return false;
   }
-  if (filters.emergencyOnly && view.emergency === null) {
+  if (
+    filters.emergencyOnly &&
+    view.emergency === null &&
+    (view.decoder_emergency ?? null) === null
+  ) {
     return false;
   }
   if (filters.hideNonPositioned && view.position === null) {

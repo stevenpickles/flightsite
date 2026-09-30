@@ -46,6 +46,12 @@ DECODER_FIELD_NAMES = (
     "adsr_icao",
     "tisb_trackfile",
     "mode_s",
+    # Slice 086: the selected-altitude pair. (`category` and `emergency` are
+    # ordinary English words the rest of the package legitimately uses, so a
+    # grep for them would be noise; the adapter owns their parsing all the
+    # same.)
+    "nav_altitude_mcp",
+    "nav_altitude_fms",
 )
 
 #: Further decoder spellings the adapter does not consume today. They are
@@ -54,7 +60,6 @@ DECODER_FIELD_NAMES = (
 RESERVED_DECODER_FIELD_NAMES = (
     "nic_baro",
     "sil_type",
-    "nav_altitude_mcp",
     "nav_qnh",
     "track_rate",
     "mag_heading",

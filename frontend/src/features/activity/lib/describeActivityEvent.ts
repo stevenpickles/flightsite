@@ -22,6 +22,7 @@
 
 import type { ActivityEvent } from "@/lib/api/activity";
 import type { UnitSystem } from "@/lib/api/config";
+import { emergencyHeadline } from "@/lib/emergency";
 import { formatSightingDuration } from "@/features/sightings/lib/format";
 import {
   cardinalFromDegrees,
@@ -423,13 +424,20 @@ export function describeActivityEvent(
       return describeSelfAlert(payload, event.type === "self_alert_raised");
 
     case "emergency_squawk": {
-      const squawk = str(payload, "squawk");
       return {
         // SPEC §47 wants these prominent rather than one entry among the
         // alerts — which is why the backend gives them a type of their own —
-        // so the code goes in the headline rather than the detail line.
-        label:
-          squawk === null ? "Emergency squawk" : `Emergency squawk ${squawk}`,
+        // so the code, and since slice 086 the kind in plain words, go in
+        // the headline rather than the detail line. The same type carries an
+        // emergency the decoder's emergency state declared with no squawk
+        // at all; `emergencyHeadline` leads with the kind then, and the
+        // engine's `reason` ("Decoder emergency state: minimum fuel") names
+        // the source in the detail line.
+        label: emergencyHeadline(
+          str(payload, "squawk"),
+          str(payload, "emergency_source"),
+          str(payload, "emergency_kind"),
+        ),
         detail: join([str(payload, "reason"), airframe(payload, icao)]),
       };
     }
