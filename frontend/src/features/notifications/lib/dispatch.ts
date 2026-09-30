@@ -37,7 +37,10 @@
  * the setup wizard, which renders outside the shell, delivers nothing.
  */
 
-import { composeAlertNotification } from "@/features/notifications/lib/compose";
+import {
+  composeAlertNotification,
+  composeSelfAlertNotification,
+} from "@/features/notifications/lib/compose";
 import { claimNotification } from "@/features/notifications/lib/dedupe";
 import { canNotify } from "@/features/notifications/lib/permission";
 import {
@@ -48,9 +51,6 @@ import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircr
 import type { ActivityEvent } from "@/lib/api/activity";
 import { markAlertMatchNotified } from "@/lib/api/alertMatches";
 import { navigateTo } from "@/lib/navigation";
-
-/** The Live Map's route (`src/routes.tsx`, the shell's index route). */
-const LIVE_MAP_PATH = "/";
 
 /**
  * Why an event did or did not become a notification.
@@ -91,14 +91,14 @@ function notificationApi(): typeof Notification | null {
  * selection is made after the navigation so that it lands in a store the
  * map is about to read rather than one `AircraftLayer` is unmounting.
  */
-function focusAircraft(icao: string | null): void {
+function focusAircraft(icao: string | null, path: string): void {
   try {
     globalThis.window?.focus();
   } catch {
     // A browser that refuses to focus (a policy some engines apply outside a
     // user gesture) must not stop the selection below from happening.
   }
-  navigateTo(LIVE_MAP_PATH);
+  navigateTo(path);
   if (icao !== null) {
     useLiveAircraftStore.getState().selectAircraft(icao);
   }
@@ -152,7 +152,12 @@ export function dispatchAlertNotification(
   const store = useNotificationStore.getState();
   const units = useLiveAircraftStore.getState().receiver?.units ?? "aviation";
 
-  const content = composeAlertNotification(event, units);
+  // Roadmap slice 088: a receiver self-alert takes the same path — the
+  // same switches, permission, dedupe and delivery counters — composed by
+  // its own function because it describes the station, not an aircraft.
+  const content =
+    composeAlertNotification(event, units) ??
+    composeSelfAlertNotification(event, store.feederSelfAlerts);
   if (content === null) {
     return "not-an-alert";
   }
@@ -188,7 +193,7 @@ export function dispatchAlertNotification(
       tag: content.tag,
     });
     notification.onclick = () => {
-      focusAircraft(content.icao);
+      focusAircraft(content.icao, content.path);
       notification.close();
     };
     store.recordDelivered();

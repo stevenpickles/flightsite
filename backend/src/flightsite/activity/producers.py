@@ -44,6 +44,7 @@ from flightsite.activity.facts import (
     LongestSighting,
     MilitaryFirst,
     ReceiverRecords,
+    SelfAlertEpisode,
     SightingObservation,
 )
 from flightsite.activity.model import (
@@ -484,6 +485,51 @@ def feeder_health_events(episodes: Iterable[FeederEpisode]) -> ActivityBatch:
     return ActivityBatch(events=tuple(events))
 
 
+def self_alert_events(episodes: Iterable[SelfAlertEpisode]) -> ActivityBatch:
+    """``self_alert_raised`` / ``self_alert_restored`` for receiver self-alerts.
+
+    Slice 088 (issue #231). The raise carries the condition's own severity —
+    ``high`` for both of today's conditions, because each is something the
+    owner can act on — and the restore that ends it is ``info``, the same
+    pairing :func:`health_events` and :func:`feeder_health_events` use.
+
+    Both dedupe keys name the condition and the moment the episode *began* —
+    ``self_alert_raised:decoder_down:1790000000000`` — so an episode the
+    monitor re-announces after a restart (its active set is kept in ``meta``)
+    recomputes the same key and the ``UNIQUE`` index keeps the feed, and
+    therefore the notification path, to one event of each kind per episode.
+
+    The payload is ``{condition, since_ms, duration_s, **detail}``:
+    ``duration_s`` is ``null`` on the raise and the episode's length in
+    seconds on the restore; ``detail`` holds the numbers the condition was
+    judged on.
+    """
+    events: list[NewActivityEvent] = []
+    for episode in episodes:
+        event_type = (
+            ActivityEventType.SELF_ALERT_RAISED
+            if episode.raised
+            else ActivityEventType.SELF_ALERT_RESTORED
+        )
+        duration_ms = episode.duration_ms
+        payload: dict[str, Any] = dict(episode.detail)
+        payload.update(
+            condition=episode.condition,
+            since_ms=episode.since_ms,
+            duration_s=None if duration_ms is None else duration_ms / _MS_PER_SECOND,
+        )
+        events.append(
+            NewActivityEvent(
+                type=event_type,
+                ts_ms=episode.at_ms,
+                dedupe_key=dedupe_key(event_type.value, episode.condition, episode.since_ms),
+                severity=Severity(episode.severity) if episode.raised else Severity.INFO,
+                payload=payload,
+            )
+        )
+    return ActivityBatch(events=tuple(events))
+
+
 def import_events(outcomes: Iterable[ImportOutcome]) -> ActivityBatch:
     """One ``metadata_updated`` event per source of a completed run (SPEC §27).
 
@@ -647,4 +693,5 @@ __all__ = [
     "military_milestone",
     "new_type_events",
     "record_events",
+    "self_alert_events",
 ]

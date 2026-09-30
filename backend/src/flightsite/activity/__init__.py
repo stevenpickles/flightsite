@@ -23,6 +23,7 @@ from flightsite.activity.facts import (
     LongestSighting,
     MilitaryFirst,
     ReceiverRecords,
+    SelfAlertEpisode,
     SightingObservation,
 )
 from flightsite.activity.model import (
@@ -74,6 +75,7 @@ __all__ = [
     "PassResult",
     "ReceiverRecords",
     "RecordKind",
+    "SelfAlertEpisode",
     "Severity",
     "SightingObservation",
     "StoredActivityEvent",

@@ -20,5 +20,11 @@ import type { FlightSiteConfig } from "@/lib/api/config";
 export function applyServerConfigToNotificationStore(
   config: FlightSiteConfig,
 ): void {
-  useNotificationStore.getState().setPreferences(config.notifications);
+  const store = useNotificationStore.getState();
+  store.setPreferences(config.notifications);
+  // Roadmap slice 088. Absent from an older backend, which has no such
+  // toggle — and no self-alerts — so off is the only honest reading.
+  store.setFeederSelfAlerts(
+    config.self_alerts?.feeder_offline_enabled ?? false,
+  );
 }

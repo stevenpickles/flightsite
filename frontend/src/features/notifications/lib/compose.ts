@@ -24,15 +24,21 @@
  * the *user* wrote, so a notification and the feed row about the same match
  * must not drift apart.
  *
+ * Roadmap slice 088 adds the second family, `composeSelfAlertNotification`:
+ * receiver self-alerts, which are about the station rather than an aircraft
+ * and so carry no aircraft data at all.
+ *
  * Every field degrades. `payload` arrives as `Record<string, unknown>` from a
  * WebSocket frame validated no further than its envelope, so an absent or
  * wrong-typed value drops out of the text instead of rendering `undefined`.
  */
 
+import { describeSelfAlert } from "@/features/activity/lib/describeActivityEvent";
 import {
   formatAltitude,
   formatDistance,
 } from "@/features/aircraft-detail/lib/format";
+import { formatSightingDuration } from "@/features/sightings/lib/format";
 import type { ActivityEvent } from "@/lib/api/activity";
 import type { UnitSystem } from "@/lib/api/config";
 import { emergencyHeadline } from "@/lib/emergency";
@@ -73,6 +79,12 @@ export interface AlertNotificationContent {
    * caller reaching into `payload` itself would have to re-derive.
    */
   matchId: number | null;
+  /**
+   * Where a click takes the user: the Live Map (`"/"`) for an aircraft
+   * alert, the Health page for a receiver self-alert (roadmap slice 088),
+   * which has no aircraft to select and whose card lists what is active.
+   */
+  path: string;
 }
 
 type Payload = Record<string, unknown>;
@@ -220,5 +232,78 @@ export function composeAlertNotification(
     icao: event.icao,
     severity: event.severity,
     matchId: num(payload, "match_id"),
+    path: "/",
+  };
+}
+
+/** Where a self-alert notification's click lands (`src/routes.tsx`). */
+const HEALTH_PATH = "/health";
+
+/**
+ * Every self-alert raise is `high` (roadmap slice 088: decoder down and rate
+ * collapse by the slice's contract, feeders by slice 077's own severity).
+ * The *restore* is `info` in the feed — the problem is over by the time it
+ * is read — but it is gated here at the raise's severity: a user who asked to
+ * be told about the outage is exactly the user who wants to be told it
+ * ended, and `info` is off by default (SPEC §45), which would otherwise
+ * deliver half of every episode.
+ */
+const SELF_ALERT_SEVERITY: AlertSeverity = "high";
+
+/**
+ * The notification for one receiver self-alert event (roadmap slice 088),
+ * or `null` when the event is not one — or is a feeder event while the
+ * `self_alerts.feeder_offline_enabled` toggle is off.
+ *
+ * Two families reach here. `self_alert_raised` / `self_alert_restored` are
+ * emitted by the backend only while their condition is switched on, so they
+ * need no gate. `feeder_offline` / `feeder_restored` are slice 077's events,
+ * emitted whatever this toggle says — the feed narrates every feeder outage
+ * — so `feederAlerts` (mirrored from config) decides whether they notify.
+ *
+ * The wording is the activity feed's own (`describeSelfAlert`), so the
+ * notification and the feed row about the same episode cannot drift. Only
+ * condition names, thresholds, rates and a feeder's display label cross this
+ * boundary — never a URL or a key (`docs/SECURITY.md` §5).
+ */
+export function composeSelfAlertNotification(
+  event: ActivityEvent,
+  feederAlerts: boolean,
+): AlertNotificationContent | null {
+  const payload = event.payload;
+  let title: string;
+  let body: string;
+  if (
+    event.type === "self_alert_raised" ||
+    event.type === "self_alert_restored"
+  ) {
+    const description = describeSelfAlert(
+      payload,
+      event.type === "self_alert_raised",
+    );
+    title = description.label;
+    body = description.detail ?? "";
+  } else if (
+    feederAlerts &&
+    (event.type === "feeder_offline" || event.type === "feeder_restored")
+  ) {
+    const label = str(payload, "label") ?? str(payload, "feeder") ?? "A feeder";
+    const outage = num(payload, "outage_s");
+    title =
+      event.type === "feeder_offline"
+        ? `Self-alert: ${label} offline`
+        : `Self-alert cleared: ${label} back`;
+    body = outage === null ? "" : `Down for ${formatSightingDuration(outage)}`;
+  } else {
+    return null;
+  }
+  return {
+    title,
+    body,
+    tag: `flightsite-self-alert-${event.id}`,
+    icao: null,
+    severity: SELF_ALERT_SEVERITY,
+    matchId: null,
+    path: HEALTH_PATH,
   };
 }

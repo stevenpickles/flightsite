@@ -209,6 +209,17 @@ information. No period-over-period comparison in v1.
   connection that carries alerts is owned by the app shell rather than by the Live
   Map ([ADR-0015](adr/0015-app-shell-live-socket.md)); permission is asked for once,
   from the setup wizard or Settings, and never on load (`docs/SECURITY.md` §5).
+- **Receiver self-alerts** (roadmap slice 088, issue #231): the station telling the
+  owner it is unhealthy, beside the alerts about aircraft. Three built-in, toggleable
+  conditions — the message rate below a configurable share (default 40 %) of the same
+  hour-of-week's usual rate for N minutes (default 15; silent until two weeks of that
+  hour are recorded, so a quiet night hour is judged against other nights), the
+  decoder disconnected longer than N minutes (default 5), and a monitored feeder going
+  offline. Each episode is one activity event and one browser notification, and one
+  "restored" pair on recovery — never a stream, however the condition flickers.
+  Delivered through the same browser-only path as alert matches, at High severity;
+  clicking opens Health. Thresholds and toggles live in Settings → Receiver
+  self-alerts; the Health page lists what is active and since when.
 
 ### 4.9 Activity & Records (§16, §53–§55)
 
@@ -220,7 +231,8 @@ information. No period-over-period comparison in v1.
   lightweight (§54).
 - Chronological activity feed: interesting detections, alerts, first-evers, new types,
   records, emergency squawks, receiver offline/restored, metadata update results
-  (§55).
+  (§55); since slice 077 feeder offline/restored, and since slice 088 receiver
+  self-alert raised/restored.
 - All lifetime statistics anchor to **T0**, the timestamp of the first observation
   ever persisted; T0 is never silently reset (§16).
 
@@ -230,7 +242,8 @@ Settings edit the same canonical configuration model stored in
 `/opt/flightsite/data/config.yaml`, with secrets kept separately and always masked
 (§29–§30). Areas: receiver endpoint and location, units, timezone, display radius,
 alert radius, sighting timing, retention policy, map configuration, enrichment
-configuration (AeroDataBox key), browser notification settings. Additional actions:
+configuration (AeroDataBox key), browser notification settings, receiver self-alert
+toggles and thresholds (slice 088). Additional actions:
 
 - **Update Aircraft Metadata** — manual, per-source download/validate/import with
   independent status reporting and transactional safety (§27).
@@ -242,7 +255,10 @@ configuration (AeroDataBox key), browser notification settings. Additional actio
 A health area showing decoder connection state, last successful aircraft update,
 database health/size/row counts, free disk space, backend uptime, versions, metadata
 database age, notification permission status, and recent
-ingestion/database/enrichment/WebSocket errors. The user should never need SSH to
+ingestion/database/enrichment/WebSocket errors. Since slice 088 an **Active
+self-alerts** card leads the page: each receiver self-alert currently raised, with the
+moment its condition began, and a note while the message-rate baseline is still
+learning. The user should never need SSH to
 determine whether FlightSite is healthy. Structured logging, rotating logs,
 health/readiness endpoints, and internal counters are provided; Prometheus/Grafana are
 not required (§68).

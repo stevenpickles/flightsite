@@ -1012,6 +1012,8 @@ ActivityEventTypeLiteral = Literal[
     "milestone",
     "feeder_offline",
     "feeder_restored",
+    "self_alert_raised",
+    "self_alert_restored",
 ]
 
 
@@ -1467,6 +1469,48 @@ class DiagnosticsFeeders(_Model):
     docker_socket: Literal["available", "unset", "unreachable"] = "unset"
 
 
+# --------------------------------------------- diagnostics: self-alerts (088)
+
+
+class DiagnosticsSelfAlertCondition(_Model):
+    """One receiver self-alert condition's state (slice 088).
+
+    ``state`` is ``disabled``, ``ok``, ``pending`` (a bad run has begun but not
+    yet lasted its minimum), or ``active``; the message-rate condition also
+    reports ``learning`` (fewer than two weeks of this hour-of-week) or
+    ``quiet`` (a baseline too small to judge) in place of ``ok``.
+    """
+
+    enabled: bool = False
+    state: Literal["disabled", "ok", "pending", "active", "learning", "quiet"] = "disabled"
+    minutes: int | None = None
+    share_pct: int | None = None
+    #: The hour-of-week median the rate is judged against, msgs/s.
+    baseline_msgs_s: float | None = None
+    baseline_weeks: int | None = None
+    #: ``feeder_offline`` only: how many feeders are down right now.
+    count: int | None = None
+
+
+class DiagnosticsActiveSelfAlert(_Model):
+    """One currently raised self-alert, as the Health page lists it."""
+
+    condition: Literal["decoder_down", "message_rate", "feeder_offline"]
+    #: When the condition began (not when it was raised).
+    since: IsoTimestamp | None = None
+    severity: str = "high"
+    #: ``feeder_offline`` only: the feeder's entry name and display label.
+    subject: str | None = None
+    label: str | None = None
+
+
+class DiagnosticsSelfAlerts(_Model):
+    """Slice 088: the receiver self-alert conditions and what is active now."""
+
+    conditions: dict[str, DiagnosticsSelfAlertCondition] = Field(default_factory=dict)
+    active: list[DiagnosticsActiveSelfAlert] = Field(default_factory=list)
+
+
 class DiagnosticsError(_Model):
     """One captured recent error.
 
@@ -1506,6 +1550,8 @@ class DiagnosticsResponse(_Model):
     enrichment: DiagnosticsEnrichment = Field(default_factory=DiagnosticsEnrichment)
     websocket: DiagnosticsWebSocket = Field(default_factory=DiagnosticsWebSocket)
     feeders: DiagnosticsFeeders = Field(default_factory=DiagnosticsFeeders)
+    #: ``null`` only from an app built without the monitor (a test harness).
+    self_alerts: DiagnosticsSelfAlerts | None = None
     counters: dict[str, int] = Field(default_factory=dict)
     #: Keyed by category; each list is newest-first and bounded.
     recent_errors: dict[str, list[DiagnosticsError]] = Field(default_factory=dict)
@@ -1685,6 +1731,7 @@ __all__ = [
     "ClosureReasonLiteral",
     "CurrentAircraftResponse",
     "DecoderStateLiteral",
+    "DiagnosticsActiveSelfAlert",
     "DiagnosticsDatabase",
     "DiagnosticsDecoder",
     "DiagnosticsEnrichment",
@@ -1704,6 +1751,8 @@ __all__ = [
     "DiagnosticsRecovery",
     "DiagnosticsResponse",
     "DiagnosticsRowCounts",
+    "DiagnosticsSelfAlertCondition",
+    "DiagnosticsSelfAlerts",
     "DiagnosticsStatusLiteral",
     "DiagnosticsStorage",
     "DiagnosticsUptime",

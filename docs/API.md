@@ -792,8 +792,24 @@ combination is a `400`, not an empty series:
 
 | Path | Returns |
 |---|---|
-| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`), plus `feeder_offline` (`high`) and `feeder_restored` (`info`) since slice 077, whose payload is `{feeder, label, kind, since_ms, outage_s}` — `outage_s` is `null` on the offline event. |
+| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`), plus `feeder_offline` (`high`) and `feeder_restored` (`info`) since slice 077, whose payload is `{feeder, label, kind, since_ms, outage_s}` — `outage_s` is `null` on the offline event. Since slice 088, `self_alert_raised` (`high`) and `self_alert_restored` (`info`): a receiver self-alert condition began / ended, payload `{condition, since_ms, duration_s, …detail}` — see below. |
 | `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
+
+**Receiver self-alert events (slice 088).** `condition` is `decoder_down` or
+`message_rate`; `since_ms` is when the condition *began* (the same on both events of
+one episode, and part of both dedupe keys, so an episode is recorded once however
+often it is announced); `duration_s` is `null` on the raise and the episode's length
+on the restore. The rest is the numbers the condition was judged on:
+
+| `condition` | Detail keys |
+|---|---|
+| `decoder_down` | `minutes` (the configured threshold), `error` (the decoder's short failure reason; raise only) |
+| `message_rate` | `rate_msgs_s`, `baseline_msgs_s` (the hour-of-week median), `share_pct`, `minutes`, `baseline_weeks` |
+
+A feeder going offline is the third self-alert condition, but it has no event of its
+own: it *is* slice 077's `feeder_offline` / `feeder_restored`, which the browser turns
+into a self-alert notification while `self_alerts.feeder_offline_enabled` is on.
+Neither event carries an aircraft or a `match_id`.
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
 `severity`, `reason`, `icao`, `sighting_id`, an identity block for the airframe,
@@ -887,7 +903,7 @@ Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health ban
 renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`,
 `live_events` (slice 075), `database` (`quick_check`, `storage`, `row_counts`,
 `maintenance`, `recovery`), `metadata`, `notifications`, `enrichment`, `websocket`,
-`feeders` (slice 077), `counters`, `recent_errors`.
+`feeders` (slice 077), `self_alerts` (slice 088), `counters`, `recent_errors`.
 
 Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
 pragma takes the writer lock, so the endpoint reports the result the maintenance
@@ -912,6 +928,31 @@ Two contract details worth knowing:
   `unreachable`; the path is never published. `recent_errors` gains a `feeders`
   category (loggers under `flightsite.feeders`) and `counters` a
   `feeder_poll_failures` counter.
+- `self_alerts` (slice 088) reports each receiver self-alert condition and what is
+  active now — thresholds, states and timestamps only:
+
+  ```json
+  "self_alerts": {
+    "conditions": {
+      "decoder_down": {"enabled": true, "state": "ok", "minutes": 5},
+      "message_rate": {"enabled": true, "state": "learning", "minutes": 15,
+                       "share_pct": 40, "baseline_msgs_s": 84.2, "baseline_weeks": 1},
+      "feeder_offline": {"enabled": true, "state": "active", "count": 1}
+    },
+    "active": [
+      {"condition": "feeder_offline", "since": "2026-09-29T02:00:00Z",
+       "severity": "high", "subject": "fr24", "label": "FlightRadar24"}
+    ]
+  }
+  ```
+
+  `state` is `disabled`, `ok`, `pending` (a bad run that has not yet lasted its
+  minimum), or `active`; `message_rate` reports `learning` (fewer than two weeks of
+  this hour-of-week recorded) or `quiet` (a usual rate under 1 msg/s) in place of `ok`.
+  `since` is when the condition began. `subject`/`label` name the feeder for
+  `feeder_offline` and are `null` otherwise. The block does not move `status`: the
+  decoder and feeder sections already do. `null` only from an app built without the
+  monitor (a test harness).
 - `notifications` carries only what the server can know — the configured severities —
   and `permission_known_by` is always `"client"`. Browser permission is unobservable
   from the backend, so the health page joins this with the frontend notification store
@@ -1192,7 +1233,9 @@ against the slice-010 protocol ignore this frame type until they support it (§ 
   (§ 3.10), which is what a client that showed a browser notification for it posts
   back to `POST /api/internal/alerts/matches/{id}/notified` (§ 5).
 - `feeder_offline` and `feeder_restored` (slice 077) arrive in the same frames with the
-  § 3.10 vocabulary and payload; they carry no `match_id` and no aircraft.
+  § 3.10 vocabulary and payload; they carry no `match_id` and no aircraft. So do
+  `self_alert_raised` / `self_alert_restored` (slice 088), from which the client
+  composes the receiver self-alert browser notifications — nothing is posted back.
 
 ### 4.5 Keepalive, reconnect, slow consumers
 

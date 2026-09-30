@@ -82,6 +82,14 @@ export function defaultFlightSiteConfig(
     },
     alerts: { enabled_templates: [] },
     feeders: defaultFeedersConfig(),
+    self_alerts: {
+      message_rate_enabled: true,
+      message_rate_share_pct: 40,
+      message_rate_minutes: 15,
+      decoder_down_enabled: true,
+      decoder_down_minutes: 5,
+      feeder_offline_enabled: true,
+    },
     ...overrides,
   };
 }
