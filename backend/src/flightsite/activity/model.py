@@ -112,6 +112,11 @@ class ActivityEventType(StrEnum):
     #: Distinct from :attr:`RECEIVER_OFFLINE`, which is the decoder itself.
     FEEDER_OFFLINE = "feeder_offline"
     FEEDER_RESTORED = "feeder_restored"
+    #: Slice 088: a receiver self-alert condition (message-rate collapse,
+    #: decoder down too long) began / ended. The condition is in the payload.
+    #: A feeder outage has no pair here: it is announced by the two above.
+    SELF_ALERT_RAISED = "self_alert_raised"
+    SELF_ALERT_RESTORED = "self_alert_restored"
 
 
 class Severity(StrEnum):

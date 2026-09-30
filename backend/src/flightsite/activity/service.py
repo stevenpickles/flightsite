@@ -88,6 +88,7 @@ from flightsite.activity.facts import (
     ImportOutcome,
     LongestSighting,
     ReceiverRecords,
+    SelfAlertEpisode,
     SightingObservation,
 )
 from flightsite.activity.model import (
@@ -107,6 +108,7 @@ from flightsite.activity.producers import (
     military_milestone,
     new_type_events,
     record_events,
+    self_alert_events,
 )
 from flightsite.activity.repository import (
     DEFAULT_SCAN_LIMIT,
@@ -223,6 +225,7 @@ class ActivityService:
         "_pending_episodes",
         "_pending_feeder_episodes",
         "_pending_imports",
+        "_pending_self_alerts",
         "_persistence",
         "_records",
         "_repository",
@@ -274,6 +277,7 @@ class ActivityService:
         self._pending_episodes: list[HealthEpisode] = []
         self._pending_alerts: list[AlertMatchFact] = []
         self._pending_feeder_episodes: list[FeederEpisode] = []
+        self._pending_self_alerts: list[SelfAlertEpisode] = []
         self._announced_offline: bool | None = None
         self._announced_since_ms = 0
         self._candidate_offline: bool | None = None
@@ -384,6 +388,18 @@ class ActivityService:
         so a transition announced twice is recorded once.
         """
         self._pending_feeder_episodes.append(episode)
+
+    def record_self_alert(self, episode: SelfAlertEpisode) -> None:
+        """Note a receiver self-alert raise or restore (slice 088).
+
+        Synchronous and memory-only — the :meth:`record_feeder_episode`
+        contract — because it is called from the self-alert monitor's
+        evaluation, which rides the receiver-metrics sampler's task. The event
+        is written by the next pass, on this service's own transaction, and
+        its dedupe key names the episode's start, so an episode announced twice
+        is recorded once.
+        """
+        self._pending_self_alerts.append(episode)
 
     def _publish(self, events: Sequence[StoredActivityEvent]) -> None:
         """Hand new events to every listener, defensively.
@@ -506,6 +522,8 @@ class ActivityService:
         self._pending_alerts = []
         feeder_episodes = self._pending_feeder_episodes
         self._pending_feeder_episodes = []
+        self_alerts = self._pending_self_alerts
+        self._pending_self_alerts = []
 
         observations: tuple[SightingObservation, ...] = ()
         try:
@@ -521,6 +539,7 @@ class ActivityService:
                 episodes=episodes,
                 alerts=alerts,
                 feeder_episodes=feeder_episodes,
+                self_alerts=self_alerts,
                 now_ms=now_ms,
             )
             watermark = max(scanned, default=self._watermark)
@@ -537,6 +556,7 @@ class ActivityService:
             self._pending_episodes = episodes + self._pending_episodes
             self._pending_alerts = alerts + self._pending_alerts
             self._pending_feeder_episodes = feeder_episodes + self._pending_feeder_episodes
+            self._pending_self_alerts = self_alerts + self._pending_self_alerts
             self._counters.increment(DB_ERRORS_COUNTER)
             logger.warning("activity_pass_failed", error=str(exc), error_type=type(exc).__name__)
             return PassResult(examined=len(observations), failed=True)
@@ -569,6 +589,7 @@ class ActivityService:
         episodes: Sequence[HealthEpisode],
         alerts: Sequence[AlertMatchFact],
         feeder_episodes: Sequence[FeederEpisode] = (),
+        self_alerts: Sequence[SelfAlertEpisode] = (),
         now_ms: int,
     ) -> ActivityBatch:
         """Ask every producer what these facts justify, and merge the answers."""
@@ -585,6 +606,7 @@ class ActivityService:
             import_events(imports),
             alert_events(alerts),
             feeder_health_events(feeder_episodes),
+            self_alert_events(self_alerts),
         ]
         if await self._military_due(observations):
             batches.append(military_milestone(await self._repository.military_first()))

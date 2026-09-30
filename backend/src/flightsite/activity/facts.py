@@ -16,7 +16,9 @@ to build the fact and once to use it — is how two callers come to disagree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +258,45 @@ class FeederEpisode:
         return None if self.offline else max(0, self.at_ms - self.since_ms)
 
 
+@dataclass(frozen=True, slots=True)
+class SelfAlertEpisode:
+    """A receiver self-alert condition that was raised or restored (slice 088).
+
+    Handed to
+    :meth:`~flightsite.activity.service.ActivityService.record_self_alert` by
+    :class:`flightsite.alerts.self_alerts.SelfAlertMonitor` once its own
+    minimum-duration and hysteresis rules have held — the same division of
+    labour as :class:`HealthEpisode` and :class:`FeederEpisode`: the debounce
+    needs a clock and lives with the thing being watched, and what reaches the
+    feed is a transition that already happened.
+
+    ``detail`` carries the numbers the condition was judged on (a rate and its
+    baseline, a threshold in minutes) and the decoder's short error reason;
+    never a URL, a key or anything else from configuration beyond the
+    thresholds themselves (``docs/SECURITY.md`` §3).
+    """
+
+    #: ``message_rate`` or ``decoder_down``
+    #: (:data:`flightsite.alerts.self_alerts.SELF_ALERT_CONDITIONS`).
+    condition: str
+    #: ``True`` for the raise, ``False`` for the restore.
+    raised: bool
+    #: When the condition *began* — the first low sample, the first ``down``
+    #: reading — not when its minimum duration expired. The same value on both
+    #: events of one episode, which is what their dedupe keys are built from.
+    since_ms: int
+    #: When this transition was decided.
+    at_ms: int
+    #: The raise's severity; a restore is always ``info`` in the feed.
+    severity: str = "high"
+    detail: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def duration_ms(self) -> int | None:
+        """How long the episode lasted, for a restore; ``None`` for a raise."""
+        return None if self.raised else max(0, self.at_ms - self.since_ms)
+
+
 __all__ = [
     "AlertMatchFact",
     "FeederEpisode",
@@ -264,5 +305,6 @@ __all__ = [
     "LongestSighting",
     "MilitaryFirst",
     "ReceiverRecords",
+    "SelfAlertEpisode",
     "SightingObservation",
 ]
