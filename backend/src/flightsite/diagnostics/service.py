@@ -687,6 +687,28 @@ def _feeders_section(app: FastAPI) -> tuple[dict[str, Any], str]:
     return section, STATUS_DEGRADED if counts["down"] > 0 else STATUS_OK
 
 
+def _self_alerts_section(app: FastAPI) -> dict[str, Any] | None:
+    """Slice 088: each receiver self-alert condition's state, and the active list.
+
+    Straight from :meth:`~flightsite.alerts.self_alerts.SelfAlertMonitor.snapshot`
+    — thresholds, states, timestamps and feeder names only, and the whole
+    payload passes the redaction below regardless. ``None`` (published as
+    ``null``) when the app has no monitor, which only a test harness builds.
+    Deliberately does not move the overall ``status``: the conditions it
+    reports are already reflected there by the decoder and feeder sections,
+    and the rate condition is a judgement about traffic, not about FlightSite.
+    """
+    monitor = _state(app, "self_alerts")
+    snapshot = getattr(monitor, "snapshot", None)
+    if not callable(snapshot):
+        return None
+    try:
+        section: dict[str, Any] = snapshot()
+    except Exception:  # pragma: no cover - defensive: diagnostics must render
+        return None
+    return section
+
+
 def _recent_errors(ring: ErrorRing) -> dict[str, list[dict[str, Any]]]:
     """SPEC §67: recent ingestion / database / enrichment / WebSocket errors."""
     snapshot = ring.snapshot(limit=RECENT_ERROR_LIMIT)
@@ -789,6 +811,7 @@ async def collect_diagnostics(
         "enrichment": _enrichment_section(app, counter_values, moment),
         "websocket": _websocket_section(app, counter_values),
         "feeders": feeders,
+        "self_alerts": _self_alerts_section(app),
         "counters": dict(counter_values),
         "recent_errors": _recent_errors(buffer),
     }
