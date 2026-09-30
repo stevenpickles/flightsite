@@ -193,6 +193,7 @@ owner decision and are not scheduled.
 | 090 | What was that? | 081 | opus | low | The aircraft that passed closest overhead near any chosen moment, from stored tracks (issue #233) |
 | 091 | Perf gates read a real p95 in CI | 083 | opus | low | Hotfix: the in-suite smoke run takes 21 ticks so a per-tick p95 is not its single worst tick, and the CLI contract test pins budgets instead of judging a three-tick run against real ones (issue #240) |
 | 092 | undici audit hotfix | 091 | opus | low | Hotfix: undici 8.10.1 → 8.11.2 in the frontend lockfile (transitive, under jsdom) to clear the 2026-09-30 advisories failing security/audit on every PR |
+| 093 | brace-expansion audit hotfix | 092 | opus | low | Hotfix: patch brace-expansion in the frontend lockfile (transitive, under eslint → minimatch) to clear the second 2026-09-30 advisory batch failing security/audit |
 
 ## Parallelization Guide
 
