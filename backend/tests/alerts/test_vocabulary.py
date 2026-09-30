@@ -114,8 +114,22 @@ def test_the_emergency_codes_match_the_set_the_sighting_record_already_uses() ->
 def test_every_code_gets_its_own_builtin_key() -> None:
     """One key per code, so 7600 then 7700 is two matches — ``docs/DATA_MODEL.md``
     §4.3 names that as the allowed re-notification path."""
-    assert EMERGENCY_BUILTIN_KEYS == ("emergency_7500", "emergency_7600", "emergency_7700")
-    assert len(set(EMERGENCY_BUILTIN_KEYS)) == len(EMERGENCY_MEANINGS)
+    squawk_keys = {emergency_builtin_key(code) for code in EMERGENCY_MEANINGS}
+    assert squawk_keys == {"emergency_7500", "emergency_7600", "emergency_7700"}
+    assert squawk_keys <= set(EMERGENCY_BUILTIN_KEYS)
+
+
+def test_the_builtin_keys_are_the_squawks_plus_the_decoder_only_kinds() -> None:
+    """Slice 086: the decoder kinds a squawk also declares share its key, so
+    only the three no squawk can express add keys of their own."""
+    assert EMERGENCY_BUILTIN_KEYS == (
+        "emergency_7500",
+        "emergency_7600",
+        "emergency_7700",
+        "emergency_downed",
+        "emergency_lifeguard",
+        "emergency_minfuel",
+    )
 
 
 def test_the_builtin_key_names_its_code() -> None:

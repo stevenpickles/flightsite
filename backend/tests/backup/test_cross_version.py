@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from flightsite.backup import (
     SchemaCompatibilityError,
@@ -24,14 +25,45 @@ from flightsite.backup import (
 )
 from flightsite.counters import counters
 from flightsite.db import Database, database_path, migrate
+from flightsite.db.models import Sighting
 from flightsite.db.startup import DATABASE_SUBSYSTEM, initialize_database
 from flightsite.readiness import ReadinessRegistry
-from tests.backup.conftest import fixed_clock, make_backup, repack, sqlite_scalar, write_sightings
+from tests.backup.conftest import fixed_clock, make_backup, repack, sqlite_scalar
 from tests.db.harness import INITIAL_REVISION
 
 #: An earlier revision that predates several tables — far enough back that
 #: "restore then migrate" is doing real work, not a no-op.
 OLDER_REVISION = "0004"
+
+
+async def write_old_revision_sightings(database: Database, *, count: int) -> None:
+    """Insert ``count`` aircraft, each with one sighting, into an old schema.
+
+    The aircraft row is written with SQL naming only columns that exist at
+    :data:`OLDER_REVISION`, not through the ORM: the mapped class describes
+    head, so an ORM insert names every column head has and fails against an
+    older table the moment a revision adds one (rev 0019's
+    ``aircraft.emitter_category`` was the first since 0004).
+    """
+    for index in range(count):
+        async with database.writer_session() as session:
+            aircraft_id = (
+                await session.execute(
+                    text(
+                        "INSERT INTO aircraft "
+                        "(icao24, first_seen_ms, last_seen_ms, sighting_count, total_observed_ms) "
+                        "VALUES (:icao24, :seen, :seen, 1, 0) RETURNING id"
+                    ),
+                    {"icao24": f"{index:06x}", "seen": 1_700_000_000_000 + index},
+                )
+            ).scalar_one()
+            session.add(
+                Sighting(
+                    aircraft_id=aircraft_id,
+                    started_ms=1_700_000_000_000 + index,
+                    ended_ms=1_700_000_000_500 + index,
+                )
+            )
 
 
 def test_head_is_reported_as_same() -> None:
@@ -78,7 +110,7 @@ async def test_an_old_backup_restores_and_migrates_to_head_on_startup(
         await source.upgrade_to("head")
         await source.downgrade_to(OLDER_REVISION)
         assert await source.current_revision() == OLDER_REVISION
-        await write_sightings(source, count=3)
+        await write_old_revision_sightings(source, count=3)
     finally:
         await source.dispose()
 

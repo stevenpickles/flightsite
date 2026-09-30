@@ -547,6 +547,12 @@ def alert_events(matches: Iterable[AlertMatchFact]) -> ActivityBatch:
     report back that it was shown (``POST
     /api/internal/alerts/matches/{id}/notified``). Additive per ``docs/API.md``
     §6: a client that does not read it is unaffected.
+
+    ``emergency_squawk`` keeps its name for an emergency the decoder's
+    emergency state declared (slice 086): it is the feed's "an aircraft is
+    declaring an emergency" type, a client filtering on it wants both sources,
+    and renaming a stored type would orphan every row already written.
+    ``emergency_source`` and ``emergency_kind`` on the payload say which.
     """
     events: list[NewActivityEvent] = []
     for match in matches:
@@ -572,7 +578,15 @@ def alert_events(matches: Iterable[AlertMatchFact]) -> ActivityBatch:
         }
         if emergency:
             payload["builtin_key"] = match.builtin_key
-            payload["squawk"] = match.squawk
+            # Slice 086: an emergency the decoder's emergency state declared
+            # is announced under the same type, and the payload says which
+            # source it was and which kind. `squawk` is the *emergency* code,
+            # so beside a decoder source — where the transponder shows an
+            # ordinary one — it is null rather than a code a reader would
+            # take for the emergency.
+            payload["emergency_source"] = match.emergency_source
+            payload["emergency_kind"] = match.emergency_kind
+            payload["squawk"] = None if match.emergency_source == "decoder" else match.squawk
         else:
             payload["rule_id"] = match.rule_id
             payload["rule_name"] = match.rule_name

@@ -35,6 +35,7 @@ import {
 } from "@/features/aircraft-detail/lib/format";
 import type { ActivityEvent } from "@/lib/api/activity";
 import type { UnitSystem } from "@/lib/api/config";
+import { emergencyHeadline } from "@/lib/emergency";
 import type { AlertSeverity } from "@/lib/api/sightings";
 
 /** The two `docs/API.md` §3.9 event types slice 038 emits for a recorded
@@ -150,14 +151,21 @@ function classification(payload: Payload): string | null {
  *
  * An emergency squawk leads with the code, because SPEC §47 wants these
  * *prominent* rather than one alert among many and the code is the fact that
- * makes it so — the fuller `reason` then moves into the body. Every other
- * alert leads with the match reason itself, falling back to the rule's name
- * and finally to a bare label for a payload carrying neither.
+ * makes it so — the fuller `reason` then moves into the body. Since slice
+ * 086 the kind follows in plain words ("Emergency squawk 7600 · No radio"),
+ * and an emergency the decoder's emergency state declared, with no squawk,
+ * leads with the kind alone ("Emergency: Minimum fuel") — the same
+ * `emergencyHeadline` the activity feed uses, so the two cannot disagree.
+ * Every other alert leads with the match reason itself, falling back to the
+ * rule's name and finally to a bare label for a payload carrying neither.
  */
 function headline(event: ActivityEvent, payload: Payload): string {
   if (event.type === "emergency_squawk") {
-    const squawk = str(payload, "squawk");
-    return squawk === null ? "Emergency squawk" : `Emergency squawk ${squawk}`;
+    return emergencyHeadline(
+      str(payload, "squawk"),
+      str(payload, "emergency_source"),
+      str(payload, "emergency_kind"),
+    );
   }
   return str(payload, "reason") ?? str(payload, "rule_name") ?? "Alert";
 }

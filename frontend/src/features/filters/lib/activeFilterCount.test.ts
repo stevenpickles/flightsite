@@ -52,6 +52,12 @@ describe("countActiveFilters", () => {
     expect(hasActiveFilters(active)).toBe(true);
   });
 
+  it("counts an emitter-category selection once, however many are chosen", () => {
+    expect(
+      countActiveFilters(filters({ emitterCategories: ["A3", "A5", "A7"] })),
+    ).toBe(1);
+  });
+
   it("counts every remaining single-field filter", () => {
     expect(countActiveFilters(filters({ operatorText: "BA" }))).toBe(1);
     expect(countActiveFilters(filters({ operatorGroupText: "OW" }))).toBe(1);

@@ -166,7 +166,14 @@ class AlertMatchFact:
     rule_name: str | None = None
     #: ``None`` for a rule match; a built-in detector's key otherwise.
     builtin_key: str | None = None
-    #: The squawk that triggered a built-in emergency match, if any.
+    #: For a built-in emergency match (slice 086): what declared it —
+    #: ``squawk`` or ``decoder`` — and which emergency, in the decoder's
+    #: emergency-state vocabulary (``nordo``, ``minfuel``, ...).
+    emergency_source: str | None = None
+    emergency_kind: str | None = None
+    #: The aircraft's squawk when a built-in emergency match fired. It names
+    #: the emergency when ``emergency_source`` is ``squawk``; beside a
+    #: ``decoder`` source it is just the ordinary code the aircraft was on.
     squawk: str | None = None
     callsign: str | None = None
     registration: str | None = None

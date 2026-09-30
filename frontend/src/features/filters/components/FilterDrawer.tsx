@@ -26,6 +26,12 @@
  * "Interesting only" was gated the same way until slice 038 started
  * populating `interesting` and slice 039 surfaced it.
  *
+ * Emitter category (roadmap slice 086) is the half of SPEC §37's "aircraft
+ * category/type" that needs no metadata: the aircraft's own ADS-B category,
+ * offered as checkboxes for the categories actually in the live picture
+ * (`lib/emitterCategoryOptions.ts`) rather than all 32 codes. "Emergency
+ * only" matches the decoder's emergency state as well as the squawk.
+ *
  * Registers `toggleFilterDrawer` and `focusLiveSearch` on
  * `lib/shortcuts/mapShortcutTargets` (roadmap slice 082) so the `F` and `/`
  * keyboard shortcuts — dispatched from `useKeyboardShortcuts`, mounted in
@@ -66,6 +72,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { countActiveFilters } from "@/features/filters/lib/activeFilterCount";
 import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
+import {
+  emitterCategoryOptions,
+  presentEmitterCategoriesKey,
+} from "@/features/filters/lib/emitterCategoryOptions";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import type {
   ClassificationFlag,
@@ -77,6 +87,7 @@ import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { useMetadataAvailable } from "@/lib/api/metadata";
+import { formatEmitterCategory } from "@/lib/emitterCategory";
 import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { cn } from "@/lib/utils";
 
@@ -214,6 +225,18 @@ export function FilterDrawer({
   const setAltitudeRange = useFilterStore((state) => state.setAltitudeRange);
   const setMaxDistanceNm = useFilterStore((state) => state.setMaxDistanceNm);
   const setCategoryText = useFilterStore((state) => state.setCategoryText);
+  const toggleEmitterCategory = useFilterStore(
+    (state) => state.toggleEmitterCategory,
+  );
+  // A string, not an array: re-render only when the set of categories in
+  // the sky changes (`lib/emitterCategoryOptions.ts`).
+  const presentEmitterCategories = useLiveAircraftStore((state) =>
+    presentEmitterCategoriesKey(state.aircraft),
+  );
+  const emitterOptions = emitterCategoryOptions(
+    presentEmitterCategories,
+    filters.emitterCategories,
+  );
   const setOperatorText = useFilterStore((state) => state.setOperatorText);
   const setOperatorGroupText = useFilterStore(
     (state) => state.setOperatorGroupText,
@@ -475,6 +498,36 @@ export function FilterDrawer({
               {!metadataAvailable && <MetadataImportNote />}
             </FilterSection>
 
+            <FilterSection title="Emitter category">
+              {emitterOptions.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {emitterOptions.map((category) => (
+                    <label
+                      key={category}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={filters.emitterCategories.includes(category)}
+                        onChange={() => toggleEmitterCategory(category)}
+                      />
+                      {formatEmitterCategory(category) ?? category}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <PlumbingNote>
+                  No aircraft in the live picture has transmitted a category
+                  yet.
+                </PlumbingNote>
+              )}
+              <PlumbingNote>
+                Transmitted by the aircraft itself, so it needs no metadata
+                import. Aircraft that send no category are hidden while any is
+                selected.
+              </PlumbingNote>
+            </FilterSection>
+
             <FilterSection title="Classification">
               <div className="flex flex-col gap-1.5">
                 {CLASSIFICATION_OPTIONS.map((option) => (
@@ -546,7 +599,7 @@ export function FilterDrawer({
                   checked={filters.emergencyOnly}
                   onChange={(event) => setEmergencyOnly(event.target.checked)}
                 />
-                Emergency squawk only
+                Emergency only
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input

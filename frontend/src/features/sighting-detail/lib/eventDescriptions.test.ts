@@ -48,6 +48,29 @@ describe("describeSightingEvent", () => {
     expect(info.detail).toBe("Squawk 4521");
   });
 
+  it("names the kind of a squawk-declared emergency (slice 086)", () => {
+    const info = describeSightingEvent(
+      event({
+        type: "emergency_start",
+        detail: { squawk: "7600", source: "squawk", kind: "nordo" },
+      }),
+    );
+    expect(info.detail).toBe("No radio · Squawk 7600");
+  });
+
+  it("names the decoder as the source of a decoder-declared emergency", () => {
+    const info = describeSightingEvent(
+      event({
+        type: "emergency_start",
+        detail: { squawk: "2341", source: "decoder", kind: "minfuel" },
+      }),
+    );
+    expect(info.label).toBe("Emergency declared");
+    expect(info.detail).toBe(
+      "Minimum fuel · Decoder emergency state · Squawk 2341",
+    );
+  });
+
   it("describes route enrichment with the route and its source", () => {
     const info = describeSightingEvent(
       event({

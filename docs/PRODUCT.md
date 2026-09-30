@@ -80,7 +80,9 @@ Live Map when complete.
   clicks never select aircraft. On desktop the Basemap card, the Layers card
   and the Filters button stack down the right edge without overlapping.
 - Live aircraft with hierarchical silhouette icons (specific type → category →
-  generic), rotated to heading; extensible, license-documented icon set (§34).
+  the aircraft's own ADS-B emitter category when metadata has no opinion, e.g. `A7`
+  rotorcraft → generic), rotated to heading; extensible, license-documented icon set
+  (§34).
 - Labels (callsign → tail fallback, operator, altitude, interesting indicator) with
   priority-based decluttering; no marker clustering (§35).
 - Styling: neutral default, strong selection highlight, distinct attention styling for
@@ -94,10 +96,16 @@ Live Map when complete.
 - Non-positioned aircraft list: aircraft without valid positions remain first-class —
   visible in a compact list with ICAO, callsign, altitude, squawk, signal; they
   participate in alerts, activity events, and historical sightings (§20).
-- Filter drawer: altitude range, distance, category/type, exact operator, operator
+- Filter drawer: altitude range, distance, category/type (including the ADS-B emitter
+  category, from the categories in the live picture), exact operator, operator
   group, military/government/police classification, mission category,
-  interesting-only, live-set callsign/tail/ICAO narrowing, hide non-positioned, hide
-  ground traffic, staleness; plus quick filter chips (§37).
+  interesting-only, emergency-only (squawk or decoder emergency state), live-set
+  callsign/tail/ICAO narrowing, hide non-positioned, hide ground traffic, staleness;
+  plus quick filter chips (§37).
+- Aircraft detail shows the emitter category in words, the autopilot-selected altitude
+  beside the altitude, and the decoder's emergency state as a text badge; the
+  decoder's emergency state (minimum fuel, no radio, lifeguard, …) alerts like an
+  emergency squawk, once per sighting (§47, slice 086).
 - Interesting-aircraft panel sorted by severity then distance, click-to-select (§49).
 - Today at a Glance summary: unique aircraft, sightings, interesting count,
   military/government/police, max range, busiest hour, new aircraft, new

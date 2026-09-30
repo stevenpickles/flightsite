@@ -30,7 +30,40 @@ from typing import Literal, overload
 #: * ``other`` — position from another path (TIS-B / ADS-R rebroadcast).
 PositionSource = Literal["adsb", "mlat", "none", "other"]
 
+#: Canonical decoder emergency-state vocabulary (``docs/API.md`` §2.8, slice
+#: 086): the emergency/priority status an ADS-B transmitter broadcasts
+#: alongside, and independently of, its squawk.
+#:
+#: * ``general``   — general emergency (what squawk 7700 also declares).
+#: * ``lifeguard`` — lifeguard / medical flight.
+#: * ``minfuel``   — minimum fuel.
+#: * ``nordo``     — no communications (what squawk 7600 also declares).
+#: * ``unlawful``  — unlawful interference (what squawk 7500 also declares).
+#: * ``downed``    — downed aircraft.
+#:
+#: "No emergency" is not a member: it is ``None``, the same way every other
+#: absent statement is. The status field's reserved code points declare
+#: nothing FlightSite could name, so they are ``None`` too rather than an
+#: emergency of unknown kind.
+DecoderEmergency = Literal["general", "lifeguard", "minfuel", "nordo", "unlawful", "downed"]
+
+#: Every :data:`DecoderEmergency` value, for validation and for the
+#: vocabularies downstream layers keep in step with it.
+DECODER_EMERGENCIES: frozenset[str] = frozenset(
+    {"general", "lifeguard", "minfuel", "nordo", "unlawful", "downed"}
+)
+
+#: An ADS-B emitter category (``docs/API.md`` §2.8, slice 086): set letter
+#: ``A``-``D`` and a digit ``0``-``7``, e.g. ``A3`` (large aircraft) or ``A7``
+#: (rotorcraft). ``docs/API.md`` §3.3 lists what each one means.
+_EMITTER_CATEGORY_RE = re.compile(r"^[A-D][0-7]$")
+
 _ICAO_RE = re.compile(r"^[0-9a-f]{6}$")
+
+
+def is_emitter_category(value: str) -> bool:
+    """True when ``value`` is a well-formed emitter category (``A0``-``D7``)."""
+    return _EMITTER_CATEGORY_RE.match(value) is not None
 
 
 class DecoderFlavor(StrEnum):
@@ -96,6 +129,14 @@ class AircraftStateUpdate:
     "the decoder said so" and "FlightSite worked it out" stay distinguishable
     for field provenance (SPEC §22).
 
+    ``emitter_category``, ``selected_altitude_ft`` and ``decoder_emergency``
+    (slice 086) are what the aircraft says about itself beyond kinematics: its
+    ADS-B emitter category, the altitude selected on its autopilot or flight
+    management system, and the emergency/priority status it broadcasts. The
+    last is deliberately separate from ``squawk``: the two are independent
+    transmissions, and an aircraft can declare minimum fuel or a lifeguard
+    flight without any emergency squawk at all.
+
     The invariants enforced here are the ones the rest of the system relies on:
     a lowercase 6-hex ICAO address (``docs/API.md`` §2.9) and a timezone-aware
     UTC timestamp (SPEC: UTC in storage and APIs). An adapter that builds an
@@ -119,10 +160,17 @@ class AircraftStateUpdate:
     messages: int | None = None
     seen_s: float | None = None
     seen_pos_s: float | None = None
+    emitter_category: str | None = None
+    selected_altitude_ft: float | None = None
+    decoder_emergency: DecoderEmergency | None = None
 
     def __post_init__(self) -> None:
         if not _ICAO_RE.match(self.icao):
             raise ValueError(f"icao must be a lowercase 6-hex address, got {self.icao!r}")
+        if self.emitter_category is not None and not is_emitter_category(self.emitter_category):
+            raise ValueError(f"emitter_category must be A0-D7, got {self.emitter_category!r}")
+        if self.decoder_emergency is not None and self.decoder_emergency not in DECODER_EMERGENCIES:
+            raise ValueError(f"unknown decoder_emergency {self.decoder_emergency!r}")
         if self.timestamp.tzinfo is None:
             raise ValueError("timestamp must be timezone-aware UTC")
         if self.position is None and self.position_source != "none":
@@ -202,11 +250,14 @@ class DecoderProbe:
 
 
 __all__ = [
+    "DECODER_EMERGENCIES",
     "AircraftStateBatch",
     "AircraftStateUpdate",
+    "DecoderEmergency",
     "DecoderEndpoint",
     "DecoderFlavor",
     "DecoderProbe",
     "Position",
     "PositionSource",
+    "is_emitter_category",
 ]

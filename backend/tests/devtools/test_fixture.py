@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -73,7 +74,12 @@ def test_round_trip_preserves_every_optional_field(tmp_path: Path) -> None:
         seen_s=None,
         seen_pos_s=None,
     )
-    full = make_update("4ca87c")
+    full = replace(
+        make_update("4ca87c"),
+        emitter_category="A3",
+        selected_altitude_ft=24000.0,
+        decoder_emergency="minfuel",
+    )
     batch = AircraftStateBatch(timestamp=T0, updates=(minimal, full))
     out = tmp_path / "fields.fsrec.gz"
 

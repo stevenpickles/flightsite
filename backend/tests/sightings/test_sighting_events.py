@@ -108,7 +108,10 @@ async def test_an_emergency_squawk_records_both_the_change_and_the_emergency(
 
     assert await timeline(database) == [
         (SightingEventType.SQUAWK_CHANGE, {"from": "1200", "to": "7700"}),
-        (SightingEventType.EMERGENCY_START, {"squawk": "7700"}),
+        (
+            SightingEventType.EMERGENCY_START,
+            {"squawk": "7700", "source": "squawk", "kind": "general"},
+        ),
     ]
     assert (await only_sighting(database)).had_emergency == 1
 
@@ -123,7 +126,102 @@ async def test_an_emergency_on_the_first_observation_is_still_recorded(
 
     await worker.process_pending()
 
-    assert await timeline(database) == [(SightingEventType.EMERGENCY_START, {"squawk": "7500"})]
+    assert await timeline(database) == [
+        (
+            SightingEventType.EMERGENCY_START,
+            {"squawk": "7500", "source": "squawk", "kind": "unlawful"},
+        )
+    ]
+
+
+# ------------------------------------------- the decoder as a second source
+
+
+async def test_a_decoder_only_emergency_opens_an_episode_naming_the_decoder(
+    worker: PersistenceWorker, live: LiveStore, clock: SimulatedTime, database: Database
+) -> None:
+    """Slice 086: ``nordo`` with an ordinary squawk is an emergency too."""
+    observe(live, clock, squawk="2341", decoder_emergency="nordo")
+
+    await worker.process_pending()
+
+    assert await timeline(database) == [
+        (
+            SightingEventType.EMERGENCY_START,
+            {"squawk": "2341", "source": "decoder", "kind": "nordo"},
+        )
+    ]
+    assert (await only_sighting(database)).had_emergency == 1
+
+
+async def test_the_decoder_state_clearing_closes_its_episode(
+    worker: PersistenceWorker, live: LiveStore, clock: SimulatedTime, database: Database
+) -> None:
+    """The decoder's emergency state is its current statement: when it stops
+    reporting one, the emergency is over, and ``had_emergency`` remembers it."""
+    observe(live, clock, squawk="2341", decoder_emergency="minfuel")
+    clock.advance(5.0)
+    observe(live, clock, squawk="2341")
+
+    await worker.process_pending()
+
+    assert await timeline(database) == [
+        (
+            SightingEventType.EMERGENCY_START,
+            {"squawk": "2341", "source": "decoder", "kind": "minfuel"},
+        ),
+        (
+            SightingEventType.EMERGENCY_END,
+            {"squawk": "2341", "source": "decoder", "kind": "minfuel"},
+        ),
+    ]
+    assert (await only_sighting(database)).had_emergency == 1
+
+
+async def test_squawk_and_decoder_together_are_one_episode(
+    worker: PersistenceWorker, live: LiveStore, clock: SimulatedTime, database: Database
+) -> None:
+    """A transponder set to 7600 also broadcasts ``nordo``: one emergency."""
+    observe(live, clock, squawk="2341", decoder_emergency="nordo")
+    clock.advance(1.0)
+    observe(live, clock, squawk="7600", decoder_emergency="nordo")
+    clock.advance(1.0)
+    observe(live, clock, squawk="7600")
+
+    await worker.process_pending()
+
+    starts = [kind for kind, _ in await timeline(database) if kind == "emergency_start"]
+    ends = [kind for kind, _ in await timeline(database) if kind == "emergency_end"]
+    assert len(starts) == 1
+    assert ends == []
+
+
+async def test_the_episode_ends_only_when_neither_source_declares(
+    worker: PersistenceWorker, live: LiveStore, clock: SimulatedTime, database: Database
+) -> None:
+    observe(live, clock, squawk="7700", decoder_emergency="general")
+    clock.advance(1.0)
+    observe(live, clock, squawk="1200", decoder_emergency="general")
+    clock.advance(1.0)
+    observe(live, clock, squawk="1200")
+
+    await worker.process_pending()
+
+    events = [
+        (kind, payload)
+        for kind, payload in await timeline(database)
+        if kind != SightingEventType.SQUAWK_CHANGE
+    ]
+    assert events == [
+        (
+            SightingEventType.EMERGENCY_START,
+            {"squawk": "7700", "source": "squawk", "kind": "general"},
+        ),
+        (
+            SightingEventType.EMERGENCY_END,
+            {"squawk": "1200", "source": "decoder", "kind": "general"},
+        ),
+    ]
 
 
 async def test_leaving_the_emergency_code_closes_the_episode(

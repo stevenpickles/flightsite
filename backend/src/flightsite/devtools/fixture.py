@@ -169,6 +169,14 @@ def _update_to_dict(update: AircraftStateUpdate) -> dict[str, Any]:
         data["seen_s"] = update.seen_s
     if update.seen_pos_s is not None:
         data["seen_pos_s"] = update.seen_pos_s
+    # Slice 086's fields. Omitted when absent like everything above, so a
+    # fixture recorded before they existed reads back unchanged.
+    if update.emitter_category is not None:
+        data["emitter_cat"] = update.emitter_category
+    if update.selected_altitude_ft is not None:
+        data["sel_alt_ft"] = update.selected_altitude_ft
+    if update.decoder_emergency is not None:
+        data["dec_emergency"] = update.decoder_emergency
     return data
 
 
@@ -193,6 +201,9 @@ def _update_from_dict(data: dict[str, Any]) -> AircraftStateUpdate:
         rssi_db=data.get("rssi_db"),
         messages=data.get("messages"),
         seen_s=data.get("seen_s"),
+        emitter_category=data.get("emitter_cat"),
+        selected_altitude_ft=data.get("sel_alt_ft"),
+        decoder_emergency=data.get("dec_emergency"),
         seen_pos_s=data.get("seen_pos_s"),
     )
 

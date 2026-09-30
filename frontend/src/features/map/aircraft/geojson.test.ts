@@ -124,6 +124,21 @@ describe("buildAircraftFeatureCollection", () => {
     expect(properties.bbbbbb?.onGround).toBe(true);
   });
 
+  it("draws an A7 with no metadata as a rotorcraft (roadmap slice 086)", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records({
+          icao: "aaaaaa",
+          on_ground: false,
+          emitter_category: "A7",
+        }),
+      }),
+    );
+    expect(propertiesByIcao(collection).aaaaaa?.icon).toBe(
+      iconImageId("rotorcraft"),
+    );
+  });
+
   it("fades stale aircraft instead of hiding them", () => {
     // SPEC §36: stale aircraft visually fade.
     const collection = buildAircraftFeatureCollection(

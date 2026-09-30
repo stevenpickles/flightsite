@@ -168,6 +168,36 @@ describe("composeAlertNotification", () => {
     ).toBe("RCH485 · Alert");
   });
 
+  it("names a decoder-declared emergency by its kind (slice 086)", () => {
+    const content = composeAlertNotification(
+      emergencySquawkEvent({
+        payload: {
+          squawk: null,
+          emergency_source: "decoder",
+          emergency_kind: "nordo",
+          reason: "Decoder emergency state: no radio",
+        },
+      }),
+      "aviation",
+    );
+
+    expect(content?.title).toBe("RYR8213 · Emergency: No radio");
+    expect(content?.body.startsWith("Decoder emergency state: no radio")).toBe(
+      true,
+    );
+  });
+
+  it("adds the kind in plain words after a squawk code", () => {
+    expect(
+      composeAlertNotification(
+        emergencySquawkEvent({
+          payload: { emergency_source: "squawk", emergency_kind: "general" },
+        }),
+        "aviation",
+      )?.title,
+    ).toBe("RYR8213 · Emergency squawk 7700 · General emergency");
+  });
+
   it("names an emergency without a squawk code generically", () => {
     expect(
       composeAlertNotification(
