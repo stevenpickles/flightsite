@@ -29,6 +29,17 @@ export const EMERGENCY_KIND_LABELS: Readonly<Record<DecoderEmergency, string>> =
     downed: "Downed",
   };
 
+/** The kind each emergency squawk declares — the same pairing the backend
+ * uses (`sightings/vocabulary.py`'s `SQUAWK_EMERGENCY_KINDS`), so a squawk of
+ * 7600 and a decoder's `nordo` are recognised as one emergency. */
+export const SQUAWK_EMERGENCY_KINDS: Readonly<
+  Record<string, DecoderEmergency>
+> = {
+  "7500": "unlawful",
+  "7600": "nordo",
+  "7700": "general",
+};
+
 /** The label for an emergency kind, or `null` for an absent or unknown one. */
 export function emergencyKindLabel(
   kind: string | null | undefined,
@@ -39,6 +50,27 @@ export function emergencyKindLabel(
   return Object.hasOwn(EMERGENCY_KIND_LABELS, kind)
     ? EMERGENCY_KIND_LABELS[kind as DecoderEmergency]
     : null;
+}
+
+/**
+ * Whether the decoder's emergency state says something the squawk does not:
+ * true when it declares an emergency and the squawk declares none, or a
+ * different kind. A transponder squawking 7600 also broadcasts `nordo`, and a
+ * surface that already shows the squawk emergency should not show the same
+ * emergency a second time.
+ */
+export function decoderEmergencyAddsToSquawk(
+  decoderEmergency: DecoderEmergency | null | undefined,
+  squawk: string | null,
+): decoderEmergency is DecoderEmergency {
+  if (decoderEmergency === null || decoderEmergency === undefined) {
+    return false;
+  }
+  const squawkKind =
+    squawk !== null && Object.hasOwn(SQUAWK_EMERGENCY_KINDS, squawk)
+      ? SQUAWK_EMERGENCY_KINDS[squawk]
+      : undefined;
+  return squawkKind !== decoderEmergency;
 }
 
 /**

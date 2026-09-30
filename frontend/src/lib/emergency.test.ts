@@ -2,9 +2,32 @@ import { describe, expect, it } from "vitest";
 
 import {
   EMERGENCY_KIND_LABELS,
+  decoderEmergencyAddsToSquawk,
   emergencyHeadline,
   emergencyKindLabel,
 } from "@/lib/emergency";
+
+describe("decoderEmergencyAddsToSquawk", () => {
+  it("adds a decoder emergency to an ordinary squawk", () => {
+    expect(decoderEmergencyAddsToSquawk("nordo", "2341")).toBe(true);
+    expect(decoderEmergencyAddsToSquawk("minfuel", null)).toBe(true);
+  });
+
+  it("adds nothing when the squawk already declares the same kind", () => {
+    expect(decoderEmergencyAddsToSquawk("nordo", "7600")).toBe(false);
+    expect(decoderEmergencyAddsToSquawk("general", "7700")).toBe(false);
+    expect(decoderEmergencyAddsToSquawk("unlawful", "7500")).toBe(false);
+  });
+
+  it("adds a different kind from the squawk's", () => {
+    expect(decoderEmergencyAddsToSquawk("minfuel", "7700")).toBe(true);
+  });
+
+  it("adds nothing when the decoder declares nothing", () => {
+    expect(decoderEmergencyAddsToSquawk(null, "7700")).toBe(false);
+    expect(decoderEmergencyAddsToSquawk(undefined, "2341")).toBe(false);
+  });
+});
 
 describe("emergencyKindLabel", () => {
   it("names every kind in plain words", () => {
