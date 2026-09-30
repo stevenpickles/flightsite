@@ -106,6 +106,10 @@ and stops when the last one goes. Outage history already recorded for a feeder i
 under its `name`, so renaming an entry starts a new history. Demo mode keeps its
 scripted stand-ins whatever is saved.
 
+So does `self_alerts.*` (slice 088). The self-alert monitor reads the section on every
+receiver-metrics sample, so a new toggle or threshold applies within fifteen seconds of
+saving, with nothing to restart.
+
 ### Needs a restart
 
 | Setting | Why |
@@ -462,6 +466,55 @@ feeders:
 
 `config.example.yaml` carries a commented six-entry example.
 
+### `self_alerts` — receiver self-alerts
+
+Slice 088 ([issue #231](https://github.com/stevenpickles/flightsite/issues/231)). Tells
+you when the **station itself** is unhealthy, not only when an interesting aircraft
+appears. Edited under **Settings → Receiver self-alerts**; listed on the Health page's
+**Active self-alerts** card. [Applies immediately](#applies-immediately).
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `message_rate_enabled` | bool | `true` | Message-rate collapse |
+| `message_rate_share_pct` | int | `40` | 5–95. "Low" means below this percentage of the hour-of-week baseline |
+| `message_rate_minutes` | int | `15` | 5–240. How long the rate must stay low before it is an alert |
+| `decoder_down_enabled` | bool | `true` | Decoder disconnected |
+| `decoder_down_minutes` | int | `5` | 1–240. How long the decoder must be `down` before it is an alert |
+| `feeder_offline_enabled` | bool | `true` | Notify when a monitored feeder (see `feeders`) goes down |
+
+Each condition raises **one** activity event and **one** browser notification per
+episode, and one "restored" pair when it ends. Notifications are browser-only (SPEC
+§48) and go through the `notifications` switches like an alert match: every self-alert
+is `high` severity (its restore is gated at `high` too, so the default `info: false`
+does not swallow it).
+
+- **Message rate.** The baseline is the **median** messages/second of the same local
+  weekday and hour over the last eight weeks of hourly receiver metrics. Until at least
+  **two** such weeks exist (hours with under half an hour of samples do not count) the
+  condition is *learning* and never fires; an hour whose usual rate is under 1 msg/s is
+  *quiet* and is not judged either. It is also held while the decoder is disconnected —
+  that is the decoder condition's alert, not a second one. To restore, the rate has to
+  climb back above 1.25 × the threshold (capped at the baseline) and stay there for five
+  minutes, so a rate hovering at the threshold cannot flap.
+- **Decoder down.** Built on the same connection state the Health page and the
+  `receiver_offline` feed event read. Restores once the decoder has stayed connected for
+  one minute; a reconnect shorter than that neither restores nor starts a second alert.
+- **Feeder offline.** Uses the Feeders page's own detection and debounce and its
+  `feeder_offline` / `feeder_restored` events; this toggle only decides whether they
+  notify and whether the Health card lists them.
+
+Switching a condition off while it is active ends it silently (no restore). An active
+episode survives a backend restart — it is kept in the database's `meta` table — so the
+recovery is still announced once.
+
+```yaml
+self_alerts:
+  message_rate_share_pct: 30
+  message_rate_minutes: 20
+  decoder_down_minutes: 10
+  feeder_offline_enabled: false
+```
+
 ---
 
 ## Secrets
@@ -553,6 +606,13 @@ of a configuration file; complete it once (no restart needed) or pre-seed a
 
 Demo mode is visible, not hidden: `/api/v1/health` reports `"demo": true`, the Health
 page shows "Demo mode: On", and the Receiver page carries a Demo mode badge.
+
+Two outages are scripted so the pages that exist to report them have something to
+show: FlightRadar24 drops out for three minutes in every twenty (the Feeders page), and
+the **decoder** drops out for seven minutes from half past every hour — as seen by the
+receiver self-alert monitor only, so the traffic and the Health decoder card carry on.
+With the default `self_alerts.decoder_down_minutes` of 5, that is one "decoder down"
+self-alert notification and one "decoder back" notification an hour.
 
 ---
 

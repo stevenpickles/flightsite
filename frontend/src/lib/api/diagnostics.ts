@@ -280,6 +280,47 @@ export interface DiagnosticsFeeders {
   docker_socket: FeedersDockerSocketState;
 }
 
+/** A receiver self-alert condition (roadmap slice 088). */
+export type SelfAlertCondition =
+  "decoder_down" | "message_rate" | "feeder_offline";
+
+/** One condition's state: `pending` is a bad run that has not yet lasted its
+ * minimum; `learning`/`quiet` are the message-rate baseline's two
+ * "cannot judge yet" states. */
+export type SelfAlertConditionState =
+  "disabled" | "ok" | "pending" | "active" | "learning" | "quiet";
+
+export interface DiagnosticsSelfAlertCondition {
+  enabled: boolean;
+  state: SelfAlertConditionState;
+  minutes?: number | null;
+  share_pct?: number | null;
+  /** The hour-of-week median the rate is judged against, msgs/s. */
+  baseline_msgs_s?: number | null;
+  baseline_weeks?: number | null;
+  /** `feeder_offline` only: feeders down right now. */
+  count?: number | null;
+}
+
+/** One currently raised self-alert, as the Health page lists it. */
+export interface DiagnosticsActiveSelfAlert {
+  condition: SelfAlertCondition;
+  /** ISO-8601 UTC: when the condition *began*. */
+  since: string | null;
+  severity: string;
+  /** `feeder_offline` only: the entry name and its display label. */
+  subject: string | null;
+  label: string | null;
+}
+
+/** Roadmap slice 088's diagnostics block (`docs/API.md` §3.10). */
+export interface DiagnosticsSelfAlerts {
+  conditions: Partial<
+    Record<SelfAlertCondition, DiagnosticsSelfAlertCondition>
+  >;
+  active: DiagnosticsActiveSelfAlert[];
+}
+
 export interface Diagnostics {
   generated_at: string;
   status: DiagnosticsStatus;
@@ -301,6 +342,9 @@ export interface Diagnostics {
   recent_errors: Record<string, DiagnosticsErrorEntry[]>;
   /** Absent from a backend older than roadmap slice 077. */
   feeders?: DiagnosticsFeeders;
+  /** Absent from a backend older than roadmap slice 088; `null` only from a
+   * test harness app built without the monitor. */
+  self_alerts?: DiagnosticsSelfAlerts | null;
 }
 
 interface ApiV1ErrorBody {

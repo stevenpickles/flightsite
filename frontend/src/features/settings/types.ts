@@ -53,6 +53,19 @@ export interface FeedersDraft {
   localPages: LocalPageDraft[];
 }
 
+/** The Receiver self-alerts section's draft (roadmap slice 088). Numbers
+ * stay strings like every other draft field; `lib/validation.ts` owns the
+ * bounds, which mirror `SelfAlertSettings`. Applies on save — the monitor
+ * reads the section on every sample — so no restart badge. */
+export interface SelfAlertsDraft {
+  messageRateEnabled: boolean;
+  messageRateSharePct: string;
+  messageRateMinutes: string;
+  decoderDownEnabled: boolean;
+  decoderDownMinutes: string;
+  feederOfflineEnabled: boolean;
+}
+
 /**
  * The Settings page's working copy of the config document. Mirrors
  * `WizardDraft` (`@/features/setup/types`) in spirit — numeric fields stay
@@ -133,4 +146,7 @@ export interface SettingsDraft {
 
   // Feeders (slice 077).
   feeders: FeedersDraft;
+
+  // Receiver self-alerts (slice 088).
+  selfAlerts: SelfAlertsDraft;
 }

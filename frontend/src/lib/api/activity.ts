@@ -49,7 +49,12 @@ export type ActivityEventType =
   // feeder is one of the outbound networks this receiver feeds, so its
   // outage says nothing about whether the receiver's own decoder is up.
   | "feeder_offline"
-  | "feeder_restored";
+  | "feeder_restored"
+  // Roadmap slice 088: a receiver self-alert condition (`decoder_down`,
+  // `message_rate`) raised / restored; the condition is `payload.condition`.
+  // A feeder outage self-alert has no pair here — it *is* `feeder_offline`.
+  | "self_alert_raised"
+  | "self_alert_restored";
 
 /** Which rolling receiver record a `receiver_record` event describes. A new
  * furthest detection is *not* one of these — §3.9 gives it its own

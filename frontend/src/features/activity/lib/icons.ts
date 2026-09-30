@@ -19,6 +19,8 @@ import {
   Radar,
   Rss,
   SatelliteDish,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   TriangleAlert,
   Trophy,
@@ -43,6 +45,10 @@ export const ACTIVITY_ICONS: Record<ActivityEventType, LucideIcon> = {
   // outage).
   feeder_offline: Rss,
   feeder_restored: SatelliteDish,
+  // Slice 088 — the station warning about itself, distinct from the
+  // decoder's own offline/restored pair it may accompany.
+  self_alert_raised: ShieldAlert,
+  self_alert_restored: ShieldCheck,
 };
 
 /**

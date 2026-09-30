@@ -182,6 +182,13 @@ RECOMPUTE_MARGIN_MS: Final = MS_PER_HOUR
 EpochClock = Callable[[], int]
 Sleeper = Callable[[float], Awaitable[None]]
 
+#: Told about every sample the moment it is taken (slice 088). Awaited on the
+#: sampling task, after the sample is buffered, so a listener sees exactly the
+#: cadence and the values the raw table will hold — the receiver self-alert
+#: monitor evaluates its conditions here rather than per ingest tick. A
+#: listener that raises is logged and skipped; it cannot cost a sample.
+SampleListener = Callable[[MetricSample], Awaitable[None]]
+
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceResult:
@@ -222,6 +229,7 @@ class ReceiverMetricsService:
         "_flush_interval_ms",
         "_last_flush_ms",
         "_latest_stats",
+        "_listeners",
         "_live",
         "_maintenance_interval_s",
         "_maintenance_task",
@@ -289,6 +297,7 @@ class ReceiverMetricsService:
         self._latest_stats: DecoderStats | None = None
         self._stats_supported: bool | None = None
         self._shed = 0
+        self._listeners: list[SampleListener] = []
         self._sample_task: asyncio.Task[None] | None = None
         self._maintenance_task: asyncio.Task[None] | None = None
 
@@ -337,6 +346,32 @@ class ReceiverMetricsService:
         fault (SPEC §60).
         """
         return self._stats_supported
+
+    # ------------------------------------------------------------- the seam
+
+    def subscribe_samples(self, listener: SampleListener) -> None:
+        """Register a listener awaited with each new sample. Idempotent."""
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def unsubscribe_samples(self, listener: SampleListener) -> None:
+        """Remove a listener registered by :meth:`subscribe_samples`."""
+        with contextlib.suppress(ValueError):
+            self._listeners.remove(listener)
+
+    async def _notify(self, sample: MetricSample) -> None:
+        """Hand ``sample`` to every listener, defensively (see :data:`SampleListener`)."""
+        for listener in tuple(self._listeners):
+            try:
+                await listener(sample)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "receiver_metrics_listener_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     # ------------------------------------------------------------- lifecycle
 
@@ -481,6 +516,7 @@ class ReceiverMetricsService:
 
         if self._flush_due(ts_ms):
             await self.flush()
+        await self._notify(result.sample)
         return result.sample
 
     async def _poll_stats(self) -> DecoderStats | None:
@@ -732,4 +768,5 @@ __all__ = [
     "EpochClock",
     "MaintenanceResult",
     "ReceiverMetricsService",
+    "SampleListener",
 ]

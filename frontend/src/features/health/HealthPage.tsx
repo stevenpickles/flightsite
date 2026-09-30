@@ -11,6 +11,7 @@ import { EnrichmentHealthCard } from "@/features/health/components/EnrichmentHea
 import { FeedersHealthCard } from "@/features/health/components/FeedersHealthCard";
 import { NotificationHealthCard } from "@/features/health/components/NotificationHealthCard";
 import { RecentErrorsSection } from "@/features/health/components/RecentErrorsSection";
+import { SelfAlertsHealthCard } from "@/features/health/components/SelfAlertsHealthCard";
 import { StatusPill } from "@/features/health/components/StatusPill";
 import {
   formatAgeAgo,
@@ -297,6 +298,15 @@ export function HealthPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Roadmap slice 088: first, because it is the card that says
+            whether anything needs the owner's attention right now. */}
+        {data.self_alerts != null && (
+          <SelfAlertsHealthCard
+            selfAlerts={data.self_alerts}
+            timezone={timezone}
+          />
+        )}
+
         <HealthCard
           titleId="health-decoder"
           title="Decoder"

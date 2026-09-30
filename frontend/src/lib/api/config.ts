@@ -168,6 +168,23 @@ export interface FeedersConfig {
   stats_urls: Record<string, string | null>;
 }
 
+/**
+ * Mirrors `SelfAlertSettings` (roadmap slice 088): the receiver self-alert
+ * toggles and thresholds. Hot-applied — the monitor reads the section on
+ * every sample — so the Settings section carries no restart badge.
+ */
+export interface SelfAlertsConfig {
+  message_rate_enabled: boolean;
+  /** Percent of the hour-of-week baseline, 5–95. */
+  message_rate_share_pct: number;
+  /** Minutes below the share before raising, 5–240. */
+  message_rate_minutes: number;
+  decoder_down_enabled: boolean;
+  /** Minutes the decoder must be down before raising, 1–240. */
+  decoder_down_minutes: number;
+  feeder_offline_enabled: boolean;
+}
+
 /** Mirrors `Settings.dump_public()` — the full effective configuration
  * with secrets masked. */
 export interface FlightSiteConfig {
@@ -188,6 +205,8 @@ export interface FlightSiteConfig {
   notifications: NotificationConfig;
   alerts: AlertConfig;
   feeders: FeedersConfig;
+  /** Absent from a backend older than roadmap slice 088. */
+  self_alerts?: SelfAlertsConfig;
 }
 
 /** `GET`/`PUT /api/internal/config` response envelope. `secrets_set` reports

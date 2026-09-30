@@ -18,12 +18,14 @@ import type {
   FeederEntryDraft,
   FeedersDraft,
   LocalPageDraft,
+  SelfAlertsDraft,
   SettingsDraft,
 } from "@/features/settings/types";
 import type {
   ConfigPatch,
   FeederEntryConfig,
   FlightSiteConfig,
+  SelfAlertsConfig,
 } from "@/lib/api/config";
 
 /** One feeder entry's config shape, converted to its editable draft row.
@@ -83,6 +85,31 @@ export function feedersDraftFromConfig(
   };
 }
 
+/** `SelfAlertSettings`' own defaults, for a backend older than slice 088
+ * whose config document has no `self_alerts` block. */
+export const SELF_ALERTS_DEFAULTS: SelfAlertsConfig = {
+  message_rate_enabled: true,
+  message_rate_share_pct: 40,
+  message_rate_minutes: 15,
+  decoder_down_enabled: true,
+  decoder_down_minutes: 5,
+  feeder_offline_enabled: true,
+};
+
+function selfAlertsDraftFromConfig(
+  config: SelfAlertsConfig | undefined,
+): SelfAlertsDraft {
+  const section = config ?? SELF_ALERTS_DEFAULTS;
+  return {
+    messageRateEnabled: section.message_rate_enabled,
+    messageRateSharePct: String(section.message_rate_share_pct),
+    messageRateMinutes: String(section.message_rate_minutes),
+    decoderDownEnabled: section.decoder_down_enabled,
+    decoderDownMinutes: String(section.decoder_down_minutes),
+    feederOfflineEnabled: section.feeder_offline_enabled,
+  };
+}
+
 /** Builds the initial (and post-save) draft from the effective config.
  * Every section reads its slice of this via the `pick*` helpers below, so
  * a fresh load and a post-save resync are the same code path.
@@ -136,6 +163,8 @@ export function draftFromConfig(
     highResMetricDays: String(config.retention.high_res_metric_days),
 
     feeders: feedersDraftFromConfig(config, secretsSet),
+
+    selfAlerts: selfAlertsDraftFromConfig(config.self_alerts),
   };
 }
 
@@ -199,6 +228,10 @@ export function pickMetadata(draft: SettingsDraft) {
 
 export function pickRetention(draft: SettingsDraft) {
   return { highResMetricDays: draft.highResMetricDays };
+}
+
+export function pickSelfAlerts(draft: SettingsDraft): SelfAlertsDraft {
+  return draft.selfAlerts;
 }
 
 export function pickFeeders(draft: SettingsDraft): FeedersDraft {
@@ -328,6 +361,34 @@ export function buildRetentionPatch(
 }
 
 const RETENTION_DEFAULT_DAYS = 14;
+
+/** The whole `self_alerts` section, every field — the section is small and
+ * a full document is what `PUT` validates per field anyway. A field that
+ * fails to parse falls back to its default, but the section's Save is
+ * blocked by `lib/validation.ts` long before that can happen. */
+export function buildSelfAlertsPatch(draft: SelfAlertsDraft): ConfigPatch {
+  const whole = (raw: string, fallback: number) =>
+    Math.trunc(parseNumber(raw) ?? fallback);
+  return {
+    self_alerts: {
+      message_rate_enabled: draft.messageRateEnabled,
+      message_rate_share_pct: whole(
+        draft.messageRateSharePct,
+        SELF_ALERTS_DEFAULTS.message_rate_share_pct,
+      ),
+      message_rate_minutes: whole(
+        draft.messageRateMinutes,
+        SELF_ALERTS_DEFAULTS.message_rate_minutes,
+      ),
+      decoder_down_enabled: draft.decoderDownEnabled,
+      decoder_down_minutes: whole(
+        draft.decoderDownMinutes,
+        SELF_ALERTS_DEFAULTS.decoder_down_minutes,
+      ),
+      feeder_offline_enabled: draft.feederOfflineEnabled,
+    },
+  };
+}
 
 /** Only ever reached when the poll interval field is unparseable, which the
  * section's own validation (5–120 s) blocks before a save can fire. */
