@@ -46,6 +46,12 @@ bearing are the live store's own derived fields
 from one computation rather than two that could disagree. A receiver with no
 configured location produces neither, and therefore no range records at all —
 the honest outcome, since range from an unknown point is not a measurement.
+
+The same pass also splits the furthest aircraft by altitude band (slice 087,
+:mod:`flightsite.receiver_metrics.coverage`): one record per occupied
+(sector, band) cell, from aircraft whose barometric altitude is known. An
+aircraft with no altitude still counts towards the unbanded ring — it was
+heard at that range — but towards no band.
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ from typing import Final
 from flightsite.db.clock import MS_PER_SECOND
 from flightsite.live.aircraft import LiveAircraft
 from flightsite.receiver_metrics.aggregate import MAX_RATE_GAP_MS
+from flightsite.receiver_metrics.coverage import BandRange, altitude_band
 from flightsite.receiver_metrics.model import (
     DecoderStats,
     MetricSample,
@@ -67,10 +74,15 @@ from flightsite.receiver_metrics.model import (
 
 @dataclass(frozen=True, slots=True)
 class SampleResult:
-    """One sample and the range records the same instant produced."""
+    """One sample and the range records the same instant produced.
+
+    ``band_ranges`` holds one entry per occupied (sector, altitude band) cell,
+    each with ``samples=1`` — this instant is one sample of every cell it saw.
+    """
 
     sample: MetricSample
     ranges: tuple[RangeRecord, ...] = ()
+    band_ranges: tuple[BandRange, ...] = ()
 
 
 @dataclass(slots=True)
@@ -181,6 +193,7 @@ class MetricSampler:
         visible = len(aircraft)
         positioned = sum(1 for a in aircraft if a.has_position)
         ranges = self._ranges(ts_ms, aircraft)
+        band_ranges = self._band_ranges(ts_ms, aircraft)
 
         self._previous = current
         return SampleResult(
@@ -195,6 +208,7 @@ class MetricSampler:
                 rssi_peak_db=None if stats is None else stats.rssi_peak_db,
             ),
             ranges=ranges,
+            band_ranges=band_ranges,
         )
 
     def _rates(self, current: _Counters) -> tuple[float | None, float | None]:
@@ -236,6 +250,34 @@ class MetricSampler:
             bucket = candidate.bearing_bucket
             best[bucket] = better_range(best.get(bucket), candidate)
         return tuple(best[bucket] for bucket in sorted(best))
+
+    @staticmethod
+    def _band_ranges(ts_ms: int, aircraft: Iterable[LiveAircraft]) -> tuple[BandRange, ...]:
+        """The furthest aircraft in each occupied (sector, altitude band) cell.
+
+        One entry per cell however many aircraft share it: this instant is one
+        sample of the cell, so ``samples`` stays ``1`` and only the record is
+        compared.
+        """
+        best: dict[tuple[int, int], BandRange] = {}
+        for record in aircraft:
+            distance, bearing = record.distance_nm, record.bearing_deg
+            band = altitude_band(record.altitude_ft)
+            if distance is None or bearing is None or band is None:
+                continue
+            candidate = BandRange(
+                band=band,
+                record=RangeRecord(
+                    bearing_deg=bearing, max_range_nm=distance, at_ms=ts_ms, icao24=record.icao
+                ),
+            )
+            current = best.get(candidate.key)
+            if current is not None:
+                candidate = BandRange(
+                    band=band, record=better_range(current.record, candidate.record)
+                )
+            best[candidate.key] = candidate
+        return tuple(best[key] for key in sorted(best))
 
 
 #: Nominal spacing between raw samples (``docs/DATA_MODEL.md`` §6.1).

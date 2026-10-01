@@ -23,7 +23,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 (:class:`AlertRule`, :class:`AlertMatch`) in slice 038, and the two resolution
 scratch tables (:class:`AircraftMetadataResolvedStaging`,
 :class:`AircraftClassificationStaging`) in slice 075, and the feeder pair
-(:class:`FeederEpisodeRow`, :class:`FeederSampleRow`) in slice 077.
+(:class:`FeederEpisodeRow`, :class:`FeederSampleRow`) in slice 077, and
+:class:`RangeByBearingBandDaily` in slice 087.
 """
 
 from __future__ import annotations
@@ -1164,6 +1165,44 @@ class RangeByBearingDaily(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RangeByBearingDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r})"
+
+
+class RangeByBearingBandDaily(Base):
+    """Per-day maximum range per 5° sector *and altitude band* (§6.3.1, slice 087).
+
+    :class:`RangeByBearingDaily` split three ways by barometric altitude —
+    ``0`` below 10,000 ft, ``1`` 10,000 to 25,000 ft, ``2`` at or above
+    25,000 ft (:data:`flightsite.receiver_metrics.coverage.ALTITUDE_BANDS`) —
+    so the Receiver page can compare each band with its own radio horizon. An
+    aircraft with no barometric altitude is in no band and is not counted.
+
+    ``sample_count`` is how many receiver samples (one per ~15 s,
+    ``docs/DATA_MODEL.md`` §6.1) saw at least one aircraft in this cell that
+    day. It is what the obstruction finder's minimum-evidence rule reads: a
+    sector that reached 40 % of its horizon once is a quiet sky, not a hill.
+
+    Retained indefinitely for the same reason the unbanded table is, and like
+    it ``icao24`` is a fact about the moment, not a foreign key.
+    """
+
+    __tablename__ = "range_by_bearing_band_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: ``0..71``; sector ``n`` covers bearings ``[5n, 5n + 5)`` degrees true.
+    bearing_bucket: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ``0..2``, the index into ``ALTITUDE_BANDS``.
+    altitude_band: Mapped[int] = mapped_column(Integer, primary_key=True)
+    max_range_nm: Mapped[float] = mapped_column(REAL, nullable=False)
+    at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    icao24: Mapped[str | None] = mapped_column(Text)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"RangeByBearingBandDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r}, "
+            f"altitude_band={self.altitude_band!r})"
+        )
 
 
 class LifetimeStat(Base):
