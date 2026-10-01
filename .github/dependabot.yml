@@ -11,7 +11,9 @@
 # further Dependabot configuration change required.
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # The backend is managed by uv (`backend/uv.lock`); the `pip` ecosystem never
+  # read that lock, so no backend dependency PR was ever opened (slice 079).
+  - package-ecosystem: "uv"
     directory: "/backend"
     schedule:
       interval: "weekly"
@@ -42,6 +44,12 @@ updates:
       - "dependencies"
       - "frontend"
     groups:
+      # vitest and its @vitest/* plugins must move in lock-step — a major bump
+      # of one without the other fails `npm ci` on the peer range (slice 079).
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
       frontend-minor-patch:
         patterns:
           - "*"
@@ -81,6 +89,15 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      # The stack pins Python 3.12 (CLAUDE.md: a change needs an ADR); a tag
+      # bump to 3.13+ is a stack change, not a patch, however it is grouped.
+      - dependency-name: "python"
+        versions: [">=3.13"]
+      # Only even-numbered Node majors get long-term support; the builder
+      # image moves between LTS lines deliberately (slice 079 moved it to 24).
+      - dependency-name: "node"
+        versions: ["23.x", "25.x", "27.x", "29.x"]
     groups:
       docker-minor-patch:
         patterns:

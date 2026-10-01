@@ -5,6 +5,109 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.11.0] — 2026-10-01
+
+The post-v0.10.0 usability and observatory program (`docs/design/080-feature-program.md`),
+shipped as one release: everyday usability first — units everywhere, every page in the
+sidebar, keyboard shortcuts, sharing, list search, a phone Live Map that installs to a
+home screen, map display controls — then the receiver as an instrument: readsb fields
+FlightSite used to discard, alerts about the station itself, "What was that?", coverage
+against the radio horizon, and richer alert rules.
+
+### Added
+- **Ten-section sidebar** — Activity, Health (with a roll-up status dot) and Feeders join
+  the seven original sections (SPEC §10 amended by the owner, 2026-09-28) (#225)
+- **Keyboard shortcuts** with a `?` sheet: `/` search, `L` layers, `F` filters, `H`
+  recentre, `[` `]` step through interesting aircraft, `M` measure, `T` trails, `W`
+  "What was that?", and `g` + a letter to go to any section; suspended while typing
+- **Copy link, share and QR code** on the aircraft, sighting and Live Map views, for
+  moving a view from a wall screen to a phone (#225)
+- **System theme** option that follows the OS, and a sidebar collapse that is remembered
+- **List search**: a filter box on Aircraft (ICAO, registration, any callsign the airframe
+  has flown, type, operator) and an ICAO-or-callsign prefix on Sightings; `q=` on both
+  list endpoints, matched case-insensitively from an index; the boxes wait for two
+  characters (#226)
+- **Phone Live Map**: below 768 px the floating cards become a bottom dock that opens one
+  card at a time, and the aircraft detail panel becomes a draggable bottom sheet (#227)
+- **Installable app**: a web app manifest and a hand-written service worker that caches
+  only the app shell — never `/api/`, the live socket, tiles or anything cross-origin —
+  with a "new version available — Reload" prompt (#227)
+- **Map display controls**: toggles for range rings, the receiver marker and labels; label
+  presets (full / compact / altitude only); optional short trails for every aircraft
+  (30 points, 2 minutes); a distance-and-bearing measure tool (#228)
+- **Decoder fields**: readsb's emitter category, autopilot-selected altitude and emergency
+  state are captured and shown; the category chooses the silhouette when no metadata
+  exists and joins the category filter; the decoder's emergency state (general, lifeguard,
+  minimum fuel, no radio, unlawful interference, downed) is an emergency source beside
+  squawks 7500/7600/7700, never double-notified (#229)
+- **Receiver self-alerts**: browser notifications when the message rate collapses against
+  the same hour-of-week baseline, when the decoder is disconnected, or when a feeder goes
+  offline — once per episode with a restore, a Settings section, an *Active self-alerts*
+  card on Health, and a `self_alerts` diagnostics block (#231)
+- **"What was that?"** (`GET /api/v1/overhead`): the aircraft whose stored position fixes
+  came closest to the receiver near a chosen moment, from the Live Map, the phone Activity
+  sheet, the Activity page or `W`; every result is a stored fix, never interpolated (#233)
+- **Coverage by altitude** on the Receiver page: the furthest aircraft heard per 5° sector
+  in three altitude bands against the 4/3-earth radio horizon from the antenna height,
+  with findings that name sectors reaching under 60 % of the horizon ("likely
+  obstruction") (#230)
+- **Richer alert conditions**, still a flat AND: squawk sets, callsign and registration
+  patterns, ground-speed and vertical-rate bounds, emitter category, and a polygon drawn
+  on a mini-map in the rule builder (with a keyboard-accessible text fallback) (#232)
+
+### Changed
+- The **units preference** is honoured on map labels, the activity feed's range records,
+  the Feeders range tile and the display-radius notice, which always printed ft / nm
+  before; a guard test now fails on any new hard-coded unit suffix (#224)
+- **Antenna height is above ground level** (owner decision 2026-09-30): the field is
+  labelled so in the wizard and Settings, and "What was that?" no longer subtracts it from
+  the aircraft's altitude
+- Migration **0018** adds four case-insensitive prefix indexes for list search; the
+  metadata import drops and rebuilds the two on `aircraft_metadata_resolved` around its
+  swap, so the writer hold stays within ~4 % of before
+- Migration **0019** adds the nullable `aircraft.emitter_category` column
+- Migration **0020** adds `range_by_bearing_band_daily` (72 sectors × 3 bands a day,
+  kept indefinitely like `range_by_bearing_daily`)
+- Alert rule conditions are stored as a versioned document (`version: 2`); v1 rules load
+  unchanged and are rewritten only when next saved
+- The frontend builder image and CI run on Node 24 LTS; vitest 5; Dependabot watches the
+  uv-managed backend
+- The visual-regression fixtures were re-recorded and every baseline retaken; the Receiver
+  baseline viewport grew for the coverage card, and phone baselines were added
+- The in-suite perf smoke run takes 21 ticks so a per-tick p95 is not a single stalled
+  runner tick (#240)
+
+### Fixed
+- Filters button no longer overlaps the Layers card header; Basemap, Layers and Filters
+  stack in one column (#245)
+- A failed Feeders page is labelled "Feeders", not "Receiver", by the error boundary
+- Receiver is no longer highlighted in the sidebar on the Feeders page
+- The analytics busiest-hour test no longer collides with itself within two hours of the
+  receiver's local midnight, which had failed every Dependabot PR's backend job (#221)
+- `undici` and `brace-expansion` advisories of 2026-09-30 cleared (dev dependencies)
+
+### Upgrade notes
+- **Back up first** (`docker compose exec flightsite-backend flightsite-backup create`):
+  three migrations run on first start. 0018 builds four indexes, 0019 adds one column,
+  0020 creates one empty table. Pre-flighted on a copy of a 590 MB production database
+  (112,771 sightings, revision 0017): the index build took about 16 s and the whole
+  start, migrations plus the startup integrity check, 55 s on a desktop; foreign keys
+  checked clean.
+- **Set the antenna height** (Settings → Receiver, *above ground*) to see the radio horizon
+  and obstruction findings on the Receiver page; the coverage chart fills from the day of
+  the upgrade onward.
+- **Install to a phone** requires a secure context: HTTPS or `localhost`. Over plain HTTP
+  on a LAN address the phone layout works but there is no install prompt or offline shell.
+- Receiver self-alerts are on by default with a 40 % / 15 min rate threshold and a 5 min
+  decoder threshold; the rate condition stays in "learning" until two weeks of hourly
+  history exist. Demo installs script a decoder outage at :30 every hour.
+
+### Known issues
+- The kill-drill test fails in most full local runs on Windows and passes alone (#255);
+  the unfiltered Sightings page may switch to a full scan once SQLite statistics exist
+  (#241, to confirm); the visual-test container keeps a stale dependency volume after a
+  package change (#244); #153 remains deferred; review follow-ups #209–#212 remain open
+
 ## [0.10.0] — 2026-09-26
 
 FlightSite now watches the networks the receiver feeds. A Feeders page under

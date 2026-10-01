@@ -83,7 +83,7 @@ describe("AlertRulesSection", () => {
       rules: [
         alertRule({
           name: "R4 watchlist rule",
-          conditions: { version: 1, watchlist_id: 42 },
+          conditions: { version: 2, watchlist_id: 42 },
         }),
       ],
       watchlists: [watchlist({ id: 42, name: "R4 probe list" })],
@@ -105,7 +105,7 @@ describe("AlertRulesSection", () => {
       rules: [
         alertRule({
           name: "Orphaned watchlist rule",
-          conditions: { version: 1, watchlist_id: 99 },
+          conditions: { version: 2, watchlist_id: 99 },
         }),
       ],
       watchlists: [],
@@ -195,7 +195,7 @@ describe("AlertRulesSection", () => {
         alertRule({
           name: "Locally rare",
           template_key: "locally_rare",
-          conditions: { version: 1, rare_aircraft: { max_sightings: 2 } },
+          conditions: { version: 2, rare_aircraft: { max_sightings: 2 } },
         }),
       ],
     });

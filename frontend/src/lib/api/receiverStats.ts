@@ -8,7 +8,11 @@
  * envelope (§2.5) — duplicated rather than imported, the same call that
  * module itself makes relative to `aircraft.ts`.
  */
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 
 /** `docs/API.md` §3.8's receiver-health summary — deliberately coarse; full
  * diagnostics is roadmap slice 042's scope. */
@@ -64,6 +68,63 @@ export interface ReceiverRangeByBearing {
   sector_width_deg: number;
   today: ReceiverBearingSector[];
   ever: ReceiverBearingSector[];
+}
+
+/** `GET /api/v1/receiver/coverage`'s window (roadmap slice 087): whole
+ * receiver-local days ending today, or every stored day. */
+export type ReceiverCoverageWindow = "7d" | "30d" | "90d" | "all";
+
+/** The three altitude bands, by barometric altitude. */
+export type ReceiverCoverageBandKey = "below_10k" | "10k_25k" | "above_25k";
+
+export interface ReceiverCoverageSector {
+  /** Sector midpoint, degrees true. 0 is North, increasing clockwise. */
+  bearing_deg: number;
+  /** `null` when nothing in the band was heard here in the window — never 0. */
+  max_range_nm: number | null;
+  at: string | null;
+  icao: string | null;
+  samples: number;
+  days: number;
+  /** `max_range_nm / horizon_nm`; `null` when either is unknown. Not clamped. */
+  share_of_horizon: number | null;
+}
+
+export interface ReceiverCoverageBand {
+  key: ReceiverCoverageBandKey;
+  label: string;
+  min_ft: number | null;
+  max_ft: number | null;
+  reference_ft: number;
+  /** 4/3-Earth radio horizon; `null` while the antenna height is unset. */
+  horizon_nm: number | null;
+  sectors: ReceiverCoverageSector[];
+}
+
+export interface ReceiverCoverageFinding {
+  band: ReceiverCoverageBandKey;
+  start_deg: number;
+  end_deg: number;
+  compass: string;
+  max_range_nm: number;
+  horizon_nm: number;
+  share_of_horizon: number;
+  samples: number;
+  days: number;
+  /** Canonical-units sentence; the page composes its own units-aware one. */
+  message: string;
+}
+
+export interface ReceiverCoverage {
+  window: ReceiverCoverageWindow;
+  from_day: string | null;
+  to_day: string;
+  sector_width_deg: number;
+  /** Above ground level. `null` when not configured. */
+  antenna_height_ft: number | null;
+  criteria: { share_below: number; min_samples: number; min_days: number };
+  bands: ReceiverCoverageBand[];
+  findings: ReceiverCoverageFinding[];
 }
 
 export interface ReceiverSignalBucket {
@@ -257,6 +318,30 @@ export function useReceiverRangeByBearingQuery(): UseQueryResult<ReceiverRangeBy
   return useQuery({
     queryKey: ["receiver", "range-by-bearing"],
     queryFn: getReceiverRangeByBearing,
+    ...RESILIENT_QUERY_OPTIONS,
+  });
+}
+
+export function getReceiverCoverage(
+  window: ReceiverCoverageWindow,
+): Promise<ReceiverCoverage> {
+  return apiV1Fetch<ReceiverCoverage>(
+    `/api/v1/receiver/coverage?window=${window}`,
+  );
+}
+
+/** Coverage by bearing and altitude band (roadmap slice 087). Built from
+ * daily rollups, so it is polled at the shared chart cadence like every
+ * other Receiver chart rather than any faster. */
+export function useReceiverCoverageQuery(
+  window: ReceiverCoverageWindow,
+): UseQueryResult<ReceiverCoverage> {
+  return useQuery({
+    queryKey: ["receiver", "coverage", window],
+    queryFn: () => getReceiverCoverage(window),
+    // A window switch keeps the previous answer on screen until the new one
+    // lands, rather than collapsing the card to "Loading…" and back.
+    placeholderData: keepPreviousData,
     ...RESILIENT_QUERY_OPTIONS,
   });
 }

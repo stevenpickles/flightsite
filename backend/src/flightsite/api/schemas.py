@@ -28,6 +28,13 @@ from pydantic import BaseModel, ConfigDict, Field
 #: position (Mode S only), which is a first-class live entry, not an error.
 PositionSourceLiteral = Literal["adsb", "mlat", "none", "other"]
 
+#: ``docs/API.md`` §2.8's decoder emergency-state vocabulary (slice 086);
+#: :data:`flightsite.ingest.types.DecoderEmergency` is the same six values.
+DecoderEmergencyLiteral = Literal["general", "lifeguard", "minfuel", "nordo", "unlawful", "downed"]
+
+#: An ADS-B emitter category, ``A0``-``D7`` (slice 086, ``docs/API.md`` §3.3).
+EmitterCategoryField = Annotated[str, Field(pattern=r"^[A-D][0-7]$", examples=["A3"])]
+
 #: §2.2: UTC ISO-8601 with a ``Z`` suffix and millisecond precision.
 IsoTimestamp = Annotated[str, Field(examples=["2026-08-31T14:03:22.418Z"])]
 
@@ -147,6 +154,13 @@ class AircraftView(_Model):
     vertical_rate_fpm: float | None = None
     squawk: str | None = None
     emergency: Literal["7500", "7600", "7700"] | None = None
+    #: The ADS-B emergency/priority status, independent of the squawk
+    #: (slice 086). ``null`` when none is declared or none was received.
+    decoder_emergency: DecoderEmergencyLiteral | None = None
+    #: ADS-B emitter category (slice 086).
+    emitter_category: EmitterCategoryField | None = None
+    #: Autopilot-selected altitude, feet: the MCP/FCU value, else the FMS one.
+    selected_altitude_ft: float | None = None
     on_ground: bool | None = None
 
     distance_nm: float | None = None
@@ -250,6 +264,9 @@ class AircraftHistoryRow(_Model):
     operator: str | None = None
     operator_group: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086);
+    #: decoder-reported, so it has no ``provenance`` entry.
+    emitter_category: EmitterCategoryField | None = None
     first_seen: IsoTimestamp
     last_seen: IsoTimestamp
     sighting_count: int
@@ -288,6 +305,8 @@ class AircraftDetail(_Model):
     operator_group: str | None = None
     owner: str | None = None
     classification: Classification | None = None
+    #: The last ADS-B emitter category the airframe transmitted (slice 086).
+    emitter_category: EmitterCategoryField | None = None
     #: True when this airframe is in the live picture right now — the
     #: frontend's cue to offer a jump to its Live Map selection.
     live: bool
@@ -381,6 +400,64 @@ class SightingListResponse(_Model):
     total: int | None = None
     limit: int
     offset: int
+
+
+class OverheadPassRow(_Model):
+    """One ranked result of ``GET /api/v1/overhead`` (roadmap slice 090).
+
+    The sighting, who it was, and its **closest stored position fix** inside
+    the window — a point the sighting actually stored, with that point's own
+    time, altitude and source; never an interpolated position
+    (:mod:`flightsite.sightings.overhead`). Identity fields follow
+    :class:`SightingRow`'s names.
+    """
+
+    sighting_id: int
+    icao: Annotated[str, Field(pattern=r"^[0-9a-f]{6}$", examples=["ae1463"])]
+    callsign: str | None = None
+    registration: str | None = None
+    aircraft_type: str | None = None
+    model: str | None = None
+    operator: str | None = None
+    #: The sighting has not closed; its fixes come from the checkpointed tail.
+    open: bool
+    #: When the closest stored fix was recorded (§2.2).
+    fix_at: IsoTimestamp
+    lat: float
+    lon: float
+    #: ``null`` where the fix carried no altitude (§2.7).
+    altitude_ft: int | None = None
+    #: What results are ranked by: slant distance when ``altitude_ft`` is
+    #: known, ground distance otherwise — ``distance_kind`` says which.
+    distance_nm: float
+    distance_kind: Literal["slant", "ground"]
+    #: Great-circle distance over the ground, always present.
+    ground_distance_nm: float
+    #: Degrees true from the receiver to the fix.
+    bearing_deg: float
+    position_source: PositionSourceLiteral
+
+
+class OverheadResponse(_Model):
+    """``GET /api/v1/overhead`` — "What was that?" (roadmap slice 090)."""
+
+    #: The moment asked about, and the window around it (§2.2, inclusive).
+    at: IsoTimestamp
+    window_minutes: int
+    window_start: IsoTimestamp
+    window_end: IsoTimestamp
+    #: Always ``closest_position_fix``: every row is a stored fix, never an
+    #: interpolated position.
+    method: Literal["closest_position_fix"] = "closest_position_fix"
+    #: ``false`` when no receiver location is set; ``items`` is then empty
+    #: and ``reason`` says why, rather than the request failing (§2.7).
+    receiver_configured: bool
+    reason: Literal["receiver_location_unset"] | None = None
+    #: Sightings with a position whose span overlapped the window.
+    candidates: int
+    #: ``true`` if the candidate cap cut the search short.
+    truncated: bool = False
+    items: list[OverheadPassRow] = Field(default_factory=list)
 
 
 class ReceptionStats(_Model):
@@ -563,6 +640,101 @@ class ReceiverRangeByBearing(_Model):
     sector_width_deg: float
     today: list[ReceiverBearingSector]
     ever: list[ReceiverBearingSector]
+
+
+#: ``GET /api/v1/receiver/coverage``'s window choices (slice 087).
+ReceiverCoverageWindow = Literal["7d", "30d", "90d", "all"]
+
+#: The altitude bands of the coverage analysis, by barometric altitude.
+ReceiverCoverageBandKey = Literal["below_10k", "10k_25k", "above_25k"]
+
+
+class ReceiverCoverageSector(_Model):
+    """One 5° sector of one altitude band over the window (§3.8, slice 087).
+
+    ``max_range_nm`` (and its ``at``/``icao``) is ``null`` when nothing in the
+    band was heard in this sector in the window — never ``0``. ``samples``
+    and ``days`` are real counts and are ``0`` then.
+    """
+
+    #: The sector's midpoint, degrees true; ``0`` is North, clockwise.
+    bearing_deg: float
+    max_range_nm: float | None = None
+    at: IsoTimestamp | None = None
+    icao: str | None = None
+    #: Receiver samples (one per ~15 s) that heard anything in this cell.
+    samples: int
+    #: Receiver-local days in the window with any data in this cell.
+    days: int
+    #: ``max_range_nm / horizon_nm``; ``null`` when either is unknown. Not
+    #: clamped — above 1 is a real observation.
+    share_of_horizon: float | None = None
+
+
+class ReceiverCoverageBand(_Model):
+    """One altitude band: its radio horizon and its 72 sectors."""
+
+    key: ReceiverCoverageBandKey
+    label: str
+    #: Inclusive lower edge, ft; ``null`` for the bottom band.
+    min_ft: float | None = None
+    #: Exclusive upper edge, ft; ``null`` for the top band.
+    max_ft: float | None = None
+    #: The altitude the horizon is computed for (the lower edge, or 3,000 ft).
+    reference_ft: float
+    #: 4/3-Earth radio horizon, nm; ``null`` when the antenna height is unset.
+    horizon_nm: float | None = None
+    sectors: list[ReceiverCoverageSector]
+
+
+class ReceiverCoverageCriteria(_Model):
+    """The documented thresholds a finding must meet."""
+
+    share_below: float
+    min_samples: int
+    min_days: int
+
+
+class ReceiverCoverageFinding(_Model):
+    """A run of adjacent sectors in one band that look obstructed."""
+
+    band: ReceiverCoverageBandKey
+    #: The run's first bearing and its exclusive end, degrees true. A run
+    #: through North has ``start_deg > end_deg`` (e.g. 350 to 10).
+    start_deg: float
+    end_deg: float
+    #: 16-point compass name of the run's middle bearing.
+    compass: str
+    max_range_nm: float
+    horizon_nm: float
+    share_of_horizon: float
+    samples: int
+    #: The fewest days any sector of the run was heard on.
+    days: int
+    #: A plain sentence in canonical units, e.g. "NE 40-60° reaches 58 % of
+    #: the radio horizon above 25,000 ft — likely obstruction".
+    message: str
+
+
+class ReceiverCoverage(_Model):
+    """``GET /api/v1/receiver/coverage`` — coverage by bearing and altitude band.
+
+    Roadmap slice 087 (issue #230). Always three bands of 72 sectors each, in
+    band then bucket order; ``findings`` is empty whenever the antenna height
+    is unset or nothing has enough evidence.
+    """
+
+    window: ReceiverCoverageWindow
+    #: First and last receiver-local day the window covers (``YYYY-MM-DD``).
+    #: ``from_day`` is ``null`` for ``window=all`` on an install with no data.
+    from_day: str | None = None
+    to_day: str
+    sector_width_deg: float
+    #: ``receiver.location.antenna_height_ft`` — above ground level.
+    antenna_height_ft: float | None = None
+    criteria: ReceiverCoverageCriteria
+    bands: list[ReceiverCoverageBand]
+    findings: list[ReceiverCoverageFinding] = Field(default_factory=list)
 
 
 class ReceiverSignalBucket(_Model):
@@ -935,6 +1107,8 @@ ActivityEventTypeLiteral = Literal[
     "milestone",
     "feeder_offline",
     "feeder_restored",
+    "self_alert_raised",
+    "self_alert_restored",
 ]
 
 
@@ -1390,6 +1564,48 @@ class DiagnosticsFeeders(_Model):
     docker_socket: Literal["available", "unset", "unreachable"] = "unset"
 
 
+# --------------------------------------------- diagnostics: self-alerts (088)
+
+
+class DiagnosticsSelfAlertCondition(_Model):
+    """One receiver self-alert condition's state (slice 088).
+
+    ``state`` is ``disabled``, ``ok``, ``pending`` (a bad run has begun but not
+    yet lasted its minimum), or ``active``; the message-rate condition also
+    reports ``learning`` (fewer than two weeks of this hour-of-week) or
+    ``quiet`` (a baseline too small to judge) in place of ``ok``.
+    """
+
+    enabled: bool = False
+    state: Literal["disabled", "ok", "pending", "active", "learning", "quiet"] = "disabled"
+    minutes: int | None = None
+    share_pct: int | None = None
+    #: The hour-of-week median the rate is judged against, msgs/s.
+    baseline_msgs_s: float | None = None
+    baseline_weeks: int | None = None
+    #: ``feeder_offline`` only: how many feeders are down right now.
+    count: int | None = None
+
+
+class DiagnosticsActiveSelfAlert(_Model):
+    """One currently raised self-alert, as the Health page lists it."""
+
+    condition: Literal["decoder_down", "message_rate", "feeder_offline"]
+    #: When the condition began (not when it was raised).
+    since: IsoTimestamp | None = None
+    severity: str = "high"
+    #: ``feeder_offline`` only: the feeder's entry name and display label.
+    subject: str | None = None
+    label: str | None = None
+
+
+class DiagnosticsSelfAlerts(_Model):
+    """Slice 088: the receiver self-alert conditions and what is active now."""
+
+    conditions: dict[str, DiagnosticsSelfAlertCondition] = Field(default_factory=dict)
+    active: list[DiagnosticsActiveSelfAlert] = Field(default_factory=list)
+
+
 class DiagnosticsError(_Model):
     """One captured recent error.
 
@@ -1429,6 +1645,8 @@ class DiagnosticsResponse(_Model):
     enrichment: DiagnosticsEnrichment = Field(default_factory=DiagnosticsEnrichment)
     websocket: DiagnosticsWebSocket = Field(default_factory=DiagnosticsWebSocket)
     feeders: DiagnosticsFeeders = Field(default_factory=DiagnosticsFeeders)
+    #: ``null`` only from an app built without the monitor (a test harness).
+    self_alerts: DiagnosticsSelfAlerts | None = None
     counters: dict[str, int] = Field(default_factory=dict)
     #: Keyed by category; each list is newest-first and bounded.
     recent_errors: dict[str, list[DiagnosticsError]] = Field(default_factory=dict)
@@ -1608,6 +1826,7 @@ __all__ = [
     "ClosureReasonLiteral",
     "CurrentAircraftResponse",
     "DecoderStateLiteral",
+    "DiagnosticsActiveSelfAlert",
     "DiagnosticsDatabase",
     "DiagnosticsDecoder",
     "DiagnosticsEnrichment",
@@ -1627,6 +1846,8 @@ __all__ = [
     "DiagnosticsRecovery",
     "DiagnosticsResponse",
     "DiagnosticsRowCounts",
+    "DiagnosticsSelfAlertCondition",
+    "DiagnosticsSelfAlerts",
     "DiagnosticsStatusLiteral",
     "DiagnosticsStorage",
     "DiagnosticsUptime",
@@ -1653,10 +1874,19 @@ __all__ = [
     "IsoTimestamp",
     "LifetimeRecord",
     "NearestAirportView",
+    "OverheadPassRow",
+    "OverheadResponse",
     "PositionSourceLiteral",
     "ReceiverBearingSector",
     "ReceiverBusiestDay",
     "ReceiverCommonRecord",
+    "ReceiverCoverage",
+    "ReceiverCoverageBand",
+    "ReceiverCoverageBandKey",
+    "ReceiverCoverageCriteria",
+    "ReceiverCoverageFinding",
+    "ReceiverCoverageSector",
+    "ReceiverCoverageWindow",
     "ReceiverFrequentAircraft",
     "ReceiverHealthLiteral",
     "ReceiverInfo",

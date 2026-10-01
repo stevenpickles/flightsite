@@ -7,26 +7,32 @@
  * (`frame.perf.test.ts`) and what the integration tests assert on.
  */
 
+import type { FeatureCollection, LineString } from "geojson";
 import type { Map as MapLibreGlMap } from "maplibre-gl";
 
 import {
   setAircraftData,
   setTrackData,
+  setTrailData,
 } from "@/features/map/aircraft/aircraftLayers";
 import {
   buildAircraftFeatureCollection,
   buildTrackFeatureCollection,
+  buildTrailFeatureCollection,
   countLabelledAircraft,
 } from "@/features/map/aircraft/geojson";
+import { liveTrails } from "@/features/map/aircraft/trails";
 import type {
   DepartingRecord,
   LiveAircraftRecord,
 } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { SelectedTrack } from "@/features/map/aircraft/track";
 import { updateDensityLatch } from "@/features/map/labels/densityLatch";
+import type { LabelPreset } from "@/features/map/labels/labelContent";
 import { DEFAULT_DISPLAY_RADIUS_NM } from "@/features/map/mapConfig";
 import { getFilteredLiveAircraft } from "@/features/filters/lib/filteredLiveAircraftCache";
 import { DEFAULT_FILTERS, type LiveFilters } from "@/features/filters/types";
+import type { UnitSystem } from "@/lib/api/config";
 
 /** The slice of the live store a frame is drawn from. */
 export interface AircraftFrameState {
@@ -49,9 +55,29 @@ export interface DrawFrameOptions {
   /** The display-radius default the distance cap falls back to when
    * `filters.maxDistanceNm` is unset. Defaults to the schema default. */
   displayRadiusNm?: number;
+  /** The receiver's display units for label altitudes. Defaults to aviation
+   * units. */
+  units?: UnitSystem;
+  /** The user's label content preset (roadmap slice 085). Defaults to
+   * `"full"`. */
+  labelPreset?: LabelPreset;
+  /** Whether to feed the trail buffer and rebuild the trail layer (roadmap
+   * slice 085). Trails end at the last reported position, so like the track
+   * they only change when the picture (or the filters, or the trails toggle)
+   * does, and interpolation frames skip them. */
+  includeTrails?: boolean;
+  /** Whether trails are shown at all — the Layers card's "Trails" toggle.
+   * Off (the default) pushes an empty trail collection. */
+  trailsEnabled?: boolean;
 }
 
-/** Rebuilds and pushes the aircraft (and optionally track) sources for `now`.
+const NO_TRAILS: FeatureCollection<LineString> = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+/** Rebuilds and pushes the aircraft (and optionally track and trail) sources
+ * for `now`.
  * Filtering happens here, once, through `getFilteredLiveAircraft` — the same
  * memoized selector React components read via
  * `useFilteredLiveAircraft` — so the map, the non-positioned panel, and the
@@ -78,6 +104,8 @@ export function drawAircraftFrame(
       zoom: map.getZoom(),
       visibleIcaos: filterResult.visibleIcaos,
       dimmedIcaos: filterResult.dimmedIcaos,
+      units: options.units,
+      labelPreset: options.labelPreset,
       // The frame loop is the one caller that draws a *sequence*, so it is
       // the one that owns the label-density latch (issue #143). Advancing it
       // here — once per frame, on the same post-filter count `geojson.ts`
@@ -91,5 +119,26 @@ export function drawAircraftFrame(
   );
   if (options.includeTrack) {
     setTrackData(map, buildTrackFeatureCollection(state.track));
+  }
+  if (options.includeTrails) {
+    // Like the density latch above, the trail buffer is memory about the
+    // sequence of pictures, so the frame loop feeds it and the builder only
+    // reads it. Fed whether or not trails are shown, so turning them on
+    // draws the recent wake at once instead of starting from nothing; the
+    // buffer is bounded either way (`trails.ts`).
+    liveTrails.record(state.aircraft, now);
+    setTrailData(
+      map,
+      options.trailsEnabled
+        ? buildTrailFeatureCollection({
+            aircraft: state.aircraft,
+            trails: liveTrails,
+            selectedIcao: state.selectedIcao,
+            now,
+            visibleIcaos: filterResult.visibleIcaos,
+            dimmedIcaos: filterResult.dimmedIcaos,
+          })
+        : NO_TRAILS,
+    );
   }
 }

@@ -25,25 +25,70 @@
  *
  * "Interesting only" was gated the same way until slice 038 started
  * populating `interesting` and slice 039 surfaced it.
+ *
+ * Emitter category (roadmap slice 086) is the half of SPEC §37's "aircraft
+ * category/type" that needs no metadata: the aircraft's own ADS-B category,
+ * offered as checkboxes for the categories actually in the live picture
+ * (`lib/emitterCategoryOptions.ts`) rather than all 32 codes. "Emergency
+ * only" matches the decoder's emergency state as well as the squawk.
+ *
+ * Registers `toggleFilterDrawer` and `focusLiveSearch` on
+ * `lib/shortcuts/mapShortcutTargets` (roadmap slice 082) so the `F` and `/`
+ * keyboard shortcuts — dispatched from `useKeyboardShortcuts`, mounted in
+ * `AppShell` far from this component — can reach this drawer's own
+ * open/closed state and its live-set query input.
+ *
+ * On a phone (`placement="docked"`, roadmap slice 084) the drawer has no
+ * trigger of its own: the bottom toolbar's Filters button is the trigger,
+ * the open flag is the toolbar's `usePhoneMapStore.openCard === "filters"`
+ * rather than this component's state, and the panel flows full width in the
+ * toolbar's sheet instead of sliding over the right edge of the map. The
+ * shortcuts keep working unchanged, because they go through the same
+ * `setIsOpen` either way.
+ *
+ * On desktop the trigger is the last item in `LiveMapPage`'s right-hand
+ * control column, in flow below the Basemap and Layers cards (issue #245),
+ * rather than at a fixed offset the Layers card could grow into. The open
+ * panel is still absolutely positioned: the column is itself a full-height,
+ * right-edge box, so `inset-y-0 right-0` against it is the map's right edge,
+ * exactly where the panel always slid in. The column carries no z-index of
+ * its own, so the panel's `z-20` still ranks against the page's other cards
+ * as it did before.
  */
 
 import { Filter, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { countActiveFilters } from "@/features/filters/lib/activeFilterCount";
 import { useFilteredLiveAircraft } from "@/features/filters/hooks/useFilteredLiveAircraft";
+import {
+  emitterCategoryOptions,
+  presentEmitterCategoriesKey,
+} from "@/features/filters/lib/emitterCategoryOptions";
 import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import type {
   ClassificationFlag,
   GroundTrafficMode,
 } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
+import { usePhoneMapStore } from "@/features/map/phone/usePhoneMapStore";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { useRovingFocus } from "@/lib/a11y/useRovingFocus";
 import { useMetadataAvailable } from "@/lib/api/metadata";
+import { formatEmitterCategory } from "@/lib/emitterCategory";
+import { setMapShortcutTarget } from "@/lib/shortcuts/mapShortcutTargets";
 import { cn } from "@/lib/utils";
 
 const CLASSIFICATION_OPTIONS: { value: ClassificationFlag; label: string }[] = [
@@ -141,8 +186,35 @@ function FilterMatchCount({ shown, total }: { shown: number; total: number }) {
   );
 }
 
-export function FilterDrawer() {
-  const [isOpen, setIsOpen] = useState(false);
+export function FilterDrawer({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const docked = placement === "docked";
+  const [floatingOpen, setFloatingOpen] = useState(false);
+  const dockedOpen = usePhoneMapStore((state) => state.openCard === "filters");
+  const isOpen = docked ? dockedOpen : floatingOpen;
+  // One setter for both placements, with `useState`'s own signature, so the
+  // shortcut registrations and the Escape handler below never need to know
+  // which one they are driving. The docked branch reads the store at call
+  // time rather than closing over `dockedOpen`, since the shortcut callbacks
+  // are registered once and would otherwise toggle against a stale value.
+  const setIsOpen = useCallback(
+    (next: SetStateAction<boolean>) => {
+      if (!docked) {
+        setFloatingOpen(next);
+        return;
+      }
+      const store = usePhoneMapStore.getState();
+      const current = store.openCard === "filters";
+      const value = typeof next === "function" ? next(current) : next;
+      if (value !== current) {
+        store.setOpenCard(value ? "filters" : null);
+      }
+    },
+    [docked],
+  );
   const metadataAvailable = useMetadataAvailable();
   const filters = useFilterStore((state) => state.filters);
   const total = useLiveAircraftStore(
@@ -153,6 +225,18 @@ export function FilterDrawer() {
   const setAltitudeRange = useFilterStore((state) => state.setAltitudeRange);
   const setMaxDistanceNm = useFilterStore((state) => state.setMaxDistanceNm);
   const setCategoryText = useFilterStore((state) => state.setCategoryText);
+  const toggleEmitterCategory = useFilterStore(
+    (state) => state.toggleEmitterCategory,
+  );
+  // A string, not an array: re-render only when the set of categories in
+  // the sky changes (`lib/emitterCategoryOptions.ts`).
+  const presentEmitterCategories = useLiveAircraftStore((state) =>
+    presentEmitterCategoriesKey(state.aircraft),
+  );
+  const emitterOptions = emitterCategoryOptions(
+    presentEmitterCategories,
+    filters.emitterCategories,
+  );
   const setOperatorText = useFilterStore((state) => state.setOperatorText);
   const setOperatorGroupText = useFilterStore(
     (state) => state.setOperatorGroupText,
@@ -187,6 +271,29 @@ export function FilterDrawer() {
   const headingId = useId();
   const activeCount = countActiveFilters(filters);
 
+  // The `/` shortcut's target (roadmap slice 082): the live-set query input,
+  // reachable even while the drawer starts closed. `focusLiveSearch` records
+  // the intent in a ref (not state — a second render here would just refire
+  // the focus effect below and steal focus right back off the input) and
+  // opens the drawer; the focus effect reads and clears that ref once, on
+  // the one commit the drawer actually opens.
+  const liveQueryInputRef = useRef<HTMLInputElement>(null);
+  const focusSearchOnOpenRef = useRef(false);
+
+  useEffect(() => {
+    setMapShortcutTarget("toggleFilterDrawer", () => {
+      setIsOpen((open) => !open);
+    });
+    setMapShortcutTarget("focusLiveSearch", () => {
+      focusSearchOnOpenRef.current = true;
+      setIsOpen(true);
+    });
+    return () => {
+      setMapShortcutTarget("toggleFilterDrawer", undefined);
+      setMapShortcutTarget("focusLiveSearch", undefined);
+    };
+  }, [setIsOpen]);
+
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -198,10 +305,16 @@ export function FilterDrawer() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+  }, [isOpen, setIsOpen]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) {
+      return;
+    }
+    if (focusSearchOnOpenRef.current) {
+      focusSearchOnOpenRef.current = false;
+      liveQueryInputRef.current?.focus();
+    } else {
       panelRef.current?.focus();
     }
   }, [isOpen, panelRef]);
@@ -217,34 +330,38 @@ export function FilterDrawer() {
 
   return (
     <>
-      <button
-        type="button"
-        aria-expanded={isOpen}
-        // Only while the panel is actually mounted: `aria-controls` pointing
-        // at an id that is not in the document is an invalid reference.
-        aria-controls={isOpen ? headingId : undefined}
-        onClick={() => setIsOpen((open) => !open)}
-        className={cn(
-          // Below `BasemapSwitcher` (right-3 top-3, up to three rows tall)
-          // so the two floating map controls never overlap.
-          "absolute right-3 top-40 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
-          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-          activeCount > 0
-            ? "text-accent"
-            : "text-foreground hover:bg-secondary",
-        )}
-      >
-        <Filter className="size-3.5" aria-hidden="true" />
-        Filters
-        {activeCount > 0 && (
-          <span
-            data-testid="filter-active-count"
-            className="inline-flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground"
-          >
-            {activeCount}
-          </span>
-        )}
-      </button>
+      {!docked && (
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          // Only while the panel is actually mounted: `aria-controls` pointing
+          // at an id that is not in the document is an invalid reference.
+          aria-controls={isOpen ? headingId : undefined}
+          onClick={() => setIsOpen((open) => !open)}
+          className={cn(
+            // In flow, last in `LiveMapPage`'s right-hand control column,
+            // below the Basemap and Layers cards (issue #245) — not at a
+            // fixed offset, which is how it came to sit on the Layers card's
+            // header once that card grew.
+            "pointer-events-auto relative z-10 flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 text-xs font-medium shadow-md backdrop-blur-sm",
+            "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+            activeCount > 0
+              ? "text-accent"
+              : "text-foreground hover:bg-secondary",
+          )}
+        >
+          <Filter className="size-3.5" aria-hidden="true" />
+          Filters
+          {activeCount > 0 && (
+            <span
+              data-testid="filter-active-count"
+              className="inline-flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground"
+            >
+              {activeCount}
+            </span>
+          )}
+        </button>
+      )}
 
       {isOpen && (
         <div
@@ -255,8 +372,10 @@ export function FilterDrawer() {
           tabIndex={-1}
           data-testid="filter-drawer"
           className={cn(
-            "absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col",
-            "border-l border-border bg-card text-card-foreground shadow-lg outline-none",
+            docked
+              ? "flex max-h-full w-full flex-col rounded-lg border"
+              : "pointer-events-auto absolute inset-y-0 right-0 z-20 flex w-[320px] max-w-[90vw] flex-col border-l",
+            "border-border bg-card text-card-foreground shadow-lg outline-none",
           )}
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -291,6 +410,7 @@ export function FilterDrawer() {
               </Label>
               <Input
                 id="filter-live-query"
+                ref={liveQueryInputRef}
                 placeholder="e.g. BAW, N12345, a1b2c3"
                 value={filters.liveSetQuery}
                 onChange={(event) => setLiveSetQuery(event.target.value)}
@@ -378,6 +498,36 @@ export function FilterDrawer() {
               {!metadataAvailable && <MetadataImportNote />}
             </FilterSection>
 
+            <FilterSection title="Emitter category">
+              {emitterOptions.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {emitterOptions.map((category) => (
+                    <label
+                      key={category}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={filters.emitterCategories.includes(category)}
+                        onChange={() => toggleEmitterCategory(category)}
+                      />
+                      {formatEmitterCategory(category) ?? category}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <PlumbingNote>
+                  No aircraft in the live picture has transmitted a category
+                  yet.
+                </PlumbingNote>
+              )}
+              <PlumbingNote>
+                Transmitted by the aircraft itself, so it needs no metadata
+                import. Aircraft that send no category are hidden while any is
+                selected.
+              </PlumbingNote>
+            </FilterSection>
+
             <FilterSection title="Classification">
               <div className="flex flex-col gap-1.5">
                 {CLASSIFICATION_OPTIONS.map((option) => (
@@ -449,7 +599,7 @@ export function FilterDrawer() {
                   checked={filters.emergencyOnly}
                   onChange={(event) => setEmergencyOnly(event.target.checked)}
                 />
-                Emergency squawk only
+                Emergency only
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input

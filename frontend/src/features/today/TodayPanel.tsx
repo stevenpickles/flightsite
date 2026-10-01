@@ -40,6 +40,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { StatTile } from "@/features/today/components/StatTile";
 import {
   formatAsOfTime,
@@ -50,6 +51,7 @@ import {
 import { useReceiverLocalDate } from "@/features/today/lib/localDay";
 import { useAnalyticsSummaryQuery } from "@/lib/api/analytics";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { cn } from "@/lib/utils";
 
 /** One collapsed-header badge — reused for unique aircraft, sightings and
  * interesting so the three read as one family rather than the single
@@ -71,8 +73,18 @@ function HeaderBadge({
   );
 }
 
-export function TodayPanel() {
-  const [isExpanded, setIsExpanded] = useState(false);
+/**
+ * `placement="docked"` (roadmap slice 084) is the phone layout: the header
+ * and its badges become a compact full-width strip at the top of the bottom
+ * toolbar's Today sheet, with the tiles already open beneath it — the
+ * toolbar tap was the request for them.
+ */
+export function TodayPanel({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const [isExpanded, setIsExpanded] = useState(placement === "docked");
   const receiverQuery = useReceiverQuery();
   const timezone = receiverQuery.data?.timezone ?? "UTC";
   const units = receiverQuery.data?.units ?? "aviation";
@@ -87,7 +99,12 @@ export function TodayPanel() {
   return (
     <div
       data-testid="today-panel"
-      className="absolute left-1/2 top-3 z-10 w-[min(36rem,92vw)] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm"
+      className={cn(
+        placement === "floating"
+          ? "absolute left-1/2 top-3 z-10 w-[min(36rem,92vw)] -translate-x-1/2"
+          : "w-full",
+        "overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm",
+      )}
     >
       <button
         type="button"

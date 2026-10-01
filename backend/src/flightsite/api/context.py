@@ -62,6 +62,7 @@ from flightsite.api.receiver_stats import (
     SUMMARY_ONLY_METRICS,
     ReceiverMetricQueryError,
     ReceiverStatsRepository,
+    coverage_from_day,
     ever_ranges,
     next_local_day,
     signal_histogram,
@@ -73,6 +74,7 @@ from flightsite.api.serializers import (
     aircraft_payload,
     alert_match_payload,
     analytics_window_payload,
+    receiver_coverage_payload,
     receiver_lifetime_stats_payload,
     receiver_metric_series_payload,
     receiver_payload,
@@ -89,6 +91,11 @@ from flightsite.live import LiveAircraft, LiveStore
 from flightsite.metadata import MetadataCache, MetadataService
 from flightsite.receiver_metrics import MetricsRepository, ReceiverMetricsService
 from flightsite.receiver_metrics.aggregate import local_day, local_day_start_ms
+from flightsite.receiver_metrics.coverage import (
+    band_horizons,
+    find_obstructions,
+    reduce_window,
+)
 from flightsite.sightings import PersistenceWorker
 from flightsite.watchlists import WatchlistService
 from flightsite.watchlists.matcher import WatchlistMatcher
@@ -345,6 +352,7 @@ class LiveApiContext:
         classification: str | None = None,
         operator_group: str | None = None,
         type_code: str | None = None,
+        q: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """One page of the Aircraft page's list, serialized — §3.5."""
         rows, total = await self.history.list_aircraft(
@@ -355,6 +363,7 @@ class LiveApiContext:
             classification=classification,
             operator_group=operator_group,
             type_code=type_code,
+            q=q,
         )
         return [aircraft_history_row_payload(row) for row in rows], total
 
@@ -422,6 +431,7 @@ class LiveApiContext:
         to_ms: int | None = None,
         interesting: bool | None = None,
         open_only: bool | None = None,
+        q: str | None = None,
     ) -> list[dict[str, Any]]:
         """One page of the sightings log, serialized — §3.6.
 
@@ -439,6 +449,7 @@ class LiveApiContext:
             to_ms=to_ms,
             interesting=interesting,
             open_only=open_only,
+            q=q,
         )
         # One clock reading for the whole page, not one per row: an open
         # sighting's `elapsed_s` is measured against it, and two rows of one
@@ -752,6 +763,30 @@ class LiveApiContext:
         today_ranges = await metrics.ranges_for_day(today)
         ever = ever_ranges(await metrics.ranges_all())
         return receiver_range_by_bearing_payload(today=today_ranges, ever=ever)
+
+    async def receiver_coverage(self, *, window: str) -> dict[str, Any]:
+        """``GET /api/v1/receiver/coverage`` — slice 087's coverage by altitude band.
+
+        The window is whole receiver-local days ending today, in the live
+        zone, the same calendar the rows were written under. The antenna
+        height is read from the live settings on every request, so setting
+        it in Settings brings the horizon and findings in on the next poll.
+        """
+        today = local_day(utc_now_ms(), self._receiver_timezone)
+        from_day = coverage_from_day(window, today)
+        rows = await self.metrics.band_ranges_from(from_day)
+        cells = reduce_window(rows)
+        antenna_height_ft = self.settings.location.antenna_height_ft
+        horizons = band_horizons(antenna_height_ft)
+        return receiver_coverage_payload(
+            window=window,
+            from_day=from_day if from_day is not None or not rows else rows[0][0],
+            to_day=today,
+            antenna_height_ft=antenna_height_ft,
+            cells=cells,
+            horizons=horizons,
+            findings=find_obstructions(cells, horizons),
+        )
 
     async def receiver_signal_distribution(
         self, *, from_ms: int | None, to_ms: int | None, bucket_width_db: float

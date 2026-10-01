@@ -685,6 +685,65 @@ describe("heading structure, landmarks and skip link (R1-11)", () => {
   });
 });
 
+describe("right-hand control column (issue #245)", () => {
+  // jsdom does no layout, so this pins the *structure* that makes an overlap
+  // impossible rather than measuring pixels (the visual baselines measure
+  // those): Basemap, Layers and the Filters button are consecutive flex
+  // items in one column, and none of them positions itself — so each one
+  // starts below the previous one whatever its height.
+  function column(): HTMLElement {
+    return screen.getByTestId("map-right-controls");
+  }
+
+  it("stacks Basemap, Layers and Filters in that order in one column", () => {
+    renderPage();
+    const basemap = screen.getByRole("region", { name: "Basemap" });
+    const layers = screen.getByRole("region", { name: "Map layers" });
+    const filters = screen.getByRole("button", { name: /^filters/i });
+
+    expect([...column().children]).toEqual([basemap, layers, filters]);
+    expect(column().className).toMatch(/\bflex-col\b/);
+  });
+
+  it("lets none of the three claim a fixed position of its own", () => {
+    renderPage();
+    const cards = [
+      within(screen.getByRole("region", { name: "Basemap" })).getByRole(
+        "radiogroup",
+      ).parentElement,
+      screen.getByRole("button", { name: /^layers/i }).closest("div"),
+      screen.getByRole("button", { name: /^filters/i }),
+    ];
+    for (const card of cards) {
+      expect(card?.className).not.toMatch(/\b(absolute|fixed|top-\d+)\b/);
+    }
+  });
+
+  it("keeps the column click-through and out of the stacking order", () => {
+    renderPage();
+    expect(column().className).toMatch(/\bpointer-events-none\b/);
+    expect(column().className).not.toMatch(/\bz-\d+/);
+    for (const card of [
+      within(screen.getByRole("region", { name: "Basemap" })).getByRole(
+        "radiogroup",
+      ).parentElement,
+      screen.getByRole("button", { name: /^filters/i }),
+    ]) {
+      expect(card?.className).toMatch(/\bpointer-events-auto\b/);
+    }
+  });
+
+  it("still opens the filter drawer over the map's right edge, clickable", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("button", { name: /^filters/i }));
+    const drawer = screen.getByTestId("filter-drawer");
+    expect(drawer.className).toMatch(/\babsolute inset-y-0 right-0\b/);
+    expect(drawer.className).toMatch(/\bpointer-events-auto\b/);
+    expect(drawer.className).toMatch(/\bz-20\b/);
+  });
+});
+
 describe("notification status pill (R1-12)", () => {
   it("stays off the page entirely once permission is granted", () => {
     installNotificationMock({ permission: "granted" });

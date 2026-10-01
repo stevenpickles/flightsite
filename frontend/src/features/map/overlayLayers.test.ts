@@ -11,8 +11,11 @@ import {
   RECEIVER_DOT_LAYER_ID,
   RECEIVER_HALO_LAYER_ID,
   RECEIVER_SOURCE_ID,
+  setRangeRingLayersVisible,
+  setReceiverLayersVisible,
 } from "@/features/map/overlayLayers";
 import type { MapConfig } from "@/features/map/types";
+import { MapLibreMockMap } from "@/test/maplibreGlMock";
 
 const config: MapConfig = {
   receiver: { lat: 47.6, lon: -122.3, label: "Test Receiver" },
@@ -138,5 +141,49 @@ describe("ensureOverlayLayers", () => {
     const receiverSetData = fakeMap._sources.get(RECEIVER_SOURCE_ID)?.setData;
     const lastCallArg = receiverSetData?.mock.calls.at(-1)?.[0];
     expect(lastCallArg.features[0].geometry.coordinates).toEqual([-74, 40]);
+  });
+});
+
+describe("range-ring and receiver visibility (roadmap slice 085)", () => {
+  function layoutVisibility(mock: MapLibreMockMap, id: string): unknown {
+    return (mock.layers.get(id)?.layout as Record<string, unknown> | undefined)
+      ?.visibility;
+  }
+
+  it("hides and shows the ring line and ring labels together", () => {
+    const mock = new MapLibreMockMap({});
+    const map = mock as unknown as MapLibreGlMap;
+    ensureOverlayLayers(map, config);
+
+    setRangeRingLayersVisible(map, false);
+    expect(layoutVisibility(mock, RANGE_RING_LINE_LAYER_ID)).toBe("none");
+    expect(layoutVisibility(mock, RANGE_RING_LABEL_LAYER_ID)).toBe("none");
+    // The receiver marker is a separate toggle.
+    expect(layoutVisibility(mock, RECEIVER_DOT_LAYER_ID)).toBeUndefined();
+
+    setRangeRingLayersVisible(map, true);
+    expect(layoutVisibility(mock, RANGE_RING_LINE_LAYER_ID)).toBe("visible");
+    expect(layoutVisibility(mock, RANGE_RING_LABEL_LAYER_ID)).toBe("visible");
+  });
+
+  it("hides and shows the receiver halo and dot together", () => {
+    const mock = new MapLibreMockMap({});
+    const map = mock as unknown as MapLibreGlMap;
+    ensureOverlayLayers(map, config);
+
+    setReceiverLayersVisible(map, false);
+    expect(layoutVisibility(mock, RECEIVER_HALO_LAYER_ID)).toBe("none");
+    expect(layoutVisibility(mock, RECEIVER_DOT_LAYER_ID)).toBe("none");
+    expect(layoutVisibility(mock, RANGE_RING_LINE_LAYER_ID)).toBeUndefined();
+  });
+
+  it("is a no-op before the layers exist", () => {
+    const mock = new MapLibreMockMap({});
+    const map = mock as unknown as MapLibreGlMap;
+    expect(() => {
+      setRangeRingLayersVisible(map, false);
+      setReceiverLayersVisible(map, false);
+    }).not.toThrow();
+    expect(mock.layers.size).toBe(0);
   });
 });

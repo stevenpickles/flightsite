@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   CATEGORY_ICON_SHAPES,
+  EMITTER_CATEGORY_ICON_SHAPES,
   GENERIC_ICON_SHAPE,
   GROUND_ICON_SHAPE,
   resolveAircraftIcon,
@@ -134,6 +135,90 @@ describe("resolveAircraftIcon", () => {
         on_ground: true,
       }),
     ).toEqual({ shape: "airliner", level: "type" });
+  });
+
+  describe("emitter-category fallback (roadmap slice 086)", () => {
+    it("renders an A7 with no metadata as a rotorcraft", () => {
+      // The roadmap acceptance criterion.
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: null,
+          on_ground: false,
+          emitter_category: "A7",
+        }),
+      ).toEqual({ shape: "rotorcraft", level: "emitter" });
+    });
+
+    it("keeps the rotorcraft on the ground", () => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: null,
+          on_ground: true,
+          emitter_category: "A7",
+        }),
+      ).toEqual({ shape: "rotorcraft", level: "emitter" });
+    });
+
+    it("applies when metadata resolved but its category is unknown", () => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: classification("unknown"),
+          on_ground: false,
+          emitter_category: "a7",
+        }).level,
+      ).toBe("emitter");
+    });
+
+    it("never outranks a metadata category, even a generic-shaped one", () => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: classification("airliner"),
+          on_ground: false,
+          emitter_category: "A7",
+        }),
+      ).toEqual({ shape: GENERIC_ICON_SHAPE, level: "generic" });
+    });
+
+    it("never outranks a metadata type silhouette", () => {
+      typeTable.B738 = "airliner";
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: "B738",
+          classification: null,
+          on_ground: false,
+          emitter_category: "A7",
+        }).level,
+      ).toBe("type");
+    });
+
+    it("maps only shapes that exist, so other categories fall through", () => {
+      expect(EMITTER_CATEGORY_ICON_SHAPES).toEqual({ A7: "rotorcraft" });
+      for (const code of ["A0", "A1", "A3", "A5", "A6", "B1", "B6", "C1"]) {
+        expect(
+          resolveAircraftIcon({
+            aircraft_type: null,
+            classification: null,
+            on_ground: false,
+            emitter_category: code,
+          }),
+        ).toEqual({ shape: GENERIC_ICON_SHAPE, level: "generic" });
+      }
+    });
+
+    it("ignores a malformed category", () => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: null,
+          on_ground: false,
+          emitter_category: "constructor",
+        }).level,
+      ).toBe("generic");
+    });
   });
 
   it("makes no heuristic guess from live kinematics", () => {

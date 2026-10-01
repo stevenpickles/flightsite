@@ -72,6 +72,12 @@ def _rule_payload(record: AlertRuleRecord) -> dict[str, Any]:
     back — and ``describes`` beside it is the rule stated in prose, which is
     what a list row shows under the name without every client re-implementing
     :meth:`~flightsite.alerts.model.RuleConditions.describe`.
+
+    The echo is always the *current* document version (2, slice 089): a rule
+    stored or submitted as version 1 comes back as version 2 with the same
+    conditions, because the model upgrades on read. A client therefore only
+    ever has to understand one version, and sending the echo back — which is
+    what the rule builder does on save — is what lazily rewrites a v1 row.
     """
     return {
         "id": record.id,

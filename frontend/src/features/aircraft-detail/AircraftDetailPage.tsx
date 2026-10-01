@@ -34,6 +34,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiV1Error, useAircraftDetailQuery } from "@/lib/api/aircraft";
 import { useReceiverQuery } from "@/lib/api/receiver";
 import { useAircraftSightingsQuery } from "@/lib/api/sightings";
+import { ShareControls } from "@/lib/share/ShareControls";
+import { useCurrentUrl } from "@/lib/share/useCurrentUrl";
 
 const ICAO_PATTERN = /^[0-9a-f]{6}$/;
 
@@ -41,6 +43,7 @@ export function AircraftDetailPage() {
   const { icao: rawIcao } = useParams<{ icao: string }>();
   const icao = rawIcao?.toLowerCase();
   const validIcao = icao !== undefined && ICAO_PATTERN.test(icao);
+  const shareUrl = useCurrentUrl();
 
   // The cadence applies only while the airframe is in the live picture —
   // that is the one state in which its lifetime block is still changing
@@ -135,9 +138,15 @@ export function AircraftDetailPage() {
           />
         )}
         <header className="border-b border-border pb-4">
-          <h1 className="text-lg font-semibold">
-            {detail.registration ?? detail.icao.toUpperCase()}
-          </h1>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h1 className="text-lg font-semibold">
+              {detail.registration ?? detail.icao.toUpperCase()}
+            </h1>
+            <ShareControls
+              url={shareUrl}
+              title={detail.registration ?? detail.icao.toUpperCase()}
+            />
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
             ICAO {detail.icao.toUpperCase()} · Registration{" "}
             {detail.registration ?? <UnknownValue />}

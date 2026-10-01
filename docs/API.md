@@ -202,6 +202,9 @@ and the roadmap. Any document using different spellings is wrong and must be fix
 | Provenance values | `decoder` \| `derived` \| `mictronics` \| `faa` \| `opensky` (opt-in, default off) \| `vrs` \| `aerodatabox` \| `heuristic` |
 | Route source | `route_source` / `provenance.route`: `"vrs"` (offline directory) \| `"aerodatabox"` (online provider) |
 | Alert severity | `info` \| `interesting` \| `high` \| `critical` |
+| Decoder emergency state | `decoder_emergency`: `"general"` \| `"lifeguard"` \| `"minfuel"` \| `"nordo"` \| `"unlawful"` \| `"downed"` (slice 086; no emergency is `null`) |
+| Emitter category | `emitter_category`: `"A0"`–`"D7"` (slice 086; ADS-B emitter category set letter + digit) |
+| Emergency source | `emergency_source`: `"squawk"` \| `"decoder"`; `emergency_kind`: the `decoder_emergency` vocabulary (slice 086) |
 
 ### 2.9 Path parameter constraints
 
@@ -269,7 +272,8 @@ restart a backend whose only problem is on the other end of the network.
 
 Non-secret receiver identity and configuration snapshot: site name, latitude,
 longitude, antenna height, configured timezone, units preference, display/alert
-radius, demo-mode flag, T0.
+radius, demo-mode flag, T0. `antenna_height_ft` is the antenna's height **above ground
+level** (`docs/CONFIGURATION.md`, `location`), `null` when not configured.
 
 ```json
 {
@@ -308,6 +312,9 @@ Aircraft object (the same shape used by the WebSocket):
   "vertical_rate_fpm": -640,
   "squawk": "4521",
   "emergency": null,
+  "decoder_emergency": null,
+  "emitter_category": "A5",
+  "selected_altitude_ft": 25000,
   "on_ground": false,
   "distance_nm": 18.4,
   "bearing_deg": 31.7,
@@ -359,7 +366,34 @@ Aircraft object (the same shape used by the WebSocket):
 - `position_source`: `adsb` | `mlat` | `none` | `other` (SPEC §21). Non-positioned
   aircraft have `position: null`, `position_source: "none"`.
 - `state`: `live` | `stale` (past the 15 s threshold, not yet removed).
-- `emergency`: `null` | `"7500"` | `"7600"` | `"7700"`.
+- `emergency`: `null` | `"7500"` | `"7600"` | `"7700"` — the squawk, restated when it
+  is an emergency code. It keeps meaning exactly that; the decoder's own emergency
+  state is the separate `decoder_emergency`.
+- `decoder_emergency` (slice 086): the ADS-B emergency/priority status the aircraft
+  broadcasts, independently of its squawk — `general`, `lifeguard`, `minfuel`,
+  `nordo` (no communications), `unlawful` or `downed`; `null` when it declares none,
+  when the status is a reserved code, or when the decoder has not received one. Not
+  sticky: it is the decoder's *current* statement, and a decoder drops the status
+  once the aircraft stops broadcasting it. Either field being non-null means the
+  aircraft is declaring an emergency; both feed the built-in emergency alert (§3.10).
+- `emitter_category` (slice 086): the ADS-B emitter category, `A0`–`D7`, exactly as
+  the aircraft transmits it (`null` when never received, including on every
+  legacy dump1090-fa feed). Set A is powered aircraft by size/performance, B
+  unpowered and lighter-than-air, C surface vehicles and obstacles, D reserved:
+  `A0` no category information, `A1` light (< 15 500 lb), `A2` small (15 500–75 000
+  lb), `A3` large (75 000–300 000 lb), `A4` high-vortex large (e.g. B757), `A5`
+  heavy (> 300 000 lb), `A6` high performance (> 5 g, > 400 kt), `A7` rotorcraft;
+  `B0` no information, `B1` glider/sailplane, `B2` lighter-than-air, `B3`
+  parachutist/skydiver, `B4` ultralight/hang-glider/paraglider, `B5` reserved, `B6`
+  unmanned aerial vehicle, `B7` space/trans-atmospheric vehicle; `C0` no
+  information, `C1` surface emergency vehicle, `C2` surface service vehicle, `C3`
+  point obstacle, `C4` cluster obstacle, `C5` line obstacle, `C6`–`C7` reserved;
+  `D0`–`D7` reserved. Sticky like other decoder fields.
+- `selected_altitude_ft` (slice 086): the altitude selected on the autopilot, in
+  feet — the mode control panel / flight control unit value when received, else the
+  flight management system's target altitude. The MCP value is preferred because it
+  is what the crew has actually set and what the aircraft will level at; the FMS
+  value is the programmed profile. Sticky; `null` when neither was received.
 - `interesting`: `null` when no active alert match (fields populated from phase 6).
 
 ### 3.4 Interesting aircraft — slice 038/039
@@ -373,9 +407,35 @@ severity. Same aircraft object shape, `interesting` always non-null.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/aircraft` | Paginated historical aircraft list. Sort keys: `registration`, `icao`, `type`, `operator`, `classification`, `first_seen`, `last_seen`, `sighting_count`, `closest_approach_nm`, `max_range_nm`. Filters: `classification`, `operator_group`, `type`. |
+| `GET /api/v1/aircraft` | Paginated historical aircraft list. Sort keys: `registration`, `icao`, `type`, `operator`, `classification`, `first_seen`, `last_seen`, `sighting_count`, `closest_approach_nm`, `max_range_nm`. Filters: `classification`, `operator_group`, `type`, `q` (search, below). |
 | `GET /api/v1/aircraft/{icao}` | Full aircraft detail: identity, metadata with provenance, classification, lifetime records. |
 | `GET /api/v1/aircraft/{icao}/sightings` | Paginated sightings for one aircraft. |
+
+Both the list rows and the detail carry `emitter_category` (slice 086): the last ADS-B
+emitter category the airframe transmitted (`A0`–`D7`, §3.3 lists them), or `null` if
+it never sent one. It is decoder-reported, so it has no `provenance` entry, and it
+answers "what is this" for an airframe no metadata registry describes.
+
+**Search: `q`** (slice 083). Finds airframes whose **ICAO address, registration, any
+callsign it has flown, ICAO type designator or operator name** starts with `q`:
+
+- **Prefix, not substring.** `q=G-EZ` finds `G-EZTH`; `q=EZTH` does not.
+- **Case-insensitive** for ASCII letters. `q=g-ez`, `q=A1B2` and `q=easyj` all match.
+- **Literal.** `%`, `_` and `\` match themselves; there is no pattern syntax.
+- **Trimmed**, and a blank `q` is ignored — `?q=%20` is the unfiltered list.
+- **At most 32 characters.** A longer `q` is a `422` validation error, not a truncation.
+- **Any callsign it has flown** means the first or last callsign of *any* of its
+  sightings: an airliner that flew `BAW12` last month and `BAW7` today is found by
+  `BAW12`, `BAW7` and `BAW`, and one whose callsign changed mid-sighting by either.
+
+`q` combines with the other filters (`AND`), and sorting and pagination apply to the
+filtered set; `total` is the exact count of airframes matching every filter, `q`
+included. It is served from indexes (rev 0018), so its cost follows the number of
+matching rows rather than the size of history.
+
+`q` filters **this list only**. It is not a global search across aircraft, sightings,
+alerts or places — that is a deferred non-goal (SPEC §79); SPEC §37 scopes search to
+the list page it is typed on. `GET /api/v1/sightings` has its own `q` (§3.7).
 
 Lifetime record block (SPEC §53):
 
@@ -425,11 +485,22 @@ size class to include.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
 `started_at`. A value without a timezone is interpreted as UTC rather than rejected.
+
+**`icao` and `q`.** `icao` is an **exact** match on a lowercase six-hex-digit address
+(`^[0-9a-f]{6}$`; anything else is a `422`), unchanged since slice 030. `q` (slice 083)
+is the search the Sightings page's filter box sends: sightings whose **ICAO address,
+first callsign or last callsign starts with `q`** (a callsign can change mid-sighting;
+rows show the last one), with the same rules as `/aircraft`'s `q` (§3.5) —
+prefix, ASCII case-insensitive, literal (`%`, `_`, `\` are not wildcards), trimmed,
+blank ignored, at most 32 characters (`422` beyond). `q=BAW` finds `BAW12` and `BAW7`;
+`q=ae14` finds every sighting of `ae1463`. Both may be given and combine with `AND`.
+Like `/aircraft`'s, this `q` filters this list only and is not a global search (SPEC
+§37, §79).
 
 **Open sightings.** Every list row and the detail object carry two fields that say
 whether the sighting is still running, and for how long:
@@ -499,6 +570,103 @@ Sighting detail sketch:
 `path` is the Douglas-Peucker-simplified, timestamp-ordered track (playback-capable,
 SPEC §19). Active sightings return the live full-resolution track instead, with
 `ended_at: null` and `open: true`.
+
+#### 3.7.1 What was that? — `GET /api/v1/overhead` (slice 090)
+
+"What just flew over?" for any moment: the sightings whose **closest stored position
+fix** within `window` minutes either side of `at` came nearest the receiver, nearest
+first (issue #233).
+
+| Param | Default | Bounds | Meaning |
+|---|---|---|---|
+| `at` | now | ISO-8601 | The moment asked about. A value without an offset is UTC (§2.2). |
+| `window` | `10` | `1`–`60` | Minutes either side of `at`; the window `[at − window, at + window]` is inclusive. |
+| `limit` | `10` | `1`–`50` | Ranked results returned. |
+
+Anything outside those bounds, or an unparseable `at`, is a `422`.
+
+```json
+{
+  "at": "2026-08-30T22:10:00.000Z",
+  "window_minutes": 10,
+  "window_start": "2026-08-30T22:00:00.000Z",
+  "window_end": "2026-08-30T22:20:00.000Z",
+  "method": "closest_position_fix",
+  "receiver_configured": true,
+  "reason": null,
+  "candidates": 14,
+  "truncated": false,
+  "items": [
+    {
+      "sighting_id": 88213,
+      "icao": "ae1463",
+      "callsign": "RCH492",
+      "registration": "05-5140",
+      "aircraft_type": "C17",
+      "model": "C-17A Globemaster III",
+      "operator": "United States Air Force",
+      "open": false,
+      "fix_at": "2026-08-30T22:12:41.000Z",
+      "lat": 47.49712,
+      "lon": -122.30215,
+      "altitude_ft": 4200,
+      "distance_nm": 2.968,
+      "distance_kind": "slant",
+      "ground_distance_nm": 2.831,
+      "bearing_deg": 5.12,
+      "position_source": "adsb"
+    }
+  ]
+}
+```
+
+**Closest position fix, never interpolated.** Every row is one point the sighting
+actually stored — a closed sighting's simplified packed track, an open one's
+checkpointed tail — with that point's own time (`fix_at`), altitude and
+`position_source`. Nothing is interpolated between two stored points or extrapolated
+beyond the first or last, which is what keeps this a single-moment lookup rather than
+the animated playback SPEC §79 keeps out of scope. `method` is always
+`closest_position_fix` so a client can say so beside the numbers. The price, stated
+rather than hidden: a straight leg that simplification kept only as its two
+endpoints can pass overhead with neither endpoint inside the window, and such a
+sighting is left out rather than represented by a position it never reported.
+
+**Distance.** `ground_distance_nm` is the great-circle distance from the receiver,
+measured exactly as every other receiver-relative range is. Results are ranked by
+`distance_nm`, which is the **slant** (line-of-sight) distance when the fix carries an
+altitude — ground distance and height above the receiver as the two legs of a flat
+right triangle — and the ground distance when it does not (`distance_kind` says
+which). The height is the fix's reported altitude as-is: `antenna_height_ft` is above
+*ground* level while the altitude is above *sea* level, and the site's own elevation —
+what would reconcile the two — is not stored, so nothing is subtracted (slice 087
+corrected an earlier version that subtracted the antenna height). For a site well
+above sea level this overstates the vertical leg by the site's elevation, which moves
+an aircraft directly overhead by at most that much; a future site-elevation setting
+would refine it. A missing altitude is unknown,
+not zero (§2.7). Ties go to the earlier fix, then the lower sighting id.
+
+**Which sightings are considered.** Sightings with a position whose span overlaps the
+window: any still open that began before the window's end, plus any that began within
+24 hours before the window's start and had not ended before it. `candidates` counts
+them. A closed sighting that began more than 24 hours earlier — a day of continuous
+reception with no ten-minute gap, i.e. a parked, transmitting aircraft — is outside the
+lookup. At most 2,000 candidates are considered, keeping those whose recorded closest
+approach could come nearest; `truncated: true` says the cap was reached. Open sightings
+are read from their stored checkpoints, never from the live picture, so the last flush
+interval (about 30 s) of a sighting in progress is not visible yet.
+
+**No receiver location.** With no receiver position set there is nothing to measure
+from, and the answer is an empty `200` — `receiver_configured: false`,
+`reason: "receiver_location_unset"`, `items: []` — the way every other
+receiver-relative field degrades to unknown rather than failing (§2.7). The window is
+still echoed.
+
+**Cost.** The lookup's cost follows the traffic around the window, not the length of
+history: both candidate reads are bounded index ranges (`ix_sightings_started`,
+`ix_sightings_open`), and packed tracks are decoded only for candidates whose recorded
+closest approach could still beat the results already found. The analytics query
+budget (500 ms, `docs/PERFORMANCE.md`) applies to a ±10-minute window;
+`flightsite-storage-qual` probes it on the multi-year synthetic history.
 
 ### 3.8 Analytics — slice 031
 
@@ -596,6 +764,7 @@ carries a model, and always `null` for an operator group.
 | `GET /api/v1/receiver/metrics` | One time-series chart. Params: `metric`, `resolution=high\|hourly\|daily` (default `hourly`), `from`/`to`. |
 | `GET /api/v1/receiver/range-by-bearing` | Polar max-range histogram (buckets of bearing → max nm). |
 | `GET /api/v1/receiver/signal-distribution` | RSSI distribution histogram, derived from per-sighting `rssi_*_db` reception stats over the selected window. |
+| `GET /api/v1/receiver/coverage` | Coverage by bearing and altitude band against the radio horizon, plus likely-obstruction findings (slice 087). Param: `window=7d\|30d\|90d\|all` (default `30d`). |
 | `GET /api/v1/receiver/lifetime` | SPEC §63 lifetime statistics since T0. |
 
 **The scorecard's "today" figures are null-honest and never rollup-backed**
@@ -626,12 +795,108 @@ combination is a `400`, not an empty series:
 - `messages_total` and `positions_total` are `hourly` or `daily` only.
 - `from` later than `to` returns `400 invalid_range`.
 
+#### 3.9.1 Coverage by altitude band — slice 087
+
+`GET /api/v1/receiver/coverage?window=30d`
+
+How far the receiver hears in each 5° direction at each altitude band, compared with
+the radio horizon, and which directions look obstructed (issue #230). Read from the
+daily rollup `range_by_bearing_band_daily` (`docs/DATA_MODEL.md` §6.3.1).
+
+- **`window`** — `7d`, `30d` (default), `90d` or `all`: whole **receiver-local** days
+  ending today (`7d` is today and the six days before it). Anything else is `422`.
+  `from_day`/`to_day` echo the local calendar days covered; `from_day` is the first
+  stored day for `all`, or `null` when nothing is stored.
+- **`bands`** — always three, in order `below_10k` (< 10,000 ft), `10k_25k`
+  (10,000–25,000 ft), `above_25k` (≥ 25,000 ft), by barometric altitude; aircraft with
+  no altitude are in none. Each carries `min_ft`/`max_ft` (`null` = unbounded),
+  `reference_ft`, `horizon_nm`, and always **72 sectors** in bucket order.
+- **Sector** — `bearing_deg` (midpoint), `max_range_nm` with the `at`/`icao` that set
+  it, `samples` (receiver samples, one per ~15 s, that heard anything in the cell,
+  summed over the window), `days` (local days with any data) and `share_of_horizon`
+  (`max_range_nm / horizon_nm`, not clamped — above 1 is a real observation). A sector
+  nothing was heard in has `max_range_nm`, `at`, `icao` and `share_of_horizon`
+  **`null`** and zero counts — never a `0` nm range.
+- **Radio horizon** — the 4/3-Earth line-of-sight distance
+  `horizon_nm = 1.23 × (√antenna_height_ft + √reference_ft)`, with
+  `antenna_height_ft` above ground level (`receiver.location`, echoed as
+  `antenna_height_ft`). `reference_ft` is the band's lower edge — 10,000 and 25,000 ft
+  — and 3,000 ft for the bottom band, whose 0 ft edge would judge it by the antenna's
+  own few-mile horizon: a sector short of the lower-edge horizon is short for every
+  aircraft in the band. The aircraft's height should be above the *site's* ground,
+  but the site elevation is not stored, so `reference_ft` is used as-is — exact at sea
+  level, about 4 nm generous at 25,000 ft for a 1,000 ft site. **With no antenna
+  height configured every `horizon_nm` is `null`** (Unknown), every
+  `share_of_horizon` is `null` and `findings` is empty.
+- **`criteria`** — the documented finding rule: `share_below: 0.6`,
+  `min_samples: 30`, `min_days: 3`.
+- **`findings`** — runs of adjacent sectors in one band (wrapping through North) in
+  which **every** sector has `share_of_horizon < 0.6`, at least `min_samples` samples
+  and data on at least `min_days` days. A sector with no data is never part of a
+  finding (nothing distinguishes "blocked" from "no traffic" there). Highest band
+  first, then by bearing. Each has `band`, `start_deg`/`end_deg` (end exclusive; a run
+  through North has `start_deg > end_deg`, e.g. 350 → 10), `compass` (16-point name of
+  the middle bearing), `max_range_nm` (the furthest anywhere in the run) and
+  `share_of_horizon` from it, `horizon_nm`, `samples` (summed), `days` (the fewest of
+  any sector — the weakest evidence) and `message`, a canonical-units sentence such
+  as `"NE 40–60° reaches 58 % of the radio horizon above 25,000 ft — likely
+  obstruction"`. A run covering all 72 sectors reads as a receiver-wide limit
+  (antenna, cable or gain) rather than an obstruction.
+
+```json
+{
+  "window": "30d",
+  "from_day": "2026-09-01",
+  "to_day": "2026-09-30",
+  "sector_width_deg": 5.0,
+  "antenna_height_ft": 25.0,
+  "criteria": { "share_below": 0.6, "min_samples": 30, "min_days": 3 },
+  "bands": [
+    {
+      "key": "above_25k", "label": "25,000 ft and above",
+      "min_ft": 25000.0, "max_ft": null, "reference_ft": 25000.0,
+      "horizon_nm": 200.6,
+      "sectors": [
+        { "bearing_deg": 2.5, "max_range_nm": 187.4, "at": "2026-09-21T14:03:11.000Z",
+          "icao": "a4b2c1", "samples": 1840, "days": 30, "share_of_horizon": 0.934 },
+        { "bearing_deg": 7.5, "max_range_nm": null, "at": null, "icao": null,
+          "samples": 0, "days": 0, "share_of_horizon": null }
+      ]
+    }
+  ],
+  "findings": [
+    { "band": "above_25k", "start_deg": 40.0, "end_deg": 60.0, "compass": "NE",
+      "max_range_nm": 116.3, "horizon_nm": 200.6, "share_of_horizon": 0.58,
+      "samples": 912, "days": 21,
+      "message": "NE 40–60° reaches 58 % of the radio horizon above 25,000 ft — likely obstruction" }
+  ]
+}
+```
+
+(Abridged: the real payload has all three bands and 72 sectors in each.)
+
 ### 3.10 Activity & alert history — slices 035/038
 
 | Path | Returns |
 |---|---|
-| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`), plus `feeder_offline` (`high`) and `feeder_restored` (`info`) since slice 077, whose payload is `{feeder, label, kind, since_ms, outage_s}` — `outage_s` is `null` on the offline event. |
+| `GET /api/v1/activity` | Paginated chronological activity feed. Filter: `type`, `from`, `to`. Event types per SPEC §55 (`alert_triggered`, `first_ever_aircraft`, `new_type`, `range_record`, `receiver_record`, `emergency_squawk`, `receiver_offline`, `receiver_restored`, `metadata_updated`, `milestone`), plus `feeder_offline` (`high`) and `feeder_restored` (`info`) since slice 077, whose payload is `{feeder, label, kind, since_ms, outage_s}` — `outage_s` is `null` on the offline event. Since slice 088, `self_alert_raised` (`high`) and `self_alert_restored` (`info`): a receiver self-alert condition began / ended, payload `{condition, since_ms, duration_s, …detail}` — see below. |
 | `GET /api/v1/alerts/matches` | Alert match history. Filters: `severity`, `icao`, `rule_id`, `from`, `to`. |
+
+**Receiver self-alert events (slice 088).** `condition` is `decoder_down` or
+`message_rate`; `since_ms` is when the condition *began* (the same on both events of
+one episode, and part of both dedupe keys, so an episode is recorded once however
+often it is announced); `duration_s` is `null` on the raise and the episode's length
+on the restore. The rest is the numbers the condition was judged on:
+
+| `condition` | Detail keys |
+|---|---|
+| `decoder_down` | `minutes` (the configured threshold), `error` (the decoder's short failure reason; raise only) |
+| `message_rate` | `rate_msgs_s`, `baseline_msgs_s` (the hour-of-week median), `share_pct`, `minutes`, `baseline_weeks` |
+
+A feeder going offline is the third self-alert condition, but it has no event of its
+own: it *is* slice 077's `feeder_offline` / `feeder_restored`, which the browser turns
+into a self-alert notification while `self_alerts.feeder_offline_enabled` is on.
+Neither event carries an aircraft or a `match_id`.
 
 An alert match carries `id`, `at` (the match timestamp — not `matched_at`),
 `severity`, `reason`, `icao`, `sighting_id`, an identity block for the airframe,
@@ -698,6 +963,20 @@ their payload — the `alert_matches` row the event is about. It is what lets a 
 holding a live event name the match it needs to mark notified; every other payload
 member is described where its producer builds it.
 
+**Emergency sources (slice 086).** A built-in emergency is raised by an emergency
+squawk *or* by the decoder's emergency state (§3.3 `decoder_emergency`) — an aircraft
+declaring `nordo` on an ordinary squawk alerts exactly as 7600 would, at `critical`,
+once per sighting. Built-in keys name the emergency's kind, and a kind a squawk also
+declares keeps that squawk's key, so the full set is `emergency_7500`,
+`emergency_7600`, `emergency_7700`, `emergency_minfuel`, `emergency_lifeguard` and
+`emergency_downed`; a squawk and a decoder reporting the same emergency are one match,
+never two, and when both declare at once the squawk is the one named. The
+`emergency_squawk` event keeps its type for both sources and adds `emergency_source`
+(`squawk` | `decoder`) and `emergency_kind` (§2.8) to its payload; its `squawk` is the
+emergency code, `null` for a decoder-declared emergency. The match `reason` names the
+source: `"Emergency squawk 7600 (radio failure)"` or `"Decoder emergency state: no
+radio"`.
+
 ### 3.11 Diagnostics — slice 042
 
 `GET /api/v1/diagnostics`
@@ -711,7 +990,7 @@ Top-level sections: `status` (`ok`/`degraded`/`down`, the roll-up the health ban
 renders), `ready` + `subsystems`, `versions`, `uptime`, `decoder`, `live`,
 `live_events` (slice 075), `database` (`quick_check`, `storage`, `row_counts`,
 `maintenance`, `recovery`), `metadata`, `notifications`, `enrichment`, `websocket`,
-`feeders` (slice 077), `counters`, `recent_errors`.
+`feeders` (slice 077), `self_alerts` (slice 088), `counters`, `recent_errors`.
 
 Read-only in the strong sense: no writer session, and no fresh `quick_check` — that
 pragma takes the writer lock, so the endpoint reports the result the maintenance
@@ -736,6 +1015,31 @@ Two contract details worth knowing:
   `unreachable`; the path is never published. `recent_errors` gains a `feeders`
   category (loggers under `flightsite.feeders`) and `counters` a
   `feeder_poll_failures` counter.
+- `self_alerts` (slice 088) reports each receiver self-alert condition and what is
+  active now — thresholds, states and timestamps only:
+
+  ```json
+  "self_alerts": {
+    "conditions": {
+      "decoder_down": {"enabled": true, "state": "ok", "minutes": 5},
+      "message_rate": {"enabled": true, "state": "learning", "minutes": 15,
+                       "share_pct": 40, "baseline_msgs_s": 84.2, "baseline_weeks": 1},
+      "feeder_offline": {"enabled": true, "state": "active", "count": 1}
+    },
+    "active": [
+      {"condition": "feeder_offline", "since": "2026-09-29T02:00:00Z",
+       "severity": "high", "subject": "fr24", "label": "FlightRadar24"}
+    ]
+  }
+  ```
+
+  `state` is `disabled`, `ok`, `pending` (a bad run that has not yet lasted its
+  minimum), or `active`; `message_rate` reports `learning` (fewer than two weeks of
+  this hour-of-week recorded) or `quiet` (a usual rate under 1 msg/s) in place of `ok`.
+  `since` is when the condition began. `subject`/`label` name the feeder for
+  `feeder_offline` and are `null` otherwise. The block does not move `status`: the
+  decoder and feeder sections already do. `null` only from an app built without the
+  monitor (a test harness).
 - `notifications` carries only what the server can know — the configured severities —
   and `permission_known_by` is always `"client"`. Browser permission is unobservable
   from the backend, so the health page joins this with the frontend notification store
@@ -1016,7 +1320,9 @@ against the slice-010 protocol ignore this frame type until they support it (§ 
   (§ 3.10), which is what a client that showed a browser notification for it posts
   back to `POST /api/internal/alerts/matches/{id}/notified` (§ 5).
 - `feeder_offline` and `feeder_restored` (slice 077) arrive in the same frames with the
-  § 3.10 vocabulary and payload; they carry no `match_id` and no aircraft.
+  § 3.10 vocabulary and payload; they carry no `match_id` and no aircraft. So do
+  `self_alert_raised` / `self_alert_restored` (slice 088), from which the client
+  composes the receiver self-alert browser notifications — nothing is posted back.
 
 ### 4.5 Keepalive, reconnect, slow consumers
 
@@ -1067,6 +1373,48 @@ config/domain models the backend uses.
 | Metadata update | `POST /metadata/update` (starts run), `GET /metadata/status` (per-source status, last success, versions) | 025 |
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
 | Feeder stats links | `GET /feeders/{name}/stats-link` → `302` to that feeder's per-network stats page (`feeders.stats_urls.<name>` in `secrets.yaml`; for a `piaware` feeder with none configured, the site page piaware itself reports). `404` when there is no link or no such feeder. `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. The only place a stats URL ever leaves the backend, and only as the `Location` of this response — never in `/api/v1`, a log line or the rendered page; `/api/v1/feeders` carries just `stats_link: true\|false` | 077 |
+
+**Alert-rule conditions** (`conditions` in the `/alert-rules` bodies and payloads;
+validated by `flightsite.alerts.model.RuleConditions`, the model the stored
+`alert_rules.conditions_json` is parsed with — [DATA_MODEL.md](DATA_MODEL.md) §4.2). A
+flat object of optional conditions, **all ANDed** (SPEC §43; no OR, no nesting — §79).
+Unknown keys are refused with `422`, as is a set that constrains nothing or can never
+match (an inverted window). Every error's `loc` names the field.
+
+| Key | Type | Matches when | Since |
+|---|---|---|---|
+| `classification` | `{military, government, law_enforcement: bool, mission?}` | every required claim is asserted | v1 |
+| `type_code` / `model` | string | exact type designator / model substring, ignoring case | v1 |
+| `watchlist_id` / `watchlist_any` | int / bool | on that watchlist / on any | v1 |
+| `rare_aircraft` / `rare_type` | `{max_sightings: 1..1000}` | seen at most N times / type on at most N airframes here | v1 |
+| `min_distance_nm`, `max_distance_nm` | number, nm (0..10000) | inclusive window | v1 |
+| `min_alt_ft`, `max_alt_ft` | number, ft (-2000..100000) | inclusive window, barometric | v1 |
+| `squawk_in` | array of 1–16 `"[0-7]{4}"` strings | live squawk is one of them | v2 |
+| `callsign_glob` / `registration_glob` | string, 1–32 chars, no whitespace | whole callsign / resolved registration matches, ignoring case; `*` = any run, `?` = one character, everything else literal | v2 |
+| `min_ground_speed_kt`, `max_ground_speed_kt` | number, kt (0..2000; max > 0) | inclusive window | v2 |
+| `min_vertical_rate_fpm`, `max_vertical_rate_fpm` | number, ft/min (-20000..20000), negative descending | inclusive window | v2 |
+| `emitter_category_in` | array of 1–32 `"[A-D][0-7]"` strings | decoder emitter category (slice 086) is one of them | v2 |
+| `within_area` | GeoJSON `{"type": "Polygon", "coordinates": [[[lon, lat], ...]]}` | live position inside or on the boundary | v2 |
+| `applies_on_ground` | bool | not a condition: lets the rule match ground traffic (SPEC §40) | v1 |
+
+An unknown input never satisfies a condition: no squawk, no callsign, no metadata
+registration, no speed or no position is not a match. Sets (`squawk_in`,
+`emitter_category_in`) are echoed sorted and de-duplicated. `within_area` takes exactly
+one ring of 3–64 distinct vertices, `[longitude, latitude]` (GeoJSON order); an
+unclosed ring is closed and the echo is always closed. Refused: a second ring (holes),
+an edge spanning more than 180° of longitude (antimeridian crossing — draw one rule
+each side), crossing or folding edges, repeated vertices and collinear rings. Edges are
+straight in longitude/latitude; a point on the boundary is inside.
+
+`version` is `2`. A body may still send `"version": 1` (or omit it) — a v1 document is
+a v2 document without the new keys and is upgraded on read — but `"version": 1` with a
+v2 key is a `422`, and the response is always `"version": 2`. Stored v1 rows are not
+migrated: they read back as v2 and are rewritten as v2 the next time the rule is saved.
+`describes` gains one phrase per new condition, after the v1 phrases, in canonical units:
+`"squawking 1200 or 7000"`, `"callsign matching 'RCH*'"`, `"registration matching
+'N?23AB'"`, `"emitter category A1 or A7"`, `"ground speed at most 250 kt"`, `"vertical
+rate at or above -3000 ft/min"`, `"inside a drawn area of 4 vertices"`. A match's
+`reason` is still `"Rule: <name>"`.
 
 `GET /metadata/status` reports one row per **registered** source, each with its own
 `status`, `last_success_ms`, `dataset_version`, `row_count` and `last_error`, and each

@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
-
 import { requireNavItem } from "@/components/shell/nav-items";
+import { useIsMobile } from "@/components/shell/useIsMobile";
 import { ActivityPanel } from "@/features/activity/ActivityPanel";
 import { AircraftDetailPanel } from "@/features/aircraft-detail/AircraftDetailPanel";
 import { DisplayRadiusIndicator } from "@/features/filters/components/DisplayRadiusIndicator";
@@ -14,11 +13,17 @@ import { InterestingPanel } from "@/features/interesting/InterestingPanel";
 import { AircraftLayer } from "@/features/map/aircraft/AircraftLayer";
 import { BasemapSwitcher } from "@/features/map/BasemapSwitcher";
 import { MapLibreMap } from "@/features/map/MapLibreMap";
+import { MeasureControl } from "@/features/map/measure/MeasureControl";
 import { LayersControl } from "@/features/map/overlays/LayersControl";
 import { OverlaysLayer } from "@/features/map/overlays/OverlaysLayer";
+import { PanelRegion } from "@/features/map/PanelRegion";
+import { PhoneMapControls } from "@/features/map/phone/PhoneMapControls";
+import { RecenterButton } from "@/features/map/RecenterButton";
 import { useMapConfigStore } from "@/features/map/store/useMapConfigStore";
 import { useActiveBasemap } from "@/features/map/useActiveBasemap";
 import { NotificationStatusPill } from "@/features/notifications/components/NotificationStatusPill";
+import { OverheadButton } from "@/features/overhead/OverheadButton";
+import { OverheadDialog } from "@/features/overhead/OverheadDialog";
 import { TodayPanel } from "@/features/today/TodayPanel";
 
 const item = requireNavItem("/");
@@ -26,39 +31,6 @@ const item = requireNavItem("/");
 /** The skip link's landing spot — see {@link AIRCRAFT_LIST_SKIP_TARGET_ID}'s
  * doc comment on `SkipAircraftListLink` below. */
 const AIRCRAFT_LIST_SKIP_TARGET_ID = "aircraft-list-end";
-
-/**
- * A floating card's landmark, wrapped around it from the page rather than
- * edited into the card itself (R1-11): a `<section>` with an accessible
- * name computes to the ARIA `region` role, and the `<h2>` inside gives every
- * card a place in the page's heading hierarchy — previously just
- * `["H1: Live Map"]`, with the Basemap, Layers, Interesting, Non-positioned,
- * Activity and Today cards all unlabelled `div`s with a `button` header and
- * no heading or landmark route to any of them. `label` is visually hidden
- * (`sr-only`): every one of these cards already shows its own name in its
- * toggle button or header, so the heading exists for screen-reader
- * navigation without printing the name twice on screen.
- */
-function PanelRegion({
-  headingId,
-  label,
-  className,
-  children,
-}: {
-  headingId: string;
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section role="region" aria-labelledby={headingId} className={className}>
-      <h2 id={headingId} className="sr-only">
-        {label}
-      </h2>
-      {children}
-    </section>
-  );
-}
 
 /**
  * "Skip aircraft list" (R1-11): the interesting-aircraft panel is expanded
@@ -94,7 +66,16 @@ function SkipAircraftListLink() {
  * glance" card (slice 036), a top-center strip fed by the analytics summary
  * endpoint rather than by anything the live picture or the feed carry, and
  * the interesting-aircraft panel (slice 039, SPEC §49), which shares the
- * bottom-left column with the non-positioned list.
+ * bottom-left column with the non-positioned list, and, since roadmap slice
+ * 082, `RecenterButton` (the `H` shortcut's visible control) plus a full set
+ * of keyboard shortcuts (`/`, `L`, `F`, `H`, `[`, `]`) dispatched from
+ * `useKeyboardShortcuts` in `AppShell` and reaching this page's own
+ * components through `lib/shortcuts/mapShortcutTargets`. Roadmap slice 085
+ * adds the distance/bearing `MeasureControl` beside the recentre button,
+ * shared by both layouts like it. Roadmap slice 090 adds "What was that?"
+ * (`features/overhead`): one dialog for both layouts, opened by `W`, by a
+ * pill under the recentre button on desktop, and from the top of the
+ * Activity sheet on phones.
  *
  * The map configuration — including the display-radius default the
  * distance-cap filter falls back to — comes from `useMapConfigStore`, which
@@ -114,8 +95,17 @@ function SkipAircraftListLink() {
  * (usually much shorter) non-positioned list still needs only one extra tab
  * stop — is last, with `order-1`/`order-2` on the two cards keeping the
  * *visual* stack exactly as it was (interesting on top).
+ *
+ * **Phone layout (roadmap slice 084).** Below the `md` breakpoint
+ * (`useIsMobile`) the floating cards give way to `PhoneMapControls`: one
+ * bottom dock holding a toolbar that opens one card at a time as a sheet,
+ * and the aircraft detail panel as a draggable bottom sheet. The map, its
+ * layers, the connection chip, the quick-filter chips and the recentre
+ * button are shared by both layouts; everything else is one layout's or the
+ * other's, so the desktop render below is untouched by the phone one.
  */
 export function LiveMapPage() {
+  const isMobile = useIsMobile();
   const config = useMapConfigStore((state) => state.config);
   const basemap = useActiveBasemap();
   const hideNonPositioned = useFilterStore(
@@ -134,19 +124,88 @@ export function LiveMapPage() {
       <MapLibreMap config={config} basemap={basemap} className="h-full w-full">
         <OverlaysLayer />
         <AircraftLayer />
+        <RecenterButton receiver={config.receiver} />
+        <MeasureControl
+          receiver={config.receiverConfigured ? config.receiver : null}
+        />
       </MapLibreMap>
 
+      {isMobile ? (
+        <>
+          <QuickFilterChips />
+          <PhoneMapControls />
+        </>
+      ) : (
+        <DesktopMapControls hideNonPositioned={hideNonPositioned} />
+      )}
+      <OverheadDialog />
+    </div>
+  );
+}
+
+/**
+ * The right-hand control column (issue #245): Basemap, then Layers, then the
+ * Filters button, stacked in flow down the map's right edge.
+ *
+ * Each of the three used to claim its own fixed offset (`right-3 top-3`,
+ * `right-3 top-40`, and `right-3 top-40` again), and the Layers card and the
+ * Filters button ended up sharing a corner: the button sat over the right end
+ * of the card's header (around x 1355-1427, y 162-188 at 1440 x 900). A fixed
+ * offset for the button could only ever be right for one height of the card
+ * above it, and that card changes height — it collapses (slice 082's `L`) and
+ * slice 085 gave it more rows. As flex items in one column they cannot
+ * overlap at any height: collapsing the Layers card lifts the button with
+ * it.
+ *
+ * - `absolute inset-y-0 right-0 p-3` keeps the cards exactly where
+ *   `right-3 top-3` put the first one, and makes the column a full-height,
+ *   right-edge box — which is also what `FilterDrawer`'s open panel
+ *   (`absolute inset-y-0 right-0`) positions against, so it still slides in
+ *   over the whole right edge of the map.
+ * - `pointer-events-none`, with each card turning pointer events back on for
+ *   itself, keeps the gaps and the empty column below the button
+ *   click-through to the map.
+ * - No `z-index`: an absolutely positioned box without one opens no stacking
+ *   context, so each card's own `z-10` and the drawer panel's `z-20` still
+ *   rank against every other card on the page exactly as before.
+ */
+const RIGHT_CONTROL_COLUMN_CLASSES =
+  "pointer-events-none absolute inset-y-0 right-0 flex flex-col items-end gap-2 p-3";
+
+/**
+ * The desktop (and tablet, from `md` up) floating cards — the Live Map's
+ * layout before roadmap slice 084, lifted out of `LiveMapPage` so the phone
+ * layout can replace it wholesale, with the right-hand column grouped since
+ * slice 085 (issue #245, {@link RIGHT_CONTROL_COLUMN_CLASSES}) — which also
+ * puts the Filters button right after the Layers card in tab order, ahead of
+ * the quick-filter chips. The panel-order notes on `LiveMapPage` describe
+ * this JSX.
+ */
+function DesktopMapControls({
+  hideNonPositioned,
+}: {
+  hideNonPositioned: boolean;
+}) {
+  return (
+    <>
       <PanelRegion headingId="today-panel-heading" label="Today at a glance">
         <TodayPanel />
       </PanelRegion>
-      <PanelRegion headingId="basemap-heading" label="Basemap">
-        <BasemapSwitcher />
-      </PanelRegion>
-      <PanelRegion headingId="layers-heading" label="Map layers">
-        <LayersControl />
-      </PanelRegion>
+      {/* The right-hand control column — see RIGHT_CONTROL_COLUMN_CLASSES. */}
+      <div
+        data-testid="map-right-controls"
+        className={RIGHT_CONTROL_COLUMN_CLASSES}
+      >
+        <PanelRegion headingId="basemap-heading" label="Basemap">
+          <BasemapSwitcher />
+        </PanelRegion>
+        <PanelRegion headingId="layers-heading" label="Map layers">
+          <LayersControl />
+        </PanelRegion>
+        <FilterDrawer />
+      </div>
       <QuickFilterChips />
-      <FilterDrawer />
+      <OverheadButton placement="map" />
       <PanelRegion headingId="activity-heading" label="Activity">
         <ActivityPanel />
       </PanelRegion>
@@ -188,6 +247,6 @@ export function LiveMapPage() {
       />
 
       <AircraftDetailPanel />
-    </div>
+    </>
   );
 }

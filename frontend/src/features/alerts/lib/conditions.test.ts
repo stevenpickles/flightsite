@@ -19,6 +19,15 @@ import {
 } from "@/features/alerts/lib/conditions";
 import type { AlertRuleConditions } from "@/lib/api/alertRules";
 
+/** A closed ring, as the API stores and echoes it. */
+const SQUARE_RING: [number, number][] = [
+  [-2, 50],
+  [-1, 50],
+  [-1, 51],
+  [-2, 51],
+  [-2, 50],
+];
+
 describe("conditionsToDocument", () => {
   it("writes only the conditions that were added", () => {
     const document = conditionsToDocument(
@@ -29,7 +38,7 @@ describe("conditionsToDocument", () => {
     // An unset condition is an absent key, never a null or a zero — adding a
     // condition kind in a later document version must not be able to change
     // what an existing rule means.
-    expect(document).toEqual({ version: 1, type_code: "c17" });
+    expect(document).toEqual({ version: 2, type_code: "c17" });
   });
 
   it("splits a distance window into its two document fields", () => {
@@ -89,7 +98,7 @@ describe("documentToConditions", () => {
     // in one place and saved without the untouched conditions being reworded
     // on the way through.
     const document: AlertRuleConditions = {
-      version: 1,
+      version: 2,
       classification: {
         military: true,
         government: false,
@@ -106,6 +115,15 @@ describe("documentToConditions", () => {
       max_distance_nm: 40,
       min_alt_ft: 500,
       max_alt_ft: 10000,
+      squawk_in: ["1200", "7000"],
+      callsign_glob: "RCH*",
+      registration_glob: "N?23AB",
+      emitter_category_in: ["A1", "A7"],
+      min_ground_speed_kt: 80,
+      max_ground_speed_kt: 250,
+      min_vertical_rate_fpm: -3000,
+      max_vertical_rate_fpm: -500,
+      within_area: { type: "Polygon", coordinates: [SQUARE_RING] },
       applies_on_ground: true,
     };
 
@@ -117,7 +135,7 @@ describe("documentToConditions", () => {
 
   it("covers every kind the builder offers", () => {
     const document: AlertRuleConditions = {
-      version: 1,
+      version: 2,
       classification: {
         military: true,
         government: false,
@@ -131,6 +149,13 @@ describe("documentToConditions", () => {
       rare_type: { max_sightings: 4 },
       max_distance_nm: 40,
       max_alt_ft: 10000,
+      squawk_in: ["7000"],
+      callsign_glob: "RCH*",
+      registration_glob: "N?23AB",
+      emitter_category_in: ["A7"],
+      max_ground_speed_kt: 250,
+      min_vertical_rate_fpm: 500,
+      within_area: { type: "Polygon", coordinates: [SQUARE_RING] },
     };
 
     const kinds = documentToConditions(document).drafts.map(
@@ -144,7 +169,7 @@ describe("documentToConditions", () => {
 
   it("returns drafts in catalogue order whatever order the document lists", () => {
     const { drafts } = documentToConditions({
-      version: 1,
+      version: 2,
       max_alt_ft: 10000,
       type_code: "C17",
     });
@@ -156,7 +181,7 @@ describe("documentToConditions", () => {
   });
 
   it("reads an absent watchlist_any as no condition", () => {
-    const { drafts } = documentToConditions({ version: 1, type_code: "C17" });
+    const { drafts } = documentToConditions({ version: 2, type_code: "C17" });
 
     expect(drafts.map((draft) => draft.kind)).toEqual(["type_code"]);
   });

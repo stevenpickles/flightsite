@@ -62,8 +62,27 @@ Live Map when complete.
   aviation-style default, opportunistic caching of recently used tiles; core function
   survives tile outage (§32).
 - Aviation overlays: airports, airspace boundaries, receiver range rings (§33).
+- Map display controls (roadmap slice 085): the Layers card toggles airports,
+  airspace, range rings, the receiver marker, aircraft labels and aircraft
+  trails, and picks the label content — **Full** (identity, operator,
+  altitude), **Compact** (identity only) or **Altitude only** (identity and
+  altitude). Every choice is remembered per browser and survives a reload
+  and a basemap switch. A preset only ever trims what the zoom/density
+  declutter would show; attention-worthy aircraft keep their priority, and
+  turning labels off or picking a preset never hides the selected aircraft's
+  full label. **Trails** (off by default) draw a short, faint wake behind every
+  visible aircraft — the last 30 positions, at most 2 minutes old — while
+  the selected aircraft keeps its full current-sighting track. The **measure
+  tool** (ruler button or `M`) measures great-circle distance, in the
+  receiver's units, and initial bearing, in degrees and as a compass point:
+  click point A then point B (or start **From receiver**); a third click
+  starts over, and Escape or the button again leaves it. While it is on,
+  clicks never select aircraft. On desktop the Basemap card, the Layers card
+  and the Filters button stack down the right edge without overlapping.
 - Live aircraft with hierarchical silhouette icons (specific type → category →
-  generic), rotated to heading; extensible, license-documented icon set (§34).
+  the aircraft's own ADS-B emitter category when metadata has no opinion, e.g. `A7`
+  rotorcraft → generic), rotated to heading; extensible, license-documented icon set
+  (§34).
 - Labels (callsign → tail fallback, operator, altitude, interesting indicator) with
   priority-based decluttering; no marker clustering (§35).
 - Styling: neutral default, strong selection highlight, distinct attention styling for
@@ -77,15 +96,44 @@ Live Map when complete.
 - Non-positioned aircraft list: aircraft without valid positions remain first-class —
   visible in a compact list with ICAO, callsign, altitude, squawk, signal; they
   participate in alerts, activity events, and historical sightings (§20).
-- Filter drawer: altitude range, distance, category/type, exact operator, operator
+- Filter drawer: altitude range, distance, category/type (including the ADS-B emitter
+  category, from the categories in the live picture), exact operator, operator
   group, military/government/police classification, mission category,
-  interesting-only, live-set callsign/tail/ICAO narrowing, hide non-positioned, hide
-  ground traffic, staleness; plus quick filter chips (§37).
+  interesting-only, emergency-only (squawk or decoder emergency state), live-set
+  callsign/tail/ICAO narrowing, hide non-positioned, hide ground traffic, staleness;
+  plus quick filter chips (§37).
+- Aircraft detail shows the emitter category in words, the autopilot-selected altitude
+  beside the altitude, and the decoder's emergency state as a text badge; the
+  decoder's emergency state (minimum fuel, no radio, lifeguard, …) alerts like an
+  emergency squawk, once per sighting (§47, slice 086).
 - Interesting-aircraft panel sorted by severity then distance, click-to-select (§49).
 - Today at a Glance summary: unique aircraft, sightings, interesting count,
   military/government/police, max range, busiest hour, new aircraft, new
   milestones/records (§59).
 - Activity feed access (§55).
+- Sidebar navigation covers every routed page, including Activity, Health and
+  Feeders (§10 amendment, roadmap slice 082); the primary sidebar itself
+  collapses to icon-only width, a preference remembered per browser. A `?`
+  shortcut sheet lists every keyboard shortcut, each with a visible control
+  equivalent: `/` focuses the live search, `L`/`F` toggle the Layers card and
+  filter drawer, `Esc` deselects, `H` recentres on the receiver, `[`/`]` step
+  through interesting aircraft, `M` toggles the measure tool and `T` toggles
+  trails (roadmap slice 085), `W` opens "What was that?" (roadmap slice 090),
+  and `g` then a letter jumps to any section (§80, roadmap slice 082).
+- **What was that?** (roadmap slice 090, issue #233): pick a moment — now by
+  default, in the receiver's timezone — and a window of ±5, ±10 or ±30
+  minutes, and get the aircraft that passed closest to the receiver, nearest
+  first, with altitude, distance, bearing, the time of the closest fix and
+  links to the sighting and the aircraft. Distances are to each aircraft's
+  **closest stored position fix**, never an interpolated position, and the
+  dialog says so. Opened from a button under the recentre control on the
+  Live Map (at the top of the Activity sheet on phones), from the Activity
+  page header, or with `W`. A single-moment lookup; animated playback stays
+  out of scope (§79).
+- Copy-link, `navigator.share` (where supported) and a QR code of the current
+  URL, on the aircraft detail, sighting detail, and Live Map (selected
+  aircraft) views — a copied or scanned link reopens the same view (roadmap
+  slice 082).
 
 ### 4.3 Aircraft Detail (§22–§24, §41, §50)
 
@@ -132,6 +180,24 @@ information. No period-over-period comparison in v1.
 - Charts: messages/sec and positions/sec over time, simultaneous aircraft, unique
   aircraft per day, maximum range over time, signal-strength distribution,
   maximum-range-by-bearing polar plot, daily message/position totals (§62).
+- **Coverage by altitude** (slice 087, issue #230): a polar chart of the furthest
+  aircraft heard in each 5° direction for one altitude band at a time — below
+  10,000 ft, 10,000–25,000 ft, 25,000 ft and above (barometric) — over the last
+  7/30/90 days or all time, with that band's **radio horizon** drawn as a ring: how far
+  an aircraft at the band's lower edge (3,000 ft for the bottom band) could be heard
+  over the curve of the Earth from an antenna of the configured height above ground
+  (4/3-Earth model, d ≈ 1.23 × (√h_antenna + √h_aircraft) nm). Below the chart, the
+  band's **likely obstructions**: runs of directions that reach under 60 % of the
+  horizon, each as a plain sentence ("NE 40–60° reaches 58 % of the radio horizon
+  above 25,000 ft — likely obstruction"). A direction is only judged once it has at
+  least 30 samples (about 7.5 minutes of traffic) on at least 3 days in that band, so
+  a quiet sky is never reported as a hill; a direction nothing was heard in is never
+  a finding. Without an antenna height the chart still shows what was heard and asks
+  for the height ("Set the antenna height in Settings to see the radio horizon");
+  before any data it says it is still learning. The horizon assumes the site is at
+  sea level — FlightSite does not store the ground elevation — which makes it a
+  little generous for a high site; a future site-elevation setting would refine it.
+  This is a Receiver-page chart, not a map layer (§33).
 - Lifetime statistics since T0 (§63). Decoder-native statistics consumed when
   available; unsupported metrics gracefully hidden (§60).
 - Metric retention: high-resolution window (14-day default, configurable 7–30 days)
@@ -144,6 +210,17 @@ information. No period-over-period comparison in v1.
 - **Rule engine**: visual rule builder; v1 conditions — classification, specific
   type/model, watchlist membership, locally rare aircraft, locally rare type,
   distance, altitude — combined with simple AND; no nested boolean trees (§43).
+- **Richer conditions** (roadmap slice 089, issue #232), still plain AND: a set of
+  squawk codes; callsign and registration patterns (`RCH*`, `N?23AB` — `*` any
+  characters, `?` exactly one, case ignored); ground-speed (kt) and vertical-rate
+  (ft/min, negative descending) windows; a set of ADS-B emitter categories (shown in
+  words, "A7 · Rotorcraft"); and an area drawn on a mini-map inside the rule builder —
+  the receiver's map with its range rings, click to add vertices, drag to move them,
+  double-click or Enter to finish, with a "longitude, latitude" text box beside it as
+  the keyboard-accessible way to enter or adjust the same shape. Areas are one simple
+  shape of 3–64 vertices that does not cross the 180° meridian; an aircraft with no
+  position is never inside one. Inputs stay in canonical units with a metric hint
+  beside them (R4-13). Existing rules keep working unchanged.
 - **Rarity** is receiver-relative, computed from FlightSite's own history since T0:
   never seen, seen fewer than N times, type seen fewer than N times (§44).
 - **Templates** shipped in v1: military, government, police/law enforcement, emergency
@@ -161,6 +238,17 @@ information. No period-over-period comparison in v1.
   connection that carries alerts is owned by the app shell rather than by the Live
   Map ([ADR-0015](adr/0015-app-shell-live-socket.md)); permission is asked for once,
   from the setup wizard or Settings, and never on load (`docs/SECURITY.md` §5).
+- **Receiver self-alerts** (roadmap slice 088, issue #231): the station telling the
+  owner it is unhealthy, beside the alerts about aircraft. Three built-in, toggleable
+  conditions — the message rate below a configurable share (default 40 %) of the same
+  hour-of-week's usual rate for N minutes (default 15; silent until two weeks of that
+  hour are recorded, so a quiet night hour is judged against other nights), the
+  decoder disconnected longer than N minutes (default 5), and a monitored feeder going
+  offline. Each episode is one activity event and one browser notification, and one
+  "restored" pair on recovery — never a stream, however the condition flickers.
+  Delivered through the same browser-only path as alert matches, at High severity;
+  clicking opens Health. Thresholds and toggles live in Settings → Receiver
+  self-alerts; the Health page lists what is active and since when.
 
 ### 4.9 Activity & Records (§16, §53–§55)
 
@@ -172,7 +260,8 @@ information. No period-over-period comparison in v1.
   lightweight (§54).
 - Chronological activity feed: interesting detections, alerts, first-evers, new types,
   records, emergency squawks, receiver offline/restored, metadata update results
-  (§55).
+  (§55); since slice 077 feeder offline/restored, and since slice 088 receiver
+  self-alert raised/restored.
 - All lifetime statistics anchor to **T0**, the timestamp of the first observation
   ever persisted; T0 is never silently reset (§16).
 
@@ -182,7 +271,8 @@ Settings edit the same canonical configuration model stored in
 `/opt/flightsite/data/config.yaml`, with secrets kept separately and always masked
 (§29–§30). Areas: receiver endpoint and location, units, timezone, display radius,
 alert radius, sighting timing, retention policy, map configuration, enrichment
-configuration (AeroDataBox key), browser notification settings. Additional actions:
+configuration (AeroDataBox key), browser notification settings, receiver self-alert
+toggles and thresholds (slice 088). Additional actions:
 
 - **Update Aircraft Metadata** — manual, per-source download/validate/import with
   independent status reporting and transactional safety (§27).
@@ -194,7 +284,10 @@ configuration (AeroDataBox key), browser notification settings. Additional actio
 A health area showing decoder connection state, last successful aircraft update,
 database health/size/row counts, free disk space, backend uptime, versions, metadata
 database age, notification permission status, and recent
-ingestion/database/enrichment/WebSocket errors. The user should never need SSH to
+ingestion/database/enrichment/WebSocket errors. Since slice 088 an **Active
+self-alerts** card leads the page: each receiver self-alert currently raised, with the
+moment its condition began, and a note while the message-rate baseline is still
+learning. The user should never need SSH to
 determine whether FlightSite is healthy. Structured logging, rotating logs,
 health/readiness endpoints, and internal counters are provided; Prometheus/Grafana are
 not required (§68).
@@ -225,10 +318,11 @@ interesting aircraft, aircraft history, sightings, analytics, receiver statistic
 activity, health — via REST and WebSocket. Mutation endpoints used internally by the
 frontend are not part of the supported external contract.
 
-### 4.15 Feeders (§10, §67, §79 amendments; slice 077)
+### 4.15 Feeders (§10, §67, §79 amendments; slices 077, 082)
 
-One page, `/receiver/feeders`, reached from the Receiver page and from Health — a
-sub-route of Receiver, not an eighth sidebar section. It shows every network the
+One page, `/receiver/feeders` — a sub-route of Receiver, not an eighth SPEC §10
+primary section, but reached directly from the sidebar since roadmap slice 082 as
+well as from the Receiver page and Health. It shows every network the
 receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, OpenSky, AeroDataBox and
 similar), each as a card with its status (up / degraded / down / unknown), how long it
 has been in that state, when data was last sent, MLAT and ADS-B-out state where the
@@ -245,6 +339,35 @@ secrets the owner pastes, masked like the API key and never shown. Outages and
 restorations appear in the activity feed; feeder counts appear on Health. Monitoring
 the feeds of one receiver is not multi-receiver support, which stays a non-goal (§79).
 See [ADR-0017](adr/0017-feeder-status-sources.md).
+
+### 4.16 Phone Layout & Installable App (§80; roadmap slice 084)
+
+**Live Map on a phone.** Below 768 px the Live Map's floating cards collapse into a
+bottom toolbar of five toggles — **Today**, **Layers** (basemap and overlay toggles),
+**Filters**, **Aircraft** (the interesting and non-positioned lists) and **Activity** —
+each opening its card as a sheet directly above the toolbar, one at a time; tapping
+the open card's button again, or Escape, closes it. Selecting an aircraft replaces
+the open card with the aircraft detail panel as a draggable bottom sheet with three
+stops (peek: the header only; half; full), resized by dragging its handle or with its
+Expand/Collapse buttons; Escape or the close button deselects as on desktop. The
+connection chip, the quick-filter chips and the recentre button stay on the map, and
+nothing is drawn under another control: at 390 x 844 no card overlaps another and,
+with nothing open, the map keeps well over 60 % of the screen. The toolbar sits clear
+of the phone's home indicator (`env(safe-area-inset-bottom)`), and the `L`, `F` and
+`/` shortcuts open the matching sheets. From 768 px up the layout is unchanged.
+
+**Install to a home screen.** FlightSite ships a web app manifest (name, standalone
+display, the dark theme's colours, 192/512 px and maskable icons drawn from the brand
+mark), so a supporting browser offers **Install** / **Add to Home Screen** and the app
+opens in its own window. A small service worker keeps the app shell (the page, its
+scripts, styles, fonts and icons) so an installed app opens even while the server is
+unreachable — but it never stores live data: aircraft, history, analytics and alerts
+always come from the server, and map tiles are never cached by it (offline tiles
+remain out of scope, §32). When a new version is deployed, an open tab shows **"A
+new version of FlightSite is available — Reload"**; nothing changes until Reload is
+clicked. Browsers only install apps and run service workers in a secure context
+(HTTPS, or `localhost`), so an install reached over plain HTTP on a LAN address works
+exactly as before, without the install option.
 
 ## 5. Key Product Behaviors
 

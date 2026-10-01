@@ -19,6 +19,7 @@ from flightsite.activity import (
     AlertMatchFact,
     FeederEpisode,
     HealthProbe,
+    SelfAlertEpisode,
     StoredActivityEvent,
 )
 from flightsite.airports import (
@@ -31,6 +32,7 @@ from flightsite.airports import (
 )
 from flightsite.airports.ourairports import DEFAULT_ARTIFACT_URL as OURAIRPORTS_ARTIFACT_URL
 from flightsite.alerts import AlertListener, AlertService
+from flightsite.alerts.self_alerts import SelfAlertMonitor
 from flightsite.analytics import AnalyticsService
 from flightsite.api import feeders_internal
 from flightsite.api.context import LiveApiContext
@@ -45,6 +47,7 @@ from flightsite.db.clock import utc_now_ms
 from flightsite.db.startup import DATABASE_SUBSYSTEM
 from flightsite.demo import DEFAULT_CENTER, DemoAdapter, demo_enabled
 from flightsite.demo.airframes import seed_demo_metadata
+from flightsite.demo.decoder_outage import scripted_decoder_health
 from flightsite.demo.feeders import demo_probes
 from flightsite.diagnostics.errors import error_ring, secrets_from_settings
 from flightsite.enrichment import (
@@ -475,6 +478,47 @@ def _build_feeders(app: FastAPI, settings: Settings) -> FeederService:
     return FeederService(**options)
 
 
+def _build_self_alerts(app: FastAPI) -> SelfAlertMonitor:
+    """Construct the receiver self-alert monitor (slice 088, issue #231).
+
+    Every input is a probe closed over ``app`` — the ``_alert_radius``
+    pattern — so a Settings save of ``self_alerts`` applies on the next sample
+    with no apply step, the decoder is read through the same late probe the
+    activity feed uses (so the first-run hot start of issue #122 is invisible
+    here too), and raises and restores reach the feed through
+    :meth:`~flightsite.activity.ActivityService.record_self_alert`.
+
+    Demo mode wraps the decoder probe in a scripted outage
+    (:mod:`flightsite.demo.decoder_outage`) that only this monitor sees, so
+    the demo stack shows one raise and one restore an hour while its traffic
+    keeps flowing.
+    """
+
+    def settings() -> Any:
+        current: Settings = app.state.settings
+        return current.self_alerts
+
+    def sink(episode: SelfAlertEpisode) -> None:
+        activity: ActivityService = app.state.activity
+        activity.record_self_alert(episode)
+
+    def feeder_statuses() -> Sequence[Any] | None:
+        feeders: FeederService | None = getattr(app.state, "feeders", None)
+        return None if feeders is None else feeders.statuses()
+
+    health = _decoder_health(app)
+    if demo_enabled():
+        health = scripted_decoder_health(health)
+    return SelfAlertMonitor(
+        database=app.state.database,
+        settings=settings,
+        health=health,
+        sink=sink,
+        feeders=feeder_statuses,
+        timezone=_receiver_timezone(app),
+    )
+
+
 def _include_feeders_internal(app: FastAPI) -> None:
     """Mount slice 077's ``/api/internal/feeders`` router (the stats-link redirect)."""
     app.include_router(feeders_internal.router, prefix="/api/internal", include_in_schema=False)
@@ -555,6 +599,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     alerts: AlertService = app.state.alerts
     maintenance: MaintenanceService = app.state.maintenance
     feeders: Any | None = app.state.feeders
+    self_alerts: SelfAlertMonitor = app.state.self_alerts
 
     # Migrations and the integrity check run before startup is declared
     # complete. They never abort startup: a failure leaves the `database`
@@ -618,6 +663,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # is of a table they wrote themselves. Skipping them leaves the
         # receiver page without history; nothing else notices, because nothing
         # else reads those tables.
+        #
+        # Receiver self-alerts (slice 088) resume whatever episodes an earlier
+        # process left active first, before the sampler can evaluate anything:
+        # the monitor rides that sampler's seam, and the `meta` row it resumes
+        # from is in the schema the migration may have failed to create.
+        await self_alerts.start()
         await receiver_metrics.start()
         # And once more, for the same reason and with one addition: the
         # analytics rollups are derived from `sightings`, so this start
@@ -1058,6 +1109,12 @@ def create_app(data_dir: str | os.PathLike[str] | None = None) -> FastAPI:
     # activity feed through `_record_feeder_episode`. Constructing it opens
     # nothing and starts no task.
     app.state.feeders = _build_feeders(app, settings)
+    # Receiver self-alerts (slice 088, issue #231): evaluated on every
+    # receiver-metrics sample rather than on a task of its own, and handing
+    # raises and restores to the activity service's pending queue above.
+    # Constructing it reads nothing; `start()` resumes the active episodes.
+    app.state.self_alerts = _build_self_alerts(app)
+    app.state.receiver_metrics.subscribe_samples(app.state.self_alerts.observe)
     # Interesting-aircraft alerting (SPEC §43 to §48, docs/DATA_MODEL.md §4.2
     # and §4.3). A seventh background task and a fifth consumer of the live
     # event stream: it evaluates each aircraft's rules on its own updates from

@@ -16,12 +16,33 @@
  * opened it to watch an aircraft land or go stale still wants to see where
  * it ended up. Only an explicit close/Escape/re-click-elsewhere clears the
  * selection.
+ *
+ * Since roadmap slice 082, the header also carries `ShareControls` — Copy
+ * link, `navigator.share`, and a QR popover — reading the current address
+ * bar URL (`useCurrentUrl`), which already carries this selection as
+ * `?selected=<icao>` via `useSelectionUrlSync`.
+ *
+ * On a phone (`placement="docked"`, roadmap slice 084) the panel is a
+ * draggable bottom sheet inside the Live Map's bottom dock rather than the
+ * viewport-wide `fixed` sheet it used to be below `md`: it sits above the
+ * bottom toolbar instead of over it, snaps between peek, half and full
+ * (`lib/sheetSnap.ts`), and carries `BottomSheetHandle` — a grabber for
+ * pointers plus Expand/Collapse buttons for keyboards and screen readers.
+ * Escape and the close button deselect exactly as they do on desktop.
+ *
+ * Since roadmap slice 086 the Live section also shows what the aircraft's own
+ * transmitter says about it: the emitter category in words ("A7 ·
+ * Rotorcraft", `lib/emitterCategory.ts`), the autopilot-selected altitude
+ * beside the altitude, and — in the header — the decoder's emergency state as
+ * a text badge whenever it says something the squawk badge does not.
  */
 
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { BottomSheetHandle } from "@/features/aircraft-detail/components/BottomSheetHandle";
+import { DecoderEmergencyBadge } from "@/features/aircraft-detail/components/DecoderEmergencyBadge";
 import {
   DetailSection,
   DetailSectionHeadingLevel,
@@ -53,11 +74,18 @@ import {
   isEmergencySquawk,
   verticalTrend,
 } from "@/features/aircraft-detail/lib/format";
+import type { SheetSnap } from "@/features/aircraft-detail/lib/sheetSnap";
 import { useRelativeAge } from "@/features/aircraft-detail/lib/useRelativeAge";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
+import type { UnitSystem } from "@/lib/api/config";
 import type { LiveAircraft } from "@/lib/api/live";
+import { decoderEmergencyAddsToSquawk } from "@/lib/emergency";
+import { formatEmitterCategory } from "@/lib/emitterCategory";
+import { ShareControls } from "@/lib/share/ShareControls";
+import { useCurrentUrl } from "@/lib/share/useCurrentUrl";
 import { cn } from "@/lib/utils";
 
 /** Vertical-rate direction glyph. Text/symbol-first (▲/▼/—), not a bare
@@ -68,7 +96,22 @@ const TREND_GLYPH: Record<"climb" | "descend" | "level", string> = {
   level: "—",
 };
 
-export function AircraftDetailPanel() {
+/** The docked sheet's resting height per snap. `h-44` is
+ * `PEEK_HEIGHT_PX`; the fractions are of the dock, which the sheet shares
+ * with the toolbar, so `h-full` shrinks (`shrink`, `min-h-0`) to what is
+ * left rather than pushing the toolbar off screen. */
+const SNAP_HEIGHT_CLASS: Record<SheetSnap, string> = {
+  peek: "h-44",
+  half: "h-1/2",
+  full: "h-full",
+};
+
+export function AircraftDetailPanel({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const docked = placement === "docked";
   const selectedIcao = useLiveAircraftStore((state) => state.selectedIcao);
   const record = useLiveAircraftStore((state) =>
     state.selectedIcao ? state.aircraft[state.selectedIcao] : undefined,
@@ -81,6 +124,14 @@ export function AircraftDetailPanel() {
   // arriving since selection, which the backfilled drawn track no longer is.
   const trackLive = useLiveAircraftStore((state) => state.trackLive);
   const selectAircraft = useLiveAircraftStore((state) => state.selectAircraft);
+  // The URL already carries `?selected=<icao>` via `useSelectionUrlSync`
+  // (mounted once at `LiveMapPage`), so sharing this panel is just sharing
+  // the address bar (roadmap slice 082).
+  const shareUrl = useCurrentUrl();
+  // Kept across selections: a height the user dragged to is a preference for
+  // how much of the map to give up, not a property of one aircraft.
+  const [snap, setSnap] = useState<SheetSnap>("half");
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
 
   const isOpen = selectedIcao !== null;
   // Non-modal (`aria-modal="false"`): the map behind stays interactive, so
@@ -132,14 +183,35 @@ export function AircraftDetailPanel() {
           aria-labelledby={headingId}
           tabIndex={-1}
           data-testid="aircraft-detail-panel"
-          className={cn(
-            "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
-            "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
-            "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
-            "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
-            "outline-none",
-          )}
+          data-snap={docked ? snap : undefined}
+          style={
+            docked && dragHeight !== null ? { height: dragHeight } : undefined
+          }
+          className={
+            docked
+              ? cn(
+                  "pointer-events-auto flex min-h-0 w-full shrink flex-col",
+                  "rounded-t-xl border border-border bg-card text-card-foreground shadow-lg outline-none",
+                  dragHeight === null && SNAP_HEIGHT_CLASS[snap],
+                )
+              : cn(
+                  "fixed inset-x-0 bottom-0 z-20 flex max-h-[75vh] flex-col",
+                  "rounded-t-xl border-t border-border bg-card text-card-foreground shadow-lg",
+                  "md:inset-y-0 md:right-0 md:left-auto md:top-0 md:bottom-auto md:h-full md:max-h-none",
+                  "md:w-[400px] md:rounded-t-none md:rounded-l-xl md:border-t-0 md:border-l",
+                  "outline-none",
+                )
+          }
         >
+          {docked && (
+            <BottomSheetHandle
+              sheetRef={panelRef}
+              snap={snap}
+              onSnapChange={setSnap}
+              onDragHeight={setDragHeight}
+              label="aircraft detail"
+            />
+          )}
           <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border px-4 py-3">
             <div className="flex min-w-0 flex-col gap-1.5">
               <h2 id={headingId} className="truncate text-lg font-semibold">
@@ -156,7 +228,19 @@ export function AircraftDetailPanel() {
                 {aircraft && isEmergencySquawk(aircraft.squawk) && (
                   <EmergencySquawkBadge squawk={aircraft.squawk} />
                 )}
+                {aircraft &&
+                  decoderEmergencyAddsToSquawk(
+                    aircraft.decoder_emergency,
+                    aircraft.squawk,
+                  ) && (
+                    <DecoderEmergencyBadge kind={aircraft.decoder_emergency} />
+                  )}
               </div>
+              <ShareControls
+                className="-ml-1.5"
+                url={shareUrl}
+                title={aircraft?.callsign ?? selectedIcao.toUpperCase()}
+              />
             </div>
             <button
               type="button"
@@ -168,7 +252,7 @@ export function AircraftDetailPanel() {
             </button>
           </header>
 
-          <div className="overflow-y-auto">
+          <div className={cn("overflow-y-auto", docked && "min-h-0 flex-1")}>
             {aircraft === null ? (
               <p className="px-4 py-4 text-sm text-muted-foreground">
                 No live data for this aircraft.
@@ -183,7 +267,7 @@ export function AircraftDetailPanel() {
                 <DetailSection title="Live">
                   <FieldRow
                     label="Altitude"
-                    value={formatAltitude(aircraft.altitude_ft, units)}
+                    value={altitudeWithSelected(aircraft, units)}
                     provenanceSource={
                       aircraft.provenance.altitude_ft ?? "decoder"
                     }
@@ -281,6 +365,13 @@ export function AircraftDetailPanel() {
                     label="On ground"
                     value={formatOnGround(aircraft.on_ground)}
                   />
+                  {/* Slice 086: what the aircraft's own transmitter says it
+                   * is — distinct from the metadata type below, which is
+                   * what a registry says. */}
+                  <FieldRow
+                    label="Emitter category"
+                    value={formatEmitterCategory(aircraft.emitter_category)}
+                  />
                 </DetailSection>
 
                 <IdentityMetadataSection aircraft={aircraft} />
@@ -328,6 +419,34 @@ export function AircraftDetailPanel() {
         </div>
       </TooltipProvider>
     </DetailSectionHeadingLevel>
+  );
+}
+
+/**
+ * The Altitude row's value: the barometric altitude, with the autopilot's
+ * selected altitude beside it when the decoder reported one (slice 086) —
+ * "where it is" and "where it is going" read together, which is why this is
+ * one row rather than two. Both go through `formatAltitude`, so a metric
+ * install reads metres for both. `null` (→ Unknown) only when neither is
+ * known; an unknown current altitude with a known target still shows the
+ * target, labelled, beside the Unknown.
+ */
+function altitudeWithSelected(
+  aircraft: LiveAircraft,
+  units: UnitSystem,
+): ReactNode | null {
+  const current = formatAltitude(aircraft.altitude_ft, units);
+  const selected = formatAltitude(aircraft.selected_altitude_ft ?? null, units);
+  if (selected === null) {
+    return current;
+  }
+  return (
+    <span className="inline-flex flex-col items-end">
+      <span>{current ?? <UnknownValue />}</span>
+      <span className="text-xs font-normal text-muted-foreground">
+        Selected {selected}
+      </span>
+    </span>
   );
 }
 

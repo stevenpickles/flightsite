@@ -18,13 +18,19 @@
  * budget left to the renderer, and it is a generous multiple of what the path
  * actually costs — the point is to fail loudly if someone makes it
  * quadratic, not to police a few hundred microseconds.
+ *
+ * Roadmap slice 085 holds its all-aircraft trails to the *same* budget, not a
+ * separate one: a trailed frame is still one frame, and the budget is what
+ * the renderer is promised it will be left with.
  */
 
 import type { Map as MapLibreGlMap } from "maplibre-gl";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { AIRCRAFT_TRAILS_SOURCE_ID } from "@/features/map/aircraft/aircraftLayers";
 import { drawAircraftFrame } from "@/features/map/aircraft/frame";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { resetTrails, TRAIL_MAX_POINTS } from "@/features/map/aircraft/trails";
 import type { LiveAircraft } from "@/lib/api/live";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 
@@ -72,6 +78,7 @@ function median(values: number[]): number {
 
 beforeEach(() => {
   useLiveAircraftStore.getState().reset();
+  resetTrails();
 });
 
 describe("500-aircraft frame cost", () => {
@@ -101,6 +108,65 @@ describe("500-aircraft frame cost", () => {
     expect(
       result,
       `median frame cost ${result.toFixed(2)} ms for ${AIRCRAFT_COUNT} aircraft`,
+    ).toBeLessThanOrEqual(BUDGET_MS);
+  });
+
+  it("builds a frame with every aircraft trailed well inside the same budget", () => {
+    // Roadmap slice 085's acceptance criterion: all-aircraft trails at 500
+    // aircraft keep the Live Map frame-time budget. Run past the point cap
+    // (FRAMES > TRAIL_MAX_POINTS) so every trail is at its longest — 499
+    // full trails (the selected aircraft draws its track instead), ~15,000
+    // vertices — for the samples that matter most, and measure the
+    // store-driven redraw that is the only one to rebuild them.
+    expect(FRAMES).toBeGreaterThan(TRAIL_MAX_POINTS);
+    const store = useLiveAircraftStore.getState();
+    const start = Date.now();
+    store.applySnapshot({ aircraft: fleet(0), receiver: null }, start);
+    store.selectAircraft("000001");
+
+    let trailFeatures = 0;
+    let trailVertices = 0;
+    const map = {
+      getSource: (id: string) => ({
+        setData: (data: {
+          features?: { geometry: { coordinates: unknown[] } }[];
+        }) => {
+          if (id === AIRCRAFT_TRAILS_SOURCE_ID) {
+            trailFeatures = data.features?.length ?? 0;
+            trailVertices = 0;
+            for (const feature of data.features ?? []) {
+              trailVertices += feature.geometry.coordinates.length;
+            }
+          }
+        },
+      }),
+      getZoom: () => 10,
+    } as unknown as MapLibreGlMap;
+
+    const samples: number[] = [];
+    for (let tick = 1; tick <= FRAMES; tick += 1) {
+      const now = start + tick * 1000;
+      const updated = fleet(tick);
+      const began = performance.now();
+      useLiveAircraftStore
+        .getState()
+        .applyDelta({ updated, stale: [], removed: [] }, now);
+      drawAircraftFrame(map, useLiveAircraftStore.getState(), now, {
+        includeTrack: true,
+        includeTrails: true,
+        trailsEnabled: true,
+      });
+      samples.push(performance.now() - began);
+    }
+
+    // Guards the guard: the trails really were built, at full length.
+    expect(trailFeatures).toBe(AIRCRAFT_COUNT - 1);
+    expect(trailVertices).toBe((AIRCRAFT_COUNT - 1) * TRAIL_MAX_POINTS);
+
+    const result = median(samples);
+    expect(
+      result,
+      `median frame cost ${result.toFixed(2)} ms for ${AIRCRAFT_COUNT} trailed aircraft`,
     ).toBeLessThanOrEqual(BUDGET_MS);
   });
 

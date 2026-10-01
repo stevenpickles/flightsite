@@ -43,11 +43,18 @@ Modern                  Legacy                  Normalized to
 ``rssi``                ``rssi``                ``rssi_db``
 ``messages``            ``messages``            ``messages``
 ``type`` / ``mlat``     ``mlat``                ``position_source``
+``category``            —                       ``emitter_category``
+``nav_altitude_mcp``    —                       ``selected_altitude_ft``
+``nav_altitude_fms``    —                       ``selected_altitude_ft`` (fallback)
+``emergency``           —                       ``decoder_emergency``
 ======================= ======================= ============================
 
-Fields FlightSite does not consume yet (``category``, ``nav_*``, ``nic``,
-``sil``, ``r``, ``t``, ``emergency``) are ignored rather than rejected;
-metadata and emergency handling arrive in slices 021 and 038.
+The last four arrived with slice 086. The legacy field set has none of them,
+so a dump1090-fa 3.x document simply yields ``None`` for each.
+
+Fields FlightSite does not consume yet (the other ``nav_*`` fields, ``nic``,
+``sil``, ``r``, ``t``) are ignored rather than rejected; airframe metadata
+comes from the registries of slice 021, not from the decoder.
 
 Normalization decisions
 -----------------------
@@ -78,6 +85,24 @@ Normalization decisions
   names no airframe.
 * **Squawk.** Kept only when it is a well-formed 4-digit octal code, so
   emergency detection (slice 038) never has to defend against ``"9999"``.
+* **Emitter category.** Kept only when it is a well-formed ``A0``-``D7``
+  code (upper-cased first); anything else is ``None``. The code is passed
+  through as the aircraft stated it — ``A0`` ("no category information")
+  included — because interpreting it is a display decision, not an ingest one.
+* **Selected altitude.** ``nav_altitude_mcp`` — the altitude dialled into the
+  autopilot's mode control panel / flight control unit — is preferred, and
+  ``nav_altitude_fms`` — the flight management system's target — is the
+  fallback. The MCP value is what the crew has actually selected and what the
+  autopilot will level at; the FMS value is the programmed profile, which the
+  MCP normally bounds, so it answers "where is it going" only when the MCP
+  value was not received. Both are plausibility-bounded exactly like every
+  other altitude.
+* **Emergency state.** readsb's ``emergency`` is the ADS-B emergency/priority
+  status, independent of the squawk. ``general``, ``lifeguard``, ``minfuel``,
+  ``nordo``, ``unlawful`` and ``downed`` pass through as the canonical
+  :data:`~flightsite.ingest.types.DecoderEmergency` values; ``none`` means no
+  emergency and becomes ``None``, and so do ``reserved`` (a code point that
+  declares nothing nameable) and any other string.
 
 Plausibility bounds and type coercion live in :mod:`flightsite.ingest.bounds`.
 """
@@ -100,11 +125,13 @@ from flightsite.ingest.protocol import DecoderError, DecoderParseError, DecoderU
 from flightsite.ingest.types import (
     AircraftStateBatch,
     AircraftStateUpdate,
+    DecoderEmergency,
     DecoderEndpoint,
     DecoderFlavor,
     DecoderProbe,
     Position,
     PositionSource,
+    is_emitter_category,
 )
 
 logger = structlog.get_logger(__name__)
@@ -122,6 +149,19 @@ REBROADCAST_TYPE_PREFIXES: Final = ("tisb_", "adsr_")
 
 #: readsb marks synthetic, non-ICAO addresses with this prefix.
 NON_ICAO_ADDRESS_PREFIX: Final = "~"
+
+#: readsb ``emergency`` values that declare an emergency, mapped onto the
+#: canonical vocabulary. The spellings happen to coincide today; the mapping is
+#: explicit anyway so the canonical names cannot drift with the decoder's.
+#: ``none`` and ``reserved`` are deliberately absent.
+DECODER_EMERGENCY_VALUES: Final[dict[str, DecoderEmergency]] = {
+    "general": "general",
+    "lifeguard": "lifeguard",
+    "minfuel": "minfuel",
+    "nordo": "nordo",
+    "unlawful": "unlawful",
+    "downed": "downed",
+}
 
 #: Keys emitted only by readsb; their presence identifies the decoder.
 READSB_MARKER_FIELDS: Final = (
@@ -157,6 +197,36 @@ def _octal_squawk(value: object) -> str | None:
     if text is None or len(text) != 4 or any(character not in "01234567" for character in text):
         return None
     return text
+
+
+def _emitter_category(value: object) -> str | None:
+    """Return a well-formed ``A0``-``D7`` emitter category, else ``None``."""
+    text = bounds.as_text(value)
+    if text is None:
+        return None
+    category = text.upper()
+    return category if is_emitter_category(category) else None
+
+
+def _selected_altitude(entry: dict[str, Any]) -> float | None:
+    """The autopilot-selected altitude: MCP/FCU first, FMS as the fallback."""
+    for key in ("nav_altitude_mcp", "nav_altitude_fms"):
+        altitude = bounds.altitude_ft(entry.get(key))
+        if altitude is not None:
+            return altitude
+    return None
+
+
+def _decoder_emergency(value: object) -> DecoderEmergency | None:
+    """Map readsb's ``emergency`` onto the canonical vocabulary.
+
+    ``none``, ``reserved`` and anything unrecognised are ``None`` — see the
+    module docstring.
+    """
+    text = bounds.as_text(value)
+    if text is None:
+        return None
+    return DECODER_EMERGENCY_VALUES.get(text.lower())
 
 
 def _address(value: object) -> tuple[str | None, bool]:
@@ -263,6 +333,9 @@ def _build_update(
         messages=bounds.message_count(entry.get("messages")),
         seen_s=seen_s,
         seen_pos_s=bounds.age_s(entry.get("seen_pos")),
+        emitter_category=_emitter_category(entry.get("category")),
+        selected_altitude_ft=_selected_altitude(entry),
+        decoder_emergency=_decoder_emergency(entry.get("emergency")),
     )
 
 

@@ -24,7 +24,7 @@ compose.yaml Docker Compose deployment                      — arrives in slice
 | --- | --- |
 | Backend | Python 3.12, [uv](https://docs.astral.sh/uv/), FastAPI, Pydantic, SQLAlchemy 2.x (async, aiosqlite), Alembic |
 | Backend quality | ruff (format + lint), mypy (strict), pytest + pytest-asyncio, coverage (≥ 80% global) |
-| Frontend | Node 22 LTS, npm, Vite, React 18, TypeScript (strict), Tailwind CSS, shadcn/ui, Lucide, Zustand, TanStack Query, ECharts, MapLibre GL JS |
+| Frontend | Node 24 LTS (22 still supported), npm, Vite, React 18, TypeScript (strict), Tailwind CSS, shadcn/ui, Lucide, Zustand, TanStack Query, ECharts, MapLibre GL JS |
 | Frontend quality | ESLint, Prettier, tsc, Vitest + React Testing Library, coverage (≥ 70% global) |
 | E2E | Playwright (Chromium, Firefox, WebKit where practical) |
 | CI/CD | GitHub Actions; GHCR for images (`linux/arm64` + `linux/amd64`) |
@@ -40,7 +40,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                    # strict type checking
 uv run flightsite-serve        # serve on :8000 (or: python -m flightsite)
 
-# frontend (Node >= 22)
+# frontend (Node 24 LTS; >= 22 works)
 cd frontend
 npm install
 npm run test:coverage          # Vitest + RTL, coverage gate (>= 70%)
@@ -68,6 +68,21 @@ enough to run two: `compose.yaml` pins `container_name`, which is global to the
 daemon, so a second stack fails with a name conflict even under a different
 `docker compose -p` project. Bring one stack down before starting another from
 another worktree.
+
+### Service worker and app icons (roadmap slice 084)
+
+`npm run dev` never registers a service worker, so the dev server always serves live
+code. Only `npm run build` emits `dist/sw.js` (`vite-plugins/serviceWorker.ts` prints
+how many shell files it precached and the cache version), and only a production build
+opened in a secure context registers it — `npm run preview` on `localhost` qualifies,
+which is the way to exercise installability or the update prompt locally. The worker
+precaches the built shell only and never intercepts `/api/`, `/ws/` or cross-origin
+requests; its scope and rules are in `ARCHITECTURE.md` §5. To clear it while testing,
+use the browser's Application → Service workers → Unregister.
+
+The PNG icons in `frontend/public/icons/` are generated from `public/favicon.svg` by
+`npm run icons` (a dependency-free rasterizer, `scripts/generate-icons.mjs`) and
+committed; re-run it only when the mark changes.
 
 ### Running E2E locally
 

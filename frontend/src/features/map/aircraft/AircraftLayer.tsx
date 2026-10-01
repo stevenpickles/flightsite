@@ -27,6 +27,9 @@
  *   this layer drew. It would clear itself on the next drawn frame anyway — an
  *   empty picture is a count of zero — but a remount should not have to spend
  *   a frame in the old picture's tier to get there.
+ * - **The trail buffer** (roadmap slice 085, `trails.ts`) — the same kind of
+ *   memory about drawn frames. A remount starts from the live picture rather
+ *   than from the wake the map drew before it left.
  *
  * Nothing else: the live picture belongs to the socket, which is still running.
  */
@@ -35,6 +38,7 @@ import { useEffect } from "react";
 
 import { ConnectionStatusChip } from "@/features/map/aircraft/ConnectionStatusChip";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
+import { resetTrails } from "@/features/map/aircraft/trails";
 import { useAircraftLayer } from "@/features/map/aircraft/useAircraftLayer";
 import { useTrackBackfill } from "@/features/map/aircraft/useTrackBackfill";
 import { resetDensityLatch } from "@/features/map/labels/densityLatch";
@@ -47,6 +51,7 @@ export function AircraftLayer() {
     () => () => {
       useLiveAircraftStore.getState().selectAircraft(null);
       resetDensityLatch();
+      resetTrails();
     },
     [],
   );

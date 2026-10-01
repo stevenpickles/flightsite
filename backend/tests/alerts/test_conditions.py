@@ -34,7 +34,7 @@ def test_a_minimal_document_carries_the_schema_version() -> None:
     conditions = RuleConditions(watchlist_any=True)
 
     assert conditions.version == CONDITIONS_VERSION
-    assert json.loads(conditions.to_json())["version"] == 1
+    assert json.loads(conditions.to_json())["version"] == 2
 
 
 def test_a_document_round_trips_through_the_stored_text() -> None:
@@ -133,7 +133,7 @@ def test_an_unknown_document_version_is_refused() -> None:
     """Decoding a newer format by guessing is worse than saying so — the same
     refusal the packed track encoding applies to an unknown version."""
     with pytest.raises(ValueError):
-        RuleConditions.from_json('{"version": 2, "watchlist_any": true}')
+        RuleConditions.from_json('{"version": 3, "watchlist_any": true}')
 
 
 def test_text_that_is_not_a_json_object_is_refused() -> None:

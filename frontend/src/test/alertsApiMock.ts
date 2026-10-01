@@ -13,7 +13,7 @@ import { defaultFlightSiteConfig } from "@/test/configApiMock";
  * just the fields a test cares about. */
 export function alertRule(overrides: Partial<AlertRule> = {}): AlertRule {
   const conditions: AlertRuleConditions = overrides.conditions ?? {
-    version: 1,
+    version: 2,
     classification: {
       military: true,
       government: false,
@@ -45,7 +45,7 @@ export function alertTemplate(
     severity: "high",
     builtin: false,
     conditions: {
-      version: 1,
+      version: 2,
       classification: {
         military: true,
         government: false,
@@ -92,7 +92,7 @@ export const SHIPPED_TEMPLATE_FIXTURES: AlertTemplate[] = [
     name: "Government aircraft",
     description: "Any aircraft classified as a government operator.",
     conditions: {
-      version: 1,
+      version: 2,
       classification: {
         military: false,
         government: true,
@@ -114,14 +114,14 @@ export const SHIPPED_TEMPLATE_FIXTURES: AlertTemplate[] = [
     name: "First-ever aircraft",
     description: "An airframe this receiver has never recorded before.",
     severity: "info",
-    conditions: { version: 1, rare_aircraft: { max_sightings: 1 } },
+    conditions: { version: 2, rare_aircraft: { max_sightings: 1 } },
   }),
   alertTemplate({
     key: "watchlist",
     name: "Watchlist match",
     description: "Any aircraft on any watchlist (SPEC §42).",
     severity: "interesting",
-    conditions: { version: 1, watchlist_any: true },
+    conditions: { version: 2, watchlist_any: true },
   }),
 ];
 
@@ -253,7 +253,7 @@ export function installAlertsApiMock(
     base: Partial<AlertRule>,
   ): AlertRule {
     const conditions = (body?.conditions ?? {
-      version: 1,
+      version: 2,
     }) as AlertRuleConditions;
     return {
       id: base.id ?? nextRuleId++,

@@ -111,7 +111,7 @@ describe("TemplateGallery", () => {
                   description: "Any military aircraft.",
                   severity: "high",
                   builtin: false,
-                  conditions: { version: 1 },
+                  conditions: { version: 2 },
                 },
               ],
             },

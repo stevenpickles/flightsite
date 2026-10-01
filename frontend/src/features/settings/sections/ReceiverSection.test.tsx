@@ -177,6 +177,15 @@ describe("ReceiverSection", () => {
     expect(await screen.findByText(/≈ 9.1 m/)).toBeInTheDocument();
   });
 
+  it("labels the antenna height as height above ground level (slice 087)", () => {
+    installConfigApiMock();
+    renderSection({ units: "aviation" });
+
+    expect(
+      screen.getByLabelText("Antenna height above ground (ft, optional)"),
+    ).toBeInTheDocument();
+  });
+
   it("shows no metric hint when the aviation units preference is in effect", () => {
     installConfigApiMock();
     renderSection({ units: "aviation" });

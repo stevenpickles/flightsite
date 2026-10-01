@@ -1,10 +1,23 @@
 /**
  * Persisted per-browser visibility for the map's overlay layers (roadmap
  * slice 028) — Airports and Airspace, alongside the basemap choice
- * (`basemapPersistence.ts`). Same guarded-localStorage shape as that module:
- * falls back to the documented default on any error (private browsing,
- * disabled storage) or a malformed stored value, and never throws.
+ * (`basemapPersistence.ts`) — and, since roadmap slice 085 (issue #228), the
+ * rest of the Layers card's display controls: the range rings, the receiver
+ * marker, the aircraft labels, aircraft trails and the label content preset.
+ *
+ * Same guarded-localStorage shape as that module: falls back to the
+ * documented default on any error (private browsing, disabled storage) or a
+ * malformed stored value, and never throws. Every member falls back on its
+ * own, so a value stored before a member existed — every browser that used
+ * the Layers card before slice 085 — keeps the choices it made and picks up
+ * the new members' defaults.
  */
+
+import {
+  DEFAULT_LABEL_PRESET,
+  isLabelPreset,
+  type LabelPreset,
+} from "@/features/map/labels/labelContent";
 
 export const OVERLAY_VISIBILITY_STORAGE_KEY =
   "flightsite-map-overlay-visibility";
@@ -18,15 +31,39 @@ export interface OverlayVisibility {
    * nothing when there is no data and needs no separate "on if data
    * exists" state to track. */
   airspace: boolean;
+  /** The receiver's range rings and their distance labels (SPEC §33).
+   * Defaults ON — the map as it has always been drawn. */
+  rangeRings: boolean;
+  /** The receiver marker (dot and halo). Defaults ON. */
+  receiver: boolean;
+  /** Aircraft labels (SPEC §35). Defaults ON. Hides every *unselected*
+   * aircraft's label; the selected aircraft keeps its own, since selecting
+   * an aircraft is an explicit request to read it (slice 015's "selected
+   * aircraft always fully labeled"). */
+  labels: boolean;
+  /** Short trails behind every visible aircraft (`aircraft/trails.ts`).
+   * Defaults OFF — the one display choice that adds to the map rather than
+   * keeping what was already there, and the one with a real per-frame cost. */
+  trails: boolean;
+  /** What each label says (`labels/labelContent.ts`'s {@link LabelPreset}).
+   * Defaults to `"full"`. Not a visibility, strictly, but it is chosen on
+   * the same card, for the same map, with the same per-browser lifetime —
+   * one record and one key keep it with the choices it sits beside. */
+  labelPreset: LabelPreset;
 }
 
 export const DEFAULT_OVERLAY_VISIBILITY: OverlayVisibility = {
   airports: true,
   airspace: true,
+  rangeRings: true,
+  receiver: true,
+  labels: true,
+  trails: false,
+  labelPreset: DEFAULT_LABEL_PRESET,
 };
 
-function isBoolean(value: unknown): value is boolean {
-  return typeof value === "boolean";
+function booleanOr(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 /** Reads the persisted overlay visibility. Falls back to
@@ -42,14 +79,20 @@ export function readStoredOverlayVisibility(): OverlayVisibility {
     if (typeof parsed !== "object" || parsed === null) {
       return DEFAULT_OVERLAY_VISIBILITY;
     }
-    const candidate = parsed as Partial<OverlayVisibility>;
+    const candidate = parsed as Partial<
+      Record<keyof OverlayVisibility, unknown>
+    >;
+    const fallback = DEFAULT_OVERLAY_VISIBILITY;
     return {
-      airports: isBoolean(candidate.airports)
-        ? candidate.airports
-        : DEFAULT_OVERLAY_VISIBILITY.airports,
-      airspace: isBoolean(candidate.airspace)
-        ? candidate.airspace
-        : DEFAULT_OVERLAY_VISIBILITY.airspace,
+      airports: booleanOr(candidate.airports, fallback.airports),
+      airspace: booleanOr(candidate.airspace, fallback.airspace),
+      rangeRings: booleanOr(candidate.rangeRings, fallback.rangeRings),
+      receiver: booleanOr(candidate.receiver, fallback.receiver),
+      labels: booleanOr(candidate.labels, fallback.labels),
+      trails: booleanOr(candidate.trails, fallback.trails),
+      labelPreset: isLabelPreset(candidate.labelPreset)
+        ? candidate.labelPreset
+        : fallback.labelPreset,
     };
   } catch {
     return DEFAULT_OVERLAY_VISIBILITY;

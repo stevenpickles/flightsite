@@ -51,6 +51,7 @@ from flightsite.sightings.tracks import TrackSample, simplify
 from flightsite.sightings.vocabulary import (
     EMERGENCY_SQUAWKS,
     ClosureReason,
+    declared_emergency,
     position_source_code,
     position_source_name,
 )
@@ -175,6 +176,13 @@ class OpenSightingRow:
             # episode: deriving this from the stored squawk is what keeps
             # `emergency_start` exactly-once across a process boundary.
             emergency_active=self.squawk_last in EMERGENCY_SQUAWKS,
+            # The decoder's emergency state is not stored (it is a live
+            # statement, not a fact about the flight), so only a squawk-declared
+            # episode comes back open. A decoder-declared one standing across
+            # the restart opens a second `emergency_start` on the next
+            # observation; the alert it would raise is still deduplicated by
+            # `alert_matches`' unique index, so nobody is notified twice.
+            emergency_declared=declared_emergency(self.squawk_last, None),
             any_position=self.any_position,
             mlat_used=self.mlat_used,
             ground_seen=self.ground_seen,
@@ -587,6 +595,13 @@ class SightingRepository:
         if _better(aircraft.highest_alt_ft, active.highest_alt_ft, larger=True):
             aircraft.highest_alt_ft = active.highest_alt_ft
             aircraft.highest_alt_ms = active.highest_alt_ms
+        # Not a record but the airframe's latest self-description (slice 086):
+        # the newest category wins, and a sighting that saw none leaves the
+        # stored one alone. Compared first so an unchanged category stays out
+        # of the flush's UPDATE.
+        category = active.emitter_category
+        if category is not None and category != aircraft.emitter_category:
+            aircraft.emitter_category = category
 
     @staticmethod
     async def _require_sighting(session: AsyncSession, ids: SightingIds) -> Sighting:

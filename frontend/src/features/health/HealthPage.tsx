@@ -11,6 +11,7 @@ import { EnrichmentHealthCard } from "@/features/health/components/EnrichmentHea
 import { FeedersHealthCard } from "@/features/health/components/FeedersHealthCard";
 import { NotificationHealthCard } from "@/features/health/components/NotificationHealthCard";
 import { RecentErrorsSection } from "@/features/health/components/RecentErrorsSection";
+import { SelfAlertsHealthCard } from "@/features/health/components/SelfAlertsHealthCard";
 import { StatusPill } from "@/features/health/components/StatusPill";
 import {
   formatAgeAgo,
@@ -50,9 +51,10 @@ import { rowNoun, sourceLabel } from "@/lib/metadata/sources";
  * install with no receiver, no metadata and no integrity check yet is a
  * normal state to be shown clearly, not an error to apologise for.
  *
- * Reached from the Receiver and Settings pages rather than the sidebar: SPEC
- * §10 fixes that at seven sections, so this follows the `/activity`
- * precedent of a route inside the shell with no `NAV_ITEMS` entry.
+ * Reached from the sidebar since roadmap slice 082 (`NAV_ITEMS`, issue #225),
+ * plus the Receiver and Settings pages' own links from before then — this is
+ * not a promotion to an eighth SPEC §10 primary section, just the same route
+ * gaining a second, more discoverable way in.
  */
 
 /** The current time, re-read every `intervalMs` — the same lazy-initial-state
@@ -296,6 +298,15 @@ export function HealthPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Roadmap slice 088: first, because it is the card that says
+            whether anything needs the owner's attention right now. */}
+        {data.self_alerts != null && (
+          <SelfAlertsHealthCard
+            selfAlerts={data.self_alerts}
+            timezone={timezone}
+          />
+        )}
+
         <HealthCard
           titleId="health-decoder"
           title="Decoder"

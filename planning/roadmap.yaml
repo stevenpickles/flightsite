@@ -30,7 +30,7 @@
 #   - Documentation relevant to the slice is updated within the slice.
 
 version: 2  # v2: Phase 0 review-gate corrections (dependency completions, 009 split into 009/052/053, packed track storage, numeric perf criteria, licensing register)
-updated: "2026-09-26"
+updated: "2026-09-28"
 
 phases:
   - number: 0
@@ -60,6 +60,9 @@ phases:
   - number: 8
     name: "Hardening & Release Qualification"
     goal: "Full E2E, visual regression, accessibility, performance gates, multi-year storage qualification, docs."
+  - number: 9
+    name: "Usability & Observatory Expansion"
+    goal: "Everyday usability (units, shell, keyboard, sharing, list search, phone layout, map controls) and the receiver as an instrument (decoder field capture, coverage analysis, self-alerts, richer alert conditions, overhead lookup); docs/design/080-feature-program.md."
 
 # Release checkpoints (SPEC.md §109–113). Releases are prepared on release/vX.Y.Z
 # branches from qualified dev; the main merge requires human approval.
@@ -140,6 +143,16 @@ releases:
       links to the networks and their feed-stats pages, and to the sibling local
       pages; opt-in Docker socket for log-only feeds (slice 077; migration 0017;
       ADR-0017). Recorded 2026-09-26."
+  - version: "v0.11.0"
+    after_phase: 9
+    theme: "The usability and observatory expansion program shipped as one
+      release: units on every surface, ten sidebar sections (SPEC §10 amended),
+      keyboard shortcuts, share links and QR hand-off, list search, a phone Live
+      Map and installable shell, map display controls; decoder emitter category,
+      selected altitude and emergency state, receiver self-alerts, 'What was
+      that?', coverage against the radio horizon, richer alert conditions
+      (slices 080-093; migrations 0018-0020). The planned v0.11.0/v0.12.0 split
+      was not used. Recorded 2026-10-01."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2375,6 +2388,417 @@ slices:
     risk_level: low
     notes: "Found by the v0.10.0 release PR's CI (#217) after PR #216 had passed: a 30 s writer-pool TimeoutError in the removed-feeder test. Added by Fable outside the phase plan, 2026-09-26."
 
+  - id: "079"
+    title: "Dependency upkeep"
+    phase: 8
+    branch: "079-dependency-upkeep"
+    status: merged
+    depends_on: ["078"]
+    objective: "Act on the 2026-09-27 Dependabot evaluation: fix the time-of-day test bug that failed every Dependabot PR, make Dependabot watch the uv-managed backend and stop proposing stack-breaking bumps, and take vitest 5 and Node 24 LTS deliberately (issue #221)."
+    scope:
+      - "tests/analytics/test_api.py: the in-progress-day busiest-hour test seeds two hourly rows in distinct hours by construction (the first local hour and the hour now falls in) instead of fractions of the elapsed day that coincide shortly after local midnight"
+      - ".github/dependabot.yml: backend ecosystem pip → uv; ignore python >= 3.13 image tags and odd-numbered node majors; a vitest group so vitest and @vitest/* move together"
+      - "vitest and @vitest/coverage-v8 4 → 5 together (supersedes Dependabot #189/#193)"
+      - "frontend builder image node:22.23.2 → node:24.21.0-trixie-slim and CI setup-node 22 → 24 (supersedes #195's non-LTS Node 25); docs/DEVELOPMENT.md toolchain line"
+    out_of_scope:
+      - "TypeScript 7 (#192) — deferred until the lint/typecheck toolchain accepts it"
+      - "Python 3.13+ (a stack change requiring an ADR)"
+    acceptance_criteria:
+      - "the fixed test passes at any time of day, including in the receiver's first local hour"
+      - "full frontend suite and coverage gate pass under vitest 5; CI green on Node 24"
+      - "`Closes #221` in the PR body"
+    required_tests: [the fixed analytics test, full frontend suite + coverage under vitest 5, CI on Node 24]
+    expected_artifacts:
+      - backend/tests/analytics/test_api.py
+      - .github/dependabot.yml
+      - .github/workflows/
+      - frontend/Dockerfile
+      - frontend/package.json
+      - frontend/package-lock.json
+      - docs/DEVELOPMENT.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner request 2026-09-27: 'evaluate the dependabot recommendations', then 'take care of what you can take care of'. Added by Fable outside the phase plan."
+
+  # ---------------------------------------------------------------- Phase 9
+  # Usability & observatory expansion (docs/design/080-feature-program.md).
+  - id: "080"
+    title: "Feature program planning"
+    phase: 9
+    branch: "080-feature-program"
+    status: merged
+    depends_on: ["079"]
+    objective: "Record the post-v0.10.0 usability and observatory expansion program: design record, Phase 9, the Wave A and Wave B slices, and the proposals that wait on an owner spec amendment (issue #223)."
+    scope:
+      - "docs/design/080-feature-program.md: survey findings, guardrails, Wave A (081-085), Wave B (086-090), pending-owner-decision table, sequencing"
+      - "planning/roadmap.yaml: phase 9, release themes v0.11.0 and v0.12.0, slices 080-090; docs/ROADMAP.md mirrors them"
+      - "one GitHub issue per scheduled slice"
+    out_of_scope:
+      - "any SPEC.md amendment — the §5 proposals of the design record wait for the owner's decision"
+      - "implementation of any Wave A or B item"
+    acceptance_criteria:
+      - "roadmap.yaml parses and docs/ROADMAP.md lists the same phase 9 slices, dependencies and release themes"
+      - "every item that touches a SPEC limit is in the pending table, none in a scheduled slice"
+      - "`Closes #223` in the PR body"
+    required_tests: [roadmap.yaml parses]
+    expected_artifacts:
+      - docs/design/080-feature-program.md
+      - planning/roadmap.yaml
+      - docs/ROADMAP.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner request 2026-09-27 ('plan for ways to improve the usability and additional featuresets ... think outside the box'); plan approved for implementation 2026-09-28. Added by Fable outside the phase plan."
+
+  - id: "081"
+    title: "Units preference on every surface"
+    phase: 9
+    branch: "081-units-everywhere"
+    status: merged
+    depends_on: ["080"]
+    objective: "Every altitude, speed and distance FlightSite prints honours the receiver's units preference, map labels included (issue #224)."
+    scope:
+      - "map labels (features/map/labels/labelContent.ts) format altitude through the unit-aware formatter: flight levels above the transition altitude in aviation units, metres in metric"
+      - "audit and fix hard-coded unit suffixes: display-radius notice, filter-drawer hints, interesting and non-positioned panels, notification bodies, chart axes"
+      - "a guard test that fails on a new hard-coded ' ft' / ' nm' / ' kt' literal outside the formatter modules"
+    out_of_scope:
+      - "metric input in Settings and the rule builder (site review §5; conversion hints stay)"
+    acceptance_criteria:
+      - "with units = metric, no visible string on the Live Map, detail panel, notices or notifications shows ft, nm or kt"
+      - "aviation-unit output is byte-identical to today's; visual baselines unchanged"
+      - "`Closes #224` in the PR body"
+    required_tests: [label formatter unit tests in both systems, component tests for each fixed surface, the literal guard test]
+    expected_artifacts:
+      - frontend/src/features/map/labels/
+      - frontend/src/features/filters/components/
+      - frontend/src/features/interesting/
+      - frontend/src/features/notifications/lib/
+    preferred_agent: sonnet
+    risk_level: low
+    notes: "Defect found by the 080 survey: the live detail panel already honours units; the map labels and several notices do not."
+
+  - id: "082"
+    title: "Shell, keyboard and sharing"
+    phase: 9
+    branch: "082-shell-keyboard-sharing"
+    status: merged
+    depends_on: ["081"]
+    objective: "Make every page reachable, every common action a keystroke away, and every view shareable (issue #225)."
+    scope:
+      - "sidebar: Activity, Health (roll-up status dot from /api/v1/health) and Feeders as nav items"
+      - "theme: a System option following prefers-color-scheme (lib/theme.ts); sidebar collapse persisted in the UI store"
+      - "keyboard: a `?` shortcut sheet; `/` focuses the live search, `L` layers, `F` filters, `Esc` deselects, `H` recentres on the receiver, `[` / `]` step through interesting aircraft, `g` + letter navigation; shortcuts suspended while typing in an input"
+      - "sharing: Copy link and navigator.share on the aircraft, sighting and Live Map (selected aircraft) views; a QR code of the current URL"
+    out_of_scope:
+      - "a command palette or global search (pending owner decision, design record §5)"
+    acceptance_criteria:
+      - "every routed page is reachable from the sidebar; the shortcut sheet lists exactly the bound shortcuts"
+      - "System theme follows an OS theme change without a reload"
+      - "a copied link reopens the same view; the QR code encodes the same URL"
+      - "axe checks pass; every shortcut has a visible control equivalent"
+      - "`Closes #225` in the PR body"
+    required_tests: [shortcut hook tests incl. input suppression, theme tests, share/QR component tests, e2e shortcut flow, a11y]
+    expected_artifacts:
+      - frontend/src/components/shell/
+      - frontend/src/lib/theme.ts
+      - frontend/src/lib/shortcuts/
+      - frontend/src/components/share/
+      - docs/LICENSES.md
+    preferred_agent: sonnet
+    risk_level: low
+    notes: "The QR encoder must be a permissively licensed, dependency-light package recorded in docs/LICENSES.md."
+
+  - id: "083"
+    title: "Aircraft and sightings list search"
+    phase: 9
+    branch: "083-list-search"
+    status: merged
+    depends_on: ["081"]
+    objective: "Find an aircraft or sighting from its list page by the identifier you remember (issue #226)."
+    scope:
+      - "`q=` on GET /api/v1/aircraft: case-insensitive prefix over ICAO, registration, last callsign, type code and operator, using existing indexes or new prefix indexes"
+      - "`/sightings` accepts an ICAO or callsign prefix instead of requiring six hex digits"
+      - "the filter box is kept in the URL alongside sort and page; empty and no-match states"
+      - "docs/API.md"
+    out_of_scope:
+      - "cross-entity or free-form global search (§37 / §79; pending owner decision)"
+    acceptance_criteria:
+      - "a registration prefix finds the aircraft on /aircraft; a callsign prefix finds its sightings"
+      - "`q` on a three-year synthetic dataset answers within the analytics query budget"
+      - "`Closes #226` in the PR body"
+    required_tests: [repository and API tests for q, query-plan test against the slice-050 dataset, frontend list tests, URL state tests]
+    expected_artifacts:
+      - backend/src/flightsite/api/v1.py
+      - backend/src/flightsite/sightings/
+      - frontend/src/features/aircraft-page/
+      - frontend/src/features/history/
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Adds an index migration only if the query plan needs one; if it does, it is serialized against other migration slices."
+
+  - id: "084"
+    title: "Phone Live Map and installable shell"
+    phase: 9
+    branch: "084-phone-map-pwa"
+    status: merged
+    depends_on: ["081"]
+    objective: "Make the Live Map usable one-handed on a phone and let FlightSite install to a home screen (issue #227)."
+    scope:
+      - "below 768 px: floating cards collapse into a bottom toolbar of toggles; the aircraft detail panel becomes a draggable bottom sheet; the Today card becomes a compact strip"
+      - "web app manifest, icon set and theme colour; a service worker that precaches the built app shell only and never caches /api or /ws"
+      - "an update-available prompt when a new shell is deployed"
+    out_of_scope:
+      - "offline map tiles (§32), background push (§48)"
+    acceptance_criteria:
+      - "at 390 x 844 no Live Map card overlaps another and the map keeps at least 60 % of the viewport"
+      - "Lighthouse installability passes; live data after reinstall is never stale from a cache"
+      - "`Closes #227` in the PR body"
+    required_tests: [layout component tests, service worker cache-scope test, e2e at phone viewport, visual baselines at 390 px]
+    expected_artifacts:
+      - frontend/src/pages/LiveMapPage.tsx
+      - frontend/src/features/aircraft-detail/
+      - frontend/public/manifest.webmanifest
+      - frontend/src/sw/
+      - frontend/nginx.conf
+    preferred_agent: opus
+    risk_level: medium
+    notes: "The frontend container must serve the service worker with no-cache headers."
+
+  - id: "085"
+    title: "Map display controls"
+    phase: 9
+    branch: "085-map-display-controls"
+    status: merged
+    depends_on: ["081"]
+    objective: "Let the user choose what the Live Map draws: overlay and label toggles, label content, trails for every aircraft, and a measure tool (issue #228)."
+    scope:
+      - "Layers card: toggles for range rings, receiver marker and labels, persisted per browser like the existing overlay visibility"
+      - "label presets: full, compact (identity only), altitude-only"
+      - "optional trails for every visible aircraft from the live store, capped per aircraft by point count and age"
+      - "distance/bearing measure tool from the receiver or between two clicked points, in the preferred units"
+    out_of_scope:
+      - "new overlay layers such as coverage, heatmap or a day/night terminator (§33; pending owner decision)"
+    acceptance_criteria:
+      - "all-aircraft trails at 500 aircraft keep the Live Map frame-time budget in PERFORMANCE.md"
+      - "toggles survive reload and basemap switch"
+      - "`Closes #228` in the PR body"
+    required_tests: [layer toggle tests, trail buffer bound tests, measure tool tests, perf check at 500 aircraft, visual]
+    expected_artifacts:
+      - frontend/src/features/map/overlays/
+      - frontend/src/features/map/aircraft/
+      - frontend/src/features/map/labels/
+    preferred_agent: opus
+    risk_level: medium
+    notes: ""
+
+  - id: "086"
+    title: "Decoder emitter category, selected altitude and emergency state"
+    phase: 9
+    branch: "086-decoder-field-capture"
+    status: merged
+    depends_on: ["081"]
+    objective: "Use readsb fields FlightSite discards today: emitter category, autopilot-selected altitude and the decoder's emergency state (issue #229)."
+    scope:
+      - "adapter: `category` (A0-D7), `nav_altitude_mcp` / `nav_altitude_fms`, `emergency` into the live model and WS payload"
+      - "detail panel: category, selected altitude beside altitude"
+      - "icons: emitter category as the §34 category-silhouette fallback when no metadata type exists"
+      - "filters: emitter category in the §37 category filter"
+      - "emergency: the decoder's emergency state (general, lifeguard, minfuel, nordo, unlawful, downed) is an emergency source beside squawk 7500/7600/7700, with the source named in the event"
+      - "persist the last emitter category per aircraft (migration)"
+    out_of_scope:
+      - "wind, temperature and QNH capture (weather station; pending owner decision)"
+    acceptance_criteria:
+      - "a demo aircraft with category A7 and no metadata renders the helicopter silhouette"
+      - "a readsb `emergency: nordo` without squawk 7600 raises one emergency event naming the decoder as source"
+      - "ingest duty-cycle gate unchanged"
+      - "`Closes #229` in the PR body"
+    required_tests: [adapter fixtures, live model, emergency source tests, migration up/down on the seeded dataset, frontend panel/filter/icon tests, perf harness]
+    expected_artifacts:
+      - backend/src/flightsite/ingest/readsb.py
+      - backend/src/flightsite/live/
+      - backend/src/flightsite/db/migrations/versions/
+      - frontend/src/features/map/aircraft/
+      - frontend/src/features/filters/
+      - frontend/src/features/aircraft-detail/
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Migration-bearing: serialized against 087."
+
+  - id: "087"
+    title: "Coverage analysis and obstruction finder"
+    phase: 9
+    branch: "087-coverage-analysis"
+    status: merged
+    depends_on: ["086"]
+    objective: "Show how far the receiver hears in every direction at each altitude band, how that compares with the theoretical radio horizon, and which sectors look obstructed (issue #230)."
+    scope:
+      - "daily rollup: max range per 5 degree bearing x altitude band (<10k, 10-25k, >25k ft) with the setting aircraft, written by the persistence worker (migration)"
+      - "radio horizon per band from receiver.antenna_height_ft (4/3-earth model); Unknown when the height is unset"
+      - "GET /api/v1/receiver/coverage?window=: observed range, horizon, share of horizon per sector"
+      - "Receiver page: banded polar chart with the horizon ring and a sector findings list ('NE 40-60 degrees at 58 % of radio horizon above 25k ft')"
+    out_of_scope:
+      - "map coverage or heatmap layers (§33; pending owner decision)"
+    acceptance_criteria:
+      - "sector findings appear only with enough samples in the band (minimum count documented)"
+      - "rollup write cost stays inside the db_write_cycle budget"
+      - "`Closes #230` in the PR body"
+    required_tests: [rollup unit tests, horizon maths tests, migration on the seeded dataset, API contract, chart component tests, perf harness]
+    expected_artifacts:
+      - backend/src/flightsite/receiver_metrics/
+      - backend/src/flightsite/db/migrations/versions/
+      - backend/src/flightsite/api/receiver_stats.py
+      - frontend/src/features/receiver/
+      - docs/DATA_MODEL.md
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Migration-bearing: serialized after 086."
+
+  - id: "088"
+    title: "Receiver self-alerts"
+    phase: 9
+    branch: "088-receiver-self-alerts"
+    status: merged
+    depends_on: ["081"]
+    objective: "Tell the owner when the station itself is unhealthy, not only when an interesting aircraft appears (issue #231)."
+    scope:
+      - "built-in toggleable conditions: message rate below a configurable share of the same hour-of-week baseline for N minutes; decoder disconnected longer than N minutes; a feeder offline"
+      - "each raises one activity event and one browser notification per episode, and a restored event on recovery"
+      - "Settings: thresholds and toggles; Health page lists active self-alerts"
+    out_of_scope:
+      - "delivery outside the browser (§48; pending owner decision)"
+    acceptance_criteria:
+      - "a demo decoder outage produces exactly one offline and one restored notification"
+      - "a quiet night hour does not trip the rate alert when it matches that hour's baseline"
+      - "`Closes #231` in the PR body"
+    required_tests: [baseline and debounce tests, activity producer tests, notification tests, settings tests, e2e with the demo outage]
+    expected_artifacts:
+      - backend/src/flightsite/alerts/
+      - backend/src/flightsite/receiver_metrics/
+      - backend/src/flightsite/activity/
+      - frontend/src/features/settings/
+      - frontend/src/features/health/
+    preferred_agent: opus
+    risk_level: medium
+    notes: ""
+
+  - id: "089"
+    title: "Richer alert conditions"
+    phase: 9
+    branch: "089-alert-conditions"
+    status: merged
+    depends_on: ["086"]
+    objective: "Let rules match on squawk, identity patterns, speed, vertical rate, emitter category and a drawn area, still combined with flat AND (issue #232)."
+    scope:
+      - "conditions: squawk set, callsign/registration glob, ground-speed bounds, vertical-rate bounds, emitter category, polygon area (point-in-polygon on the live position)"
+      - "rule builder: editors for each; a mini-map for drawing and editing the polygon"
+      - "rule storage schema versioned so existing rules load unchanged"
+    out_of_scope:
+      - "OR / nested expressions (§43, §79)"
+    acceptance_criteria:
+      - "every existing rule evaluates identically before and after"
+      - "rule evaluation at 500 aircraft stays within the alert-engine budget"
+      - "`Closes #232` in the PR body"
+    required_tests: [condition unit tests, polygon edge cases (antimeridian excluded, holes rejected), rule migration tests, builder component tests, perf]
+    expected_artifacts:
+      - backend/src/flightsite/alerts/
+      - frontend/src/features/alerts/
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: ""
+
+  - id: "090"
+    title: "What was that?"
+    phase: 9
+    branch: "090-what-was-that"
+    status: merged
+    depends_on: ["081"]
+    objective: "Answer 'what just flew over?' for any moment: the aircraft that passed closest overhead near a chosen time (issue #233)."
+    scope:
+      - "GET /api/v1/overhead?at=&window=: sightings overlapping the window (indexed on first/last seen), stored tracks decoded only for those, closest approach to the receiver within the window, open sightings from checkpoints"
+      - "a 'What was that?' control on the Live Map and Activity pages: time picker defaulting to now, ranked results with altitude, distance and a sighting link"
+    out_of_scope:
+      - "animated playback (§79; pending owner decision)"
+    acceptance_criteria:
+      - "a +/-10 min window on the three-year synthetic dataset answers within the analytics query budget"
+      - "results say 'closest position fix' and never interpolate beyond stored points"
+      - "`Closes #233` in the PR body"
+    required_tests: [query and geometry tests, API contract, component tests, e2e against demo traffic]
+    expected_artifacts:
+      - backend/src/flightsite/api/v1.py
+      - backend/src/flightsite/sightings/
+      - frontend/src/features/overhead/
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: ""
+
+  - id: "091"
+    title: "Perf gates read a real p95 in CI"
+    phase: 9
+    branch: "091-perf-gate-tail"
+    status: merged
+    depends_on: ["083"]
+    objective: "Hotfix: one stalled shared-runner tick no longer fails the in-suite perf gates; the CLI contract test no longer judges a three-tick run against real budgets (issue #240)."
+    scope:
+      - "tests/perf/test_harness.py smoke run 15 -> 21 ticks, so the per-tick gates' nearest-rank p95 is the second-worst sample rather than the maximum (harness.DEFAULT_PROBE_EVERY's own n >= 20 note)"
+      - "tests/perf/test_cli.py pins every budget to one the tiny run cannot miss (exit 0) or cannot meet (exit 1, new test), so the CLI's exit-status contract is tested deterministically in both directions"
+      - "docs/PERFORMANCE.md smoke-run paragraph"
+    out_of_scope:
+      - "changing any budget, headroom or statistic; the sustained run"
+    acceptance_criteria:
+      - "tests/perf passes; the smoke run adds about six seconds"
+      - "`Closes #240` in the PR body"
+    required_tests: [tests/perf/test_harness.py, tests/perf/test_cli.py]
+    expected_artifacts:
+      - backend/tests/perf/test_harness.py
+      - backend/tests/perf/test_cli.py
+      - docs/PERFORMANCE.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "ws_fanout_ms failed three times on shared runners on 2026-09-28 (PR #235 CLI run; PR #246 twice, 562 ms and 650 ms against a 16-21 ms median) on PRs with no backend change. Added by Fable outside the phase plan."
+
+  - id: "092"
+    title: "undici audit hotfix"
+    phase: 9
+    branch: "092-undici-audit"
+    status: merged
+    depends_on: ["091"]
+    objective: "Hotfix: clear the undici advisories (GHSA-3wwx-pv8p-q78v and nine siblings, published 2026-09-30) that fail the security/audit check on every PR; undici is a transitive dev dependency under jsdom."
+    scope:
+      - "frontend/package-lock.json: undici 8.10.1 -> 8.11.2 (npm update undici); no direct dependency change"
+    out_of_scope:
+      - "any other dependency bump"
+    acceptance_criteria:
+      - "`npm audit --audit-level=high` reports 0 vulnerabilities; the frontend suite passes"
+    required_tests: [frontend suite]
+    expected_artifacts:
+      - frontend/package-lock.json
+    preferred_agent: opus
+    risk_level: low
+    notes: "Surfaced by PR #249's security/audit job. Added by Fable outside the phase plan."
+
+  - id: "093"
+    title: "brace-expansion audit hotfix"
+    phase: 9
+    branch: "093-brace-expansion-audit"
+    status: merged
+    depends_on: ["092"]
+    objective: "Hotfix: clear the brace-expansion advisories (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p) that fail security/audit on every PR; brace-expansion is a transitive dev dependency under eslint -> minimatch."
+    scope:
+      - "frontend/package-lock.json: brace-expansion patched via `npm audit fix`; no direct dependency change"
+    out_of_scope:
+      - "any other dependency bump"
+    acceptance_criteria:
+      - "`npm audit --audit-level=high` reports 0 vulnerabilities; `npm run lint` passes"
+    required_tests: [frontend lint]
+    expected_artifacts:
+      - frontend/package-lock.json
+    preferred_agent: opus
+    risk_level: low
+    notes: "Second advisory batch of 2026-09-30, surfaced by PRs #249 and #251 after 092 merged. Added by Fable outside the phase plan."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
@@ -2389,6 +2813,7 @@ slices:
 #   Wave G: 026 -> 027 -> 028 ∥ 030, 032, 034 ∥ 035 (after 025) -> 036 ∥ 038 (after 031/037) -> {039, 041} -> 040
 #   Wave H: 042 (after 040) ∥ 043 -> 045 ∥ 044
 #   Wave I: 046..051 largely sequentialized on feature completeness.
+#   Wave J (phase 9): 080 -> 081 -> {082 ∥ 083 ∥ 084 ∥ 085 ∥ 088 ∥ 090} ∥ 086 -> {087 (migrations serialized after 086), 089}
 # Bootstrap gating note: 001/002 merge before CI (003) exists. dev branch protection
 # (PR required, no direct pushes) is applied before any merge; Fable reviews 001/002
 # manually against their acceptance criteria, and 003 retroactively gates them.

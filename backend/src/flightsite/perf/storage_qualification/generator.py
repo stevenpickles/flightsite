@@ -82,6 +82,7 @@ from flightsite.db.models import (
     LifetimeStat,
     Meta,
     OperatorGroup,
+    RangeByBearingBandDaily,
     RangeByBearingDaily,
     ReceiverMetricDaily,
     ReceiverMetricHourly,
@@ -123,6 +124,13 @@ OPERATOR_GROUP_COUNT: Final = 40
 #: Bearing sectors in ``range_by_bearing_daily``: 72 sectors of 5 degrees
 #: (``flightsite.receiver_metrics``' ``BEARING_BUCKETS``).
 BEARING_BUCKETS: Final = 72
+
+#: Altitude bands in ``range_by_bearing_band_daily`` (slice 087): every
+#: sector in each of the three bands, every day. That is the table's ceiling
+#: (72 x 3 rows a day) rather than a typical install, whose high band rarely
+#: fills every sector, so the growth figure it yields is a budget, not a
+#: forecast.
+ALTITUDE_BANDS: Final = 3
 
 #: Milliseconds in a day and an hour, spelled once.
 MS_PER_HOUR: Final = 3_600_000
@@ -571,6 +579,24 @@ class HistoryGenerator:
             for bucket in range(BEARING_BUCKETS)
         ]
 
+    def _band_rows(self, day: str, day_start_ms: int) -> list[dict[str, Any]]:
+        """The day's banded range record per sector and altitude band (slice 087)."""
+        return [
+            {
+                "day": day,
+                "bearing_bucket": bucket,
+                "altitude_band": band,
+                "max_range_nm": self._rng.uniform(20.0 + 40.0 * band, 120.0 + 70.0 * band),
+                "at_ms": day_start_ms + self._rng.randrange(0, MS_PER_DAY),
+                "icao24": self._pool.airframes[self._rng.randrange(self._pool.size)].icao24
+                if self._pool.size
+                else None,
+                "sample_count": self._rng.randrange(1, 2_000),
+            }
+            for band in range(ALTITUDE_BANDS)
+            for bucket in range(BEARING_BUCKETS)
+        ]
+
     # ------------------------------------------------------------------- run
 
     async def run(self) -> GenerationResult:
@@ -758,7 +784,10 @@ class HistoryGenerator:
             mark = await self._mark(session, "activity_events", len(activity), mark)
             bearing = self._bearing_rows(day_name, day_start_ms)
             await self._insert(session, RangeByBearingDaily, bearing)
-            await self._mark(session, "range_by_bearing_daily", len(bearing), mark)
+            mark = await self._mark(session, "range_by_bearing_daily", len(bearing), mark)
+            banded = self._band_rows(day_name, day_start_ms)
+            await self._insert(session, RangeByBearingBandDaily, banded)
+            await self._mark(session, "range_by_bearing_band_daily", len(banded), mark)
 
     async def _finalize_aircraft(self) -> None:
         """Apply the accumulated lifetime aggregates to every airframe."""

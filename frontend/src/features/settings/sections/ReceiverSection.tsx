@@ -161,7 +161,7 @@ export function ReceiverSection({ config }: ReceiverSectionProps) {
 
         <div className="col-span-2 flex flex-col gap-1.5">
           <Label htmlFor="settings-antenna-height">
-            Antenna height (ft, optional)
+            Antenna height above ground (ft, optional)
           </Label>
           <Input
             id="settings-antenna-height"

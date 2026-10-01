@@ -1,7 +1,8 @@
 /**
  * The Receiver page (roadmap slice 034): scorecard (SPEC §61), charts
  * (SPEC §62, including the range-by-bearing polar plot and the signal-
- * strength distribution), and lifetime statistics (SPEC §63).
+ * strength distribution), coverage by altitude band against the radio
+ * horizon (roadmap slice 087), and lifetime statistics (SPEC §63).
  */
 import { Stethoscope } from "lucide-react";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import {
   useReceiverRangeByBearingQuery,
 } from "@/lib/api/receiverStats";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { CoverageChart } from "@/features/receiver/components/CoverageChart";
 import { FeedersSummaryCard } from "@/features/receiver/components/FeedersSummaryCard";
 import { LifetimeStatsSection } from "@/features/receiver/components/LifetimeStatsSection";
 import { RangeByBearingChart } from "@/features/receiver/components/RangeByBearingChart";
@@ -66,9 +68,10 @@ export function ReceiverPage() {
             </p>
           )}
         </div>
-        {/* SPEC §10 fixes the sidebar at seven sections, so the health area
-            (SPEC §67) is reached from here — the page a user already opens
-            when they suspect something is wrong. */}
+        {/* Health (SPEC §67) is in the sidebar since roadmap slice 082, but
+            this link stays: it is the page a user already has open when
+            they suspect something is wrong, one click closer than the
+            rail. */}
         <Link
           to="/health"
           className="inline-flex items-center gap-1.5 self-start rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary"
@@ -116,6 +119,12 @@ export function ReceiverPage() {
           />
         ))}
       </div>
+
+      {/* Roadmap slice 087: its own row, full width — it carries a band
+          selector, a window selector and a findings list, which a half-width
+          grid cell would crowd. It keeps its own window: coverage is read
+          over days to weeks, not the 24h the charts above default to. */}
+      <CoverageChart units={units} />
 
       <LifetimeStatsSection units={units} timezone={timezone} />
     </div>

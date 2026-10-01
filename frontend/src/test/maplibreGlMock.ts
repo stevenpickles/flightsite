@@ -79,6 +79,15 @@ export class MapLibreMockMap {
   });
   jumpTo = vi.fn();
   fitBounds = vi.fn();
+  /** `RecenterButton` (roadmap slice 082's `H` shortcut) calls this on a
+   * recentre request. */
+  easeTo = vi.fn();
+  /** The two interaction handlers the alert rule builder's area editor
+   * (roadmap slice 089) switches off while a vertex is dragged or a shape
+   * is being drawn — so a drag moves the vertex rather than the map, and a
+   * double-click finishes the shape rather than zooming. */
+  dragPan = { enable: vi.fn(), disable: vi.fn() };
+  doubleClickZoom = { enable: vi.fn(), disable: vi.fn() };
 
   /** When true, the next construction throws — simulating a browser with
    * no WebGL context (MapLibre throws from its constructor there). Reset by
@@ -204,6 +213,15 @@ export class MapLibreMockMap {
 
   getZoom(): number {
     return this.zoom;
+  }
+
+  /** The canvas element — `MeasureControl` (roadmap slice 085) sets its
+   * `style.cursor` to a crosshair while measuring, so tests can read it
+   * back here. */
+  canvas: HTMLCanvasElement = document.createElement("canvas");
+
+  getCanvas(): HTMLCanvasElement {
+    return this.canvas;
   }
 
   isStyleLoaded(): boolean {

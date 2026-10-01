@@ -26,6 +26,9 @@ const LABELS: Record<ActivityEventType, string> = {
   // two are never the same event, so the chips must not read the same.
   feeder_offline: "Feed offline",
   feeder_restored: "Feed restored",
+  // Slice 088.
+  self_alert_raised: "Self-alerts",
+  self_alert_restored: "Self-alert cleared",
 };
 
 /** The chip label for an event type; falls back to the slug itself for a

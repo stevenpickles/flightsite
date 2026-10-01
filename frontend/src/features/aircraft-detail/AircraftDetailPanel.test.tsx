@@ -55,6 +55,24 @@ describe("AircraftDetailPanel", () => {
     expect(screen.getByRole("heading", { name: "RCH471" })).toBeInTheDocument();
   });
 
+  it("offers Copy link and QR code sharing for the selected aircraft (roadmap slice 082)", async () => {
+    renderPanel();
+    seedSnapshot([makeAircraft({ icao: "aaaaaa", callsign: "RCH471" })]);
+    act(() => {
+      useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+    });
+
+    expect(
+      screen.getByRole("button", { name: /copy link/i }),
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /qr code/i }));
+    expect(
+      screen.getByRole("dialog", { name: /qr code for rch471/i }),
+    ).toBeInTheDocument();
+  });
+
   it("links the History section to the full aircraft detail route", () => {
     renderPanel();
     seedSnapshot([makeAircraft({ icao: "aaaaaa" })]);
@@ -781,5 +799,91 @@ describe("AircraftDetailPanel", () => {
       useLiveAircraftStore.getState().selectAircraft("aaaaaa");
     });
     expect(screen.getByText("Yes")).toBeInTheDocument();
+  });
+
+  describe("decoder fields (roadmap slice 086)", () => {
+    function select(overrides: Parameters<typeof makeAircraft>[0]) {
+      renderPanel();
+      seedSnapshot([makeAircraft({ icao: "aaaaaa", ...overrides })]);
+      act(() => {
+        useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+      });
+    }
+
+    it.each([
+      ["A3", "A3 · Large aircraft"],
+      ["A7", "A7 · Rotorcraft"],
+      ["B6", "B6 · Unmanned aerial vehicle"],
+    ])("shows emitter category %s in words", (code, expected) => {
+      select({ emitter_category: code });
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("shows Unknown for an aircraft that sent no category", () => {
+      select({ emitter_category: null });
+      const row = screen.getByText("Emitter category").closest("div");
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText("Unknown")).toBeVisible();
+    });
+
+    it("shows the selected altitude beside the altitude, labelled", () => {
+      select({ altitude_ft: 8000, selected_altitude_ft: 12000 });
+      expect(screen.getByText("8,000 ft")).toBeInTheDocument();
+      expect(screen.getByText("Selected 12,000 ft")).toBeInTheDocument();
+    });
+
+    it("formats the selected altitude in the receiver's units", () => {
+      renderPanel();
+      act(() => {
+        useLiveAircraftStore.getState().applySnapshot({
+          aircraft: [
+            makeAircraft({
+              icao: "aaaaaa",
+              altitude_ft: 10000,
+              selected_altitude_ft: 5000,
+            }),
+          ],
+          receiver: {
+            site_name: "Test",
+            latitude: 0,
+            longitude: 0,
+            antenna_height_ft: 0,
+            timezone: "UTC",
+            units: "metric",
+            display_radius_nm: 250,
+            alert_radius_nm: null,
+            demo_mode: false,
+            t0: null,
+          },
+        });
+        useLiveAircraftStore.getState().selectAircraft("aaaaaa");
+      });
+      expect(screen.getByText("Selected 1,524 m")).toBeInTheDocument();
+    });
+
+    it("omits the selected line when none was reported", () => {
+      select({ altitude_ft: 8000, selected_altitude_ft: null });
+      expect(screen.queryByText(/^Selected /)).not.toBeInTheDocument();
+    });
+
+    it("badges a decoder emergency in words, with no emergency squawk", () => {
+      select({ squawk: "2341", decoder_emergency: "nordo" });
+      const badge = screen.getByText(/Emergency · No radio/);
+      expect(badge).toHaveTextContent("Emergency · No radio (ADS-B status)");
+      expect(badge).toHaveAttribute("role", "status");
+    });
+
+    it("does not badge the same emergency twice when the squawk agrees", () => {
+      select({ squawk: "7600", decoder_emergency: "nordo" });
+      expect(screen.queryByText(/ADS-B status/)).not.toBeInTheDocument();
+      expect(screen.getAllByText(/Emergency · 7600/).length).toBeGreaterThan(0);
+    });
+
+    it("badges a decoder kind the squawk does not declare", () => {
+      select({ squawk: "7700", decoder_emergency: "minfuel" });
+      expect(
+        screen.getByText("Emergency · Minimum fuel (ADS-B status)"),
+      ).toBeInTheDocument();
+    });
   });
 });

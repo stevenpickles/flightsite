@@ -5,6 +5,7 @@
  */
 
 import type { SightingEvent } from "@/lib/api/sightings";
+import { emergencyKindLabel } from "@/lib/emergency";
 
 export interface EventDescription {
   label: string;
@@ -66,18 +67,24 @@ export function describeSightingEvent(event: SightingEvent): EventDescription {
         detail: from !== null && to !== null ? `${from} → ${to}` : to,
       };
     }
-    case "emergency_start": {
-      const squawk = stringDetail(detail, "squawk");
-      return {
-        label: "Emergency declared",
-        detail: squawk === null ? null : `Squawk ${squawk}`,
-      };
-    }
+    // Since slice 086 the payload also names what declared the emergency
+    // (`source`: `squawk` | `decoder`) and which one (`kind`). Rows written
+    // before then carry only `squawk` and read exactly as they always did.
+    case "emergency_start":
     case "emergency_end": {
       const squawk = stringDetail(detail, "squawk");
+      const kind = emergencyKindLabel(stringDetail(detail, "kind"));
+      const decoder = stringDetail(detail, "source") === "decoder";
       return {
-        label: "Emergency cleared",
-        detail: squawk === null ? null : `Squawk ${squawk}`,
+        label:
+          type === "emergency_start"
+            ? "Emergency declared"
+            : "Emergency cleared",
+        detail: join([
+          kind,
+          decoder ? "Decoder emergency state" : null,
+          squawk === null ? null : `Squawk ${squawk}`,
+        ]),
       };
     }
     case "route_enriched": {

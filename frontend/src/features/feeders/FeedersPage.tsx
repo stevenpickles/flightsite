@@ -6,9 +6,9 @@
  * charts, and links to the other locally hosted pages (tar1090,
  * graphs1090, SkyAware, the FR24 feeder UI).
  *
- * Reached at `/receiver/feeders` from the Receiver and Health pages, not an
- * eighth sidebar entry — SPEC §10 fixes the sidebar at seven sections, the
- * same precedent `features/health/HealthPage.tsx` follows.
+ * Reached at `/receiver/feeders`: a sidebar section since the SPEC §10
+ * amendment of 2026-09-28 (slice 082), and still linked from the Receiver
+ * and Health pages.
  */
 import { Stethoscope } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -131,7 +131,10 @@ export function FeedersPage() {
 
       <div>
         <h2 className="mb-2 text-base font-medium">Receiver uplink</h2>
-        <ReceiverUplinkTiles receiver={data.receiver} />
+        <ReceiverUplinkTiles
+          receiver={data.receiver}
+          units={receiver?.units ?? "aviation"}
+        />
       </div>
 
       {data.feeders.length === 0 ? (

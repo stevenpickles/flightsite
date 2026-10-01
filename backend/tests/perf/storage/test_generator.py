@@ -122,6 +122,7 @@ async def test_every_table_the_growth_model_names_was_written(dataset: Dataset) 
         "receiver_metrics_raw",
         "receiver_metrics_hourly",
         "range_by_bearing_daily",
+        "range_by_bearing_band_daily",
     ):
         assert table in written, f"{table} is in §9's growth arithmetic but was never written"
 

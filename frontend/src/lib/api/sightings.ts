@@ -177,6 +177,9 @@ export interface SightingListParams {
   sort: SightingSortKey;
   order: SortOrder;
   icao?: string;
+  /** Case-insensitive ICAO-address or callsign prefix (`docs/API.md` §3.6,
+   * slice 083). */
+  q?: string | undefined;
   /** Inclusive lower bound on `started_at`, as a full ISO instant. */
   from?: string;
   /** Inclusive upper bound on `started_at`, as a full ISO instant. */
@@ -194,6 +197,9 @@ function query(params: SightingListParams): string {
   });
   if (params.icao !== undefined) {
     search.set("icao", params.icao);
+  }
+  if (params.q !== undefined) {
+    search.set("q", params.q);
   }
   if (params.from !== undefined) {
     search.set("from", params.from);

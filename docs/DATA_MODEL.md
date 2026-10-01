@@ -92,7 +92,8 @@ CREATE TABLE aircraft (
   lowest_alt_ft       INTEGER,
   lowest_alt_ms       INTEGER,
   highest_alt_ft      INTEGER,
-  highest_alt_ms      INTEGER
+  highest_alt_ms      INTEGER,
+  emitter_category    TEXT                 -- last ADS-B emitter category, 'A0'..'D7' (rev 0019)
 );
 CREATE INDEX ix_aircraft_first_seen ON aircraft(first_seen_ms);
 CREATE INDEX ix_aircraft_last_seen  ON aircraft(last_seen_ms);
@@ -104,6 +105,16 @@ clean escape hatch for the (rare) ICAO reassignment problem and future multi-rec
 work. Record columns carry their `_ms` moments so the UI can say *when* the record was
 set. Rarity ("never seen", "seen fewer than N times", SPEC §44) reads
 `sighting_count` / `first_seen_ms` directly.
+
+`emitter_category` (slice 086, rev 0019) is not a record but the airframe's own
+latest self-description: the ADS-B emitter category it last transmitted (`A3` large,
+`A7` rotorcraft, … — the full list is in `docs/API.md` §3.3). The persistence worker
+writes it on every flush of a sighting that has seen one, the newest value winning;
+a sighting that saw none leaves it alone. `NULL` is "never transmitted one" (Mode
+S-only and MLAT-only aircraft, legacy dump1090-fa feeds). It lives here rather than
+on the sighting because it describes the airframe, not the flight. No `CHECK` and no
+index: the ingest adapter already refuses anything outside `A0`–`D7`, and nothing
+filters or sorts on it.
 
 ### 2.3 `sightings` — slice 009
 
@@ -160,6 +171,8 @@ CREATE INDEX ix_sightings_aircraft ON sightings(aircraft_id, started_ms);
 CREATE INDEX ix_sightings_started  ON sightings(started_ms);
 CREATE INDEX ix_sightings_open     ON sightings(ended_ms) WHERE ended_ms IS NULL;
 CREATE INDEX ix_sightings_max_range ON sightings(max_range_nm, id);
+CREATE INDEX ix_sightings_callsign       ON sightings(callsign_last  COLLATE NOCASE, aircraft_id);
+CREATE INDEX ix_sightings_callsign_first ON sightings(callsign_first COLLATE NOCASE, aircraft_id);
 ```
 
 The partial index on open sightings makes unclean-shutdown recovery (SPEC §71) and the
@@ -173,6 +186,15 @@ documented sorts — `duration_s` and `closest_approach_nm` — and the `interes
 stay unindexed on purpose: every index here is rewritten by the single writer on each
 30-second flush of an open sighting, and a second sort index measured about 2.6x the
 baseline per-sighting write cost again (issue #115; `docs/PERFORMANCE.md` §7.7).
+
+`ix_sightings_callsign` and `ix_sightings_callsign_first` (rev 0018, slice 083) serve
+the case-insensitive callsign prefix in `docs/API.md`'s `q` search, on `/sightings` and
+on the Aircraft page's "any callsign it has flown"; `aircraft_id` rides along so "which
+airframes flew this prefix" comes from the index entries. Neither carries the flush cost
+above: `callsign_last` is written only when the callsign actually changes (the ORM
+leaves an unchanged column out of the flush's `UPDATE`) and `callsign_first` is set
+once, so each costs one entry per sighting. Without them, a prefix matching nothing read
+every sighting — 1.6 s over slice 050's 1.64M.
 
 ### 2.4 Track storage — slice 052 (`sighting_track_checkpoints`, `sighting_tracks`)
 
@@ -261,6 +283,14 @@ CREATE TABLE sighting_events (
 CREATE INDEX ix_sevents_sighting ON sighting_events(sighting_id, ts_ms);
 ```
 
+`emergency_start` / `emergency_end` bracket an *emergency episode*: the span during
+which either an emergency squawk or (since slice 086) the decoder's emergency state
+declares one. Their payload is `{"squawk", "source", "kind"}` — `source` is `squawk`
+or `decoder`, `kind` the `docs/API.md` §2.8 emergency kind (7600 is `nordo`, 7700
+`general`, 7500 `unlawful`); the squawk is named when both declare. Rows written
+before slice 086 carry `squawk` alone. `sightings.had_emergency` latches for either
+source.
+
 ---
 
 ## 3. Metadata, classification, operators (slices 021–024)
@@ -330,7 +360,16 @@ CREATE TABLE aircraft_metadata_resolved (
 CREATE INDEX ix_amr_registration ON aircraft_metadata_resolved(registration);
 CREATE INDEX ix_amr_type         ON aircraft_metadata_resolved(type_code);
 CREATE INDEX ix_amr_opgroup      ON aircraft_metadata_resolved(operator_group_id);
+CREATE INDEX ix_amr_registration_nocase ON aircraft_metadata_resolved(registration COLLATE NOCASE);
+CREATE INDEX ix_amr_operator_nocase     ON aircraft_metadata_resolved(operator_name COLLATE NOCASE);
 ```
+
+The two `NOCASE` indexes (rev 0018, slice 083) serve the Aircraft page's
+case-insensitive prefix search (`docs/API.md` §3.5 `q`); `type_code` needs none because
+it is stored upper-case. The promotion swap drops both before its bulk copy and rebuilds
+them after, inside the same transaction: maintained row by row they tripled the
+single-writer swap (a 900k-row replay on disk: ~20 s without them, ~62 s maintaining
+them), while a drop-and-rebuild measured ~21 s — within noise of not having them.
 
 Rebuilt whole on every metadata import — but **not** inside the promotion transaction.
 Resolving an airframe is Python work, and doing it for a million of them under the single
@@ -510,6 +549,15 @@ Condition kinds (each optional, all AND-ed): `classification` (mil/gov/law/missi
 `rare_type {max_sightings}`, `max_distance_nm`, `min_distance_nm`, `max_alt_ft`,
 `min_alt_ft`. Emergency-squawk detection is built in and rule-independent (SPEC §47).
 
+**Version 2** (slice 089) adds `squawk_in`, `callsign_glob`, `registration_glob`,
+`min/max_ground_speed_kt`, `min/max_vertical_rate_fpm`, `emitter_category_in` and
+`within_area` (a GeoJSON `Polygon`, one closed ring of 3–64 `[lon, lat]` vertices) —
+still AND-ed, still optional; shapes and bounds in [API.md](API.md) §5. **No
+migration:** the v1 key set is a strict subset of v2's, so a stored `"version": 1`
+document is upgraded on read by bumping the number alone and evaluates identically; its
+text is rewritten as v2 only when the rule is next saved. A `squawk_in` rule is an
+ordinary rule beside the built-in emergency detection, never a replacement for it.
+
 ### 4.3 `alert_matches` — slice 038
 
 ```sql
@@ -537,6 +585,16 @@ The unique indexes are the once-per-sighting-per-rule dedupe guarantee (SPEC §4
 the storage layer, surviving restarts. Severity upgrades of built-ins use distinct
 `builtin_key`s, which is exactly the allowed "higher-priority condition may notify
 again" path.
+
+Since slice 086 the decoder's emergency state is a second built-in source, and
+built-in keys name the emergency *kind* rather than the source: a kind a squawk also
+declares keeps that squawk's key (`nordo` → `emergency_7600`, `general` →
+`emergency_7700`, `unlawful` → `emergency_7500`), and the three kinds no squawk can
+express get their own (`emergency_minfuel`, `emergency_lifeguard`,
+`emergency_downed`). So one emergency reported by both the transponder and the
+decoder is one row whichever arrives first, and the unique index keeps it that way;
+the row's `reason` names the source ("Emergency squawk 7600 (radio failure)" or
+"Decoder emergency state: no radio").
 
 `notified` is the one column here that is not a fact about the match: it records that
 at least one FlightSite client actually showed a browser `Notification` for the row.
@@ -660,6 +718,45 @@ CREATE TABLE range_by_bearing_daily (
   PRIMARY KEY (day, bearing_bucket)
 ) WITHOUT ROWID;
 ```
+
+### 6.3.1 `range_by_bearing_band_daily` (slice 087)
+
+§6.3's record split by altitude band, for the Receiver page's coverage-by-altitude
+chart and obstruction finder (issue #230). One row per receiver-local day, 5° sector
+and band that heard anything; at most 72 × 3 = 216 rows a day (≈ 79k rows/yr at that
+ceiling, ~4 MB/yr at §6.3's ~46 B/row), kept **indefinitely** like §6.3 — it is the
+only record of how far the receiver heard at each altitude, and nothing could rebuild
+it.
+
+```sql
+CREATE TABLE range_by_bearing_band_daily (
+  day            TEXT NOT NULL,            -- receiver-local YYYY-MM-DD (§10)
+  bearing_bucket INTEGER NOT NULL,         -- 0..71 (bucket * 5 deg)
+  altitude_band  INTEGER NOT NULL,         -- 0: < 10,000 ft, 1: 10,000-25,000 ft,
+                                           -- 2: >= 25,000 ft (barometric)
+  max_range_nm   REAL NOT NULL,
+  at_ms          INTEGER NOT NULL,
+  icao24         TEXT,                     -- who set it
+  sample_count   INTEGER NOT NULL,         -- receiver samples that heard this cell
+  PRIMARY KEY (day, bearing_bucket, altitude_band)
+) WITHOUT ROWID;
+```
+
+- **Bands** are half-open on barometric altitude (exactly 10,000 ft is band 1). An
+  aircraft with no barometric altitude (on the ground, or none reported) is in no band
+  and is not counted here, though it still counts toward §6.3.
+- **Written** by the receiver-metrics service exactly as §6.3 is: each ~15 s sample
+  yields the furthest aircraft per occupied (sector, band) cell; the service folds
+  them per receiver-local day (resolved from the live zone on every sample) between
+  flushes; each flush lands in the existing flush transaction as one multi-row upsert
+  that keeps the further record (range, moment and airframe move together) and adds
+  the sample counts. Never on the ingestion path.
+- **`sample_count`** is the number of samples — not aircraft — that heard the cell:
+  two aircraft in one sector at one instant are one sample. It is the evidence the
+  obstruction finder's minimum (30 samples on 3 days, `docs/API.md` §3.9) is judged
+  on.
+- **Timezone changes** leave existing rows under the day they were written, as §6.3
+  does (§10).
 
 ### 6.4 `lifetime_stats`
 
@@ -974,7 +1071,7 @@ The API composes these into per-field provenance for the detail UI.
 
 | Table | Retention |
 |---|---|
-| aircraft, sightings, sighting_tracks, sighting_events, milestones, activity_events, lifetime_stats, daily_* rollups, type_stats, range_by_bearing_daily | **Indefinite** (until user reset) |
+| aircraft, sightings, sighting_tracks, sighting_events, milestones, activity_events, lifetime_stats, daily_* rollups, type_stats, range_by_bearing_daily, range_by_bearing_band_daily | **Indefinite** (until user reset) |
 | sighting_track_checkpoints | Deleted at sighting close / recovery (bounded by concurrent traffic) |
 | receiver_metrics_raw | High-res window, default **14 days** (7–30 configurable) |
 | receiver_metrics_hourly/daily | Indefinite |
@@ -1013,6 +1110,7 @@ visible.
 | alert_matches (~100/day) | ~37k | ~125 B | ~5 MB |
 | receiver_metrics_raw | steady-state 14 d × 5,760/day ≈ 81k rows | ~70 B | ~6 MB steady |
 | hourly + daily + rollups + bearing | < 60k | small | < 5 MB |
+| banded bearing (§6.3.1, slice 087) | ≤ 79k (216/day ceiling) | ~46 B | ≤ 4 MB |
 
 **Scenario A total ≈ 1.7 GB/year** (measured: **1.68**) → a 3-year database is
 **~5 GB** (measured: 5.03 GB). Comfortable on any Pi 4 storage, but not the 3–4 GB
@@ -1081,8 +1179,8 @@ storage remedy.
   do this — the correct day for a sighting depends on the configured zone and on the
   sightings themselves, and the fold that produces a row is Python, not SQL. Daily
   receiver summaries (§6.2) are re-derived for the days the raw tier still retains;
-  older ones, and `range_by_bearing_daily` (§6.3), keep the key they were written
-  under, because their source rows no longer exist and a guessed shift would be
+  older ones, and `range_by_bearing_daily` (§6.3) and `range_by_bearing_band_daily`
+  (§6.3.1), keep the key they were written under, because their source rows no longer exist and a guessed shift would be
   worse than an honest one-day seam.
 - "Today at a Glance" and analytics presets resolve their ranges in receiver-local
   time, then query UTC columns via computed boundaries.
@@ -1138,3 +1236,6 @@ field names; ingest normalizes before anything is persisted.
 | 071 | `route_directory`, `route_directory_staging`; `route_cache` gains `source`; `sightings.route_source` admits `vrs` (rev 0015 — a plain `ALTER TABLE` for the cache column, a **rebuild of `sightings`** for the widened `CHECK`, which SQLite cannot alter in place) |
 | 075 | `aircraft_metadata_resolved_staging`, `aircraft_classification_staging` (rev 0016 — two scratch tables, no data movement, so resolution can be built before the promotion transaction rather than inside it) |
 | 077 | `feeder_episodes`, `feeder_samples` (rev 0017 — two new tables, no data movement; §6.6) |
+| 083 | `ix_amr_registration_nocase`, `ix_amr_operator_nocase`, `ix_sightings_callsign`, `ix_sightings_callsign_first` (rev 0018 — four indexes for the list pages' `q` search, no data movement) |
+| 086 | `aircraft` gains `emitter_category` (rev 0019 — one nullable `TEXT` column by plain `ADD COLUMN`, no rebuild, no data movement; the downgrade drops it the same way) |
+| 087 | `range_by_bearing_band_daily` (rev 0020 — one new `WITHOUT ROWID` table, no backfill and no data movement; history starts on upgrade; §6.3.1) |

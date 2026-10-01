@@ -76,6 +76,10 @@ What a zone change repairs, and what it cannot
   stand. Today's ring refills from live samples within one sample interval and
   the "ever" ring is keyed on nothing but the bearing, so neither is wrong for
   longer than that.
+* ``range_by_bearing_band_daily`` (slice 087) is the same record split by
+  altitude band, and its rows stand for the same reason. The coverage
+  analysis reads it in windows of whole days, so a re-keyed boundary moves at
+  most one day's cells across a window edge.
 
 Degradation
 -----------
@@ -122,6 +126,7 @@ from flightsite.receiver_metrics.aggregate import (
     local_day,
     local_day_start_ms,
 )
+from flightsite.receiver_metrics.coverage import BandRange, merge_band_range
 from flightsite.receiver_metrics.lifetime import LifetimeAccumulator
 from flightsite.receiver_metrics.model import (
     DecoderStats,
@@ -182,6 +187,13 @@ RECOMPUTE_MARGIN_MS: Final = MS_PER_HOUR
 EpochClock = Callable[[], int]
 Sleeper = Callable[[float], Awaitable[None]]
 
+#: Told about every sample the moment it is taken (slice 088). Awaited on the
+#: sampling task, after the sample is buffered, so a listener sees exactly the
+#: cadence and the values the raw table will hold — the receiver self-alert
+#: monitor evaluates its conditions here rather than per ingest tick. A
+#: listener that raises is logged and skipped; it cannot cost a sample.
+SampleListener = Callable[[MetricSample], Awaitable[None]]
+
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceResult:
@@ -222,10 +234,12 @@ class ReceiverMetricsService:
         "_flush_interval_ms",
         "_last_flush_ms",
         "_latest_stats",
+        "_listeners",
         "_live",
         "_maintenance_interval_s",
         "_maintenance_task",
         "_pending",
+        "_pending_band_ranges",
         "_pending_ranges",
         "_poller",
         "_previous_sample",
@@ -283,12 +297,14 @@ class ReceiverMetricsService:
         self._accumulator = LifetimeAccumulator()
         self._pending: list[MetricSample] = []
         self._pending_ranges: dict[str, dict[int, RangeRecord]] = {}
+        self._pending_band_ranges: dict[str, dict[tuple[int, int], BandRange]] = {}
         self._previous_sample: MetricSample | None = None
         self._last_flush_ms: int | None = None
         self._summary_floor_ms: int | None = None
         self._latest_stats: DecoderStats | None = None
         self._stats_supported: bool | None = None
         self._shed = 0
+        self._listeners: list[SampleListener] = []
         self._sample_task: asyncio.Task[None] | None = None
         self._maintenance_task: asyncio.Task[None] | None = None
 
@@ -337,6 +353,32 @@ class ReceiverMetricsService:
         fault (SPEC §60).
         """
         return self._stats_supported
+
+    # ------------------------------------------------------------- the seam
+
+    def subscribe_samples(self, listener: SampleListener) -> None:
+        """Register a listener awaited with each new sample. Idempotent."""
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def unsubscribe_samples(self, listener: SampleListener) -> None:
+        """Remove a listener registered by :meth:`subscribe_samples`."""
+        with contextlib.suppress(ValueError):
+            self._listeners.remove(listener)
+
+    async def _notify(self, sample: MetricSample) -> None:
+        """Hand ``sample`` to every listener, defensively (see :data:`SampleListener`)."""
+        for listener in tuple(self._listeners):
+            try:
+                await listener(sample)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "receiver_metrics_listener_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
     # ------------------------------------------------------------- lifecycle
 
@@ -477,10 +519,13 @@ class ReceiverMetricsService:
         )
         self._previous_sample = result.sample
         self._buffer(result.sample)
-        self._remember_ranges(local_day(ts_ms, self._zone), result.ranges)
+        day = local_day(ts_ms, self._zone)
+        self._remember_ranges(day, result.ranges)
+        self._remember_band_ranges(day, result.band_ranges)
 
         if self._flush_due(ts_ms):
             await self.flush()
+        await self._notify(result.sample)
         return result.sample
 
     async def _poll_stats(self) -> DecoderStats | None:
@@ -523,6 +568,19 @@ class ReceiverMetricsService:
             bucket = record.bearing_bucket
             sectors[bucket] = better_range(sectors.get(bucket), record)
 
+    def _remember_band_ranges(self, day: str, cells: tuple[BandRange, ...]) -> None:
+        """Fold this sample's banded cells into the day's pending ones (slice 087).
+
+        Keyed by the same receiver-local day as the unbanded records, resolved
+        from the live zone on every sample (issue #205), so the two tables can
+        never file one instant under different days.
+        """
+        if not cells:
+            return
+        pending = self._pending_band_ranges.setdefault(day, {})
+        for cell in cells:
+            pending[cell.key] = merge_band_range(pending.get(cell.key), cell)
+
     def _flush_due(self, now_ms: int) -> bool:
         if self._last_flush_ms is None:
             self._last_flush_ms = now_ms
@@ -545,13 +603,19 @@ class ReceiverMetricsService:
             day: [sectors[bucket] for bucket in sorted(sectors)]
             for day, sectors in self._pending_ranges.items()
         }
+        band_ranges: Mapping[str, list[BandRange]] = {
+            day: [cells[key] for key in sorted(cells)]
+            for day, cells in self._pending_band_ranges.items()
+        }
         delta = self._accumulator.drain()
-        if not samples and not ranges and delta.is_empty:
+        if not samples and not ranges and not band_ranges and delta.is_empty:
             return False
 
         now_ms = self._clock()
         try:
-            await self._repository.record(samples, ranges, delta, at_ms=now_ms)
+            await self._repository.record(
+                samples, ranges, delta, at_ms=now_ms, band_ranges=band_ranges
+            )
         except Exception as exc:
             self._accumulator.restore(delta)
             self._counters.increment(DB_ERRORS_COUNTER)
@@ -565,6 +629,7 @@ class ReceiverMetricsService:
 
         del self._pending[: len(samples)]
         self._pending_ranges.clear()
+        self._pending_band_ranges.clear()
         self._last_flush_ms = now_ms
         return True
 
@@ -732,4 +797,5 @@ __all__ = [
     "EpochClock",
     "MaintenanceResult",
     "ReceiverMetricsService",
+    "SampleListener",
 ]

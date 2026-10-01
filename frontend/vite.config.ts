@@ -6,11 +6,22 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+import { serviceWorkerPlugin } from "./vite-plugins/serviceWorker.ts";
+
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // Production builds only: emits dist/sw.js with the app shell's
+    // precache list injected (roadmap slice 084, src/sw/).
+    serviceWorkerPlugin({
+      entry: path.resolve(rootDir, "src/sw/sw.ts"),
+      srcDir: path.resolve(rootDir, "src"),
+    }),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(rootDir, "./src"),
@@ -41,6 +52,8 @@ export default defineConfig({
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/main.tsx",
+        // Event wiring only; its logic is in the tested src/sw modules.
+        "src/sw/sw.ts",
         "src/vite-env.d.ts",
         "src/test/**",
         "src/**/*.d.ts",

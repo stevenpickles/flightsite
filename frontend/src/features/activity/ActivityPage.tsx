@@ -3,12 +3,11 @@
  * paginated server-side via `GET /api/v1/activity`, with the type filter and
  * page persisted in the URL.
  *
- * **Not a primary nav section.** SPEC §10 fixes the sidebar at seven, and the
- * roadmap gives the feed its home *in the Live Map experience* plus a fuller
- * view — so this route is reached from `ActivityPanel`'s "View all" link and
- * from a shared URL, exactly as `/sightings/:id` is reached from the sightings
- * log. That is also why this page builds its own heading rather than calling
- * `requireNavItem`, which throws for anything outside the seven.
+ * A SPEC §10 primary section since the owner's amendment of 2026-09-28
+ * (roadmap slice 082, issue #225), and still reached from `ActivityPanel`'s
+ * "View all" link — the feed's first home is the Live Map experience, and
+ * this route is its fuller view. The page builds its own heading rather than
+ * calling `requireNavItem`; the two never needed to be the same string.
  *
  * **REST only, deliberately.** The live socket belongs to the Live Map (see
  * `store/useActivityFeedStore.ts`), so this page shows what
@@ -19,6 +18,9 @@
  * Reuses the Aircraft page's pagination controls, which already handle the
  * `null` total (§2.4) this endpoint always returns by falling back to "a full
  * page came back" as the signal there is a next one.
+ *
+ * The header's "What was that?" (roadmap slice 090) opens the same closest-
+ * pass lookup as the Live Map's control.
  */
 
 import { Fragment } from "react";
@@ -37,6 +39,8 @@ import { EmptyResult } from "@/features/history/components/EmptyResult";
 import { RefreshStatus } from "@/features/history/components/RefreshStatus";
 import { TimezoneNote } from "@/features/history/components/TimezoneNote";
 import { ACTIVITY_REFRESH_MS } from "@/features/history/lib/refresh";
+import { OverheadButton } from "@/features/overhead/OverheadButton";
+import { OverheadDialog } from "@/features/overhead/OverheadDialog";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
 
@@ -59,11 +63,16 @@ export function ActivityPage() {
   );
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
+  const units = receiverQuery.data?.units ?? "aviation";
 
   return (
     <div className="flex h-full flex-col px-4 py-6 md:px-8">
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+          {/* Roadmap slice 090 — see `features/overhead/OverheadButton`. */}
+          <OverheadButton placement="header" />
+        </div>
         <p className="text-sm text-muted-foreground">
           Firsts, records and milestones — what happened while you weren&rsquo;t
           watching.
@@ -139,6 +148,7 @@ export function ActivityPage() {
                           key={event.id}
                           event={event}
                           timezone={timezone}
+                          units={units}
                         />
                       ))}
                     </Fragment>
@@ -157,6 +167,7 @@ export function ActivityPage() {
           )}
         </>
       )}
+      <OverheadDialog />
     </div>
   );
 }

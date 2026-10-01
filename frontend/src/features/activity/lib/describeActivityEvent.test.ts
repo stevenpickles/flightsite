@@ -87,6 +87,14 @@ describe("describeActivityEvent", () => {
     expect(detail).toBe("412.8 nm (previous 401.2 nm) · bearing 271° W");
   });
 
+  it("describes a range record in the receiver's units", () => {
+    const { detail } = describeActivityEvent(
+      event("range_record", { range_nm: 100, previous_nm: 50 }),
+      "metric",
+    );
+    expect(detail).toBe("185.2 km (previous 92.6 km)");
+  });
+
   it("describes a first range record, which beat nothing", () => {
     const { detail } = describeActivityEvent(
       event("range_record", { range_nm: 120 }),
@@ -328,6 +336,56 @@ describe("describeActivityEvent", () => {
     );
     expect(label).toBe("Emergency squawk 7700");
     expect(detail).toContain("Emergency squawk 7700 (general emergency)");
+  });
+
+  it("names the kind in plain words after the squawk (slice 086)", () => {
+    const { label } = describeActivityEvent(
+      event("emergency_squawk", {
+        squawk: "7600",
+        emergency_source: "squawk",
+        emergency_kind: "nordo",
+        reason: "Emergency squawk 7600 (radio failure)",
+      }),
+    );
+    expect(label).toBe("Emergency squawk 7600 · No radio");
+  });
+
+  it.each([
+    ["minfuel", "Emergency: Minimum fuel"],
+    ["nordo", "Emergency: No radio"],
+    ["unlawful", "Emergency: Unlawful interference"],
+    ["lifeguard", "Emergency: Lifeguard / medical"],
+    ["downed", "Emergency: Downed"],
+    ["general", "Emergency: General emergency"],
+  ])(
+    "headlines a decoder-declared %s emergency with its kind",
+    (kind, expected) => {
+      const { label, detail } = describeActivityEvent(
+        event(
+          "emergency_squawk",
+          {
+            squawk: null,
+            emergency_source: "decoder",
+            emergency_kind: kind,
+            reason: "Decoder emergency state: something",
+          },
+          { icao: "a1b2c3" },
+        ),
+      );
+      expect(label).toBe(expected);
+      // The engine's reason is what names the decoder as the source.
+      expect(detail).toContain("Decoder emergency state");
+    },
+  );
+
+  it("still says something for a decoder emergency of an unknown kind", () => {
+    const { label } = describeActivityEvent(
+      event("emergency_squawk", {
+        emergency_source: "decoder",
+        emergency_kind: "mayday",
+      }),
+    );
+    expect(label).toBe("Emergency declared");
   });
 
   it("still names an emergency whose squawk did not survive the payload", () => {

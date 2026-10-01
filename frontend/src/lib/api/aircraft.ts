@@ -61,6 +61,9 @@ export interface AircraftListRow {
   operator: string | null;
   operator_group: string | null;
   classification: Classification | null;
+  /** The last ADS-B emitter category the airframe transmitted (slice 086);
+   * absent from a backend older than that slice. */
+  emitter_category?: string | null;
   first_seen: string;
   last_seen: string;
   sighting_count: number;
@@ -90,6 +93,8 @@ export interface AircraftDetail {
   operator_group: string | null;
   owner: string | null;
   classification: Classification | null;
+  /** The last ADS-B emitter category the airframe transmitted (slice 086). */
+  emitter_category?: string | null;
   /** Whether this airframe is in the live picture right now. */
   live: boolean;
   lifetime: LifetimeRecord;
@@ -137,6 +142,9 @@ export interface AircraftListParams {
   classification?: string;
   operatorGroup?: string;
   type?: string;
+  /** Case-insensitive prefix over ICAO, registration, most recent callsign,
+   * type and operator (`docs/API.md` §3.5, slice 083). */
+  q?: string | undefined;
 }
 
 function listPath(params: AircraftListParams): string {
@@ -154,6 +162,9 @@ function listPath(params: AircraftListParams): string {
   }
   if (params.type !== undefined) {
     query.set("type", params.type);
+  }
+  if (params.q !== undefined) {
+    query.set("q", params.q);
   }
   return `/api/v1/aircraft?${query.toString()}`;
 }

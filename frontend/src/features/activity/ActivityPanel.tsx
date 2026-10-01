@@ -17,8 +17,8 @@
  * the non-positioned list at `bottom-3 left-3`.
  *
  * "View all" hands off to `/activity`, which is the same feed unbounded and
- * filterable — the `RecentSightingsSection` affordance, and the reason this
- * slice adds no eighth primary nav section (SPEC §10 fixes them at seven).
+ * filterable — the `RecentSightingsSection` affordance. (Activity itself
+ * became a SPEC §10 primary section in slice 082.)
  */
 
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -30,15 +30,27 @@ import {
   mergeActivityEvents,
   useActivityFeedStore,
 } from "@/features/activity/store/useActivityFeedStore";
+import type { MapCardPlacement } from "@/features/map/phone/placement";
 import { useActivityQuery } from "@/lib/api/activity";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { cn } from "@/lib/utils";
 
 /** Events the panel shows. Enough to cover a glance back over the last
  * while; the standalone page is where a longer look belongs. */
 const PANEL_LIMIT = 8;
 
-export function ActivityPanel() {
-  const [isExpanded, setIsExpanded] = useState(false);
+/**
+ * `placement="docked"` (roadmap slice 084) is the phone layout: full width in
+ * the bottom toolbar's Activity sheet, and expanded from the start — a user
+ * who tapped "Activity" in the toolbar asked for the list, not for a second
+ * header to tap.
+ */
+export function ActivityPanel({
+  placement = "floating",
+}: {
+  placement?: MapCardPlacement;
+}) {
+  const [isExpanded, setIsExpanded] = useState(placement === "docked");
   const receiverQuery = useReceiverQuery();
   // Fetched even while collapsed: the count badge is the whole reason the
   // collapsed card is worth having, and one page of eight rows every 30 s
@@ -47,6 +59,7 @@ export function ActivityPanel() {
   const liveEvents = useActivityFeedStore((state) => state.events);
 
   const timezone = receiverQuery.data?.timezone ?? "UTC";
+  const units = receiverQuery.data?.units ?? "aviation";
   const events = mergeActivityEvents(
     liveEvents,
     listQuery.data?.items ?? [],
@@ -55,7 +68,12 @@ export function ActivityPanel() {
   return (
     <div
       data-testid="activity-panel"
-      className="absolute bottom-3 right-3 z-10 w-80 max-w-[80vw] overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm"
+      className={cn(
+        placement === "floating"
+          ? "absolute bottom-3 right-3 z-10 w-80 max-w-[80vw]"
+          : "w-full",
+        "overflow-hidden rounded-lg border border-border bg-card/95 shadow-md backdrop-blur-sm",
+      )}
     >
       <button
         type="button"
@@ -100,6 +118,7 @@ export function ActivityPanel() {
                   key={event.id}
                   event={event}
                   timezone={timezone}
+                  units={units}
                   compact
                 />
               ))}

@@ -93,6 +93,26 @@ describe("SightingDetailPage", () => {
     expect(link).toHaveAttribute("href", "/aircraft/ae1463");
   });
 
+  it("offers Copy link and QR code sharing for this sighting's own URL (roadmap slice 082)", async () => {
+    installSightingsApiMock({
+      detail: { 88213: sightingDetail({ id: 88213 }) },
+      aircraft: {
+        ae1463: aircraftDetail({ icao: "ae1463", registration: "N302DN" }),
+      },
+    });
+
+    renderApp("/sightings/88213");
+    await screen.findByText("N302DN");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /qr code/i }));
+    const popover = screen.getByRole("dialog", { name: /qr code for/i });
+    expect(popover.querySelector("svg")).toHaveAttribute(
+      "aria-label",
+      `QR code encoding ${window.location.origin}/sightings/88213`,
+    );
+  });
+
   it("shows 'Ongoing' instead of an end time and duration for an open sighting", async () => {
     installSightingsApiMock({
       detail: {

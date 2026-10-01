@@ -36,7 +36,17 @@ from flightsite.analytics.queries import (
 )
 from flightsite.api.context import LiveApiContext
 from flightsite.api.history import DEFAULT_ORDER, DEFAULT_SORT
+from flightsite.api.overhead import (
+    DEFAULT_OVERHEAD_LIMIT,
+    DEFAULT_WINDOW_MINUTES,
+    MAX_OVERHEAD_LIMIT,
+    MAX_WINDOW_MINUTES,
+    MINUTE_MS,
+    OverheadRepository,
+    overhead_payload,
+)
 from flightsite.api.receiver_stats import (
+    DEFAULT_COVERAGE_WINDOW,
     DEFAULT_SIGNAL_BUCKET_WIDTH_DB,
     MAX_SIGNAL_BUCKET_WIDTH_DB,
     MIN_SIGNAL_BUCKET_WIDTH_DB,
@@ -66,6 +76,9 @@ from flightsite.api.schemas import (
     FeederHistoryWindowLiteral,
     FeedersResponse,
     InterestingAircraftResponse,
+    OverheadResponse,
+    ReceiverCoverage,
+    ReceiverCoverageWindow,
     ReceiverInfo,
     ReceiverLifetimeStats,
     ReceiverMetricSeries,
@@ -79,6 +92,7 @@ from flightsite.api.schemas import (
     SightingSortKey,
     SortOrder,
 )
+from flightsite.api.search import MAX_QUERY_LENGTH
 from flightsite.api.serializers import (
     airport_feature_collection_payload,
     analytics_aircraft_payload,
@@ -91,7 +105,7 @@ from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
 from flightsite.api.sightings import DEFAULT_SORT as SIGHTINGS_DEFAULT_SORT
 from flightsite.api.ws import router as ws_router
 from flightsite.counters import counters
-from flightsite.db import to_epoch_ms, utc_now_ms
+from flightsite.db import Database, to_epoch_ms, utc_now_ms
 from flightsite.diagnostics import collect_diagnostics
 from flightsite.feeders import FeederService, empty_report
 from flightsite.readiness import ReadinessRegistry
@@ -292,6 +306,31 @@ async def receiver_range_by_bearing(request: Request) -> dict[str, Any]:
 
 
 @router.get(
+    "/receiver/coverage",
+    response_model=ReceiverCoverage,
+    tags=["receiver"],
+    summary="Coverage by bearing and altitude band, against the radio horizon",
+)
+async def receiver_coverage(
+    request: Request,
+    window: Annotated[
+        ReceiverCoverageWindow,
+        Query(description="Whole receiver-local days ending today, or `all`."),
+    ] = DEFAULT_COVERAGE_WINDOW,
+) -> dict[str, Any]:
+    """Roadmap slice 087's coverage analysis — ``docs/API.md`` §3.8.
+
+    For each altitude band (below 10,000 ft, 10,000 to 25,000 ft, 25,000 ft
+    and above) and each 5° sector: the furthest detection in the window, the
+    evidence behind it, the band's 4/3-Earth radio horizon from the antenna
+    height above ground, and the share of it reached — plus findings for
+    well-observed sectors that fall short of 60 % of it. With no antenna
+    height configured every horizon is ``null`` and there are no findings.
+    """
+    return await _context(request).receiver_coverage(window=window)
+
+
+@router.get(
     "/receiver/signal-distribution",
     response_model=ReceiverSignalDistribution,
     tags=["receiver"],
@@ -423,13 +462,27 @@ async def aircraft_history(
     ] = None,
     operator_group: Annotated[str | None, Query(description="Curated operator group slug.")] = None,
     type: Annotated[str | None, Query(description="Exact ICAO type designator match.")] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_QUERY_LENGTH,
+            description=(
+                "Case-insensitive, literal prefix over ICAO address, registration, "
+                "most recent callsign, type designator and operator. Trimmed; "
+                "blank is ignored. Filters this list only — not a global search."
+            ),
+            examples=["G-EZ"],
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Every airframe this receiver has ever sighted — ``docs/API.md`` §3.5.
 
     Sortable and filterable per §3.5; SPEC §56's columns. ``total`` is the
     exact count of rows matching the filters (see
     :mod:`flightsite.api.history` for why this endpoint does not exercise
-    §2.4's allowance to omit or approximate it).
+    §2.4's allowance to omit or approximate it). ``q`` (slice 083) is the
+    list-scoped prefix search :mod:`flightsite.api.search` defines; it
+    combines with the other filters and with sorting and pagination.
     """
     items, total = await _context(request).aircraft_history(
         limit=limit,
@@ -439,6 +492,7 @@ async def aircraft_history(
         classification=classification,
         operator_group=operator_group,
         type_code=type,
+        q=q,
     )
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
@@ -626,12 +680,26 @@ async def sightings_list(
         bool | None,
         Query(description="Restrict to sightings still open (`ended_at` is null)."),
     ] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_QUERY_LENGTH,
+            description=(
+                "Case-insensitive, literal prefix of the ICAO address or the last "
+                "callsign. Trimmed; blank is ignored. Filters this list only — not "
+                "a global search."
+            ),
+            examples=["BAW"],
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """The chronological sightings log — ``docs/API.md`` §3.6, SPEC §57.
 
     Sortable and filterable per §3.6; ``total`` is always ``null`` (see
     :mod:`flightsite.api.sightings` for why this endpoint does not exercise
-    §2.4's exact-count path the way ``/aircraft`` does).
+    §2.4's exact-count path the way ``/aircraft`` does). ``icao`` stays an
+    exact six-hex-digit match; ``q`` (slice 083) is the prefix search over
+    address or callsign that the Sightings page's filter box sends.
     """
     items = await _context(request).sighting_list(
         limit=limit,
@@ -643,6 +711,7 @@ async def sightings_list(
         to_ms=_bound_ms(to),
         interesting=interesting,
         open_only=open,
+        q=q,
     )
     return {"items": items, "total": None, "limit": limit, "offset": offset}
 
@@ -786,6 +855,64 @@ async def sighting_detail(
             },
         )
     return detail
+
+
+@router.get(
+    "/overhead",
+    response_model=OverheadResponse,
+    tags=["history"],
+    summary="What passed closest to the receiver around a moment",
+)
+async def overhead(
+    request: Request,
+    at: Annotated[
+        datetime | None,
+        Query(description="The moment asked about (§2.2). Defaults to now; no offset means UTC."),
+    ] = None,
+    window: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=MAX_WINDOW_MINUTES,
+            description="Minutes either side of `at` to search.",
+        ),
+    ] = DEFAULT_WINDOW_MINUTES,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_OVERHEAD_LIMIT, description="Ranked results to return.")
+    ] = DEFAULT_OVERHEAD_LIMIT,
+) -> dict[str, Any]:
+    """The "What was that?" lookup — roadmap slice 090, issue #233, ``docs/API.md`` §3.7.1.
+
+    The sightings whose **closest stored position fix** inside
+    ``[at - window, at + window]`` came nearest the receiver, nearest first.
+    Every row is a point a sighting actually stored — never a position
+    interpolated between stored points or beyond them — so a single-moment
+    lookup stays one (SPEC §79 keeps playback out of scope). How candidates
+    are found and how distance is measured: :mod:`flightsite.api.overhead`
+    and :mod:`flightsite.sightings.overhead`.
+
+    Measured from the position the live store measures every other range
+    from. With no receiver location set there is nothing to measure from:
+    the answer is an empty 200 with ``receiver_configured: false`` and a
+    ``reason``, the way every other receiver-relative field degrades to
+    unknown rather than an error (§2.7).
+    """
+    context = _context(request)
+    at_ms = _bound_ms(at)
+    if at_ms is None:
+        at_ms = utc_now_ms()
+    receiver = context.live.receiver_location
+    if receiver is None:
+        return overhead_payload(at_ms=at_ms, window_minutes=window, result=None)
+    database: Database = request.app.state.database
+    result = await OverheadRepository(database).closest_passes(
+        receiver=receiver,
+        from_ms=at_ms - window * MINUTE_MS,
+        to_ms=at_ms + window * MINUTE_MS,
+        limit=limit,
+        antenna_height_ft=context.settings.location.antenna_height_ft,
+    )
+    return overhead_payload(at_ms=at_ms, window_minutes=window, result=result)
 
 
 # ---------------------------------------------------------------- analytics

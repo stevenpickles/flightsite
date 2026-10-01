@@ -94,6 +94,11 @@ WEEKDAY_WEIGHTS: Final[tuple[float, ...]] = (
 #: band §2.4 states for a typical transit.
 SECONDS_PER_RETAINED_POINT: Final = 15.0
 
+#: The ``(latitude, longitude)`` every synthetic track is drawn around — the
+#: receiver the generated history implies, which the storage qualification's
+#: overhead probe (slice 090) measures from.
+TRACK_CENTRE: Final = (51.5, -0.45)
+
 #: Mean and shape of the sighting-duration lognormal, in seconds. §9 sizes on a
 #: ~15-minute mean sighting; the spread covers a distant airliner clipping the
 #: edge of range for two minutes and a circling helicopter held for an hour.
@@ -505,7 +510,7 @@ class TrackPool:
     #: whole pool is built in seconds.
     VARIANTS_PER_LENGTH: Final = 8
 
-    def __init__(self, *, rng: random.Random, centre: tuple[float, float] = (51.5, -0.45)) -> None:
+    def __init__(self, *, rng: random.Random, centre: tuple[float, float] = TRACK_CENTRE) -> None:
         self._rng = rng
         self._centre = centre
         self._pool: dict[int, list[PackedTrack]] = {}
@@ -574,6 +579,7 @@ __all__ = [
     "MIN_TRACK_POINTS",
     "MODE_S_SHARE",
     "SECONDS_PER_RETAINED_POINT",
+    "TRACK_CENTRE",
     "TYPE_CODES",
     "WEEKDAY_WEIGHTS",
     "AircraftPool",

@@ -1,10 +1,16 @@
 /**
- * Aircraft page state <-> query string, round-tripped through three keys:
+ * Aircraft page state <-> query string, round-tripped through four keys:
  * `sort`, `order`, `page` (1-indexed — an offset would be an implementation
- * detail leaking into a URL a user might read or hand-edit). Only fields
- * that differ from the default are ever written, so `/aircraft` and
+ * detail leaking into a URL a user might read or hand-edit) and `q`, the
+ * filter box (roadmap slice 083). Only fields that differ from the default
+ * are ever written, so `/aircraft` and
  * `/aircraft?sort=last_seen&order=desc&page=1` are the same page and a
  * shared link stays short.
+ *
+ * `q` is stored the way the API reads it (`docs/API.md` §3.5): trimmed,
+ * blank meaning absent, at most `MAX_SEARCH_LENGTH` characters — so a
+ * hand-edited or over-long link degrades to a search the server accepts
+ * rather than a 422 (`features/history/lib/search.ts`).
  *
  * Pure `URLSearchParams` in and out, mirroring
  * `features/filters/lib/urlSync.ts`'s split: the hook that touches
@@ -12,7 +18,17 @@
  * so this half is unit-testable without one.
  */
 
+import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
 import type { AircraftSortKey, SortOrder } from "@/lib/api/aircraft";
+
+// Shared with the Sightings page's filter; re-exported so this module stays
+// the Aircraft page's one import for everything its URL holds.
+export {
+  isTooShort,
+  MAX_SEARCH_LENGTH,
+  MIN_SEARCH_LENGTH,
+  normalizeSearch,
+} from "@/features/history/lib/search";
 
 export const DEFAULT_SORT: AircraftSortKey = "last_seen";
 export const DEFAULT_ORDER: SortOrder = "desc";
@@ -31,19 +47,23 @@ const SORT_KEYS: readonly AircraftSortKey[] = [
   "max_range_nm",
 ];
 
-const KEYS = { sort: "sort", order: "order", page: "page" } as const;
+const KEYS = { sort: "sort", order: "order", page: "page", q: "q" } as const;
 
 export interface AircraftTableState {
   sort: AircraftSortKey;
   order: SortOrder;
   /** 1-indexed page number. */
   page: number;
+  /** The filter box's prefix search, already normalized
+   * ({@link normalizeSearch}), or `undefined` for none. */
+  q?: string | undefined;
 }
 
 export const DEFAULT_TABLE_STATE: AircraftTableState = {
   sort: DEFAULT_SORT,
   order: DEFAULT_ORDER,
   page: 1,
+  q: undefined,
 };
 
 function isSortKey(value: string): value is AircraftSortKey {
@@ -68,7 +88,9 @@ export function parseAircraftTableState(
       ? pageRaw
       : DEFAULT_TABLE_STATE.page;
 
-  return { sort, order, page };
+  const q = searchFromUrl(params.get(KEYS.q));
+
+  return { sort, order, page, q };
 }
 
 /** Builds the query-string representation of `state` — only the fields that
@@ -86,6 +108,10 @@ export function serializeAircraftTableState(
   }
   if (state.page !== DEFAULT_TABLE_STATE.page) {
     params.set(KEYS.page, String(state.page));
+  }
+  const q = normalizeSearch(state.q);
+  if (q !== undefined) {
+    params.set(KEYS.q, q);
   }
   return params;
 }

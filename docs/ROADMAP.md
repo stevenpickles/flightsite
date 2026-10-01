@@ -22,6 +22,7 @@ must remain deployable after every merge.
 | 6 | Alerts & Notifications | Watchlists, rule engine, interesting surfaces, notifications, alerts page |
 | 7 | Operations | Health/diagnostics, backup/restore, maintenance, data reset |
 | 8 | Hardening & Release Qualification | Full E2E, visual regression, a11y, performance, storage qualification, docs |
+| 9 | Usability & Observatory Expansion | Everyday usability and the receiver as an instrument ([`docs/design/080-feature-program.md`](design/080-feature-program.md)) |
 
 ## Release Checkpoints
 
@@ -43,6 +44,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.8.0 | 8 | Self-explanatory Analytics rankings: tail number and type on every Top aircraft bar, the long-form description beside every Top types designator, richer tooltips on both; visual capture waits for a populated demo picture (slice 074; recorded 2026-09-19) |
 | v0.9.0 | 8 | Useful and robust on every page: the 2026-09-20 formal site review's 71 findings fixed (rollups keyed on the live receiver timezone with a one-time repair, basemap switch keeps every layer, legible status text, error boundaries, responsive shell, refresh/retry everywhere, honest ordering and not-yet states), plus a metadata import that no longer starves the live pipeline and per-consumer drop attribution (slices 075–076; migration 0016; recorded 2026-09-25) |
 | v0.10.0 | 8 | Feeders: one page for every network the receiver streams to — status, last data sent, MLAT sync, gaps and availability over the observed span, links to the networks and their feed-stats pages, and to the sibling local pages; opt-in Docker socket for log-only feeds (slice 077; migration 0017; ADR-0017; recorded 2026-09-26) |
+| v0.11.0 | 9 | The usability and observatory expansion program shipped as one release: units on every surface, ten sidebar sections (SPEC §10 amended), keyboard shortcuts, share links and QR hand-off, list search, a phone Live Map and installable shell, map display controls; decoder emitter category, selected altitude and emergency state, receiver self-alerts, 'What was that?', coverage against the radio horizon, richer alert conditions (slices 080–093; migrations 0018–0020; the planned v0.11.0/v0.12.0 split was not used; recorded 2026-10-01) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -167,6 +169,30 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | 076 | Site review remediation | 075 | opus | high | Fix every finding of the 2026-09-20 formal site review (`docs/reviews/2026-09-20-site-review.md`): rollup day keys from the live timezone, basemap layer loss, invisible status text, error boundaries, responsive shell, refresh/retry on every page, ordering and 'not yet' semantics, raw strings, and the per-page usefulness gaps |
 | 077 | Feeders page | 033, 042, 076 | opus | medium | `/receiver/feeders`: status of every network the receiver feeds (FlightAware, FlightRadar24, ADS-B Exchange, AeroDataBox, OpenSky) from their local status documents and, opt-in via the Docker socket, their container logs; links to each network and its stats page (URLs kept in secrets.yaml), gap timeline and connection statistics, and links to sibling local pages such as tar1090 and graphs1090 (issue #215; migration 0017; v0.10.0) |
 | 078 | Feeder writes survive a cancelled poll task | 077 | opus | low | Hotfix: the feeder service shields its write from the poll task's cancellation and settles it on stop(), so the writer connection is never stranded and no episode is left open (issue #218) |
+| 079 | Dependency upkeep | 078 | opus | low | Fix the time-of-day analytics test that failed every Dependabot PR's backend job; Dependabot watches the uv-managed backend and stops proposing Python 3.13+ and odd Node majors; vitest 5 with coverage-v8 5 together; Node 24 LTS for the builder image and CI (issue #221) |
+
+### Phase 9 — Usability & Observatory Expansion
+
+Program record: [`docs/design/080-feature-program.md`](design/080-feature-program.md).
+Proposals that touch a SPEC limit (§33, §37, §48, §79) are listed there as pending an
+owner decision and are not scheduled.
+
+| ID | Title | Depends on | Agent | Risk | Objective |
+|---|---|---|---|---|---|
+| 080 | Feature program planning | 079 | opus | low | Record the post-v0.10.0 usability and observatory expansion program: design record, Phase 9, the Wave A and Wave B slices, and the proposals that wait on an owner spec amendment (issue #223) |
+| 081 | Units preference on every surface | 080 | sonnet | low | Every altitude, speed and distance FlightSite prints honours the receiver's units preference, map labels included (issue #224) |
+| 082 | Shell, keyboard and sharing | 081 | sonnet | low | Every page in the nav, a System theme, persisted sidebar, a `?` shortcut sheet with map and navigation shortcuts, copy-link / share and a QR code of the current view (issue #225) |
+| 083 | Aircraft and sightings list search | 081 | opus | low | Prefix filter on `/aircraft` (ICAO, registration, callsign, type, operator) and `/sightings` via `q=` on the list endpoints; list-scoped, not global search (issue #226) |
+| 084 | Phone Live Map and installable shell | 081 | opus | medium | Bottom toolbar and bottom-sheet detail panel below 768 px; web app manifest and an app-shell-only service worker (issue #227) |
+| 085 | Map display controls | 081 | opus | medium | Toggles for range rings, receiver marker and labels; label presets; bounded trails for every aircraft; a distance/bearing measure tool (issue #228) |
+| 086 | Decoder emitter category, selected altitude and emergency state | 081 | opus | medium | Capture readsb `category`, `nav_altitude_*` and `emergency`; category silhouette fallback and filter; the decoder's emergency state as an emergency source (issue #229) |
+| 087 | Coverage analysis and obstruction finder | 086 | opus | medium | Max range per bearing × altitude band against the radio horizon from the antenna height, with obstructed-sector findings on the Receiver page (issue #230) |
+| 088 | Receiver self-alerts | 081 | opus | medium | Activity events and browser notifications when the message rate drops below its hour-of-week baseline, the decoder disconnects, or a feeder goes offline (issue #231) |
+| 089 | Richer alert conditions | 086 | opus | medium | Squawk set, callsign/registration glob, speed and vertical-rate bounds, emitter category and a drawn polygon area, still flat AND (issue #232) |
+| 090 | What was that? | 081 | opus | low | The aircraft that passed closest overhead near any chosen moment, from stored tracks (issue #233) |
+| 091 | Perf gates read a real p95 in CI | 083 | opus | low | Hotfix: the in-suite smoke run takes 21 ticks so a per-tick p95 is not its single worst tick, and the CLI contract test pins budgets instead of judging a three-tick run against real ones (issue #240) |
+| 092 | undici audit hotfix | 091 | opus | low | Hotfix: undici 8.10.1 → 8.11.2 in the frontend lockfile (transitive, under jsdom) to clear the 2026-09-30 advisories failing security/audit on every PR |
+| 093 | brace-expansion audit hotfix | 092 | opus | low | Hotfix: patch brace-expansion in the frontend lockfile (transitive, under eslint → minimatch) to clear the second 2026-09-30 advisory batch failing security/audit |
 
 ## Parallelization Guide
 
@@ -186,6 +212,7 @@ would allow parallelism.
 - **Wave G:** 026 → 027 → 028 ∥ 030, 032, 034 ∥ 035 (after 025) → 036 ∥ 038 (after 031/037) → {039, 041} → 040
 - **Wave H:** 042 (after 040) ∥ 043 → 045 ∥ 044
 - **Wave I:** phase-8 qualification, largely sequential on feature completeness
+- **Wave J (phase 9):** 080 → 081 → {082 ∥ 083 ∥ 084 ∥ 085 ∥ 088 ∥ 090} ∥ 086 → {087 (migrations serialized after 086), 089}
 
 Bootstrap gating note: slices 001/002 merge before CI (003) exists. `dev` branch
 protection (PR required, no direct pushes) is applied before any merge; Fable reviews

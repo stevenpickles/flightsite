@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,10 @@ import { useFilterStore } from "@/features/filters/store/useFilterStore";
 import { DEFAULT_FILTERS } from "@/features/filters/types";
 import { useLiveAircraftStore } from "@/features/map/aircraft/store/useLiveAircraftStore";
 import type { MetadataStatusResponse } from "@/lib/api/metadata";
+import {
+  getMapShortcutTargets,
+  setMapShortcutTarget,
+} from "@/lib/shortcuts/mapShortcutTargets";
 import { makeAircraft } from "@/test/liveAircraftFixtures";
 import { installMetadataApiMock, metadataSource } from "@/test/metadataApiMock";
 import { renderWithProviders } from "@/test/test-utils";
@@ -139,7 +143,7 @@ describe("FilterDrawer", () => {
     renderDrawer();
     await userEvent.click(screen.getByRole("button", { name: /filters/i }));
     await userEvent.click(
-      screen.getByRole("checkbox", { name: /emergency squawk only/i }),
+      screen.getByRole("checkbox", { name: /emergency only/i }),
     );
     await userEvent.click(
       screen.getByRole("checkbox", { name: /interesting only/i }),
@@ -148,6 +152,64 @@ describe("FilterDrawer", () => {
       emergencyOnly: true,
       interestingOnly: true,
     });
+  });
+
+  it("offers the emitter categories in the live picture, in words (slice 086)", async () => {
+    act(() => {
+      useLiveAircraftStore.getState().applySnapshot({
+        aircraft: [
+          makeAircraft({ icao: "aaaaaa", emitter_category: "A7" }),
+          makeAircraft({ icao: "bbbbbb", emitter_category: "A3" }),
+          makeAircraft({ icao: "cccccc", emitter_category: "A3" }),
+          makeAircraft({ icao: "dddddd", emitter_category: null }),
+        ],
+        receiver: null,
+      });
+    });
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+
+    const section = screen
+      .getByRole("heading", { name: "Emitter category" })
+      .closest("section") as HTMLElement;
+    const boxes = within(section).getAllByRole("checkbox");
+    expect(boxes.map((box) => box.closest("label")?.textContent)).toEqual([
+      "A3 · Large aircraft",
+      "A7 · Rotorcraft",
+    ]);
+
+    await userEvent.click(
+      within(section).getByRole("checkbox", { name: "A7 · Rotorcraft" }),
+    );
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual(["A7"]);
+    expect(screen.getByTestId("filter-match-count")).toHaveTextContent(
+      "Showing 1 of 4 aircraft.",
+    );
+  });
+
+  it("keeps a selected emitter category removable after its aircraft leave", async () => {
+    useFilterStore.setState({
+      filters: { ...DEFAULT_FILTERS, emitterCategories: ["B1"] },
+    });
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+
+    const box = screen.getByRole("checkbox", {
+      name: "B1 · Glider / sailplane",
+    });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    expect(useFilterStore.getState().filters.emitterCategories).toEqual([]);
+  });
+
+  it("says so when no aircraft has transmitted a category", async () => {
+    renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: /filters/i }));
+    expect(
+      screen.getByText(
+        /no aircraft in the live picture has transmitted a category/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("toggles a classification checkbox and explains that it needs a metadata import", async () => {
@@ -281,6 +343,47 @@ describe("FilterDrawer", () => {
       const line = screen.getByTestId("filter-match-count");
       expect(line).toHaveTextContent("No aircraft match these filters.");
       expect(line).toHaveClass("text-destructive");
+    });
+  });
+
+  describe("keyboard shortcut targets (roadmap slice 082)", () => {
+    afterEach(() => {
+      setMapShortcutTarget("toggleFilterDrawer", undefined);
+      setMapShortcutTarget("focusLiveSearch", undefined);
+    });
+
+    it("registers toggleFilterDrawer, which opens and closes the drawer", () => {
+      renderDrawer();
+      expect(screen.queryByTestId("filter-drawer")).not.toBeInTheDocument();
+
+      act(() => {
+        getMapShortcutTargets().toggleFilterDrawer?.();
+      });
+      expect(screen.getByTestId("filter-drawer")).toBeInTheDocument();
+
+      act(() => {
+        getMapShortcutTargets().toggleFilterDrawer?.();
+      });
+      expect(screen.queryByTestId("filter-drawer")).not.toBeInTheDocument();
+    });
+
+    it("registers focusLiveSearch, which opens the drawer and focuses the live-set query input", () => {
+      renderDrawer();
+      act(() => {
+        getMapShortcutTargets().focusLiveSearch?.();
+      });
+
+      expect(screen.getByTestId("filter-drawer")).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/callsign, registration, or icao/i),
+      ).toHaveFocus();
+    });
+
+    it("unregisters both targets on unmount", () => {
+      const { unmount } = renderDrawer();
+      unmount();
+      expect(getMapShortcutTargets().toggleFilterDrawer).toBeUndefined();
+      expect(getMapShortcutTargets().focusLiveSearch).toBeUndefined();
     });
   });
 });

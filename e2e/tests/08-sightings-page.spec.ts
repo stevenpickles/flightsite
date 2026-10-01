@@ -9,7 +9,7 @@
  * interesting behaviour lives — so the bulk of this file exercises the filter
  * bar rather than the table. The two assertions that matter:
  *
- * - **The ICAO filter actually narrows the query**, checked by requiring every
+ * - **The aircraft filter actually narrows the query**, checked by requiring every
  *   surviving row to belong to the requested aircraft rather than by counting
  *   rows (a count would be a moving target while demo traffic keeps arriving).
  * - **"Open now" means open**, checked against the one cell that distinguishes
@@ -95,11 +95,12 @@ test.describe("Sightings page", () => {
     const unfiltered = await renderedIcaos(page);
     expect(unfiltered.length).toBeGreaterThan(0);
 
-    // The filter commits on submit, not on keystroke (`SightingsFilters.tsx`).
-    await page.getByLabel("Aircraft (ICAO)").fill(subject.icao);
-    await page.getByLabel("Aircraft (ICAO)").press("Enter");
+    // The filter commits on submit, not on keystroke (`SightingsFilters.tsx`),
+    // and since slice 083 sends an ICAO-or-callsign prefix as `q`.
+    await page.getByLabel("Aircraft or callsign").fill(subject.icao);
+    await page.getByLabel("Aircraft or callsign").press("Enter");
 
-    await expect(page).toHaveURL(new RegExp(`[?&]icao=${subject.icao}`, "i"));
+    await expect(page).toHaveURL(new RegExp(`[?&]q=${subject.icao}`, "i"));
     const rows = page.getByTestId("sighting-row");
     await expect(rows.first()).toBeVisible();
 
@@ -133,26 +134,39 @@ test.describe("Sightings page", () => {
     await expect(clear).toBeVisible();
     await clear.click();
 
-    await expect(page).not.toHaveURL(/[?&]icao=/);
+    await expect(page).not.toHaveURL(/[?&]q=/);
     await expect(clear).toHaveCount(0);
-    await expect(page.getByLabel("Aircraft (ICAO)")).toHaveValue("");
+    await expect(page.getByLabel("Aircraft or callsign")).toHaveValue("");
   });
 
-  test("a malformed ICAO is rejected without touching the query", async ({
+  test("the start of an address narrows the log (slice 083)", async ({
     page,
+    request,
   }) => {
+    const aircraft = await waitForPersistedAircraft(request);
+    // Five of six digits: a real prefix, and long enough that no demo
+    // callsign (three letters and a flight number) can start with it too.
+    const prefix = pickBusiestAircraft(aircraft).icao.slice(0, 5).toLowerCase();
+
     await page.goto("/sightings");
-    const field = page.getByLabel("Aircraft (ICAO)");
-    await field.fill("nothex");
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+    const field = page.getByLabel("Aircraft or callsign");
+    await field.fill(prefix.toUpperCase());
     await field.press("Enter");
 
-    // Rejected in the field rather than sent to the API as an unsatisfiable
-    // query that would render as an empty log.
-    await expect(field).toHaveAttribute("aria-invalid", "true");
-    await expect(
-      page.getByText("Enter a 6-character hex ICAO address."),
-    ).toBeVisible();
-    await expect(page).not.toHaveURL(/[?&]icao=/);
+    // A prefix is a search, not a malformed address: it reaches the URL and
+    // narrows the log to aircraft whose address starts with it, whatever the
+    // case it was typed in.
+    await expect(page).toHaveURL(new RegExp(`[?&]q=${prefix}`, "i"));
+    await expect
+      .poll(async () => {
+        const icaos = await renderedIcaos(page);
+        return (
+          icaos.length > 0 &&
+          icaos.every((icao) => icao.toLowerCase().startsWith(prefix))
+        );
+      })
+      .toBe(true);
   });
 
   test('"Open now" restricts the log to observations still in progress', async ({

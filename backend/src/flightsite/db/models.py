@@ -23,7 +23,8 @@ slice 005, :class:`Aircraft` and :class:`Sighting` in slice 009,
 (:class:`AlertRule`, :class:`AlertMatch`) in slice 038, and the two resolution
 scratch tables (:class:`AircraftMetadataResolvedStaging`,
 :class:`AircraftClassificationStaging`) in slice 075, and the feeder pair
-(:class:`FeederEpisodeRow`, :class:`FeederSampleRow`) in slice 077.
+(:class:`FeederEpisodeRow`, :class:`FeederSampleRow`) in slice 077, and
+:class:`RangeByBearingBandDaily` in slice 087.
 """
 
 from __future__ import annotations
@@ -245,6 +246,12 @@ class Aircraft(Base):
     highest_alt_ft: Mapped[int | None] = mapped_column(Integer)
     highest_alt_ms: Mapped[int | None] = mapped_column(Integer)
 
+    #: The last ADS-B emitter category (``A0``-``D7``) this airframe
+    #: transmitted (slice 086, rev 0019). Written by the persistence worker
+    #: whenever a sighting has seen one; ``NULL`` for an airframe that never
+    #: sent one. A property of the airframe, not of a flight, hence here.
+    emitter_category: Mapped[str | None] = mapped_column(Text)
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Aircraft(id={self.id!r}, icao24={self.icao24!r})"
 
@@ -296,6 +303,18 @@ class Sighting(Base):
         # each 30-second flush of an open sighting, and a second one measured
         # ~2.6x the baseline per-sighting write cost again (issue #115).
         Index("ix_sightings_max_range", "max_range_nm", "id"),
+        # Slice 083's callsign prefix search, on `/sightings` and on the
+        # Aircraft page (rev 0018), over both callsigns since one can change
+        # mid-sighting. Unlike the extremes above, neither is rewritten per
+        # flush — the ORM leaves an unchanged attribute out of the flush's
+        # UPDATE, `callsign_last` changes only with the callsign and
+        # `callsign_first` never — so each costs one entry per sighting.
+        # `aircraft_id` rides along so "which airframes flew this prefix"
+        # is answered from the indexes alone. Built `COLLATE NOCASE` by the
+        # migration; declared by column alone for the reason given on
+        # `ix_amr_registration_nocase`.
+        Index("ix_sightings_callsign", "callsign_last", "aircraft_id"),
+        Index("ix_sightings_callsign_first", "callsign_first", "aircraft_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -636,6 +655,16 @@ class AircraftMetadataResolved(_ResolvedColumns, Base):
         Index("ix_amr_registration", "registration"),
         Index("ix_amr_type", "type_code"),
         Index("ix_amr_opgroup", "operator_group_id"),
+        # The Aircraft page's `q` prefix search (slice 083). Rev 0018 builds
+        # both `COLLATE NOCASE`: neither column is case-normalized on import
+        # (unlike `type_code`), and a case-insensitive prefix can only be read
+        # from an index in the collation the comparison uses. Declared here
+        # by column alone because SQLite reflection does not report an index
+        # column's collation, so the collated form would be a permanent
+        # phantom diff in `alembic check`; `tests/db/test_migration_0018_*`
+        # pins the collation instead.
+        Index("ix_amr_registration_nocase", "registration"),
+        Index("ix_amr_operator_nocase", "operator_name"),
         {"sqlite_with_rowid": False},
     )
 
@@ -1136,6 +1165,44 @@ class RangeByBearingDaily(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RangeByBearingDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r})"
+
+
+class RangeByBearingBandDaily(Base):
+    """Per-day maximum range per 5° sector *and altitude band* (§6.3.1, slice 087).
+
+    :class:`RangeByBearingDaily` split three ways by barometric altitude —
+    ``0`` below 10,000 ft, ``1`` 10,000 to 25,000 ft, ``2`` at or above
+    25,000 ft (:data:`flightsite.receiver_metrics.coverage.ALTITUDE_BANDS`) —
+    so the Receiver page can compare each band with its own radio horizon. An
+    aircraft with no barometric altitude is in no band and is not counted.
+
+    ``sample_count`` is how many receiver samples (one per ~15 s,
+    ``docs/DATA_MODEL.md`` §6.1) saw at least one aircraft in this cell that
+    day. It is what the obstruction finder's minimum-evidence rule reads: a
+    sector that reached 40 % of its horizon once is a quiet sky, not a hill.
+
+    Retained indefinitely for the same reason the unbanded table is, and like
+    it ``icao24`` is a fact about the moment, not a foreign key.
+    """
+
+    __tablename__ = "range_by_bearing_band_daily"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    day: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: ``0..71``; sector ``n`` covers bearings ``[5n, 5n + 5)`` degrees true.
+    bearing_bucket: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: ``0..2``, the index into ``ALTITUDE_BANDS``.
+    altitude_band: Mapped[int] = mapped_column(Integer, primary_key=True)
+    max_range_nm: Mapped[float] = mapped_column(REAL, nullable=False)
+    at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    icao24: Mapped[str | None] = mapped_column(Text)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"RangeByBearingBandDaily(day={self.day!r}, bearing_bucket={self.bearing_bucket!r}, "
+            f"altitude_band={self.altitude_band!r})"
+        )
 
 
 class LifetimeStat(Base):

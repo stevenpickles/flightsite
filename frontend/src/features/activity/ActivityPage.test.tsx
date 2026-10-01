@@ -36,9 +36,10 @@ function page(events: number, from = 0) {
 }
 
 describe("ActivityPage", () => {
-  it("renders the feed under its own heading, outside the seven nav sections", async () => {
-    // SPEC §10 fixes the sidebar at seven, so this route builds its own
-    // heading instead of reading one from NAV_ITEMS.
+  it("renders the feed under its own heading, with a sidebar entry", async () => {
+    // A primary section since the SPEC §10 amendment of 2026-09-28 (slice
+    // 082); the page still builds its own heading rather than reading one
+    // from NAV_ITEMS.
     installActivityApiMock({ list: page(3) });
     renderApp("/activity");
 
@@ -48,9 +49,24 @@ describe("ActivityPage", () => {
     await waitFor(() =>
       expect(screen.getAllByTestId("activity-row")).toHaveLength(3),
     );
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute(
+      "href",
+      "/activity",
+    );
+  });
+
+  it("opens 'What was that?' from the page header (slice 090)", async () => {
+    installActivityApiMock({ list: page(1) });
+    const user = userEvent.setup();
+    renderApp("/activity");
+
+    await user.click(screen.getByRole("button", { name: "What was that?" }));
+
     expect(
-      screen.queryByRole("link", { name: "Activity" }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("dialog", { name: "What was that?" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("dates the rows by grouping them under a receiver-local day (R2-06)", async () => {

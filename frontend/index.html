@@ -3,7 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Installable shell (roadmap slice 084): the web app manifest, the iOS
+      home-screen icon, and the browser chrome colour, which is the dark
+      theme's --background token (index.css) so the status bar and the app
+      read as one surface. `viewport-fit=cover` lets the phone Live Map run
+      edge to edge; its bottom toolbar pads itself clear of
+      env(safe-area-inset-bottom). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#050b12" />
+    <meta name="apple-mobile-web-app-title" content="FlightSite" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="dark light" />
     <title>FlightSite</title>
     <script>
@@ -12,15 +25,31 @@
         var theme = "dark";
         try {
           var stored = window.localStorage.getItem(STORAGE_KEY);
-          if (stored === "light" || stored === "dark") {
+          if (stored === "light" || stored === "dark" || stored === "system") {
             theme = stored;
           }
         } catch (_err) {
           theme = "dark";
         }
+        // "system" resolves against the OS preference right here, before
+        // React mounts — the same first-paint-flash guard this script
+        // already gave "dark"/"light", now covering roadmap slice 082's
+        // third option too. Falls back to dark, matching the app default,
+        // wherever `matchMedia` is unavailable.
+        var effective = theme;
+        if (theme === "system") {
+          try {
+            effective = window.matchMedia("(prefers-color-scheme: dark)")
+              .matches
+              ? "dark"
+              : "light";
+          } catch (_err) {
+            effective = "dark";
+          }
+        }
         var root = document.documentElement;
-        root.classList.toggle("dark", theme === "dark");
-        root.style.colorScheme = theme;
+        root.classList.toggle("dark", effective === "dark");
+        root.style.colorScheme = effective;
       })();
     </script>
   </head>

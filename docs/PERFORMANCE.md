@@ -198,6 +198,16 @@ aircraft) and metadata appear-resolution (`tests/metadata/test_cache_latency.py`
 ≤ 1 ms per appear event — gated on the median round in CI and reported at the
 p99, for the reason §1 gives).
 
+On the client, the Live Map's frame-building budget is **≤ 10 ms median per
+frame at 500 aircraft** (`frontend/src/features/map/aircraft/frame.perf.test.ts`):
+the store → interpolation → icon → GeoJSON path the map runs at ~12.5 fps,
+leaving the renderer the rest of each frame. Since roadmap slice 085 the same
+test also builds every frame with all-aircraft trails on at their longest (499
+trails of 30 points, the selected aircraft drawing its track instead) and
+holds it to the same 10 ms — a trailed frame is still one frame. The GPU half
+of the frame is outside a jsdom run and belongs to the visual/performance
+suites.
+
 ---
 
 ## 3. The harness
@@ -298,8 +308,11 @@ cd backend && uv run pytest tests/perf
 `tests/perf/test_harness.py` drives a short smoke run of the whole pipeline at
 the full 500-aircraft population and asserts every hard gate. The gates are
 structural rather than statistical — a database round trip on the hot path or a
-lost delta batching blows through them on fifteen ticks exactly as on six
+lost delta batching blows through them on twenty-one ticks exactly as on six
 hundred — so a regression fails the required check on the PR that causes it.
+Twenty-one, because the per-tick gates take one sample a tick and a nearest-rank
+p95 is simply the maximum below twenty samples: at fifteen, one stalled
+shared-runner tick decided the verdict (issue #240).
 
 The **sustained** run is excluded from the default suite (`-m 'not load'`), and
 is the one marker in this repo that is. It catches what a short run cannot see

@@ -1,7 +1,15 @@
-import { ChevronLeft, ChevronRight, Menu, Radar, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Keyboard,
+  Menu,
+  Radar,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
+import { HealthStatusDot } from "@/components/shell/HealthStatusDot";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { NAV_ITEMS } from "@/components/shell/nav-items";
 import { useFocusTrap } from "@/components/shell/useFocusTrap";
@@ -13,10 +21,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useShortcutSheetStore } from "@/lib/shortcuts/useShortcutSheetStore";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/useUiStore";
 
-/** The seven-section nav list, shared between the desktop sidebar and the
+/** The primary-section nav list, shared between the desktop sidebar and the
  * mobile drawer. Desktop alone gets the `collapsed` icon-only variant with
  * tooltips — the mobile drawer, opened deliberately by tapping the rail's
  * menu button, always shows full labels. */
@@ -29,7 +38,9 @@ function NavList({ collapsed }: { collapsed: boolean }) {
           const link = (
             <NavLink
               to={item.to}
-              end={item.to === "/"}
+              // `/receiver` must not stay highlighted on `/receiver/feeders`,
+              // which is its own section (SPEC §10 amendment, 2026-09-28).
+              end={item.to === "/" || item.to === "/receiver"}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium outline-none transition-colors",
@@ -50,6 +61,11 @@ function NavList({ collapsed }: { collapsed: boolean }) {
                   <span className={collapsed ? "sr-only" : undefined}>
                     {item.label}
                   </span>
+                  {/* The roll-up health dot rides along with the Health
+                   * link itself — see `HealthStatusDot`'s own doc comment
+                   * for why it reuses the Health page's own hook rather
+                   * than computing a second opinion. */}
+                  {item.to === "/health" && <HealthStatusDot />}
                 </>
               )}
             </NavLink>
@@ -70,6 +86,28 @@ function NavList({ collapsed }: { collapsed: boolean }) {
         })}
       </ul>
     </nav>
+  );
+}
+
+/** The `?` sheet's visible control equivalent (SPEC §80: every shortcut
+ * needs one) — shared between the desktop footer and the mobile drawer, the
+ * same way `ThemeToggle` already is. */
+function ShortcutsButton({ collapsed }: { collapsed: boolean }) {
+  const openShortcutSheet = useShortcutSheetStore((state) => state.openSheet);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size={collapsed ? "icon" : "default"}
+      className={collapsed ? undefined : "w-full justify-start"}
+      onClick={openShortcutSheet}
+    >
+      <Keyboard className="size-4" aria-hidden="true" />
+      {!collapsed && <span>Keyboard shortcuts</span>}
+      <span className="sr-only">
+        {collapsed ? "Keyboard shortcuts" : "(press ?)"}
+      </span>
+    </Button>
   );
 }
 
@@ -207,6 +245,7 @@ export function Sidebar() {
 
               <div className="flex flex-col gap-2 p-2">
                 <ThemeToggle collapsed={false} />
+                <ShortcutsButton collapsed={false} />
               </div>
             </div>
           </>
@@ -248,6 +287,7 @@ export function Sidebar() {
         className={cn("flex flex-col gap-2 p-2", collapsed && "items-center")}
       >
         <ThemeToggle collapsed={collapsed} />
+        <ShortcutsButton collapsed={collapsed} />
         <Button
           type="button"
           variant="ghost"

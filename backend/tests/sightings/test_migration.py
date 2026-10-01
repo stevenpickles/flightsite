@@ -44,6 +44,8 @@ EXPECTED_AIRCRAFT_COLUMNS = {
     "lowest_alt_ms": "INTEGER",
     "highest_alt_ft": "INTEGER",
     "highest_alt_ms": "INTEGER",
+    # rev 0019 (slice 086): the airframe's last reported ADS-B emitter category.
+    "emitter_category": "TEXT",
 }
 
 EXPECTED_SIGHTING_COLUMNS = {

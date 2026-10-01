@@ -127,6 +127,57 @@ export function validateRouteTtlDays(raw: string): string | null {
 }
 
 /**
+ * Receiver self-alerts (roadmap slice 088). Bounds mirror `SelfAlertSettings`
+ * in `backend/src/flightsite/config/models.py` exactly.
+ */
+export const SELF_ALERT_SHARE_MIN_PCT = 5;
+export const SELF_ALERT_SHARE_MAX_PCT = 95;
+export const SELF_ALERT_RATE_MIN_MINUTES = 5;
+export const SELF_ALERT_DECODER_MIN_MINUTES = 1;
+export const SELF_ALERT_MAX_MINUTES = 240;
+
+function wholeNumberBetween(raw: string, min: number, max: number): boolean {
+  const value = parseNumber(raw);
+  return (
+    value !== null && Number.isInteger(value) && value >= min && value <= max
+  );
+}
+
+/** The share of the hour-of-week baseline below which the rate is "low". */
+export function validateSelfAlertSharePct(raw: string): string | null {
+  return wholeNumberBetween(
+    raw,
+    SELF_ALERT_SHARE_MIN_PCT,
+    SELF_ALERT_SHARE_MAX_PCT,
+  )
+    ? null
+    : `Enter a whole percentage between ${SELF_ALERT_SHARE_MIN_PCT} and ${SELF_ALERT_SHARE_MAX_PCT}.`;
+}
+
+/** How long the rate must stay low. At least five minutes: under that, a
+ * single quiet spell between two aircraft would be an "outage". */
+export function validateSelfAlertRateMinutes(raw: string): string | null {
+  return wholeNumberBetween(
+    raw,
+    SELF_ALERT_RATE_MIN_MINUTES,
+    SELF_ALERT_MAX_MINUTES,
+  )
+    ? null
+    : `Enter a whole number of minutes between ${SELF_ALERT_RATE_MIN_MINUTES} and ${SELF_ALERT_MAX_MINUTES}.`;
+}
+
+/** How long the decoder must be down before it is an alert. */
+export function validateSelfAlertDecoderMinutes(raw: string): string | null {
+  return wholeNumberBetween(
+    raw,
+    SELF_ALERT_DECODER_MIN_MINUTES,
+    SELF_ALERT_MAX_MINUTES,
+  )
+    ? null
+    : `Enter a whole number of minutes between ${SELF_ALERT_DECODER_MIN_MINUTES} and ${SELF_ALERT_MAX_MINUTES}.`;
+}
+
+/**
  * Feeders (roadmap slice 077, `docs/design/077-feeders-page.md`). Bounds and
  * shape rules mirror the design record's "Config" section and its `feeders:
  * poll_interval_s # 5–120` comment; the slug pattern, URL scheme check and

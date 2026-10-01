@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import { ShortcutSheet } from "@/components/shell/ShortcutSheet";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useLiveConnection } from "@/features/live/useLiveConnection";
 import { registerNavigator } from "@/lib/navigation";
+import { useKeyboardShortcuts } from "@/lib/shortcuts/useKeyboardShortcuts";
 
 /**
  * The app chrome — skip link, sidebar, main region — and, since ADR-0015, the
@@ -24,9 +26,15 @@ import { registerNavigator } from "@/lib/navigation";
  * It also lends the router to code that runs outside React (`lib/navigation`):
  * a clicked notification, delivered on whichever route the tab was parked on,
  * has to be able to bring it back to the Live Map.
+ *
+ * Since roadmap slice 082 it is also the one place `useKeyboardShortcuts` is
+ * mounted (same "works from any route, once per session" reasoning as the
+ * socket) and renders the `?` shortcut sheet, so both are available no
+ * matter which page a session is parked on.
  */
 export function AppShell() {
   useLiveConnection();
+  useKeyboardShortcuts();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   useEffect(() => {
@@ -58,6 +66,7 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+      <ShortcutSheet />
     </TooltipProvider>
   );
 }

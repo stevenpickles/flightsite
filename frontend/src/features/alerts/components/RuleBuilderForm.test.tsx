@@ -172,7 +172,7 @@ describe("RuleBuilderForm", () => {
       severity: "critical",
       enabled: true,
       conditions: {
-        version: 1,
+        version: 2,
         classification: {
           military: true,
           government: false,
@@ -224,7 +224,7 @@ describe("RuleBuilderForm", () => {
         id: 7,
         name: "Rare here",
         severity: "interesting",
-        conditions: { version: 1, rare_aircraft: { max_sightings: 2 } },
+        conditions: { version: 2, rare_aircraft: { max_sightings: 2 } },
       }),
     );
 
@@ -245,7 +245,7 @@ describe("RuleBuilderForm", () => {
       expect.objectContaining({
         name: "Rare here",
         severity: "interesting",
-        conditions: { version: 1, rare_aircraft: { max_sightings: 5 } },
+        conditions: { version: 2, rare_aircraft: { max_sightings: 5 } },
       }),
     );
   });

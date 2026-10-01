@@ -32,6 +32,13 @@ code rather than one shared ``emergency`` key is what makes an aircraft that
 squawks 7600 and later 7700 produce two matches — §4.3 names that as exactly
 the allowed "a newly matched higher-priority condition may notify again" path,
 and a shared key would collapse it into one.
+
+Slice 086 adds the decoder's emergency state as a second source, and keys it
+by *kind* rather than by source: the kinds a squawk also declares share that
+squawk's key (``nordo`` is ``emergency_7600``), so an aircraft squawking 7600
+while broadcasting ``nordo`` — which is what a transponder set to 7600 does —
+is one match, not two. Only the kinds no squawk can express get keys of their
+own (:func:`emergency_kind_builtin_key`).
 """
 
 from __future__ import annotations
@@ -93,14 +100,47 @@ EMERGENCY_MEANINGS: Final[MappingProxyType[str, str]] = MappingProxyType(
     }
 )
 
+#: The decoder's emergency states (slice 086) and what each one means, in the
+#: wording the reason string shows a user. The keys are
+#: :data:`flightsite.ingest.types.DECODER_EMERGENCIES`.
+DECODER_EMERGENCY_MEANINGS: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {
+        "general": "general emergency",
+        "lifeguard": "lifeguard / medical",
+        "minfuel": "minimum fuel",
+        "nordo": "no radio",
+        "unlawful": "unlawful interference",
+        "downed": "downed aircraft",
+    }
+)
+
 #: Prefix of a built-in emergency detector's ``alert_matches.builtin_key``.
 #: ``docs/DATA_MODEL.md`` §4.3 gives ``emergency_7700`` as its example.
 EMERGENCY_BUILTIN_PREFIX: Final = "emergency_"
 
+#: The emergency kinds a squawk can also declare, keyed to that squawk
+#: (slice 086). A kind a squawk can declare is keyed *by the squawk*, whichever
+#: source raised it: ``nordo`` from the decoder and 7600 on the transponder are
+#: one emergency, and one ``builtin_key`` is what makes the sighting's dedupe —
+#: and ``alert_matches``' unique index — treat them as one. It also keeps every
+#: key an earlier build wrote meaning what it meant.
+_SQUAWK_FOR_KIND: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {"unlawful": "7500", "nordo": "7600", "general": "7700"}
+)
+
 #: Every ``builtin_key`` this build can write, for the API's filter vocabulary
-#: and for the test that pins it.
+#: and for the test that pins it: one per squawk code, plus one per decoder
+#: kind no squawk declares (``emergency_downed``, ``emergency_lifeguard``,
+#: ``emergency_minfuel``).
 EMERGENCY_BUILTIN_KEYS: Final[tuple[str, ...]] = tuple(
-    f"{EMERGENCY_BUILTIN_PREFIX}{code}" for code in sorted(EMERGENCY_MEANINGS)
+    sorted(
+        {f"{EMERGENCY_BUILTIN_PREFIX}{code}" for code in EMERGENCY_MEANINGS}
+        | {
+            f"{EMERGENCY_BUILTIN_PREFIX}{kind}"
+            for kind in DECODER_EMERGENCY_MEANINGS
+            if kind not in _SQUAWK_FOR_KIND
+        }
+    )
 )
 
 #: The severity every emergency squawk fires at (SPEC §46: "emergency squawk to
@@ -114,11 +154,24 @@ def emergency_builtin_key(squawk: str) -> str:
     return f"{EMERGENCY_BUILTIN_PREFIX}{squawk}"
 
 
+def emergency_kind_builtin_key(kind: str) -> str:
+    """The ``builtin_key`` for an emergency *kind*, whichever source declared it.
+
+    ``nordo`` is ``emergency_7600`` — the key squawk 7600 has always had —
+    and ``minfuel``, which no squawk declares, is ``emergency_minfuel``. See
+    :data:`_SQUAWK_FOR_KIND` for why the two sources share keys.
+    """
+    squawk = _SQUAWK_FOR_KIND.get(kind)
+    return emergency_builtin_key(squawk if squawk is not None else kind)
+
+
 __all__ = [
+    "DECODER_EMERGENCY_MEANINGS",
     "EMERGENCY_BUILTIN_KEYS",
     "EMERGENCY_BUILTIN_PREFIX",
     "EMERGENCY_MEANINGS",
     "EMERGENCY_SEVERITY",
     "AlertSeverity",
     "emergency_builtin_key",
+    "emergency_kind_builtin_key",
 ]
