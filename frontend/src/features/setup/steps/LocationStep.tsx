@@ -156,7 +156,7 @@ export function LocationStep({ draft, onChange }: LocationStepProps) {
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="setup-antenna-height">
-            Antenna height (ft, optional)
+            Antenna height above ground (ft, optional)
           </Label>
           <Input
             id="setup-antenna-height"

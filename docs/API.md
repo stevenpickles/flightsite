@@ -272,7 +272,8 @@ restart a backend whose only problem is on the other end of the network.
 
 Non-secret receiver identity and configuration snapshot: site name, latitude,
 longitude, antenna height, configured timezone, units preference, display/alert
-radius, demo-mode flag, T0.
+radius, demo-mode flag, T0. `antenna_height_ft` is the antenna's height **above ground
+level** (`docs/CONFIGURATION.md`, `location`), `null` when not configured.
 
 ```json
 {
@@ -633,10 +634,15 @@ sighting is left out rather than represented by a position it never reported.
 **Distance.** `ground_distance_nm` is the great-circle distance from the receiver,
 measured exactly as every other receiver-relative range is. Results are ranked by
 `distance_nm`, which is the **slant** (line-of-sight) distance when the fix carries an
-altitude — ground distance and height above the antenna as the two legs of a flat right
-triangle, the height being the reported altitude minus the configured
-`antenna_height_ft` (or the altitude itself when that is unset) — and the ground
-distance when it does not (`distance_kind` says which). A missing altitude is unknown,
+altitude — ground distance and height above the receiver as the two legs of a flat
+right triangle — and the ground distance when it does not (`distance_kind` says
+which). The height is the fix's reported altitude as-is: `antenna_height_ft` is above
+*ground* level while the altitude is above *sea* level, and the site's own elevation —
+what would reconcile the two — is not stored, so nothing is subtracted (slice 087
+corrected an earlier version that subtracted the antenna height). For a site well
+above sea level this overstates the vertical leg by the site's elevation, which moves
+an aircraft directly overhead by at most that much; a future site-elevation setting
+would refine it. A missing altitude is unknown,
 not zero (§2.7). Ties go to the earlier fix, then the lower sighting id.
 
 **Which sightings are considered.** Sightings with a position whose span overlaps the
