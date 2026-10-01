@@ -46,18 +46,20 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flightsite.db import (
     Database,
     LifetimeStat,
+    RangeByBearingBandDaily,
     RangeByBearingDaily,
     ReceiverMetricDaily,
     ReceiverMetricHourly,
     ReceiverMetricRaw,
 )
+from flightsite.receiver_metrics.coverage import BandRange
 from flightsite.receiver_metrics.lifetime import (
     LifetimeDelta,
     LifetimeValue,
@@ -109,7 +111,10 @@ def _as_summary(row: Any) -> MetricSummary:
 
 @dataclass(frozen=True, slots=True)
 class MetricsRepository:
-    """Reads and writes the five tables of ``docs/DATA_MODEL.md`` §6."""
+    """Reads and writes the receiver-metric tables of ``docs/DATA_MODEL.md`` §6.
+
+    The five of slice 033, plus slice 087's banded range table (§6.3.1).
+    """
 
     database: Database
 
@@ -122,12 +127,14 @@ class MetricsRepository:
         delta: LifetimeDelta,
         *,
         at_ms: int,
+        band_ranges: Mapping[str, Sequence[BandRange]] | None = None,
     ) -> None:
         """Write one flush: raw samples, range records and lifetime increments.
 
-        ``ranges`` is keyed by receiver-local day, because that is the key the
-        table is bucketed on and the caller — which knows the configured
-        timezone — is where that conversion belongs.
+        ``ranges`` and ``band_ranges`` (slice 087) are keyed by receiver-local
+        day, because that is the key both tables are bucketed on and the
+        caller — which knows the configured timezone — is where that
+        conversion belongs.
 
         One transaction for all of it, and it either commits or raises. The
         caller keeps its in-memory state until this returns, so a raise means
@@ -139,6 +146,9 @@ class MetricsRepository:
             for day, records in ranges.items():
                 if records:
                     await self._merge_ranges(session, day, records)
+            for day, cells in (band_ranges or {}).items():
+                if cells:
+                    await self._merge_band_ranges(session, day, cells)
             if not delta.is_empty:
                 stored = await self._lifetime(session)
                 await self._write_lifetime(session, merged(stored, delta), at_ms=at_ms)
@@ -194,6 +204,53 @@ class MetricsRepository:
                     "icao24": statement.excluded.icao24,
                 },
                 where=statement.excluded.max_range_nm > RangeByBearingDaily.max_range_nm,
+            )
+        )
+
+    async def _merge_band_ranges(
+        self, session: AsyncSession, day: str, cells: Sequence[BandRange]
+    ) -> None:
+        """Fold one flush's banded cells into the day's rows (slice 087).
+
+        One multi-row upsert of at most 72 x 3 rows. On conflict the sample
+        counts add and the record moves only where it was beaten — the
+        :func:`~flightsite.receiver_metrics.coverage.merge_band_range` fold,
+        in SQL. The three record columns share one condition, evaluated
+        against the stored row before any assignment (SQLite evaluates every
+        ``SET`` expression first), so they can only move together: a range
+        from one aircraft with another's timestamp would be a record of
+        nothing.
+
+        The addition makes this write not idempotent, unlike
+        :meth:`_merge_ranges`, and it does not need to be: it runs inside the
+        one flush transaction, which either commits or leaves the caller's
+        buffer in place for the next flush, so a cell's samples land once.
+        """
+        rows = [
+            {
+                "day": day,
+                "bearing_bucket": cell.bearing_bucket,
+                "altitude_band": cell.band,
+                "max_range_nm": cell.record.max_range_nm,
+                "at_ms": cell.record.at_ms,
+                "icao24": cell.record.icao24,
+                "sample_count": cell.samples,
+            }
+            for cell in cells
+        ]
+        table = RangeByBearingBandDaily
+        statement = sqlite_insert(table).values(rows)
+        new = statement.excluded
+        beaten = new.max_range_nm > table.max_range_nm
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["day", "bearing_bucket", "altitude_band"],
+                set_={
+                    "max_range_nm": case((beaten, new.max_range_nm), else_=table.max_range_nm),
+                    "at_ms": case((beaten, new.at_ms), else_=table.at_ms),
+                    "icao24": case((beaten, new.icao24), else_=table.icao24),
+                    "sample_count": table.sample_count + new.sample_count,
+                },
             )
         )
 
@@ -335,6 +392,40 @@ class MetricsRepository:
             )
             for row in rows
         }
+
+    async def band_ranges_from(
+        self, from_day: str | None = None
+    ) -> tuple[tuple[str, BandRange], ...]:
+        """Every banded cell on or after ``from_day`` — all of them for ``None``.
+
+        Oldest day first, so a fold with
+        :func:`~flightsite.receiver_metrics.coverage.merge_band_range` resolves
+        a tie to the earlier detection. A 90-day window is at most ~19,000
+        rows, read once per coverage request. Reconstructed with the sector
+        midpoint as the bearing, as :meth:`ranges_for_day` does.
+        """
+        table = RangeByBearingBandDaily
+        statement = select(table).order_by(table.day, table.altitude_band, table.bearing_bucket)
+        if from_day is not None:
+            statement = statement.where(table.day >= from_day)
+        async with self.database.read_session() as session:
+            rows = (await session.scalars(statement)).all()
+        return tuple(
+            (
+                str(row.day),
+                BandRange(
+                    band=int(row.altitude_band),
+                    record=RangeRecord(
+                        bearing_deg=int(row.bearing_bucket) * 5.0 + 2.5,
+                        max_range_nm=float(row.max_range_nm),
+                        at_ms=int(row.at_ms),
+                        icao24=row.icao24,
+                    ),
+                    samples=int(row.sample_count),
+                ),
+            )
+            for row in rows
+        )
 
     async def lifetime(self) -> dict[str, LifetimeValue]:
         """Every lifetime record, keyed by statistic name."""

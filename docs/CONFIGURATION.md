@@ -208,12 +208,22 @@ decoder flavor.
 | `latitude` | float, −90…90 | `null` | |
 | `longitude` | float, −180…180 | `null` | |
 | `site_name` | string, ≤120 chars | `null` | |
-| `antenna_height_ft` | float, −1400…30000 | `null` | |
+| `antenna_height_ft` | float, −1400…30000 | `null` | Height of the antenna **above ground level**, ft |
 
 `latitude` and `longitude` must be **both set or both null**. This is the reference
 point for every distance, bearing, range ring, closest approach, farthest detection,
 coverage figure and alert radius — get it roughly right or those numbers are
 meaningless.
+
+`antenna_height_ft` is how high the antenna sits **above the ground at the site**
+(above ground level, AGL) — the height of the mast or roof, not the site's elevation
+above sea level. FlightSite does not store the site's ground elevation. The antenna
+height sets the radio horizon on the Receiver page's coverage chart (slice 087): unset,
+the horizon is shown as unknown and no obstruction findings are made. Because the
+ground elevation is unknown, aircraft altitudes (which are above sea level) are used
+as heights above the site wherever a height difference is needed — the coverage
+horizon and the "What was that?" slant distance (`docs/API.md` §3.7.1) — which is
+exact for a site at sea level and slightly generous for a high one.
 
 ### `sighting` — lifecycle timing (seconds)
 

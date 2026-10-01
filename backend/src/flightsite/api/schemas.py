@@ -642,6 +642,101 @@ class ReceiverRangeByBearing(_Model):
     ever: list[ReceiverBearingSector]
 
 
+#: ``GET /api/v1/receiver/coverage``'s window choices (slice 087).
+ReceiverCoverageWindow = Literal["7d", "30d", "90d", "all"]
+
+#: The altitude bands of the coverage analysis, by barometric altitude.
+ReceiverCoverageBandKey = Literal["below_10k", "10k_25k", "above_25k"]
+
+
+class ReceiverCoverageSector(_Model):
+    """One 5° sector of one altitude band over the window (§3.8, slice 087).
+
+    ``max_range_nm`` (and its ``at``/``icao``) is ``null`` when nothing in the
+    band was heard in this sector in the window — never ``0``. ``samples``
+    and ``days`` are real counts and are ``0`` then.
+    """
+
+    #: The sector's midpoint, degrees true; ``0`` is North, clockwise.
+    bearing_deg: float
+    max_range_nm: float | None = None
+    at: IsoTimestamp | None = None
+    icao: str | None = None
+    #: Receiver samples (one per ~15 s) that heard anything in this cell.
+    samples: int
+    #: Receiver-local days in the window with any data in this cell.
+    days: int
+    #: ``max_range_nm / horizon_nm``; ``null`` when either is unknown. Not
+    #: clamped — above 1 is a real observation.
+    share_of_horizon: float | None = None
+
+
+class ReceiverCoverageBand(_Model):
+    """One altitude band: its radio horizon and its 72 sectors."""
+
+    key: ReceiverCoverageBandKey
+    label: str
+    #: Inclusive lower edge, ft; ``null`` for the bottom band.
+    min_ft: float | None = None
+    #: Exclusive upper edge, ft; ``null`` for the top band.
+    max_ft: float | None = None
+    #: The altitude the horizon is computed for (the lower edge, or 3,000 ft).
+    reference_ft: float
+    #: 4/3-Earth radio horizon, nm; ``null`` when the antenna height is unset.
+    horizon_nm: float | None = None
+    sectors: list[ReceiverCoverageSector]
+
+
+class ReceiverCoverageCriteria(_Model):
+    """The documented thresholds a finding must meet."""
+
+    share_below: float
+    min_samples: int
+    min_days: int
+
+
+class ReceiverCoverageFinding(_Model):
+    """A run of adjacent sectors in one band that look obstructed."""
+
+    band: ReceiverCoverageBandKey
+    #: The run's first bearing and its exclusive end, degrees true. A run
+    #: through North has ``start_deg > end_deg`` (e.g. 350 to 10).
+    start_deg: float
+    end_deg: float
+    #: 16-point compass name of the run's middle bearing.
+    compass: str
+    max_range_nm: float
+    horizon_nm: float
+    share_of_horizon: float
+    samples: int
+    #: The fewest days any sector of the run was heard on.
+    days: int
+    #: A plain sentence in canonical units, e.g. "NE 40-60° reaches 58 % of
+    #: the radio horizon above 25,000 ft — likely obstruction".
+    message: str
+
+
+class ReceiverCoverage(_Model):
+    """``GET /api/v1/receiver/coverage`` — coverage by bearing and altitude band.
+
+    Roadmap slice 087 (issue #230). Always three bands of 72 sectors each, in
+    band then bucket order; ``findings`` is empty whenever the antenna height
+    is unset or nothing has enough evidence.
+    """
+
+    window: ReceiverCoverageWindow
+    #: First and last receiver-local day the window covers (``YYYY-MM-DD``).
+    #: ``from_day`` is ``null`` for ``window=all`` on an install with no data.
+    from_day: str | None = None
+    to_day: str
+    sector_width_deg: float
+    #: ``receiver.location.antenna_height_ft`` — above ground level.
+    antenna_height_ft: float | None = None
+    criteria: ReceiverCoverageCriteria
+    bands: list[ReceiverCoverageBand]
+    findings: list[ReceiverCoverageFinding] = Field(default_factory=list)
+
+
 class ReceiverSignalBucket(_Model):
     """One bar of the signal-strength distribution."""
 
@@ -1785,6 +1880,13 @@ __all__ = [
     "ReceiverBearingSector",
     "ReceiverBusiestDay",
     "ReceiverCommonRecord",
+    "ReceiverCoverage",
+    "ReceiverCoverageBand",
+    "ReceiverCoverageBandKey",
+    "ReceiverCoverageCriteria",
+    "ReceiverCoverageFinding",
+    "ReceiverCoverageSector",
+    "ReceiverCoverageWindow",
     "ReceiverFrequentAircraft",
     "ReceiverHealthLiteral",
     "ReceiverInfo",

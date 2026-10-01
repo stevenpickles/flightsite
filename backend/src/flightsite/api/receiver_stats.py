@@ -27,6 +27,10 @@ owns everything that data does not answer on its own:
   down to one all-time record per sector, using the same
   :func:`~flightsite.receiver_metrics.model.better_range` comparison
   production uses so the two can never disagree about what "further" means.
+* **The coverage window** (slice 087) — which receiver-local days
+  ``GET /api/v1/receiver/coverage?window=`` covers. The analysis itself (the
+  horizon, the window fold, the findings) is pure and lives in
+  :mod:`flightsite.receiver_metrics.coverage`.
 
 Every read here goes through :meth:`~flightsite.db.engine.Database.read_session`
 (ADR-0001), exactly like :mod:`flightsite.api.history` and
@@ -95,6 +99,33 @@ DEFAULT_LOOKBACK_MS: Final[Mapping[str, int]] = {
     "hourly": 7 * _MS_PER_DAY,
     "daily": 30 * _MS_PER_DAY,
 }
+
+
+#: Days covered by each ``GET /api/v1/receiver/coverage`` window, today
+#: included; ``None`` is every stored day. ``30d`` is the default: long enough
+#: for most sectors to meet the findings' evidence rule on an ordinary
+#: receiver, short enough that a newly fixed obstruction stops being reported
+#: within a month.
+COVERAGE_WINDOW_DAYS: Final[Mapping[str, int | None]] = {
+    "7d": 7,
+    "30d": 30,
+    "90d": 90,
+    "all": None,
+}
+DEFAULT_COVERAGE_WINDOW: Final = "30d"
+
+
+def coverage_from_day(window: str, today: str) -> str | None:
+    """The first receiver-local day ``window`` covers, ending on ``today``.
+
+    Whole local days, so "7d" is today and the six days before it — the same
+    calendar arithmetic as :func:`next_local_day`, with no timezone involved.
+    ``None`` for ``"all"``.
+    """
+    days = COVERAGE_WINDOW_DAYS[window]
+    if days is None:
+        return None
+    return (date.fromisoformat(today) - timedelta(days=days - 1)).isoformat()
 
 
 class ReceiverMetricQueryError(ValueError):
@@ -323,6 +354,8 @@ class ReceiverStatsRepository:
 
 
 __all__ = [
+    "COVERAGE_WINDOW_DAYS",
+    "DEFAULT_COVERAGE_WINDOW",
     "DEFAULT_LOOKBACK_MS",
     "DEFAULT_SIGNAL_BUCKET_WIDTH_DB",
     "MAX_SIGNAL_BUCKET_WIDTH_DB",
@@ -336,6 +369,7 @@ __all__ = [
     "ReceiverStatsRepository",
     "SignalHistogram",
     "SignalHistogramBucket",
+    "coverage_from_day",
     "ever_ranges",
     "next_local_day",
     "signal_histogram",

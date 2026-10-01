@@ -56,12 +56,27 @@ def _sql(statement: Any) -> str:
 
 
 async def _busiest_moment(database: Database) -> int:
-    """The start of a sighting from the middle of history: a moment with traffic."""
+    """The start of a positioned sighting from the middle of history.
+
+    Positioned, because the candidate reads keep only ``any_position = 1``
+    rows: the sighting whose start this returns is then its own candidate,
+    whatever else the generator happened to place nearby. (The smoke dataset
+    has ~40 sightings a day, so a +/-10 min window around an arbitrary
+    sighting can legitimately hold no positioned one at all — slice 087's
+    generator change rolled exactly that.)
+    """
     async with database.read_session() as session:
-        total = int((await session.execute(text("SELECT count(*) FROM sightings"))).scalar_one())
+        total = int(
+            (
+                await session.execute(text("SELECT count(*) FROM sightings WHERE any_position = 1"))
+            ).scalar_one()
+        )
         started = (
             await session.execute(
-                text("SELECT started_ms FROM sightings ORDER BY started_ms LIMIT 1 OFFSET :skip"),
+                text(
+                    "SELECT started_ms FROM sightings WHERE any_position = 1 "
+                    "ORDER BY started_ms LIMIT 1 OFFSET :skip"
+                ),
                 {"skip": total // 2},
             )
         ).scalar_one()

@@ -515,4 +515,25 @@ describe("ReceiverPage", () => {
 
     expect(await screen.findByText("Not computed yet")).toBeInTheDocument();
   });
+
+  it("shows the coverage-by-altitude card (slice 087), and keeps the rest of the page when its endpoint is missing", async () => {
+    installReceiverStatsApiMock({
+      scorecard: scorecard({ current_visible: 17 }),
+      coverage: "error",
+    });
+
+    renderApp("/receiver");
+
+    const coverageCard = await screen.findByRole("region", {
+      name: "Coverage by altitude",
+    });
+    expect(
+      await within(coverageCard).findByText(
+        /Coverage analysis is unavailable right now/,
+        {},
+        { timeout: 4000 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("17")).toBeInTheDocument();
+  });
 });

@@ -46,6 +46,7 @@ from flightsite.api.overhead import (
     overhead_payload,
 )
 from flightsite.api.receiver_stats import (
+    DEFAULT_COVERAGE_WINDOW,
     DEFAULT_SIGNAL_BUCKET_WIDTH_DB,
     MAX_SIGNAL_BUCKET_WIDTH_DB,
     MIN_SIGNAL_BUCKET_WIDTH_DB,
@@ -76,6 +77,8 @@ from flightsite.api.schemas import (
     FeedersResponse,
     InterestingAircraftResponse,
     OverheadResponse,
+    ReceiverCoverage,
+    ReceiverCoverageWindow,
     ReceiverInfo,
     ReceiverLifetimeStats,
     ReceiverMetricSeries,
@@ -300,6 +303,31 @@ async def receiver_range_by_bearing(request: Request) -> dict[str, Any]:
     for the receiver's whole lifetime.
     """
     return await _context(request).receiver_range_by_bearing()
+
+
+@router.get(
+    "/receiver/coverage",
+    response_model=ReceiverCoverage,
+    tags=["receiver"],
+    summary="Coverage by bearing and altitude band, against the radio horizon",
+)
+async def receiver_coverage(
+    request: Request,
+    window: Annotated[
+        ReceiverCoverageWindow,
+        Query(description="Whole receiver-local days ending today, or `all`."),
+    ] = DEFAULT_COVERAGE_WINDOW,
+) -> dict[str, Any]:
+    """Roadmap slice 087's coverage analysis — ``docs/API.md`` §3.8.
+
+    For each altitude band (below 10,000 ft, 10,000 to 25,000 ft, 25,000 ft
+    and above) and each 5° sector: the furthest detection in the window, the
+    evidence behind it, the band's 4/3-Earth radio horizon from the antenna
+    height above ground, and the share of it reached — plus findings for
+    well-observed sectors that fall short of 60 % of it. With no antenna
+    height configured every horizon is ``null`` and there are no findings.
+    """
+    return await _context(request).receiver_coverage(window=window)
 
 
 @router.get(

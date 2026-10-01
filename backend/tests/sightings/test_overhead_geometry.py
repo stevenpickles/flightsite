@@ -79,16 +79,23 @@ def test_a_fix_without_altitude_is_ranked_by_ground_distance() -> None:
     assert fix.distance_nm == fix.ground_distance_nm
 
 
-def test_the_antenna_height_is_subtracted_from_the_altitude() -> None:
-    at_antenna = fix_distance(
-        sample(0, north_nm=2.0, altitude_ft=1_200), RECEIVER, antenna_height_ft=1_200.0
-    )
-    at_sea_level = fix_distance(
-        sample(0, north_nm=2.0, altitude_ft=1_200), RECEIVER, antenna_height_ft=None
-    )
+def test_the_antenna_height_above_ground_is_not_subtracted_from_the_altitude() -> None:
+    """Slice 087: ``antenna_height_ft`` is above *ground*, the altitude above *sea level*.
 
-    assert at_antenna.distance_nm == pytest.approx(at_antenna.ground_distance_nm)
-    assert at_sea_level.distance_nm > at_antenna.distance_nm
+    Subtracting one from the other mixed datums, and the site's own
+    elevation — what would actually reconcile them — is not stored, so the
+    altitude is the height above the receiver as-is, with or without a
+    configured antenna height.
+    """
+    point = sample(0, north_nm=2.0, altitude_ft=1_200)
+    with_mast = fix_distance(point, RECEIVER, antenna_height_ft=1_200.0)
+    without = fix_distance(point, RECEIVER, antenna_height_ft=None)
+
+    assert with_mast.distance_nm == without.distance_nm
+    assert with_mast.distance_nm == pytest.approx(
+        math.hypot(with_mast.ground_distance_nm, 1_200 / FEET_PER_NM)
+    )
+    assert with_mast.distance_nm > with_mast.ground_distance_nm
 
 
 def test_ground_distance_is_the_live_stores_haversine() -> None:
