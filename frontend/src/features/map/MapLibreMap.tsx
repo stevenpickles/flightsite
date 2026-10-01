@@ -50,6 +50,10 @@ export interface MapLibreMapProps {
    * ref internally so passing a new function each render never tears
    * down and recreates the map (see the mount effect's `[]` deps). */
   onMapClick?: (position: { lat: number; lon: number }) => void;
+  /** The map's accessible name, when it is not the Live Map — the alert
+   * rule builder's area editor (slice 089) names what the map is *for*.
+   * Defaults to the Live Map's receiver-centred label. */
+  ariaLabel?: string;
   /** Overlays that attach to the map imperatively (the aircraft layer) and
    * chrome positioned over it. Rendered inside the map's relative wrapper
    * and given the instance through `MapInstanceContext`. */
@@ -104,6 +108,7 @@ export function MapLibreMap({
   basemap,
   className,
   onMapClick,
+  ariaLabel,
   children,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -388,9 +393,10 @@ export function MapLibreMap({
           data-testid="maplibre-container"
           role="application"
           aria-label={
-            config.receiverConfigured
+            ariaLabel ??
+            (config.receiverConfigured
               ? `Live map centered on ${config.receiver.label}`
-              : "Live map — receiver location not configured"
+              : "Live map — receiver location not configured")
           }
         />
         {tilesUnavailable && !mapUnsupported && (
