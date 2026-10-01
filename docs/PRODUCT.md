@@ -180,6 +180,24 @@ information. No period-over-period comparison in v1.
 - Charts: messages/sec and positions/sec over time, simultaneous aircraft, unique
   aircraft per day, maximum range over time, signal-strength distribution,
   maximum-range-by-bearing polar plot, daily message/position totals (§62).
+- **Coverage by altitude** (slice 087, issue #230): a polar chart of the furthest
+  aircraft heard in each 5° direction for one altitude band at a time — below
+  10,000 ft, 10,000–25,000 ft, 25,000 ft and above (barometric) — over the last
+  7/30/90 days or all time, with that band's **radio horizon** drawn as a ring: how far
+  an aircraft at the band's lower edge (3,000 ft for the bottom band) could be heard
+  over the curve of the Earth from an antenna of the configured height above ground
+  (4/3-Earth model, d ≈ 1.23 × (√h_antenna + √h_aircraft) nm). Below the chart, the
+  band's **likely obstructions**: runs of directions that reach under 60 % of the
+  horizon, each as a plain sentence ("NE 40–60° reaches 58 % of the radio horizon
+  above 25,000 ft — likely obstruction"). A direction is only judged once it has at
+  least 30 samples (about 7.5 minutes of traffic) on at least 3 days in that band, so
+  a quiet sky is never reported as a hill; a direction nothing was heard in is never
+  a finding. Without an antenna height the chart still shows what was heard and asks
+  for the height ("Set the antenna height in Settings to see the radio horizon");
+  before any data it says it is still learning. The horizon assumes the site is at
+  sea level — FlightSite does not store the ground elevation — which makes it a
+  little generous for a high site; a future site-elevation setting would refine it.
+  This is a Receiver-page chart, not a map layer (§33).
 - Lifetime statistics since T0 (§63). Decoder-native statistics consumed when
   available; unsupported metrics gracefully hidden (§60).
 - Metric retention: high-resolution window (14-day default, configurable 7–30 days)
