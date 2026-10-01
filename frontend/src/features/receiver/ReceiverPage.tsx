@@ -1,7 +1,8 @@
 /**
  * The Receiver page (roadmap slice 034): scorecard (SPEC §61), charts
  * (SPEC §62, including the range-by-bearing polar plot and the signal-
- * strength distribution), and lifetime statistics (SPEC §63).
+ * strength distribution), coverage by altitude band against the radio
+ * horizon (roadmap slice 087), and lifetime statistics (SPEC §63).
  */
 import { Stethoscope } from "lucide-react";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import {
   useReceiverRangeByBearingQuery,
 } from "@/lib/api/receiverStats";
 import { useReceiverQuery } from "@/lib/api/receiver";
+import { CoverageChart } from "@/features/receiver/components/CoverageChart";
 import { FeedersSummaryCard } from "@/features/receiver/components/FeedersSummaryCard";
 import { LifetimeStatsSection } from "@/features/receiver/components/LifetimeStatsSection";
 import { RangeByBearingChart } from "@/features/receiver/components/RangeByBearingChart";
@@ -117,6 +119,12 @@ export function ReceiverPage() {
           />
         ))}
       </div>
+
+      {/* Roadmap slice 087: its own row, full width — it carries a band
+          selector, a window selector and a findings list, which a half-width
+          grid cell would crowd. It keeps its own window: coverage is read
+          over days to weeks, not the 24h the charts above default to. */}
+      <CoverageChart units={units} />
 
       <LifetimeStatsSection units={units} timezone={timezone} />
     </div>

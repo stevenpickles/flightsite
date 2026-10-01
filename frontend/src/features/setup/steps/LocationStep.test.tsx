@@ -108,6 +108,14 @@ describe("LocationStep", () => {
     expect(screen.getByText(/between -1400 and 30000/i)).toBeInTheDocument();
   });
 
+  it("labels the antenna height as height above ground level (slice 087)", () => {
+    render(<LocationStep draft={draft} onChange={vi.fn()} />);
+
+    expect(
+      screen.getByLabelText("Antenna height above ground (ft, optional)"),
+    ).toBeInTheDocument();
+  });
+
   it("accepts a blank antenna height", () => {
     render(
       <LocationStep

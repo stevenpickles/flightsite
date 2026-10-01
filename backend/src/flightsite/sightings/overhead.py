@@ -35,15 +35,28 @@ fix, from :mod:`flightsite.live.geo` — the same haversine every other
 receiver-relative figure uses, so this number and the sighting's
 ``closest_approach_nm`` are measured the same way. When the fix carries an
 altitude, ``distance_nm`` is the **slant** (line-of-sight) distance: the
-ground distance and the height of the aircraft above the antenna, combined
-as the two legs of a right triangle. Height above the antenna is the fix's
-reported altitude minus the configured ``antenna_height_ft`` (``location``
-settings, an elevation above mean sea level — its -1 400 ft floor is the Dead
-Sea shore), or the altitude itself when no antenna height is configured. The
-triangle is flat: across the tens of miles that matter for "overhead", Earth
-curvature changes the result by well under a percent. The reported altitude
-is barometric, so the height is approximate in the same way every altitude
-on the map is.
+ground distance and the height of the aircraft above the receiver, combined
+as the two legs of a right triangle.
+
+The height is the fix's reported altitude **as-is**. It should be the
+aircraft's altitude minus the antenna's own elevation above sea level, but
+FlightSite does not know that elevation: ``location.antenna_height_ft`` is
+the antenna's height *above ground level* (owner decision, 2026-09-30, slice
+087), and the ground's own elevation is not stored. Subtracting a height
+above ground from an altitude above sea level — what this module first did —
+mixes two datums, so the altitude is used unadjusted instead, which treats
+the site as if it were at sea level. For the closest passes this ranks, the
+error is the site's elevation in the vertical leg only: a 1,000 ft site
+overstates the slant distance of an aircraft directly overhead by 1,000 ft
+(0.16 nm) and of one a few miles out by far less. A future site-elevation
+setting would subtract it here. ``antenna_height_ft`` is still accepted and
+passed through, so that refinement is a change to one expression rather
+than to every caller.
+
+The triangle is flat: across the tens of miles that matter for "overhead",
+Earth curvature changes the result by well under a percent. The reported
+altitude is barometric, so the height is approximate in the same way every
+altitude on the map is.
 
 A fix with no altitude (on the ground, or a decoder that reported none) is
 ranked by its ground distance and says so (``distance_kind="ground"``): a
@@ -92,8 +105,8 @@ def slant_distance_nm(ground_nm: float, height_ft: float) -> float:
     """Line-of-sight distance from a ground distance and a height difference.
 
     A flat right triangle — see the module docstring for why curvature is
-    ignored. The height may be negative (an aircraft below a hilltop
-    antenna); only its magnitude matters.
+    ignored. The height may be negative (a barometric altitude below sea
+    level); only its magnitude matters.
     """
     return math.hypot(ground_nm, height_ft / FEET_PER_NM)
 
@@ -101,15 +114,18 @@ def slant_distance_nm(ground_nm: float, height_ft: float) -> float:
 def fix_distance(
     sample: TrackSample, receiver: Position, *, antenna_height_ft: float | None
 ) -> ClosestFix:
-    """Measure one stored point from the receiver."""
+    """Measure one stored point from the receiver.
+
+    ``antenna_height_ft`` (above ground level) is deliberately not applied —
+    see "Distance" in the module docstring.
+    """
     target = Position(latitude=sample.latitude, longitude=sample.longitude)
     ground = distance_nm(receiver, target)
     kind: DistanceKind
     if sample.altitude_ft is None:
         ranked, kind = ground, "ground"
     else:
-        height = sample.altitude_ft - (antenna_height_ft or 0.0)
-        ranked, kind = slant_distance_nm(ground, height), "slant"
+        ranked, kind = slant_distance_nm(ground, float(sample.altitude_ft)), "slant"
     return ClosestFix(
         ts_ms=sample.ts_ms,
         latitude=sample.latitude,

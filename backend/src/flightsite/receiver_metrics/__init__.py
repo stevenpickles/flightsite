@@ -18,7 +18,8 @@ Module                                         Responsibility
 :mod:`~flightsite.receiver_metrics.sampler`    FlightSite-computed metrics
 :mod:`~flightsite.receiver_metrics.aggregate`  downsampling arithmetic (pure)
 :mod:`~flightsite.receiver_metrics.lifetime`   records pruning may not lose
-:mod:`~flightsite.receiver_metrics.repository` the five tables of §6
+:mod:`~flightsite.receiver_metrics.coverage`   bearing x altitude band (087)
+:mod:`~flightsite.receiver_metrics.repository` the tables of §6
 :mod:`~flightsite.receiver_metrics.service`    the poller and maintenance tasks
 ============================================== =====================================
 

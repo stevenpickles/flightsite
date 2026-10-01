@@ -2630,7 +2630,7 @@ slices:
     title: "Coverage analysis and obstruction finder"
     phase: 9
     branch: "087-coverage-analysis"
-    status: planned
+    status: merged
     depends_on: ["086"]
     objective: "Show how far the receiver hears in every direction at each altitude band, how that compares with the theoretical radio horizon, and which sectors look obstructed (issue #230)."
     scope:

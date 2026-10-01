@@ -719,6 +719,45 @@ CREATE TABLE range_by_bearing_daily (
 ) WITHOUT ROWID;
 ```
 
+### 6.3.1 `range_by_bearing_band_daily` (slice 087)
+
+§6.3's record split by altitude band, for the Receiver page's coverage-by-altitude
+chart and obstruction finder (issue #230). One row per receiver-local day, 5° sector
+and band that heard anything; at most 72 × 3 = 216 rows a day (≈ 79k rows/yr at that
+ceiling, ~4 MB/yr at §6.3's ~46 B/row), kept **indefinitely** like §6.3 — it is the
+only record of how far the receiver heard at each altitude, and nothing could rebuild
+it.
+
+```sql
+CREATE TABLE range_by_bearing_band_daily (
+  day            TEXT NOT NULL,            -- receiver-local YYYY-MM-DD (§10)
+  bearing_bucket INTEGER NOT NULL,         -- 0..71 (bucket * 5 deg)
+  altitude_band  INTEGER NOT NULL,         -- 0: < 10,000 ft, 1: 10,000-25,000 ft,
+                                           -- 2: >= 25,000 ft (barometric)
+  max_range_nm   REAL NOT NULL,
+  at_ms          INTEGER NOT NULL,
+  icao24         TEXT,                     -- who set it
+  sample_count   INTEGER NOT NULL,         -- receiver samples that heard this cell
+  PRIMARY KEY (day, bearing_bucket, altitude_band)
+) WITHOUT ROWID;
+```
+
+- **Bands** are half-open on barometric altitude (exactly 10,000 ft is band 1). An
+  aircraft with no barometric altitude (on the ground, or none reported) is in no band
+  and is not counted here, though it still counts toward §6.3.
+- **Written** by the receiver-metrics service exactly as §6.3 is: each ~15 s sample
+  yields the furthest aircraft per occupied (sector, band) cell; the service folds
+  them per receiver-local day (resolved from the live zone on every sample) between
+  flushes; each flush lands in the existing flush transaction as one multi-row upsert
+  that keeps the further record (range, moment and airframe move together) and adds
+  the sample counts. Never on the ingestion path.
+- **`sample_count`** is the number of samples — not aircraft — that heard the cell:
+  two aircraft in one sector at one instant are one sample. It is the evidence the
+  obstruction finder's minimum (30 samples on 3 days, `docs/API.md` §3.9) is judged
+  on.
+- **Timezone changes** leave existing rows under the day they were written, as §6.3
+  does (§10).
+
 ### 6.4 `lifetime_stats`
 
 Rolling since-T0 aggregates and records (SPEC §63) that must survive all pruning.
@@ -1032,7 +1071,7 @@ The API composes these into per-field provenance for the detail UI.
 
 | Table | Retention |
 |---|---|
-| aircraft, sightings, sighting_tracks, sighting_events, milestones, activity_events, lifetime_stats, daily_* rollups, type_stats, range_by_bearing_daily | **Indefinite** (until user reset) |
+| aircraft, sightings, sighting_tracks, sighting_events, milestones, activity_events, lifetime_stats, daily_* rollups, type_stats, range_by_bearing_daily, range_by_bearing_band_daily | **Indefinite** (until user reset) |
 | sighting_track_checkpoints | Deleted at sighting close / recovery (bounded by concurrent traffic) |
 | receiver_metrics_raw | High-res window, default **14 days** (7–30 configurable) |
 | receiver_metrics_hourly/daily | Indefinite |
@@ -1071,6 +1110,7 @@ visible.
 | alert_matches (~100/day) | ~37k | ~125 B | ~5 MB |
 | receiver_metrics_raw | steady-state 14 d × 5,760/day ≈ 81k rows | ~70 B | ~6 MB steady |
 | hourly + daily + rollups + bearing | < 60k | small | < 5 MB |
+| banded bearing (§6.3.1, slice 087) | ≤ 79k (216/day ceiling) | ~46 B | ≤ 4 MB |
 
 **Scenario A total ≈ 1.7 GB/year** (measured: **1.68**) → a 3-year database is
 **~5 GB** (measured: 5.03 GB). Comfortable on any Pi 4 storage, but not the 3–4 GB
@@ -1139,8 +1179,8 @@ storage remedy.
   do this — the correct day for a sighting depends on the configured zone and on the
   sightings themselves, and the fold that produces a row is Python, not SQL. Daily
   receiver summaries (§6.2) are re-derived for the days the raw tier still retains;
-  older ones, and `range_by_bearing_daily` (§6.3), keep the key they were written
-  under, because their source rows no longer exist and a guessed shift would be
+  older ones, and `range_by_bearing_daily` (§6.3) and `range_by_bearing_band_daily`
+  (§6.3.1), keep the key they were written under, because their source rows no longer exist and a guessed shift would be
   worse than an honest one-day seam.
 - "Today at a Glance" and analytics presets resolve their ranges in receiver-local
   time, then query UTC columns via computed boundaries.
@@ -1198,3 +1238,4 @@ field names; ingest normalizes before anything is persisted.
 | 077 | `feeder_episodes`, `feeder_samples` (rev 0017 — two new tables, no data movement; §6.6) |
 | 083 | `ix_amr_registration_nocase`, `ix_amr_operator_nocase`, `ix_sightings_callsign`, `ix_sightings_callsign_first` (rev 0018 — four indexes for the list pages' `q` search, no data movement) |
 | 086 | `aircraft` gains `emitter_category` (rev 0019 — one nullable `TEXT` column by plain `ADD COLUMN`, no rebuild, no data movement; the downgrade drops it the same way) |
+| 087 | `range_by_bearing_band_daily` (rev 0020 — one new `WITHOUT ROWID` table, no backfill and no data movement; history starts on upgrade; §6.3.1) |

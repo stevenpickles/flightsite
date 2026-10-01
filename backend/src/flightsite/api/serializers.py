@@ -141,6 +141,14 @@ from flightsite.ingest import Position
 from flightsite.live import LiveAircraft, LiveCounts
 from flightsite.metadata.cache import AircraftMetadataView
 from flightsite.receiver_metrics import LifetimeValue, MetricSample
+from flightsite.receiver_metrics.coverage import (
+    ALTITUDE_BANDS,
+    FINDING_SHARE_THRESHOLD,
+    MIN_FINDING_DAYS,
+    MIN_FINDING_SAMPLES,
+    CoverageCell,
+    Finding,
+)
 from flightsite.receiver_metrics.model import (
     BEARING_BUCKETS,
     BEARING_SECTOR_DEG,
@@ -595,6 +603,86 @@ def receiver_range_by_bearing_payload(
         sectors_today.append(_bearing_sector_payload(today.get(bucket), bearing_deg=bearing_deg))
         sectors_ever.append(_bearing_sector_payload(ever.get(bucket), bearing_deg=bearing_deg))
     return {"sector_width_deg": BEARING_SECTOR_DEG, "today": sectors_today, "ever": sectors_ever}
+
+
+def _coverage_sector_payload(cell: CoverageCell, horizon_nm: float | None) -> dict[str, Any]:
+    record = cell.record
+    return {
+        "bearing_deg": cell.bearing_bucket * BEARING_SECTOR_DEG + BEARING_SECTOR_DEG / 2,
+        "max_range_nm": None if record is None else record.max_range_nm,
+        "at": None if record is None else iso_utc(from_epoch_ms(record.at_ms)),
+        "icao": None if record is None else record.icao24,
+        "samples": cell.samples,
+        "days": cell.days,
+        "share_of_horizon": cell.share_of(horizon_nm),
+    }
+
+
+def receiver_coverage_payload(
+    *,
+    window: str,
+    from_day: str | None,
+    to_day: str,
+    antenna_height_ft: float | None,
+    cells: Mapping[tuple[int, int], CoverageCell],
+    horizons: Mapping[int, float | None],
+    findings: Sequence[Finding],
+) -> dict[str, Any]:
+    """``GET /api/v1/receiver/coverage`` — slice 087's banded coverage.
+
+    Like :func:`receiver_range_by_bearing_payload`, every band always carries
+    all :data:`~flightsite.receiver_metrics.model.BEARING_BUCKETS` sectors in
+    bucket order, so an unheard sector is an entry with ``null`` range rather
+    than a gap the frontend has to fill.
+    """
+    bands = []
+    for band in ALTITUDE_BANDS:
+        horizon = horizons.get(band.index)
+        bands.append(
+            {
+                "key": band.key,
+                "label": band.label,
+                "min_ft": band.min_ft,
+                "max_ft": band.max_ft,
+                "reference_ft": band.reference_ft,
+                "horizon_nm": horizon,
+                "sectors": [
+                    _coverage_sector_payload(
+                        cells.get((band.index, bucket), CoverageCell(band.index, bucket)),
+                        horizon,
+                    )
+                    for bucket in range(BEARING_BUCKETS)
+                ],
+            }
+        )
+    return {
+        "window": window,
+        "from_day": from_day,
+        "to_day": to_day,
+        "sector_width_deg": BEARING_SECTOR_DEG,
+        "antenna_height_ft": antenna_height_ft,
+        "criteria": {
+            "share_below": FINDING_SHARE_THRESHOLD,
+            "min_samples": MIN_FINDING_SAMPLES,
+            "min_days": MIN_FINDING_DAYS,
+        },
+        "bands": bands,
+        "findings": [
+            {
+                "band": finding.band.key,
+                "start_deg": finding.start_deg,
+                "end_deg": finding.end_deg,
+                "compass": finding.compass,
+                "max_range_nm": finding.max_range_nm,
+                "horizon_nm": finding.horizon_nm,
+                "share_of_horizon": finding.share,
+                "samples": finding.samples,
+                "days": finding.days,
+                "message": finding.message,
+            }
+            for finding in findings
+        ],
+    }
 
 
 def receiver_signal_distribution_payload(
@@ -1315,6 +1403,7 @@ __all__ = [
     "iso_utc",
     "lifetime_payload",
     "no_airport_names",
+    "receiver_coverage_payload",
     "receiver_lifetime_stats_payload",
     "receiver_metric_series_payload",
     "receiver_payload",

@@ -272,7 +272,8 @@ restart a backend whose only problem is on the other end of the network.
 
 Non-secret receiver identity and configuration snapshot: site name, latitude,
 longitude, antenna height, configured timezone, units preference, display/alert
-radius, demo-mode flag, T0.
+radius, demo-mode flag, T0. `antenna_height_ft` is the antenna's height **above ground
+level** (`docs/CONFIGURATION.md`, `location`), `null` when not configured.
 
 ```json
 {
@@ -633,10 +634,15 @@ sighting is left out rather than represented by a position it never reported.
 **Distance.** `ground_distance_nm` is the great-circle distance from the receiver,
 measured exactly as every other receiver-relative range is. Results are ranked by
 `distance_nm`, which is the **slant** (line-of-sight) distance when the fix carries an
-altitude — ground distance and height above the antenna as the two legs of a flat right
-triangle, the height being the reported altitude minus the configured
-`antenna_height_ft` (or the altitude itself when that is unset) — and the ground
-distance when it does not (`distance_kind` says which). A missing altitude is unknown,
+altitude — ground distance and height above the receiver as the two legs of a flat
+right triangle — and the ground distance when it does not (`distance_kind` says
+which). The height is the fix's reported altitude as-is: `antenna_height_ft` is above
+*ground* level while the altitude is above *sea* level, and the site's own elevation —
+what would reconcile the two — is not stored, so nothing is subtracted (slice 087
+corrected an earlier version that subtracted the antenna height). For a site well
+above sea level this overstates the vertical leg by the site's elevation, which moves
+an aircraft directly overhead by at most that much; a future site-elevation setting
+would refine it. A missing altitude is unknown,
 not zero (§2.7). Ties go to the earlier fix, then the lower sighting id.
 
 **Which sightings are considered.** Sightings with a position whose span overlaps the
@@ -758,6 +764,7 @@ carries a model, and always `null` for an operator group.
 | `GET /api/v1/receiver/metrics` | One time-series chart. Params: `metric`, `resolution=high\|hourly\|daily` (default `hourly`), `from`/`to`. |
 | `GET /api/v1/receiver/range-by-bearing` | Polar max-range histogram (buckets of bearing → max nm). |
 | `GET /api/v1/receiver/signal-distribution` | RSSI distribution histogram, derived from per-sighting `rssi_*_db` reception stats over the selected window. |
+| `GET /api/v1/receiver/coverage` | Coverage by bearing and altitude band against the radio horizon, plus likely-obstruction findings (slice 087). Param: `window=7d\|30d\|90d\|all` (default `30d`). |
 | `GET /api/v1/receiver/lifetime` | SPEC §63 lifetime statistics since T0. |
 
 **The scorecard's "today" figures are null-honest and never rollup-backed**
@@ -787,6 +794,86 @@ combination is a `400`, not an empty series:
 - `unique_aircraft` is `daily` only.
 - `messages_total` and `positions_total` are `hourly` or `daily` only.
 - `from` later than `to` returns `400 invalid_range`.
+
+#### 3.9.1 Coverage by altitude band — slice 087
+
+`GET /api/v1/receiver/coverage?window=30d`
+
+How far the receiver hears in each 5° direction at each altitude band, compared with
+the radio horizon, and which directions look obstructed (issue #230). Read from the
+daily rollup `range_by_bearing_band_daily` (`docs/DATA_MODEL.md` §6.3.1).
+
+- **`window`** — `7d`, `30d` (default), `90d` or `all`: whole **receiver-local** days
+  ending today (`7d` is today and the six days before it). Anything else is `422`.
+  `from_day`/`to_day` echo the local calendar days covered; `from_day` is the first
+  stored day for `all`, or `null` when nothing is stored.
+- **`bands`** — always three, in order `below_10k` (< 10,000 ft), `10k_25k`
+  (10,000–25,000 ft), `above_25k` (≥ 25,000 ft), by barometric altitude; aircraft with
+  no altitude are in none. Each carries `min_ft`/`max_ft` (`null` = unbounded),
+  `reference_ft`, `horizon_nm`, and always **72 sectors** in bucket order.
+- **Sector** — `bearing_deg` (midpoint), `max_range_nm` with the `at`/`icao` that set
+  it, `samples` (receiver samples, one per ~15 s, that heard anything in the cell,
+  summed over the window), `days` (local days with any data) and `share_of_horizon`
+  (`max_range_nm / horizon_nm`, not clamped — above 1 is a real observation). A sector
+  nothing was heard in has `max_range_nm`, `at`, `icao` and `share_of_horizon`
+  **`null`** and zero counts — never a `0` nm range.
+- **Radio horizon** — the 4/3-Earth line-of-sight distance
+  `horizon_nm = 1.23 × (√antenna_height_ft + √reference_ft)`, with
+  `antenna_height_ft` above ground level (`receiver.location`, echoed as
+  `antenna_height_ft`). `reference_ft` is the band's lower edge — 10,000 and 25,000 ft
+  — and 3,000 ft for the bottom band, whose 0 ft edge would judge it by the antenna's
+  own few-mile horizon: a sector short of the lower-edge horizon is short for every
+  aircraft in the band. The aircraft's height should be above the *site's* ground,
+  but the site elevation is not stored, so `reference_ft` is used as-is — exact at sea
+  level, about 4 nm generous at 25,000 ft for a 1,000 ft site. **With no antenna
+  height configured every `horizon_nm` is `null`** (Unknown), every
+  `share_of_horizon` is `null` and `findings` is empty.
+- **`criteria`** — the documented finding rule: `share_below: 0.6`,
+  `min_samples: 30`, `min_days: 3`.
+- **`findings`** — runs of adjacent sectors in one band (wrapping through North) in
+  which **every** sector has `share_of_horizon < 0.6`, at least `min_samples` samples
+  and data on at least `min_days` days. A sector with no data is never part of a
+  finding (nothing distinguishes "blocked" from "no traffic" there). Highest band
+  first, then by bearing. Each has `band`, `start_deg`/`end_deg` (end exclusive; a run
+  through North has `start_deg > end_deg`, e.g. 350 → 10), `compass` (16-point name of
+  the middle bearing), `max_range_nm` (the furthest anywhere in the run) and
+  `share_of_horizon` from it, `horizon_nm`, `samples` (summed), `days` (the fewest of
+  any sector — the weakest evidence) and `message`, a canonical-units sentence such
+  as `"NE 40–60° reaches 58 % of the radio horizon above 25,000 ft — likely
+  obstruction"`. A run covering all 72 sectors reads as a receiver-wide limit
+  (antenna, cable or gain) rather than an obstruction.
+
+```json
+{
+  "window": "30d",
+  "from_day": "2026-09-01",
+  "to_day": "2026-09-30",
+  "sector_width_deg": 5.0,
+  "antenna_height_ft": 25.0,
+  "criteria": { "share_below": 0.6, "min_samples": 30, "min_days": 3 },
+  "bands": [
+    {
+      "key": "above_25k", "label": "25,000 ft and above",
+      "min_ft": 25000.0, "max_ft": null, "reference_ft": 25000.0,
+      "horizon_nm": 200.6,
+      "sectors": [
+        { "bearing_deg": 2.5, "max_range_nm": 187.4, "at": "2026-09-21T14:03:11.000Z",
+          "icao": "a4b2c1", "samples": 1840, "days": 30, "share_of_horizon": 0.934 },
+        { "bearing_deg": 7.5, "max_range_nm": null, "at": null, "icao": null,
+          "samples": 0, "days": 0, "share_of_horizon": null }
+      ]
+    }
+  ],
+  "findings": [
+    { "band": "above_25k", "start_deg": 40.0, "end_deg": 60.0, "compass": "NE",
+      "max_range_nm": 116.3, "horizon_nm": 200.6, "share_of_horizon": 0.58,
+      "samples": 912, "days": 21,
+      "message": "NE 40–60° reaches 58 % of the radio horizon above 25,000 ft — likely obstruction" }
+  ]
+}
+```
+
+(Abridged: the real payload has all three bands and 72 sectors in each.)
 
 ### 3.10 Activity & alert history — slices 035/038
 
