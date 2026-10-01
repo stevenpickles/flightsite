@@ -1,6 +1,8 @@
 import { vi } from "vitest";
 
 import type {
+  ReceiverCoverage,
+  ReceiverCoverageBandKey,
   ReceiverLifetimeStats,
   ReceiverMetricSeries,
   ReceiverRangeByBearing,
@@ -79,6 +81,78 @@ export function rangeByBearing(
   };
 }
 
+/** `GET /api/v1/receiver/coverage`'s shape: three bands of 72 sectors.
+ * Every sector defaults to no data and the antenna height to unset; pass
+ * `ranges` (band -> bucket -> nm) for the sectors a test cares about. */
+export function coverage(
+  overrides: {
+    antennaHeightFt?: number | null;
+    horizons?: Partial<Record<ReceiverCoverageBandKey, number>>;
+    ranges?: Partial<Record<ReceiverCoverageBandKey, Record<number, number>>>;
+  } & Partial<Pick<ReceiverCoverage, "findings" | "window">> = {},
+): ReceiverCoverage {
+  const bands: Array<{
+    key: ReceiverCoverageBandKey;
+    label: string;
+    min_ft: number | null;
+    max_ft: number | null;
+    reference_ft: number;
+  }> = [
+    {
+      key: "below_10k",
+      label: "Below 10,000 ft",
+      min_ft: null,
+      max_ft: 10000,
+      reference_ft: 3000,
+    },
+    {
+      key: "10k_25k",
+      label: "10,000 to 25,000 ft",
+      min_ft: 10000,
+      max_ft: 25000,
+      reference_ft: 10000,
+    },
+    {
+      key: "above_25k",
+      label: "25,000 ft and above",
+      min_ft: 25000,
+      max_ft: null,
+      reference_ft: 25000,
+    },
+  ];
+  const antenna = overrides.antennaHeightFt ?? null;
+  return {
+    window: overrides.window ?? "30d",
+    from_day: "2026-09-01",
+    to_day: "2026-09-30",
+    sector_width_deg: 5,
+    antenna_height_ft: antenna,
+    criteria: { share_below: 0.6, min_samples: 30, min_days: 3 },
+    bands: bands.map((band) => {
+      const horizon =
+        antenna === null ? null : (overrides.horizons?.[band.key] ?? null);
+      return {
+        ...band,
+        horizon_nm: horizon,
+        sectors: Array.from({ length: 72 }, (_, bucket) => {
+          const value = overrides.ranges?.[band.key]?.[bucket];
+          return {
+            bearing_deg: bucket * 5 + 2.5,
+            max_range_nm: value ?? null,
+            at: value === undefined ? null : "2026-09-29T12:00:00.000Z",
+            icao: value === undefined ? null : "ae1463",
+            samples: value === undefined ? 0 : 40,
+            days: value === undefined ? 0 : 4,
+            share_of_horizon:
+              value === undefined || horizon === null ? null : value / horizon,
+          };
+        }),
+      };
+    }),
+    findings: overrides.findings ?? [],
+  };
+}
+
 export function signalDistribution(
   overrides: Partial<ReceiverSignalDistribution> = {},
 ): ReceiverSignalDistribution {
@@ -145,6 +219,9 @@ export interface MockReceiverStatsApiOptions {
   series?: Partial<Record<ReceiverSeriesMetric, ReceiverMetricSeries>>;
   rangeByBearing?: ReceiverRangeByBearing;
   signalDistribution?: ReceiverSignalDistribution;
+  /** `GET /api/v1/receiver/coverage` (slice 087). `"error"` answers 404
+   * with no body — what a HAR recorded before the endpoint existed serves. */
+  coverage?: ReceiverCoverage | "error";
   lifetime?: ReceiverLifetimeStats;
   /** `GET /api/v1/feeders` — `ReceiverPage` mounts `FeedersSummaryCard`
    * (roadmap slice 077), which queries this endpoint on its own. Defaults
@@ -196,6 +273,12 @@ export function installReceiverStatsApiMock(
         method === "GET"
       ) {
         return jsonResponse(options.signalDistribution ?? signalDistribution());
+      }
+      if (url.pathname === "/api/v1/receiver/coverage" && method === "GET") {
+        if (options.coverage === "error") {
+          return new Response(null, { status: 404 });
+        }
+        return jsonResponse(options.coverage ?? coverage());
       }
       if (url.pathname === "/api/v1/receiver/lifetime" && method === "GET") {
         return jsonResponse(options.lifetime ?? lifetimeStats());
