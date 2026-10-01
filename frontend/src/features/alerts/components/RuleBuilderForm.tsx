@@ -45,9 +45,12 @@ export interface RuleBuilderFormProps {
 /**
  * The visual rule builder (SPEC §43, roadmap slice 041).
  *
- * Conditions are added one at a time from the v1 set and combined with
- * `AND` — every one must hold — which is the only combinator v1 has; there
- * are deliberately no OR groups or nested expressions to build here.
+ * Conditions are added one at a time from the condition set (version 2 since
+ * slice 089, which added squawk, identity-pattern, speed, vertical-rate,
+ * emitter-category and drawn-area conditions) and combined with `AND` —
+ * every one must hold — which is the only combinator there is; there are
+ * deliberately no OR groups or nested expressions to build here (SPEC §43,
+ * §79).
  *
  * Validation runs continuously but is only *shown* after the first submit
  * attempt: an error on a field nobody has reached yet is noise, and a form

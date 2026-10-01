@@ -4,14 +4,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldError } from "@/features/setup/components/FieldError";
+import { AreaEditor } from "@/features/alerts/components/AreaEditor";
+import { ChipsInput } from "@/features/alerts/components/ChipsInput";
 import {
   conditionKindMeta,
+  validateEmitterCategory,
+  validateSquawkCode,
   type ConditionDraft,
 } from "@/features/alerts/lib/conditions";
 import { MISSION_OPTIONS } from "@/features/alerts/lib/vocabulary";
 import type { AlertMissionCategory } from "@/lib/api/alertRules";
 import { useConfigQuery } from "@/lib/api/config";
 import type { Watchlist } from "@/lib/api/watchlists";
+import {
+  EMITTER_CATEGORY_LABELS,
+  formatEmitterCategory,
+} from "@/lib/emitterCategory";
 
 /** Shared with `EntryForm` in the watchlists feature — a native `<select>`
  * dressed to match the `Input` primitive, there being no shadcn select in
@@ -24,26 +32,54 @@ const CHECKBOX_CLASSES =
 
 const NM_TO_KM = 1.852;
 const FT_TO_M = 1 / 3.28084;
+/** Knots to km/h is the same factor as nautical miles to kilometres. */
+const KT_TO_KMH = NM_TO_KM;
+/** Feet per minute to metres per second. */
+const FPM_TO_MS = FT_TO_M / 60;
+
+type WindowKind = "distance" | "altitude" | "ground_speed" | "vertical_rate";
+
+/** The two labels of each window's halves, units in the label (R4-13). */
+const WINDOW_LABELS: Record<WindowKind, { min: string; max: string }> = {
+  distance: { min: "At least (nm)", max: "Within (nm)" },
+  altitude: { min: "At or above (ft)", max: "At or below (ft)" },
+  ground_speed: { min: "At least (kt)", max: "At most (kt)" },
+  vertical_rate: { min: "At or above (ft/min)", max: "At or below (ft/min)" },
+};
 
 /**
- * A live "≈ metric" readout for a distance or altitude field (R4-13): the
- * builder's inputs are always nm/ft (`CLAUDE.md` — storage and the API
- * never change), but a receiver configured for metric display should not
- * have to convert "within 250 nm" by hand to know what it means. `null` for
- * anything that is not a plain number yet (blank, mid-edit, "Any").
+ * A live "≈ metric" readout for a window field (R4-13): the builder's
+ * inputs are always the canonical nm/ft/kt/ft-per-minute (`CLAUDE.md` —
+ * storage and the API never change), but a receiver configured for metric
+ * display should not have to convert "within 250 nm" by hand to know what it
+ * means. `null` for anything that is not a plain number yet (blank,
+ * mid-edit, "Any").
  */
-function metricConversionHint(
-  raw: string,
-  kind: "distance" | "altitude",
-): string | null {
+function metricConversionHint(raw: string, kind: WindowKind): string | null {
   const value = Number(raw);
   if (raw.trim().length === 0 || !Number.isFinite(value)) {
     return null;
   }
-  return kind === "distance"
-    ? `≈ ${(value * NM_TO_KM).toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
-    : `≈ ${(value * FT_TO_M).toLocaleString(undefined, { maximumFractionDigits: 1 })} m`;
+  const format = (converted: number): string =>
+    converted.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  switch (kind) {
+    case "distance":
+      return `≈ ${format(value * NM_TO_KM)} km`;
+    case "altitude":
+      return `≈ ${format(value * FT_TO_M)} m`;
+    case "ground_speed":
+      return `≈ ${format(value * KT_TO_KMH)} km/h`;
+    case "vertical_rate":
+      return `≈ ${format(value * FPM_TO_MS)} m/s`;
+  }
 }
+
+/** The emitter categories worth suggesting: everything but the "no
+ * information" and reserved codes, which are valid but never what a rule
+ * is about. */
+const EMITTER_SUGGESTIONS = Object.entries(EMITTER_CATEGORY_LABELS)
+  .filter(([, label]) => label !== "Reserved" && !label.startsWith("No "))
+  .map(([value, label]) => ({ value, label }));
 
 export interface ConditionEditorProps {
   draft: ConditionDraft;
@@ -234,11 +270,89 @@ export function ConditionEditor({
         </div>
       )}
 
-      {(draft.kind === "distance" || draft.kind === "altitude") && (
+      {(draft.kind === "callsign_glob" ||
+        draft.kind === "registration_glob") && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={fieldId}>
+            {draft.kind === "callsign_glob"
+              ? "Callsign matches"
+              : "Registration matches"}
+          </Label>
+          <Input
+            id={fieldId}
+            value={draft.text}
+            autoCapitalize="characters"
+            spellCheck={false}
+            placeholder={draft.kind === "callsign_glob" ? "RCH*" : "N?23AB"}
+            aria-invalid={error !== null}
+            aria-describedby={[`${fieldId}-glob-help`, describedBy]
+              .filter(Boolean)
+              .join(" ")}
+            onChange={(event) => {
+              onChange({ ...draft, text: event.target.value });
+            }}
+          />
+          <p
+            id={`${fieldId}-glob-help`}
+            className="text-xs text-muted-foreground"
+          >
+            The whole value must match, ignoring case. <code>*</code> stands for
+            any run of characters (or none), <code>?</code> for exactly one;
+            every other character means itself.
+          </p>
+        </div>
+      )}
+
+      {draft.kind === "squawk" && (
+        <ChipsInput
+          label="Squawk codes"
+          values={draft.values}
+          placeholder="7000"
+          validate={validateSquawkCode}
+          describedBy={describedBy}
+          invalid={error !== null}
+          onChange={(values) => {
+            onChange({ ...draft, values });
+          }}
+        />
+      )}
+
+      {draft.kind === "emitter_category" && (
+        <ChipsInput
+          label="Emitter categories"
+          values={draft.values}
+          placeholder="A7"
+          normalize={(raw) => raw.trim().toUpperCase()}
+          formatChip={(value) => formatEmitterCategory(value) ?? value}
+          suggestions={EMITTER_SUGGESTIONS}
+          validate={validateEmitterCategory}
+          describedBy={describedBy}
+          invalid={error !== null}
+          onChange={(values) => {
+            onChange({ ...draft, values });
+          }}
+        />
+      )}
+
+      {draft.kind === "within_area" && (
+        <AreaEditor
+          text={draft.text}
+          describedBy={describedBy}
+          invalid={error !== null}
+          onChange={(text) => {
+            onChange({ ...draft, text });
+          }}
+        />
+      )}
+
+      {(draft.kind === "distance" ||
+        draft.kind === "altitude" ||
+        draft.kind === "ground_speed" ||
+        draft.kind === "vertical_rate") && (
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${fieldId}-min`}>
-              {draft.kind === "distance" ? "At least (nm)" : "At or above (ft)"}
+              {WINDOW_LABELS[draft.kind].min}
             </Label>
             <Input
               id={`${fieldId}-min`}
@@ -259,7 +373,7 @@ export function ConditionEditor({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={`${fieldId}-max`}>
-              {draft.kind === "distance" ? "Within (nm)" : "At or below (ft)"}
+              {WINDOW_LABELS[draft.kind].max}
             </Label>
             <Input
               id={`${fieldId}-max`}
@@ -278,6 +392,12 @@ export function ConditionEditor({
               </p>
             )}
           </div>
+          {draft.kind === "vertical_rate" && (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              Negative is descending: “At or below -1000” matches an aircraft
+              descending at 1000 ft/min or faster.
+            </p>
+          )}
         </div>
       )}
 

@@ -64,15 +64,26 @@ export interface AlertRarityCondition {
   max_sightings: number;
 }
 
+/** A drawn area (slice 089): a GeoJSON `Polygon` with exactly one ring of
+ * `[longitude, latitude]` pairs, 3–64 distinct vertices. The backend stores
+ * and echoes the ring *closed* (last vertex repeats the first) and refuses
+ * holes, antimeridian crossings and self-intersecting rings. */
+export interface AlertAreaCondition {
+  type: "Polygon";
+  coordinates: [number, number][][];
+}
+
 /**
  * One rule's `AND`-combined condition set (docs/DATA_MODEL.md §4.2).
  *
- * Flat, with every member optional, because SPEC §43 gives v1 no nested
+ * Flat, with every member optional, because SPEC §43 allows no nested
  * boolean trees: every condition present must hold. `version` is the
- * document's forward door and this build reads and writes `1` only.
+ * document's forward door. This build writes `2` (slice 089); the backend
+ * still accepts `1` — a v1 document is a v2 document without the new keys —
+ * and always echoes `2`, so a client only ever reads one version.
  */
 export interface AlertRuleConditions {
-  version: 1;
+  version: 2;
   classification?: AlertClassificationCondition | null;
   /** Exact match on the resolved ICAO type designator, case-insensitively. */
   type_code?: string | null;
@@ -91,6 +102,22 @@ export interface AlertRuleConditions {
   min_distance_nm?: number | null;
   max_alt_ft?: number | null;
   min_alt_ft?: number | null;
+  /** Version 2 (slice 089). The live squawk is one of these four-digit
+   * octal codes; stored sorted and de-duplicated. */
+  squawk_in?: string[] | null;
+  /** Case-insensitive whole-value globs: `*` any run, `?` one character,
+   * everything else literal. */
+  callsign_glob?: string | null;
+  registration_glob?: string | null;
+  /** Knots, inclusive. */
+  min_ground_speed_kt?: number | null;
+  max_ground_speed_kt?: number | null;
+  /** Feet per minute, inclusive, negative descending. */
+  min_vertical_rate_fpm?: number | null;
+  max_vertical_rate_fpm?: number | null;
+  /** ADS-B emitter categories (`A0`–`D7`); stored sorted. */
+  emitter_category_in?: string[] | null;
+  within_area?: AlertAreaCondition | null;
   /** Whether the rule also applies to aircraft the decoder reports on the
    * ground. `false` — the default — is SPEC §40's "excluded from relevant
    * alerts". Not itself a condition: a rule that says only this matches
