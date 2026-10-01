@@ -257,6 +257,7 @@ def subject_for(
     resolved = None if view is None else view.metadata
     active = persistence.sighting_for(icao)
     type_count = None if view is None else view.type_count
+    position = record.position
     return AlertSubject(
         icao=icao,
         at_ms=now_ms,
@@ -267,9 +268,16 @@ def subject_for(
         distance_nm=record.distance_nm,
         altitude_ft=record.altitude_ft,
         ground_state=record.ground_state,
+        ground_speed_kt=record.ground_speed_kt,
+        vertical_rate_fpm=record.vertical_rate_fpm,
+        emitter_category=record.emitter_category,
+        latitude=None if position is None else position.latitude,
+        longitude=None if position is None else position.longitude,
+        callsign=record.callsign,
         classification=view.classification if view is not None else _UNKNOWN_CLASSIFICATION,
         type_code=None if resolved is None else resolved.type_code,
         model=None if resolved is None else resolved.model,
+        registration=None if resolved is None else resolved.registration,
         watchlists=watchlists.matches(icao),
         sightings_here=1 if view is None else (view.sighting_count or 0) + 1,
         type_aircraft_here=None if type_count is None else max(1, type_count),

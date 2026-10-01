@@ -24,6 +24,15 @@ cold one, and it is taken with a **realistic rule set** — the shipped template
 plus a handful of user-shaped rules — because a pass against zero rules would
 measure subject construction only and pass forever.
 
+Slice 089 (issue #232) adds the version 2 conditions to that rule set — one
+rule per new condition kind and one combining all of them, with a 64-vertex
+area drawn over the very airspace the synthetic traffic flies in, so nearly
+every aircraft passes the area's bounding-box check and pays for a full ray
+cast. That is the worst case the roadmap's *"rule evaluation at 500 aircraft
+stays within the alert-engine budget"* is about. Measured on dev hardware when
+the slice landed: ~7 ms median for the twelve pre-089 rules and ~15 ms with
+the eight version 2 rules added — inside the 50 ms budget with room to spare.
+
 Marked ``perf`` so it can be selected (``-m perf``) or excluded, but it runs in
 the normal suite: a regression that doubles the cost of a cycle should fail a
 routine test run, not wait for someone to remember the marker.
@@ -31,6 +40,7 @@ routine test run, not wait for someone to remember the marker.
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -38,6 +48,8 @@ import pytest
 
 from flightsite.alerts.engine import AlertEngine
 from flightsite.alerts.model import (
+    MAX_AREA_VERTICES,
+    AreaCondition,
     ClassificationCondition,
     CompiledRule,
     RarityCondition,
@@ -89,6 +101,45 @@ EXTRA_RULES = (
 )
 
 
+def _circle_ring(
+    lon: float, lat: float, radius_deg: float, count: int
+) -> tuple[tuple[float, float], ...]:
+    return tuple(
+        (
+            lon + radius_deg * math.cos(2 * math.pi * k / count),
+            lat + radius_deg * math.sin(2 * math.pi * k / count),
+        )
+        for k in range(count)
+    )
+
+
+#: A maximal (64-vertex) area centred on the synthetic traffic below, so its
+#: bounding box admits nearly every positioned aircraft — the expensive path.
+WIDE_AREA = AreaCondition(coordinates=(_circle_ring(-1.25, 51.0, 0.9, MAX_AREA_VERTICES),))
+
+#: Slice 089: one rule per version 2 condition kind, plus every one at once.
+#: With these the set is twenty rules: 10 000 evaluations per cycle.
+V2_RULES = (
+    RuleConditions(squawk_in=("0020", "1200", "7000")),
+    RuleConditions(callsign_glob="FS0*"),
+    RuleConditions(registration_glob="N?23AB"),
+    RuleConditions(min_ground_speed_kt=100.0, max_ground_speed_kt=400.0),
+    RuleConditions(min_vertical_rate_fpm=-3_000.0, max_vertical_rate_fpm=-500.0),
+    RuleConditions(emitter_category_in=("A1", "A3", "A7")),
+    RuleConditions(within_area=WIDE_AREA),
+    RuleConditions(
+        squawk_in=("1200",),
+        callsign_glob="FS*",
+        min_ground_speed_kt=50.0,
+        max_ground_speed_kt=600.0,
+        min_vertical_rate_fpm=-6_000.0,
+        max_vertical_rate_fpm=6_000.0,
+        emitter_category_in=("A3",),
+        within_area=WIDE_AREA,
+    ),
+)
+
+
 def realistic_rules() -> tuple[CompiledRule, ...]:
     """Every shipped rule plus the extras above, compiled and ready."""
     shipped = [
@@ -98,7 +149,7 @@ def realistic_rules() -> tuple[CompiledRule, ...]:
     ]
     extra = [
         rule(conditions, rule_id=len(shipped) + index, severity=AlertSeverity.INTERESTING)
-        for index, conditions in enumerate(EXTRA_RULES, start=1)
+        for index, conditions in enumerate(EXTRA_RULES + V2_RULES, start=1)
     ]
     return tuple(shipped + extra)
 
@@ -135,6 +186,9 @@ def synthetic_poll(sequence: int) -> list[AircraftStateUpdate]:
                 callsign=f"FS{index:04d}",
                 squawk=squawk,
                 altitude_ft=1_000.0 + (index % 380) * 100.0,
+                ground_speed_kt=80.0 + (index % 50) * 10.0,
+                vertical_rate_fpm=-2_000.0 + (index % 9) * 500.0,
+                emitter_category=("A1", "A3", "A5", "B2")[index % 4],
                 on_ground=False,
             )
         )

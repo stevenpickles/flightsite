@@ -10,7 +10,10 @@ way:
 * **It cannot be a rule.** ``docs/DATA_MODEL.md`` §4.2's condition set — the
   closed v1 list — has no squawk kind, and §4.2 says so explicitly:
   *"Emergency-squawk detection is built in and rule-independent (SPEC §47)."*
-  There is no document a user could write that would express it.
+  There is no document a user could write that would express it. (Version 2
+  of the document — slice 089 — added ``squawk_in``, so a user *can* now write
+  a rule about a squawk; it is an ordinary, disable-able rule beside this
+  guarantee, never a substitute for it.)
 * **A rule can be disabled, edited or deleted.** Anything expressible as a row
   in ``alert_rules`` is by construction something a user can turn off, and §47
   does not permit that.
