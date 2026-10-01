@@ -1287,6 +1287,48 @@ config/domain models the backend uses.
 | Reset | `POST /reset/data` (requires `confirm` token), `POST /reset/metadata-cache` | 045 |
 | Feeder stats links | `GET /feeders/{name}/stats-link` → `302` to that feeder's per-network stats page (`feeders.stats_urls.<name>` in `secrets.yaml`; for a `piaware` feeder with none configured, the site page piaware itself reports). `404` when there is no link or no such feeder. `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. The only place a stats URL ever leaves the backend, and only as the `Location` of this response — never in `/api/v1`, a log line or the rendered page; `/api/v1/feeders` carries just `stats_link: true\|false` | 077 |
 
+**Alert-rule conditions** (`conditions` in the `/alert-rules` bodies and payloads;
+validated by `flightsite.alerts.model.RuleConditions`, the model the stored
+`alert_rules.conditions_json` is parsed with — [DATA_MODEL.md](DATA_MODEL.md) §4.2). A
+flat object of optional conditions, **all ANDed** (SPEC §43; no OR, no nesting — §79).
+Unknown keys are refused with `422`, as is a set that constrains nothing or can never
+match (an inverted window). Every error's `loc` names the field.
+
+| Key | Type | Matches when | Since |
+|---|---|---|---|
+| `classification` | `{military, government, law_enforcement: bool, mission?}` | every required claim is asserted | v1 |
+| `type_code` / `model` | string | exact type designator / model substring, ignoring case | v1 |
+| `watchlist_id` / `watchlist_any` | int / bool | on that watchlist / on any | v1 |
+| `rare_aircraft` / `rare_type` | `{max_sightings: 1..1000}` | seen at most N times / type on at most N airframes here | v1 |
+| `min_distance_nm`, `max_distance_nm` | number, nm (0..10000) | inclusive window | v1 |
+| `min_alt_ft`, `max_alt_ft` | number, ft (-2000..100000) | inclusive window, barometric | v1 |
+| `squawk_in` | array of 1–16 `"[0-7]{4}"` strings | live squawk is one of them | v2 |
+| `callsign_glob` / `registration_glob` | string, 1–32 chars, no whitespace | whole callsign / resolved registration matches, ignoring case; `*` = any run, `?` = one character, everything else literal | v2 |
+| `min_ground_speed_kt`, `max_ground_speed_kt` | number, kt (0..2000; max > 0) | inclusive window | v2 |
+| `min_vertical_rate_fpm`, `max_vertical_rate_fpm` | number, ft/min (-20000..20000), negative descending | inclusive window | v2 |
+| `emitter_category_in` | array of 1–32 `"[A-D][0-7]"` strings | decoder emitter category (slice 086) is one of them | v2 |
+| `within_area` | GeoJSON `{"type": "Polygon", "coordinates": [[[lon, lat], ...]]}` | live position inside or on the boundary | v2 |
+| `applies_on_ground` | bool | not a condition: lets the rule match ground traffic (SPEC §40) | v1 |
+
+An unknown input never satisfies a condition: no squawk, no callsign, no metadata
+registration, no speed or no position is not a match. Sets (`squawk_in`,
+`emitter_category_in`) are echoed sorted and de-duplicated. `within_area` takes exactly
+one ring of 3–64 distinct vertices, `[longitude, latitude]` (GeoJSON order); an
+unclosed ring is closed and the echo is always closed. Refused: a second ring (holes),
+an edge spanning more than 180° of longitude (antimeridian crossing — draw one rule
+each side), crossing or folding edges, repeated vertices and collinear rings. Edges are
+straight in longitude/latitude; a point on the boundary is inside.
+
+`version` is `2`. A body may still send `"version": 1` (or omit it) — a v1 document is
+a v2 document without the new keys and is upgraded on read — but `"version": 1` with a
+v2 key is a `422`, and the response is always `"version": 2`. Stored v1 rows are not
+migrated: they read back as v2 and are rewritten as v2 the next time the rule is saved.
+`describes` gains one phrase per new condition, after the v1 phrases, in canonical units:
+`"squawking 1200 or 7000"`, `"callsign matching 'RCH*'"`, `"registration matching
+'N?23AB'"`, `"emitter category A1 or A7"`, `"ground speed at most 250 kt"`, `"vertical
+rate at or above -3000 ft/min"`, `"inside a drawn area of 4 vertices"`. A match's
+`reason` is still `"Rule: <name>"`.
+
 `GET /metadata/status` reports one row per **registered** source, each with its own
 `status`, `last_success_ms`, `dataset_version`, `row_count` and `last_error`, and each
 independent of the others (SPEC §27). A stock install registers four —

@@ -192,6 +192,17 @@ information. No period-over-period comparison in v1.
 - **Rule engine**: visual rule builder; v1 conditions — classification, specific
   type/model, watchlist membership, locally rare aircraft, locally rare type,
   distance, altitude — combined with simple AND; no nested boolean trees (§43).
+- **Richer conditions** (roadmap slice 089, issue #232), still plain AND: a set of
+  squawk codes; callsign and registration patterns (`RCH*`, `N?23AB` — `*` any
+  characters, `?` exactly one, case ignored); ground-speed (kt) and vertical-rate
+  (ft/min, negative descending) windows; a set of ADS-B emitter categories (shown in
+  words, "A7 · Rotorcraft"); and an area drawn on a mini-map inside the rule builder —
+  the receiver's map with its range rings, click to add vertices, drag to move them,
+  double-click or Enter to finish, with a "longitude, latitude" text box beside it as
+  the keyboard-accessible way to enter or adjust the same shape. Areas are one simple
+  shape of 3–64 vertices that does not cross the 180° meridian; an aircraft with no
+  position is never inside one. Inputs stay in canonical units with a metric hint
+  beside them (R4-13). Existing rules keep working unchanged.
 - **Rarity** is receiver-relative, computed from FlightSite's own history since T0:
   never seen, seen fewer than N times, type seen fewer than N times (§44).
 - **Templates** shipped in v1: military, government, police/law enforcement, emergency

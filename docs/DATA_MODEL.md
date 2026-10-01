@@ -549,6 +549,15 @@ Condition kinds (each optional, all AND-ed): `classification` (mil/gov/law/missi
 `rare_type {max_sightings}`, `max_distance_nm`, `min_distance_nm`, `max_alt_ft`,
 `min_alt_ft`. Emergency-squawk detection is built in and rule-independent (SPEC §47).
 
+**Version 2** (slice 089) adds `squawk_in`, `callsign_glob`, `registration_glob`,
+`min/max_ground_speed_kt`, `min/max_vertical_rate_fpm`, `emitter_category_in` and
+`within_area` (a GeoJSON `Polygon`, one closed ring of 3–64 `[lon, lat]` vertices) —
+still AND-ed, still optional; shapes and bounds in [API.md](API.md) §5. **No
+migration:** the v1 key set is a strict subset of v2's, so a stored `"version": 1`
+document is upgraded on read by bumping the number alone and evaluates identically; its
+text is rewritten as v2 only when the rule is next saved. A `squawk_in` rule is an
+ordinary rule beside the built-in emergency detection, never a replacement for it.
+
 ### 4.3 `alert_matches` — slice 038
 
 ```sql
