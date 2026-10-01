@@ -82,6 +82,12 @@ export class MapLibreMockMap {
   /** `RecenterButton` (roadmap slice 082's `H` shortcut) calls this on a
    * recentre request. */
   easeTo = vi.fn();
+  /** The two interaction handlers the alert rule builder's area editor
+   * (roadmap slice 089) switches off while a vertex is dragged or a shape
+   * is being drawn — so a drag moves the vertex rather than the map, and a
+   * double-click finishes the shape rather than zooming. */
+  dragPan = { enable: vi.fn(), disable: vi.fn() };
+  doubleClickZoom = { enable: vi.fn(), disable: vi.fn() };
 
   /** When true, the next construction throws — simulating a browser with
    * no WebGL context (MapLibre throws from its constructor there). Reset by

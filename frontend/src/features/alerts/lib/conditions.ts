@@ -33,7 +33,25 @@
  * backend stays authoritative: its rejection is surfaced the same way a
  * local one is, and this module is never consulted about a rule that already
  * exists.
+ *
+ * Version 2 (slice 089)
+ * ---------------------
+ *
+ * The document gained seven conditions, still flat `AND` (SPEC §43; no OR or
+ * nesting, §79): a squawk set, callsign and registration globs, ground-speed
+ * and vertical-rate windows, an emitter-category set and a drawn area. Each
+ * is one more draft kind here. The two windows pair their halves exactly as
+ * distance and altitude do, and their inputs are canonical kt and ft/min with
+ * a metric hint beside them — R4-13, the same pattern as nm/ft. The builder
+ * always writes `version: 2`; the API echoes every rule, including ones first
+ * stored as version 1, as version 2.
  */
+import {
+  closedRing,
+  formatAreaText,
+  parseAreaText,
+  validateAreaVertices,
+} from "@/features/alerts/lib/area";
 import type {
   AlertMissionCategory,
   AlertRuleConditions,
@@ -59,6 +77,23 @@ export const MAX_DISTANCE_NM = 10000;
  * stray digit) rather than to express a real aviation limit. */
 export const MIN_ALTITUDE_FT = -2000;
 export const MAX_ALTITUDE_FT = 100000;
+/** Most codes one squawk condition may name — `MAX_SQUAWK_CODES`. */
+export const MAX_SQUAWK_CODES = 16;
+/** Most categories one emitter-category condition may name (all 32). */
+export const MAX_EMITTER_CATEGORIES = 32;
+/** Longest a callsign or registration pattern may be — `MAX_GLOB_LENGTH`. */
+export const MAX_GLOB_LENGTH = 32;
+/** Upper bound on a ground-speed condition, in knots —
+ * `MAX_GROUND_SPEED_KT`. Typo-catching, like the altitude bounds. */
+export const MAX_GROUND_SPEED_KT = 2000;
+/** Bound on a vertical-rate condition's magnitude, in feet per minute —
+ * `MAX_VERTICAL_RATE_FPM`. Negative is descending. */
+export const MAX_VERTICAL_RATE_FPM = 20000;
+
+/** A transponder code: four digits, each 0–7. */
+export const SQUAWK_PATTERN = /^[0-7]{4}$/;
+/** An ADS-B emitter category: set A–D, number 0–7. */
+export const EMITTER_CATEGORY_PATTERN = /^[A-D][0-7]$/;
 
 /**
  * The condition kinds the builder offers, which together cover every member
@@ -78,7 +113,14 @@ export type ConditionKind =
   | "rare_aircraft"
   | "rare_type"
   | "distance"
-  | "altitude";
+  | "altitude"
+  | "squawk"
+  | "callsign_glob"
+  | "registration_glob"
+  | "emitter_category"
+  | "ground_speed"
+  | "vertical_rate"
+  | "within_area";
 
 export interface ClassificationConditionDraft {
   kind: "classification";
@@ -90,7 +132,21 @@ export interface ClassificationConditionDraft {
 }
 
 export interface TextConditionDraft {
-  kind: "type_code" | "model";
+  kind: "type_code" | "model" | "callsign_glob" | "registration_glob";
+  text: string;
+}
+
+/** A set of codes entered as chips: squawks, or emitter categories. */
+export interface SetConditionDraft {
+  kind: "squawk" | "emitter_category";
+  values: string[];
+}
+
+/** A drawn area, held as its text form — one `longitude, latitude` pair per
+ * line. The mini-map and the textarea both edit this string, which is what
+ * makes them round-trip (see `lib/area.ts`). */
+export interface AreaConditionDraft {
+  kind: "within_area";
   text: string;
 }
 
@@ -110,10 +166,11 @@ export interface RarityConditionDraft {
   maxSightings: string;
 }
 
-/** A `distance` (nm) or `altitude` (ft) window. Either bound may be left
- * blank for an open-ended one; both blank is not a condition. */
+/** A `distance` (nm), `altitude` (ft), `ground_speed` (kt) or
+ * `vertical_rate` (ft/min) window. Either bound may be left blank for an
+ * open-ended one; both blank is not a condition. */
 export interface RangeConditionDraft {
-  kind: "distance" | "altitude";
+  kind: "distance" | "altitude" | "ground_speed" | "vertical_rate";
   min: string;
   max: string;
 }
@@ -124,7 +181,9 @@ export type ConditionDraft =
   | WatchlistConditionDraft
   | WatchlistAnyConditionDraft
   | RarityConditionDraft
-  | RangeConditionDraft;
+  | RangeConditionDraft
+  | SetConditionDraft
+  | AreaConditionDraft;
 
 export interface ConditionKindMeta {
   kind: ConditionKind;
@@ -191,6 +250,47 @@ export const CONDITION_KINDS: ConditionKindMeta[] = [
     label: "Altitude",
     summary: "Require the aircraft to be in an altitude window, in feet.",
   },
+  {
+    kind: "squawk",
+    label: "Squawk code",
+    summary:
+      "Require the transponder to be squawking one of these codes. Emergency codes 7500, 7600 and 7700 always alert on their own; add them here only for a rule of your own about them.",
+  },
+  {
+    kind: "callsign_glob",
+    label: "Callsign pattern",
+    summary:
+      "Match the whole callsign, ignoring case. * stands for any characters and ? for exactly one — RCH* matches RCH871.",
+  },
+  {
+    kind: "registration_glob",
+    label: "Registration pattern",
+    summary:
+      "Match the whole registration, ignoring case, with * and ? as wildcards — N?23AB matches N123AB. Needs aircraft metadata.",
+  },
+  {
+    kind: "emitter_category",
+    label: "Emitter category",
+    summary:
+      "Require one of these ADS-B emitter categories, as the aircraft itself broadcasts it — A7 is rotorcraft, B1 a glider.",
+  },
+  {
+    kind: "ground_speed",
+    label: "Ground speed",
+    summary: "Require the ground speed to be in a window, in knots.",
+  },
+  {
+    kind: "vertical_rate",
+    label: "Vertical rate",
+    summary:
+      "Require the climb or descent rate to be in a window, in feet per minute. Negative is descending.",
+  },
+  {
+    kind: "within_area",
+    label: "Inside an area",
+    summary:
+      "Require the aircraft's position to be inside an area you draw on the map. An aircraft with no position never matches.",
+  },
 ];
 
 const KIND_META: Record<ConditionKind, ConditionKindMeta> = Object.fromEntries(
@@ -214,6 +314,9 @@ export function emptyCondition(kind: ConditionKind): ConditionDraft {
       };
     case "type_code":
     case "model":
+    case "callsign_glob":
+    case "registration_glob":
+    case "within_area":
       return { kind, text: "" };
     case "watchlist":
       return { kind, watchlistId: "" };
@@ -224,7 +327,12 @@ export function emptyCondition(kind: ConditionKind): ConditionDraft {
       return { kind, maxSightings: "" };
     case "distance":
     case "altitude":
+    case "ground_speed":
+    case "vertical_rate":
       return { kind, min: "", max: "" };
+    case "squawk":
+    case "emitter_category":
+      return { kind, values: [] };
   }
 }
 
@@ -309,6 +417,107 @@ function validateAltitude(draft: RangeConditionDraft): string | null {
   return null;
 }
 
+function validateGroundSpeed(draft: RangeConditionDraft): string | null {
+  const min = parseNumeric(draft.min);
+  const max = parseNumeric(draft.max);
+  if (min === null && max === null) {
+    return "Enter a minimum, a maximum, or both.";
+  }
+  if (Number.isNaN(min) || Number.isNaN(max)) {
+    return "Enter ground speeds in knots.";
+  }
+  if (min !== null && (min < 0 || min > MAX_GROUND_SPEED_KT)) {
+    return `A minimum ground speed must be between 0 and ${MAX_GROUND_SPEED_KT} kt.`;
+  }
+  if (max !== null && (max <= 0 || max > MAX_GROUND_SPEED_KT)) {
+    return `A maximum ground speed must be above 0 and at most ${MAX_GROUND_SPEED_KT} kt.`;
+  }
+  if (min !== null && max !== null && min >= max) {
+    return "The minimum must be below the maximum, or the rule can never match.";
+  }
+  return null;
+}
+
+function validateVerticalRate(draft: RangeConditionDraft): string | null {
+  const min = parseNumeric(draft.min);
+  const max = parseNumeric(draft.max);
+  if (min === null && max === null) {
+    return "Enter a minimum, a maximum, or both.";
+  }
+  if (Number.isNaN(min) || Number.isNaN(max)) {
+    return "Enter vertical rates in feet per minute.";
+  }
+  const outOfRange = (value: number): boolean =>
+    value < -MAX_VERTICAL_RATE_FPM || value > MAX_VERTICAL_RATE_FPM;
+  if ((min !== null && outOfRange(min)) || (max !== null && outOfRange(max))) {
+    return `Vertical rates must be between -${MAX_VERTICAL_RATE_FPM} and ${MAX_VERTICAL_RATE_FPM} ft/min (negative is descending).`;
+  }
+  if (min !== null && max !== null && min >= max) {
+    return "The minimum must be below the maximum, or the rule can never match.";
+  }
+  return null;
+}
+
+function validateGlob(raw: string): string | null {
+  const text = raw.trim();
+  if (text.length === 0) {
+    return "Enter a pattern.";
+  }
+  if (/\s/.test(text)) {
+    return "A pattern cannot contain spaces.";
+  }
+  if (text.length > MAX_GLOB_LENGTH) {
+    return `A pattern is at most ${MAX_GLOB_LENGTH} characters.`;
+  }
+  return null;
+}
+
+/** Why one typed squawk code cannot be added as a chip, or `null`. */
+export function validateSquawkCode(raw: string): string | null {
+  return SQUAWK_PATTERN.test(raw.trim())
+    ? null
+    : "A squawk code is four digits, each 0–7 — for example 7000.";
+}
+
+/** Why one typed emitter category cannot be added as a chip, or `null`. */
+export function validateEmitterCategory(raw: string): string | null {
+  return EMITTER_CATEGORY_PATTERN.test(raw.trim().toUpperCase())
+    ? null
+    : "An emitter category is a letter A–D and a digit 0–7 — for example A7.";
+}
+
+function validateSet(draft: SetConditionDraft): string | null {
+  if (draft.kind === "squawk") {
+    if (draft.values.length === 0) {
+      return "Add at least one squawk code.";
+    }
+    if (draft.values.length > MAX_SQUAWK_CODES) {
+      return `A rule can name at most ${MAX_SQUAWK_CODES} squawk codes.`;
+    }
+    const invalid = draft.values.find((value) => validateSquawkCode(value));
+    return invalid === undefined ? null : validateSquawkCode(invalid);
+  }
+  if (draft.values.length === 0) {
+    return "Add at least one emitter category.";
+  }
+  if (draft.values.length > MAX_EMITTER_CATEGORIES) {
+    return `A rule can name at most ${MAX_EMITTER_CATEGORIES} emitter categories.`;
+  }
+  const invalid = draft.values.find((value) => validateEmitterCategory(value));
+  return invalid === undefined ? null : validateEmitterCategory(invalid);
+}
+
+function validateArea(text: string): string | null {
+  const parsed = parseAreaText(text);
+  if (!parsed.ok) {
+    return parsed.error;
+  }
+  if (parsed.vertices.length === 0) {
+    return "Draw an area on the map, or enter its vertices as longitude, latitude pairs.";
+  }
+  return validateAreaVertices(parsed.vertices);
+}
+
 /** What is wrong with one condition, or `null` when it is ready to send. */
 export function validateCondition(draft: ConditionDraft): string | null {
   switch (draft.kind) {
@@ -353,6 +562,18 @@ export function validateCondition(draft: ConditionDraft): string | null {
       return validateDistance(draft);
     case "altitude":
       return validateAltitude(draft);
+    case "ground_speed":
+      return validateGroundSpeed(draft);
+    case "vertical_rate":
+      return validateVerticalRate(draft);
+    case "callsign_glob":
+    case "registration_glob":
+      return validateGlob(draft.text);
+    case "squawk":
+    case "emitter_category":
+      return validateSet(draft);
+    case "within_area":
+      return validateArea(draft.text);
   }
 }
 
@@ -424,7 +645,7 @@ export function conditionsToDocument(
   drafts: readonly ConditionDraft[],
   appliesOnGround: boolean,
 ): AlertRuleConditions {
-  const document: AlertRuleConditions = { version: 1 };
+  const document: AlertRuleConditions = { version: 2 };
   for (const draft of drafts) {
     switch (draft.kind) {
       case "classification":
@@ -461,6 +682,40 @@ export function conditionsToDocument(
         document.min_alt_ft = numberOrUndefined(draft.min);
         document.max_alt_ft = numberOrUndefined(draft.max);
         break;
+      case "ground_speed":
+        document.min_ground_speed_kt = numberOrUndefined(draft.min);
+        document.max_ground_speed_kt = numberOrUndefined(draft.max);
+        break;
+      case "vertical_rate":
+        document.min_vertical_rate_fpm = numberOrUndefined(draft.min);
+        document.max_vertical_rate_fpm = numberOrUndefined(draft.max);
+        break;
+      case "callsign_glob":
+        document.callsign_glob = draft.text.trim();
+        break;
+      case "registration_glob":
+        document.registration_glob = draft.text.trim();
+        break;
+      // Sorted and de-duplicated, as the backend stores them, so the echo of
+      // a saved rule is exactly what was sent.
+      case "squawk":
+        document.squawk_in = [...new Set(draft.values)].sort();
+        break;
+      case "emitter_category":
+        document.emitter_category_in = [
+          ...new Set(draft.values.map((value) => value.toUpperCase())),
+        ].sort();
+        break;
+      case "within_area": {
+        const parsed = parseAreaText(draft.text);
+        if (parsed.ok) {
+          document.within_area = {
+            type: "Polygon",
+            coordinates: [closedRing(parsed.vertices)],
+          };
+        }
+        break;
+      }
     }
   }
   if (appliesOnGround) {
@@ -540,6 +795,53 @@ export function documentToConditions(conditions: AlertRuleConditions): {
       kind: "altitude",
       min: numericText(conditions.min_alt_ft),
       max: numericText(conditions.max_alt_ft),
+    });
+  }
+  if (conditions.squawk_in != null) {
+    drafts.push({ kind: "squawk", values: [...conditions.squawk_in] });
+  }
+  if (conditions.callsign_glob != null) {
+    drafts.push({ kind: "callsign_glob", text: conditions.callsign_glob });
+  }
+  if (conditions.registration_glob != null) {
+    drafts.push({
+      kind: "registration_glob",
+      text: conditions.registration_glob,
+    });
+  }
+  if (conditions.emitter_category_in != null) {
+    drafts.push({
+      kind: "emitter_category",
+      values: [...conditions.emitter_category_in],
+    });
+  }
+  if (
+    conditions.min_ground_speed_kt != null ||
+    conditions.max_ground_speed_kt != null
+  ) {
+    drafts.push({
+      kind: "ground_speed",
+      min: numericText(conditions.min_ground_speed_kt),
+      max: numericText(conditions.max_ground_speed_kt),
+    });
+  }
+  if (
+    conditions.min_vertical_rate_fpm != null ||
+    conditions.max_vertical_rate_fpm != null
+  ) {
+    drafts.push({
+      kind: "vertical_rate",
+      min: numericText(conditions.min_vertical_rate_fpm),
+      max: numericText(conditions.max_vertical_rate_fpm),
+    });
+  }
+  const ring = conditions.within_area?.coordinates[0];
+  if (ring) {
+    // The stored ring is closed; the text form lists each vertex once.
+    const parsed = parseAreaText(formatAreaText(ring));
+    drafts.push({
+      kind: "within_area",
+      text: parsed.ok ? formatAreaText(parsed.vertices) : formatAreaText(ring),
     });
   }
   return { drafts, appliesOnGround: conditions.applies_on_ground === true };

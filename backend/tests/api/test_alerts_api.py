@@ -99,7 +99,7 @@ def test_every_other_template_reports_the_conditions_it_would_create(
     for template in templates:
         if not template["builtin"]:
             assert isinstance(template["conditions"], dict)
-            assert template["conditions"]["version"] == 1
+            assert template["conditions"]["version"] == 2
 
 
 # ------------------------------------------------------- template instantiation
@@ -230,11 +230,11 @@ def test_an_instantiated_rule_is_in_force_for_the_next_live_read(
 #: they are proved to be documents the engine accepts unchanged.
 BUILDER_CONDITION_BODIES: list[dict[str, Any]] = [
     {
-        "version": 1,
+        "version": 2,
         "classification": {"military": True, "government": False, "law_enforcement": False},
     },
     {
-        "version": 1,
+        "version": 2,
         "classification": {
             "military": False,
             "government": False,
@@ -242,18 +242,18 @@ BUILDER_CONDITION_BODIES: list[dict[str, Any]] = [
             "mission": "medical",
         },
     },
-    {"version": 1, "type_code": "C17"},
-    {"version": 1, "model": "Globemaster"},
-    {"version": 1, "watchlist_id": 1},
-    {"version": 1, "watchlist_any": True},
-    {"version": 1, "rare_aircraft": {"max_sightings": 2}},
-    {"version": 1, "rare_type": {"max_sightings": 4}},
-    {"version": 1, "min_distance_nm": 5, "max_distance_nm": 40},
-    {"version": 1, "max_distance_nm": 40},
-    {"version": 1, "min_alt_ft": 500, "max_alt_ft": 10000},
-    {"version": 1, "max_alt_ft": 5000, "applies_on_ground": True},
+    {"version": 2, "type_code": "C17"},
+    {"version": 2, "model": "Globemaster"},
+    {"version": 2, "watchlist_id": 1},
+    {"version": 2, "watchlist_any": True},
+    {"version": 2, "rare_aircraft": {"max_sightings": 2}},
+    {"version": 2, "rare_type": {"max_sightings": 4}},
+    {"version": 2, "min_distance_nm": 5, "max_distance_nm": 40},
+    {"version": 2, "max_distance_nm": 40},
+    {"version": 2, "min_alt_ft": 500, "max_alt_ft": 10000},
+    {"version": 2, "max_alt_ft": 5000, "applies_on_ground": True},
     {
-        "version": 1,
+        "version": 2,
         "classification": {"military": True, "government": False, "law_enforcement": False},
         "max_alt_ft": 5000,
         "max_distance_nm": 40,
@@ -446,7 +446,7 @@ def test_operations_on_an_unknown_rule_answer_404(client: TestClient, method: st
         {"version": 1, "min_distance_nm": 100.0, "max_distance_nm": 10.0},
         {"version": 1, "min_alt_ft": 30000.0, "max_alt_ft": 1000.0},
         {"version": 1, "classification": {}},
-        {"version": 2, "watchlist_any": True},
+        {"version": 3, "watchlist_any": True},
         {"version": 1, "squawk": "7700"},
         {"version": 1, "max_distance_nm": 99999.0},
     ],

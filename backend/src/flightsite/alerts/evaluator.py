@@ -44,6 +44,7 @@ Built-in emergency matches bypass both gates and this function entirely; see
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 
 from flightsite.alerts.builtins import emergency_match
@@ -51,6 +52,7 @@ from flightsite.alerts.model import (
     AlertSubject,
     ClassificationCondition,
     CompiledRule,
+    ExtendedConditions,
     MatchProposal,
     RuleConditions,
 )
@@ -130,6 +132,63 @@ def _rarity_holds(conditions: RuleConditions, subject: AlertSubject) -> bool:
     return here is not None and here <= rare_type.max_sightings
 
 
+def _window_holds(value: float | None, low: float | None, high: float | None) -> bool:
+    """Whether an inclusive ``[low, high]`` window holds. Unknown holds neither bound."""
+    if low is None and high is None:
+        return True
+    if value is None:
+        return False
+    if high is not None and value > high:
+        return False
+    return not (low is not None and value < low)
+
+
+def _glob_holds(matcher: re.Pattern[str] | None, value: str | None) -> bool:
+    """Whether a compiled identity glob matches the *whole* value."""
+    if matcher is None:
+        return True
+    return value is not None and matcher.fullmatch(value.strip()) is not None
+
+
+def _extended_holds(conditions: ExtendedConditions, subject: AlertSubject) -> bool:
+    """Whether every version 2 condition holds (slice 089, issue #232).
+
+    Ordered cheapest and most selective first — set lookups, then the
+    windows, then the globs, then the area — so the common case of a rule
+    that does not match is decided before any pattern or polygon is touched.
+    Every unknown input fails its condition, as everywhere else in this
+    module: no squawk is not "squawking 1200", no position is not "inside
+    the area".
+    """
+    squawks = conditions.squawks
+    if squawks is not None and subject.squawk not in squawks:
+        return False
+    categories = conditions.categories
+    if categories is not None and subject.emitter_category not in categories:
+        return False
+    if not _window_holds(
+        subject.ground_speed_kt, conditions.min_ground_speed_kt, conditions.max_ground_speed_kt
+    ):
+        return False
+    if not _window_holds(
+        subject.vertical_rate_fpm,
+        conditions.min_vertical_rate_fpm,
+        conditions.max_vertical_rate_fpm,
+    ):
+        return False
+    if not _glob_holds(conditions.callsign, subject.callsign):
+        return False
+    if not _glob_holds(conditions.registration, subject.registration):
+        return False
+    area = conditions.area
+    if area is None:
+        return True
+    latitude, longitude = subject.latitude, subject.longitude
+    if latitude is None or longitude is None:
+        return False
+    return area.contains(longitude, latitude)
+
+
 def matches(rule: CompiledRule, subject: AlertSubject, *, alert_radius_nm: float | None) -> bool:
     """Whether ``rule`` matches ``subject``. Every condition must hold (SPEC §43).
 
@@ -172,7 +231,12 @@ def matches(rule: CompiledRule, subject: AlertSubject, *, alert_radius_nm: float
         return False
     if not _distance_holds(conditions, subject.distance_nm):
         return False
-    return _altitude_holds(conditions, subject.altitude_ft)
+    if not _altitude_holds(conditions, subject.altitude_ft):
+        return False
+    # One slot read for a rule with no version 2 condition — every v1 rule —
+    # so the upgrade costs existing rule sets nothing measurable.
+    extended = rule.extended
+    return extended is None or _extended_holds(extended, subject)
 
 
 def evaluate(
