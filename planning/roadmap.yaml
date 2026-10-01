@@ -2688,7 +2688,7 @@ slices:
     title: "Richer alert conditions"
     phase: 9
     branch: "089-alert-conditions"
-    status: planned
+    status: merged
     depends_on: ["086"]
     objective: "Let rules match on squawk, identity patterns, speed, vertical rate, emitter category and a drawn area, still combined with flat AND (issue #232)."
     scope:
