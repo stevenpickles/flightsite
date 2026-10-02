@@ -119,7 +119,10 @@ function svg(body: string): string {
 }
 
 /** One silhouette in one palette, as a standalone SVG document. */
-export function renderIconSvg(shape: AircraftIconShape, palette: IconPalette): string {
+export function renderIconSvg(
+  shape: AircraftIconShape,
+  palette: IconPalette,
+): string {
   return svg(ARTWORK[shape](ICON_PALETTES[palette]));
 }
 
@@ -141,7 +144,10 @@ const MLAT_RING =
 /** MapLibre image id for one silhouette in one palette. Namespaced so it
  * cannot collide with a basemap style's own sprite entries; the double dash
  * keeps the palette unambiguous against shape names that contain a dash. */
-export function iconImageId(shape: AircraftIconShape, palette: IconPalette = "civil"): string {
+export function iconImageId(
+  shape: AircraftIconShape,
+  palette: IconPalette = "civil",
+): string {
   return `flightsite-aircraft-${shape}--${palette}`;
 }
 

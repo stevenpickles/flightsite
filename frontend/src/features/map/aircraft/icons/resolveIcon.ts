@@ -52,7 +52,9 @@ function table(
   shape: AircraftIconShape,
   designators: string,
 ): Record<string, AircraftIconShape> {
-  return Object.fromEntries(designators.split(/\s+/).map((code) => [code, shape]));
+  return Object.fromEntries(
+    designators.split(/\s+/).map((code) => [code, shape]),
+  );
 }
 
 /**
@@ -113,10 +115,16 @@ export const TYPE_ICON_SHAPES: Readonly<Record<string, AircraftIconShape>> = {
     "B741 B742 B743 B744 B748 B74S A388 A342 A343 A345 A346 MD11 DC10 L101 IL96 " +
       "E3TF E3CF E6 R135",
   ),
-  ...table("fighter", "F15 F16 F18 F22 F35 A10 AV8B EUFI RFAL TOR T38 F5 F14 HAWK GRIP"),
+  ...table(
+    "fighter",
+    "F15 F16 F18 F22 F35 A10 AV8B EUFI RFAL TOR T38 F5 F14 HAWK GRIP",
+  ),
   ...table("bomber", "B1 B2 B52 TU95"),
   ...table("tanker", "K35R K35E"),
-  ...table("military-transport", "C17 C5M C130 C30J C27J C160 C295 A400 IL76 A124"),
+  ...table(
+    "military-transport",
+    "C17 C5M C130 C30J C27J C160 C295 A400 IL76 A124",
+  ),
   ...table("patrol", "P3 E2"),
   ...table("tiltrotor", "V22 A609"),
   ...table("tandem-rotor", "H47 H46"),
@@ -278,7 +286,9 @@ export function resolveIconPalette(
 }
 
 /** The registered image id for one aircraft: its silhouette in its palette. */
-export function resolveAircraftIconImageId(aircraft: IconResolverInput): string {
+export function resolveAircraftIconImageId(
+  aircraft: IconResolverInput,
+): string {
   return iconImageId(
     resolveAircraftIcon(aircraft).shape,
     resolveIconPalette(aircraft.classification),

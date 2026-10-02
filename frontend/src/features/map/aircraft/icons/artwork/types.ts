@@ -79,7 +79,12 @@ export function blob(
 }
 
 /** A propeller seen edge-on: a short ink bar across the nose or nacelle. */
-export function propeller(cx: number, y: number, half: number, c: PaletteColours): string {
+export function propeller(
+  cx: number,
+  y: number,
+  half: number,
+  c: PaletteColours,
+): string {
   return line(`M${cx - half} ${y}h${half * 2}`, c, 2.5);
 }
 
@@ -89,10 +94,16 @@ export function propeller(cx: number, y: number, half: number, c: PaletteColours
  * either basemap. The ring is translucent so the airframe under it still
  * reads.
  */
-export function rotor(cx: number, cy: number, r: number, c: PaletteColours): string {
+export function rotor(
+  cx: number,
+  cy: number,
+  r: number,
+  c: PaletteColours,
+): string {
   const k = r * Math.SQRT1_2;
   const blades =
-    `M${cx - k} ${cy - k}L${cx + k} ${cy + k}` + `M${cx + k} ${cy - k}L${cx - k} ${cy + k}`;
+    `M${cx - k} ${cy - k}L${cx + k} ${cy + k}` +
+    `M${cx + k} ${cy - k}L${cx - k} ${cy + k}`;
   return (
     `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c.ink}" ` +
     `stroke-width="3" opacity="0.8"/>` +

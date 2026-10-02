@@ -18,7 +18,9 @@ import type { Classification } from "@/lib/api/live";
 
 function classification(
   iconCategory: string | null,
-  flags: Partial<Pick<Classification, "military" | "government" | "law_enforcement">> = {},
+  flags: Partial<
+    Pick<Classification, "military" | "government" | "law_enforcement">
+  > = {},
 ): Classification {
   return {
     military: false,
@@ -219,7 +221,13 @@ describe("resolveAircraftIcon", () => {
       ).toEqual({ shape, level: "category" });
     });
 
-    it.each(["military", "government", "law_enforcement", "medical", "firefighting"])(
+    it.each([
+      "military",
+      "government",
+      "law_enforcement",
+      "medical",
+      "firefighting",
+    ])(
       "%s says who flies it, not what it is, so it falls through",
       (category) => {
         // A stated category outranks the transmitter even without a shape of
@@ -317,7 +325,17 @@ describe("resolveAircraftIcon", () => {
     });
 
     it("falls through the categories with no silhouette of their own", () => {
-      for (const code of ["A0", "B0", "B2", "B3", "B7", "C0", "C1", "C3", "D1"]) {
+      for (const code of [
+        "A0",
+        "B0",
+        "B2",
+        "B3",
+        "B7",
+        "C0",
+        "C1",
+        "C3",
+        "D1",
+      ]) {
         expect(
           resolveAircraftIcon({
             aircraft_type: null,
@@ -399,7 +417,9 @@ describe("resolveAircraftIconImageId", () => {
     expect(
       resolveAircraftIconImageId({
         aircraft_type: "K35R",
-        classification: classification("military_transport", { military: true }),
+        classification: classification("military_transport", {
+          military: true,
+        }),
         on_ground: false,
       }),
     ).toBe(iconImageId("tanker", "military"));
