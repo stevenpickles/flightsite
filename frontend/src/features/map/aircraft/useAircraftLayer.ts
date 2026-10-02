@@ -96,12 +96,15 @@ export function useAircraftLayer(): void {
           includeTrails: true,
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // An icon that will not decode means no aircraft layer for this style
         // load. Adding the layers anyway would leave MapLibre warning once per
         // feature per frame about a missing image and draw nothing useful, so
         // the map degrades to basemap plus rings — the same degraded state a
-        // tile outage produces, and still usable.
+        // tile outage produces, and still usable. Said once, naming the
+        // image, because an empty map with no explanation is the one outcome
+        // worse than this one.
+        console.warn("FlightSite: aircraft icons failed to register", error);
       });
     return () => {
       cancelled = true;
