@@ -2799,6 +2799,40 @@ slices:
     risk_level: low
     notes: "Second advisory batch of 2026-09-30, surfaced by PRs #249 and #251 after 092 merged. Added by Fable outside the phase plan."
 
+  - id: "094"
+    title: "Aircraft silhouette set and classification tint"
+    phase: 9
+    branch: "094-aircraft-silhouette-set"
+    status: merged
+    depends_on: ["086", "093"]
+    objective: "Replace the three-shape live-map icon set with a bespoke silhouette family (§34) so a Cessna, a Cirrus, a narrowbody, a widebody, a fighter, a tanker and a helicopter are told apart at a glance; tint military/government/police aircraft as a secondary cue (§36); give the demo scenario airframes that exercise every shape."
+    scope:
+      - "artwork: 21 first-party MIT silhouettes (light high-wing, Cirrus, light low-wing, light twin, twin turboprop, business jet, narrowbody, widebody twin, widebody 3/4-engine, fighter, bomber, tanker, military transport, maritime patrol, helicopter, tiltrotor, tandem-rotor, glider, UAV, ground, generic) under frontend/src/features/map/aircraft/icons/artwork/"
+      - "palettes: civil, military, government (incl. law enforcement) pre-rendered per shape; image id flightsite-aircraft-<shape>--<palette>; palette read from the classification flags only"
+      - "resolver: populated TYPE_ICON_SHAPES (ICAO designators), every backend icon_category, and the full emitter-category fallback (A1-A7, B1, B4, B6); chain order and the ground rule unchanged"
+      - "demo: type-only airframes (no operator, classify as unknown) for commercial, rare, first-ever and MLAT profiles; fighter, bomber and tandem-rotor entries appended to the military table; positional mapping preserved"
+    out_of_scope:
+      - "medical / firefighting palettes"
+      - "runtime per-shape icon-size multiplier (relative size is baked into the artwork)"
+      - "backend icon_category vocabulary changes (fighter/bomber/tanker resolve at the type level)"
+      - "lazy (styleimagemissing) icon registration"
+    acceptance_criteria:
+      - "every shape x palette image registers on every style load; the e2e suite probes hasImage so a silently rejected SVG cannot drop the aircraft layer unnoticed"
+      - "a demo K35R renders the tanker silhouette with the military tint; a demo B738 with no operator renders narrowbody, civil, classification unknown"
+      - "the resolver remains metadata-only: no kinematic input influences shape or palette"
+      - "frontend lint/typecheck/test and backend ruff/mypy/pytest pass; visual baselines unchanged (canvas masked)"
+    required_tests: [silhouette SVG validity per shape x palette, resolver per level and palette precedence, registration cross product, geojson icon id, demo airframe tables and honest classification, e2e image-registration probe]
+    expected_artifacts:
+      - frontend/src/features/map/aircraft/icons/
+      - frontend/src/features/map/aircraft/geojson.ts
+      - backend/src/flightsite/demo/airframes.py
+      - backend/tests/demo/test_airframes.py
+      - docs/PRODUCT.md
+      - docs/LICENSES.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner request of 2026-10-02. Frontend-heavy. The palette is a secondary cue: classification is also surfaced as text in the detail panel, filters and label indicator, which is how §36's colour rule is satisfied."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other

@@ -1,9 +1,11 @@
-"""Demo aircraft classify, so the classification alerts can fire (issue #112).
+"""Demo aircraft classify, so the classification alerts can fire (issue #112),
+and carry the type designators the map's silhouettes key on (slice 094).
 
 Three levels, because the claim has three parts and they fail differently:
 
-* the airframe table is deterministic and covers exactly the three
-  special-interest categories;
+* the airframe table is deterministic, gives the three special-interest
+  categories an operator and the ordinary ones a type alone, and classifies
+  each exactly as a real registry row would;
 * a demo stack's metadata cache reports ``military`` for a scenario military
   aircraft — i.e. the seeded rows really do run through precedence, the
   operator directory and :func:`~flightsite.classification.engine.classify`;
@@ -22,20 +24,30 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from flightsite.app import create_app
+from flightsite.classification.engine import classify
+from flightsite.classification.model import Classification, Evidence
 from flightsite.demo import DEFAULT_CENTER, Category, build_roster
 from flightsite.demo.adapter import DEFAULT_POPULATION, DEFAULT_SEED, DemoAdapter
 from flightsite.demo.airframes import (
     AIRFRAMES_BY_CATEGORY,
+    COMMERCIAL_AIRFRAMES,
     DEMO_SOURCE,
     GOVERNMENT_AIRFRAMES,
     MILITARY_AIRFRAMES,
+    MLAT_AIRFRAMES,
+    OPERATED_CATEGORIES,
     POLICE_AIRFRAMES,
+    RARE_AIRFRAMES,
+    DemoAirframe,
     demo_metadata_records,
 )
 from flightsite.demo.roster import AircraftProfile
 from flightsite.metadata.cache import AircraftMetadataView, MetadataCache
 
 CLASSIFIED = (Category.MILITARY, Category.GOVERNMENT, Category.POLICE)
+
+#: The categories deliberately left without any identity.
+UNDESCRIBED = (Category.GROUND, Category.MODE_S, Category.ROTORCRAFT)
 
 
 def _roster() -> tuple[AircraftProfile, ...]:
@@ -64,24 +76,26 @@ async def resolved(app: FastAPI, icao: str) -> AircraftMetadataView | None:
 # ------------------------------------------------------------------ the table
 
 
-def test_records_are_written_for_exactly_the_three_special_categories() -> None:
+def test_records_are_written_for_exactly_the_described_categories() -> None:
     roster = _roster()
     records = demo_metadata_records(roster)
 
-    classified = {profile.icao for profile in roster if profile.category in CLASSIFIED}
-    assert {record.icao24 for record in records} == classified
+    described = {profile.icao for profile in roster if profile.category in AIRFRAMES_BY_CATEGORY}
+    assert {record.icao24 for record in records} == described
     assert records, "the scenario always carries at least one of each category"
 
 
-def test_the_ordinary_categories_are_left_unknown() -> None:
-    """A demo in which everything classifies would be a worse demo: "unknown"
-    is the common and honest answer for an airframe no registry describes."""
+def test_ground_mode_s_and_the_emitter_only_helicopter_stay_undescribed() -> None:
+    """Ground traffic keeps the generic ground form on the map, Mode-S-only
+    aircraft have nothing to draw, and the slice-086 helicopter is the
+    emitter-category fallback's acceptance case."""
     roster = _roster()
     seeded = {record.icao24 for record in demo_metadata_records(roster)}
 
     for profile in roster:
-        if profile.category not in CLASSIFIED:
+        if profile.category in UNDESCRIBED:
             assert profile.icao not in seeded
+    assert not (set(UNDESCRIBED) & set(AIRFRAMES_BY_CATEGORY))
 
 
 def test_the_records_are_deterministic_for_a_given_roster() -> None:
@@ -92,21 +106,49 @@ def test_the_records_are_deterministic_for_a_given_roster() -> None:
     assert first == second
 
 
-def test_every_airframe_carries_an_operator_and_a_type() -> None:
-    """Both are load-bearing: the operator makes the claim, the type draws the
-    icon. A blank either side would classify as unknown and look like a bug in
-    the classifier rather than a gap in the table."""
+def test_every_airframe_carries_a_type() -> None:
+    """The type draws the icon; a blank one would be a silent gap."""
     for airframes in AIRFRAMES_BY_CATEGORY.values():
         for airframe in airframes:
-            assert airframe.operator_name.strip()
             assert airframe.type_code.strip()
-            assert airframe.registration.strip()
+            assert airframe.model.strip()
+
+
+def test_special_interest_airframes_carry_an_operator_and_a_registration() -> None:
+    """The operator makes the classification claim. A blank one would classify
+    as unknown and look like a bug in the classifier rather than a gap in the
+    table."""
+    for category in OPERATED_CATEGORIES:
+        for airframe in AIRFRAMES_BY_CATEGORY[category]:
+            assert airframe.operator_name is not None and airframe.operator_name.strip()
+            assert airframe.registration is not None and airframe.registration.strip()
+
+
+def test_ordinary_airframes_are_type_only() -> None:
+    """No operator, so no classification claim; no registration, so the table
+    wrapping around a category's profiles never shares a tail number."""
+    for category, airframes in AIRFRAMES_BY_CATEGORY.items():
+        if category in OPERATED_CATEGORIES:
+            continue
+        for airframe in airframes:
+            assert airframe.operator_name is None
+            assert airframe.registration is None
 
 
 def test_the_records_leave_the_military_flag_unset() -> None:
     """The claim comes from the curated operator directory, not from a flag
     whose provenance would be published as `heuristic`."""
     assert all(record.military_flag is None for record in demo_metadata_records(_roster()))
+
+
+def _classify(airframe: DemoAirframe) -> Classification:
+    return classify(
+        Evidence(
+            icao24="ae1463",
+            operator_name=airframe.operator_name,
+            type_code=airframe.type_code,
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -118,22 +160,45 @@ def test_the_records_leave_the_military_flag_unset() -> None:
     ],
 )
 def test_every_operator_in_the_table_is_one_the_directory_recognizes(
-    airframes: tuple[object, ...], attribute: str
+    airframes: tuple[DemoAirframe, ...], attribute: str
 ) -> None:
     """The table is only useful if the shipped directory agrees with it, and a
     name that stopped matching would otherwise fail silently as "unknown"."""
-    from flightsite.classification.engine import classify
-    from flightsite.classification.model import Evidence
-
     for airframe in airframes:
-        classification = classify(
-            Evidence(
-                icao24="ae1463",
-                operator_name=airframe.operator_name,  # type: ignore[attr-defined]
-                type_code=airframe.type_code,  # type: ignore[attr-defined]
-            )
-        )
-        assert getattr(classification, attribute), airframe
+        assert getattr(_classify(airframe), attribute), airframe
+
+
+def test_type_only_identities_classify_honestly() -> None:
+    """The real engine on the real inputs: an airliner type with no operator is
+    unknown (``classification/data/types.py``), a business jet is business
+    aviation, a light single is general aviation, and nothing is military."""
+    for airframe in COMMERCIAL_AIRFRAMES:
+        classification = _classify(airframe)
+        assert classification.icon_category.value == "unknown", airframe
+    for airframe in RARE_AIRFRAMES:
+        classification = _classify(airframe)
+        assert classification.icon_category.value == "business_jet", airframe
+    c172 = next(a for a in MLAT_AIRFRAMES if a.type_code == "C172")
+    assert _classify(c172).icon_category.value == "light_aircraft"
+    for category, airframes in AIRFRAMES_BY_CATEGORY.items():
+        if category in OPERATED_CATEGORIES:
+            continue
+        for airframe in airframes:
+            classification = _classify(airframe)
+            assert not classification.military, airframe
+            assert not classification.government, airframe
+            assert not classification.law_enforcement, airframe
+
+
+def test_the_default_roster_reaches_every_military_silhouette() -> None:
+    """A default-population roster has about eight military profiles; the
+    first eight table entries must between them exercise every military
+    shape the map draws (transport, tanker, fighter, bomber, tiltrotor,
+    tandem rotor)."""
+    reached = {airframe.type_code for airframe in MILITARY_AIRFRAMES[:8]}
+    assert {"C17", "K35R", "V22", "A400", "F16", "B52", "H47"} <= reached
+    military = [p for p in _roster() if p.category is Category.MILITARY]
+    assert len(military) >= 7
 
 
 # ------------------------------------------------------------- the demo stack

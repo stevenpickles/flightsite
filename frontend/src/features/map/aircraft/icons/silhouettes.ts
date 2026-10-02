@@ -2,10 +2,13 @@
  * FlightSite's aircraft silhouettes — original artwork, MIT-licensed with the
  * repository (`docs/LICENSES.md`).
  *
- * Drawn here as SVG markup rather than shipped as files because they are tiny,
+ * Drawn as SVG markup rather than shipped as files because they are tiny,
  * because MapLibre wants them as raster images registered with `addImage`
  * anyway, and because keeping them in TypeScript means the icon ids, the
- * artwork, and the resolver that chooses between them cannot drift apart.
+ * artwork, and the resolver that chooses between them cannot drift apart. The
+ * drawings themselves live in `./artwork/`, one file per family; this module
+ * is the catalogue — which shapes exist, which palettes, and the image id
+ * every (shape, palette) pair registers under.
  *
  * Drawing rules that the rest of the layer depends on:
  *
@@ -15,20 +18,94 @@
  * - **Centred on (32, 32).** The symbol's anchor is its centre, so the icon
  *   must be balanced about that point or aircraft will appear offset from their
  *   reported positions — most visibly when rotating.
- * - **Light body, dark casing.** A single palette has to read on the dark
- *   aviation basemap, the light one, and OSM raster imagery. A pale fill with a
- *   dark outline does that in every case, which is why the icons do not follow
- *   the app theme.
+ * - **Light body, dark casing.** A pale fill with a dark outline reads on the
+ *   dark aviation basemap, the light one, and OSM raster imagery, which is why
+ *   the icons do not follow the app theme. The classification palettes keep
+ *   the casing and tint only the body.
+ * - **Relative size is in the artwork.** A glider and a 747 are drawn to
+ *   different footprints inside the same canvas, so the symbol layer's one
+ *   zoom-driven `icon-size` expression needs no per-shape multiplier.
+ *
+ * **Palettes are a secondary cue (SPEC §36).** The shape says what the
+ * aircraft *is*; the tint says who flies it — military, government or civil —
+ * and the same fact is always also stated in text (the detail panel, the
+ * filters, the label's indicator), so nothing is communicated by colour alone.
  */
+
+import { CIVIL_ARTWORK } from "@/features/map/aircraft/icons/artwork/civil";
+import { GENERIC_ARTWORK } from "@/features/map/aircraft/icons/artwork/generic";
+import { MILITARY_ARTWORK } from "@/features/map/aircraft/icons/artwork/military";
+import { ROTORCRAFT_ARTWORK } from "@/features/map/aircraft/icons/artwork/rotorcraft";
+import type {
+  IconArtwork,
+  PaletteColours,
+} from "@/features/map/aircraft/icons/artwork/types";
 
 /** Rendered pixel size of each icon. Registered at `pixelRatio: 2`, so this is
  * 32 CSS pixels of icon at `icon-size: 1`. */
 export const ICON_PIXELS = 64;
 
-/** Pale body fill — legible against the dark aviation basemap. */
-const BODY = "#f2f6ff";
-/** Dark casing — legible against light basemaps and raster imagery. */
+/** The silhouettes the resolver can choose between. */
+export type AircraftIconShape =
+  | "generic"
+  | "ground"
+  | "light-high-wing"
+  | "light-cirrus"
+  | "light-low-wing"
+  | "light-twin"
+  | "turboprop-twin"
+  | "business-jet"
+  | "narrowbody"
+  | "widebody-twin"
+  | "widebody-quad"
+  | "fighter"
+  | "bomber"
+  | "tanker"
+  | "military-transport"
+  | "patrol"
+  | "uav"
+  | "rotorcraft"
+  | "tiltrotor"
+  | "tandem-rotor"
+  | "glider";
+
+/** Every shape's drawing. `satisfies` makes a shape with no artwork — or
+ * artwork for a shape the union does not name — a compile error. */
+const ARTWORK = {
+  ...GENERIC_ARTWORK,
+  ...CIVIL_ARTWORK,
+  ...MILITARY_ARTWORK,
+  ...ROTORCRAFT_ARTWORK,
+} satisfies Record<AircraftIconShape, IconArtwork>;
+
+/** Every shape, in catalogue order. */
+export const AIRCRAFT_ICON_SHAPES: readonly AircraftIconShape[] = Object.keys(
+  ARTWORK,
+) as AircraftIconShape[];
+
+/**
+ * Who flies it. `civil` is the original palette; `military` and `government`
+ * (which also covers law enforcement) tint the body and keep the casing.
+ * Precedence between them is `resolveIconPalette`'s business.
+ */
+export type IconPalette = "civil" | "military" | "government";
+
+/** Dark casing — legible against light basemaps and raster imagery. Shared by
+ * every palette so the tinted bodies stay as readable as the pale one. */
 const INK = "#0b1220";
+
+export const ICON_PALETTES: Readonly<Record<IconPalette, PaletteColours>> = {
+  /** Pale body — legible against the dark aviation basemap. */
+  civil: { body: "#f2f6ff", ink: INK },
+  /** Olive-khaki. */
+  military: { body: "#b9c79a", ink: INK },
+  /** Cool blue. */
+  government: { body: "#9fc8ff", ink: INK },
+};
+
+export const ICON_PALETTE_NAMES: readonly IconPalette[] = Object.keys(
+  ICON_PALETTES,
+) as IconPalette[];
 
 /** Position-source ring accent (MLAT). Colour is the *secondary* signal here;
  * the dashes are the primary one (SPEC §36 forbids relying on colour alone). */
@@ -41,50 +118,13 @@ function svg(body: string): string {
   );
 }
 
-/**
- * Generic swept-wing aircraft: pointed nose, swept leading edges out to the
- * wingtips at y = 41, a straight trailing edge back to the fuselage, and a
- * tailplane. The default silhouette for anything airborne whose type and
- * category are unknown — which, until slice 024 supplies metadata, is
- * everything.
- */
-const AIRLINER_PATH =
-  "M32 4C34.2 4 36 8.2 36 13.5L36 25L60 41L60 47L36 39L36 50L43 56L43 60" +
-  "L32 57L21 60L21 56L28 50L28 39L4 47L4 41L28 25L28 13.5C28 8.2 29.8 4 32 4Z";
-
-/**
- * Rotorcraft: a stubby fuselage, a tail boom with a stabiliser, and a rotor
- * disc suggested by two crossed blades. No heuristic guesses at rotorcraft
- * from position reports; it is wired to the `helicopter` / `rotorcraft` icon
- * categories slice 024's metadata supplies and, since slice 086, to the
- * aircraft's own ADS-B emitter category `A7` when metadata has no opinion.
- */
-const ROTORCRAFT_BODY =
-  `<path d="M29.5 33h5v17h-5z" fill="${BODY}" stroke="${INK}" stroke-width="2" stroke-linejoin="round"/>` +
-  `<path d="M23 46h18v5H23z" fill="${BODY}" stroke="${INK}" stroke-width="2" stroke-linejoin="round"/>` +
-  `<ellipse cx="32" cy="26" rx="9" ry="11" fill="${BODY}" stroke="${INK}" stroke-width="2"/>` +
-  `<path d="M16 16 48 48M48 16 16 48" fill="none" stroke="${INK}" stroke-width="4.5" stroke-linecap="round" opacity="0.85"/>` +
-  `<path d="M16 16 48 48M48 16 16 48" fill="none" stroke="${BODY}" stroke-width="2" stroke-linecap="round"/>`;
-
-/**
- * On-the-ground variant: the same planform, drawn smaller, sitting on a ground
- * bar. Ground traffic is dense, slow, and rarely the thing a watcher is looking
- * at, so it reads as "parked/taxiing" at a glance and takes up less of the
- * apron than an airborne icon would.
- */
-const GROUND_PATH =
-  "M32 10C34 10 35.4 12.6 35.4 16.4L35.4 25L52 34L52 38.4L35.4 33.6L35.4 40" +
-  "L40 44L40 47.4L32 45.4L24 47.4L24 44L28.6 40L28.6 33.6L12 38.4L12 34" +
-  "L28.6 25L28.6 16.4C28.6 12.6 30 10 32 10Z";
-
-const GROUND_BAR = "M14 53h36a2.5 2.5 0 0 1 0 5H14a2.5 2.5 0 0 1 0-5z";
-
-function filledPath(d: string): string {
-  return `<path d="${d}" fill="${BODY}" stroke="${INK}" stroke-width="2" stroke-linejoin="round"/>`;
+/** One silhouette in one palette, as a standalone SVG document. */
+export function renderIconSvg(
+  shape: AircraftIconShape,
+  palette: IconPalette,
+): string {
+  return svg(ARTWORK[shape](ICON_PALETTES[palette]));
 }
-
-/** The silhouettes the resolver can choose between. */
-export type AircraftIconShape = "airliner" | "rotorcraft" | "ground";
 
 /**
  * A dashed ring drawn under MLAT positions.
@@ -101,22 +141,31 @@ const MLAT_RING =
   `<circle cx="32" cy="32" r="27" fill="none" stroke="${MLAT_ACCENT}" stroke-width="3.5" ` +
   `stroke-dasharray="8 8" stroke-linecap="round"/>`;
 
-/** Every icon this layer registers, as standalone SVG documents. */
-export const AIRCRAFT_ICON_SVGS: Readonly<
-  Record<AircraftIconShape | "mlat-ring", string>
-> = {
-  airliner: svg(filledPath(AIRLINER_PATH)),
-  rotorcraft: svg(ROTORCRAFT_BODY),
-  ground: svg(filledPath(GROUND_PATH) + filledPath(GROUND_BAR)),
-  "mlat-ring": svg(MLAT_RING),
-};
-
-/** MapLibre image id for one icon. Namespaced so it cannot collide with a
- * basemap style's own sprite entries. */
-export function iconImageId(name: AircraftIconShape | "mlat-ring"): string {
-  return `flightsite-aircraft-${name}`;
+/** MapLibre image id for one silhouette in one palette. Namespaced so it
+ * cannot collide with a basemap style's own sprite entries; the double dash
+ * keeps the palette unambiguous against shape names that contain a dash. */
+export function iconImageId(
+  shape: AircraftIconShape,
+  palette: IconPalette = "civil",
+): string {
+  return `flightsite-aircraft-${shape}--${palette}`;
 }
 
 /** Image id of the MLAT ring, which is a layer-wide constant rather than a
  * per-feature choice. */
-export const MLAT_RING_IMAGE_ID = iconImageId("mlat-ring");
+export const MLAT_RING_IMAGE_ID = "flightsite-aircraft-mlat-ring";
+
+function renderAll(): Record<string, string> {
+  const images: Record<string, string> = {};
+  for (const shape of AIRCRAFT_ICON_SHAPES) {
+    for (const palette of ICON_PALETTE_NAMES) {
+      images[iconImageId(shape, palette)] = renderIconSvg(shape, palette);
+    }
+  }
+  images[MLAT_RING_IMAGE_ID] = svg(MLAT_RING);
+  return images;
+}
+
+/** Every icon this layer registers — each shape in each palette, plus the
+ * MLAT ring — keyed by image id, as standalone SVG documents. */
+export const AIRCRAFT_ICON_SVGS: Readonly<Record<string, string>> = renderAll();

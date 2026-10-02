@@ -82,13 +82,21 @@ Live Map when complete.
 - Live aircraft with hierarchical silhouette icons (specific type → category →
   the aircraft's own ADS-B emitter category when metadata has no opinion, e.g. `A7`
   rotorcraft → generic), rotated to heading; extensible, license-documented icon set
-  (§34).
+  (§34). Twenty-one first-party silhouettes: Cessna-style high-wing single, Cirrus,
+  low-wing single, light twin, twin turboprop, business jet, narrowbody, widebody twin,
+  widebody three/four-engine, fighter, bomber, tanker, military transport, maritime
+  patrol, helicopter, tiltrotor, tandem rotor, glider, UAV, plus the generic fallback
+  and its on-the-ground form. The type level keys on the ICAO designator (`C172`,
+  `SR22`, `B738`, `K35R`); the category level on the backend's `icon_category`; the
+  emitter level on `A1`–`A7`, `B1`, `B4` and `B6`.
 - Labels (callsign → tail fallback, operator, altitude, interesting indicator) with
   priority-based decluttering; no marker clustering (§35).
 - Styling: neutral default, strong selection highlight, distinct attention styling for
-  interesting/alerting aircraft, optional category styling for
-  military/government/police, stale-aircraft fading; severity never communicated by
-  color alone (§36).
+  interesting/alerting aircraft, category styling for military (olive) and
+  government/law-enforcement (blue) aircraft as a tint of the silhouette's body,
+  stale-aircraft fading; neither severity nor classification is communicated by color
+  alone — the shape is the primary cue and the classification is always also stated in
+  text (detail panel, filters, label indicator) (§36).
 - Live lifecycle defaults (configurable): 15 s → stale, 60 s → removed from live
   display, 10 min absent → sighting closed (§18).
 - Position source clearly distinguished: direct ADS-B, MLAT-derived, Mode
