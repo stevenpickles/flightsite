@@ -145,16 +145,14 @@ releases:
       ADR-0017). Recorded 2026-09-26."
   - version: "v0.11.0"
     after_phase: 9
-    theme: "Planned (Wave A): everyday usability — units on every surface, every
-      page in the nav, keyboard shortcuts, share links and QR hand-off, list
-      search, a phone Live Map and an installable shell, map display controls
-      (slices 081-085). Planned 2026-09-28."
-  - version: "v0.12.0"
-    after_phase: 9
-    theme: "Planned (Wave B): the receiver as an instrument — emitter category,
-      selected altitude and decoder emergency state, coverage vs radio horizon,
-      receiver self-alerts, richer alert conditions, 'What was that?'
-      (slices 086-090). Planned 2026-09-28."
+    theme: "The usability and observatory expansion program shipped as one
+      release: units on every surface, ten sidebar sections (SPEC §10 amended),
+      keyboard shortcuts, share links and QR hand-off, list search, a phone Live
+      Map and installable shell, map display controls; decoder emitter category,
+      selected altitude and emergency state, receiver self-alerts, 'What was
+      that?', coverage against the radio horizon, richer alert conditions
+      (slices 080-093; migrations 0018-0020). The planned v0.11.0/v0.12.0 split
+      was not used. Recorded 2026-10-01."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
