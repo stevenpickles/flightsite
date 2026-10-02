@@ -2805,7 +2805,7 @@ slices:
     title: "Aircraft silhouette set and classification tint"
     phase: 9
     branch: "094-aircraft-silhouette-set"
-    status: in_progress
+    status: merged
     depends_on: ["086", "093"]
     objective: "Replace the three-shape live-map icon set with a bespoke silhouette family (§34) so a Cessna, a Cirrus, a narrowbody, a widebody, a fighter, a tanker and a helicopter are told apart at a glance; tint military/government/police aircraft as a secondary cue (§36); give the demo scenario airframes that exercise every shape."
     scope:
