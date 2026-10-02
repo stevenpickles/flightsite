@@ -119,9 +119,34 @@ describe("buildAircraftFeatureCollection", () => {
       }),
     );
     const properties = propertiesByIcao(collection);
-    expect(properties.aaaaaa?.icon).toBe(iconImageId("airliner"));
-    expect(properties.bbbbbb?.icon).toBe(iconImageId("ground"));
+    expect(properties.aaaaaa?.icon).toBe(iconImageId("generic", "civil"));
+    expect(properties.bbbbbb?.icon).toBe(iconImageId("ground", "civil"));
     expect(properties.bbbbbb?.onGround).toBe(true);
+  });
+
+  it("draws a typed aircraft in the palette its classification chooses", () => {
+    const collection = buildAircraftFeatureCollection(
+      input({
+        aircraft: records(
+          { icao: "aaaaaa", aircraft_type: "B738" },
+          {
+            icao: "bbbbbb",
+            aircraft_type: "K35R",
+            classification: {
+              military: true,
+              government: false,
+              law_enforcement: false,
+              mission: "military",
+              icon_category: "military_transport",
+              confidence: "high",
+            },
+          },
+        ),
+      }),
+    );
+    const properties = propertiesByIcao(collection);
+    expect(properties.aaaaaa?.icon).toBe(iconImageId("narrowbody", "civil"));
+    expect(properties.bbbbbb?.icon).toBe(iconImageId("tanker", "military"));
   });
 
   it("draws an A7 with no metadata as a rotorcraft (roadmap slice 086)", () => {

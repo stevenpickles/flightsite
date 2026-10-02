@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   CATEGORY_ICON_SHAPES,
@@ -6,23 +6,20 @@ import {
   GENERIC_ICON_SHAPE,
   GROUND_ICON_SHAPE,
   resolveAircraftIcon,
+  resolveAircraftIconImageId,
+  resolveIconPalette,
   TYPE_ICON_SHAPES,
 } from "@/features/map/aircraft/icons/resolveIcon";
-import type { AircraftIconShape } from "@/features/map/aircraft/icons/silhouettes";
+import {
+  AIRCRAFT_ICON_SHAPES,
+  iconImageId,
+} from "@/features/map/aircraft/icons/silhouettes";
 import type { Classification } from "@/lib/api/live";
 
-/** The shipped type table is empty until slice 024. Writing through this alias
- * is how the type level of the hierarchy is exercised today; every test that
- * does so clears its entry again. */
-const typeTable = TYPE_ICON_SHAPES as Record<string, AircraftIconShape>;
-
-afterEach(() => {
-  for (const key of Object.keys(typeTable)) {
-    delete typeTable[key];
-  }
-});
-
-function classification(iconCategory: string | null): Classification {
+function classification(
+  iconCategory: string | null,
+  flags: Partial<Pick<Classification, "military" | "government" | "law_enforcement">> = {},
+): Classification {
   return {
     military: false,
     government: false,
@@ -30,13 +27,12 @@ function classification(iconCategory: string | null): Classification {
     mission: null,
     icon_category: iconCategory,
     confidence: null,
+    ...flags,
   };
 }
 
 describe("resolveAircraftIcon", () => {
   it("falls through to generic when no metadata is present", () => {
-    // The state of every live payload until slices 021-024 land: the metadata
-    // half of the §3.3 object is present and null.
     expect(
       resolveAircraftIcon({
         aircraft_type: null,
@@ -118,23 +114,127 @@ describe("resolveAircraftIcon", () => {
     ).toBe("generic");
   });
 
-  it("ships an empty type table and a populated category table", () => {
-    // The plumbing is what slice 014 owns; slice 024 supplies the type data.
-    expect(TYPE_ICON_SHAPES).toEqual({});
+  it("ships populated tables whose every value is a drawn shape", () => {
+    expect(Object.keys(TYPE_ICON_SHAPES).length).toBeGreaterThan(100);
     expect(Object.keys(CATEGORY_ICON_SHAPES).length).toBeGreaterThan(0);
+    for (const table of [
+      TYPE_ICON_SHAPES,
+      CATEGORY_ICON_SHAPES,
+      EMITTER_CATEGORY_ICON_SHAPES,
+    ]) {
+      for (const shape of Object.values(table)) {
+        expect(AIRCRAFT_ICON_SHAPES).toContain(shape);
+      }
+    }
+  });
+
+  it("keys the type table by upper-case ICAO designators", () => {
+    for (const code of Object.keys(TYPE_ICON_SHAPES)) {
+      expect(code).toMatch(/^[A-Z0-9]{2,4}$/);
+    }
   });
 
   it("prefers a type match over both the category and the ground variant", () => {
-    // Simulates slice 024 populating the table: activating type-specific
-    // silhouettes must be filling this in, not changing the resolver.
-    typeTable.B738 = "airliner";
     expect(
       resolveAircraftIcon({
         aircraft_type: "b738",
         classification: classification("helicopter"),
         on_ground: true,
       }),
-    ).toEqual({ shape: "airliner", level: "type" });
+    ).toEqual({ shape: "narrowbody", level: "type" });
+  });
+
+  it("lets the type level correct a backend category the drawing disagrees with", () => {
+    // The backend files a Chinook as a helicopter and an Osprey as military
+    // transport; the type table knows better.
+    expect(
+      resolveAircraftIcon({
+        aircraft_type: "H47",
+        classification: classification("helicopter"),
+        on_ground: false,
+      }),
+    ).toEqual({ shape: "tandem-rotor", level: "type" });
+    expect(
+      resolveAircraftIcon({
+        aircraft_type: "V22",
+        classification: classification("military_transport"),
+        on_ground: false,
+      }),
+    ).toEqual({ shape: "tiltrotor", level: "type" });
+  });
+
+  describe("the type level, one designator per family", () => {
+    it.each([
+      ["C172", "light-high-wing"],
+      ["SR22", "light-cirrus"],
+      ["P28A", "light-low-wing"],
+      ["BE58", "light-twin"],
+      ["DH8D", "turboprop-twin"],
+      ["GLF6", "business-jet"],
+      ["A320", "narrowbody"],
+      ["P8", "narrowbody"],
+      ["B789", "widebody-twin"],
+      ["B744", "widebody-quad"],
+      ["A388", "widebody-quad"],
+      ["F16", "fighter"],
+      ["B52", "bomber"],
+      ["K35R", "tanker"],
+      ["C17", "military-transport"],
+      ["P3", "patrol"],
+      ["MQ9", "uav"],
+      ["DISC", "glider"],
+    ] as const)("%s draws %s", (designator, shape) => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: designator,
+          classification: null,
+          on_ground: false,
+        }),
+      ).toEqual({ shape, level: "type" });
+    });
+
+    it("lists no plain helicopter: the backend's rotorcraft table owns those", () => {
+      for (const code of ["EC35", "H125", "B06", "R44", "S76", "AH64"]) {
+        expect(TYPE_ICON_SHAPES[code]).toBeUndefined();
+      }
+    });
+  });
+
+  describe("the category level", () => {
+    it.each([
+      ["airliner", "narrowbody"],
+      ["cargo", "narrowbody"],
+      ["business_jet", "business-jet"],
+      ["light_aircraft", "light-high-wing"],
+      ["helicopter", "rotorcraft"],
+      ["military_jet", "fighter"],
+      ["military_transport", "military-transport"],
+    ] as const)("%s draws %s", (category, shape) => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: classification(category),
+          on_ground: false,
+        }),
+      ).toEqual({ shape, level: "category" });
+    });
+
+    it.each(["military", "government", "law_enforcement", "medical", "firefighting"])(
+      "%s says who flies it, not what it is, so it falls through",
+      (category) => {
+        // A stated category outranks the transmitter even without a shape of
+        // its own (module comment), so this is generic, not the emitter's A1.
+        // The palette carries what the category was saying.
+        expect(
+          resolveAircraftIcon({
+            aircraft_type: null,
+            classification: classification(category),
+            on_ground: false,
+            emitter_category: "A1",
+          }),
+        ).toEqual({ shape: GENERIC_ICON_SHAPE, level: "generic" });
+      },
+    );
   });
 
   describe("emitter-category fallback (roadmap slice 086)", () => {
@@ -172,7 +272,7 @@ describe("resolveAircraftIcon", () => {
       ).toBe("emitter");
     });
 
-    it("never outranks a metadata category, even a generic-shaped one", () => {
+    it("never outranks a metadata category", () => {
       expect(
         resolveAircraftIcon({
           aircraft_type: null,
@@ -180,11 +280,10 @@ describe("resolveAircraftIcon", () => {
           on_ground: false,
           emitter_category: "A7",
         }),
-      ).toEqual({ shape: GENERIC_ICON_SHAPE, level: "generic" });
+      ).toEqual({ shape: "narrowbody", level: "category" });
     });
 
     it("never outranks a metadata type silhouette", () => {
-      typeTable.B738 = "airliner";
       expect(
         resolveAircraftIcon({
           aircraft_type: "B738",
@@ -195,9 +294,30 @@ describe("resolveAircraftIcon", () => {
       ).toBe("type");
     });
 
-    it("maps only shapes that exist, so other categories fall through", () => {
-      expect(EMITTER_CATEGORY_ICON_SHAPES).toEqual({ A7: "rotorcraft" });
-      for (const code of ["A0", "A1", "A3", "A5", "A6", "B1", "B6", "C1"]) {
+    it.each([
+      ["A1", "light-high-wing"],
+      ["A2", "narrowbody"],
+      ["A3", "narrowbody"],
+      ["A4", "widebody-twin"],
+      ["A5", "widebody-twin"],
+      ["A6", "fighter"],
+      ["A7", "rotorcraft"],
+      ["B1", "glider"],
+      ["B4", "glider"],
+      ["B6", "uav"],
+    ] as const)("%s draws %s", (code, shape) => {
+      expect(
+        resolveAircraftIcon({
+          aircraft_type: null,
+          classification: null,
+          on_ground: false,
+          emitter_category: code,
+        }),
+      ).toEqual({ shape, level: "emitter" });
+    });
+
+    it("falls through the categories with no silhouette of their own", () => {
+      for (const code of ["A0", "B0", "B2", "B3", "B7", "C0", "C1", "C3", "D1"]) {
         expect(
           resolveAircraftIcon({
             aircraft_type: null,
@@ -232,5 +352,70 @@ describe("resolveAircraftIcon", () => {
         on_ground: false,
       }),
     ).toEqual({ shape: GENERIC_ICON_SHAPE, level: "generic" });
+  });
+});
+
+describe("resolveIconPalette", () => {
+  it("is civil when nothing is known", () => {
+    expect(resolveIconPalette(null)).toBe("civil");
+    expect(resolveIconPalette(undefined)).toBe("civil");
+    expect(resolveIconPalette(classification("airliner"))).toBe("civil");
+  });
+
+  it("is military for a military classification", () => {
+    expect(resolveIconPalette(classification(null, { military: true }))).toBe(
+      "military",
+    );
+  });
+
+  it("is government for government or law-enforcement alone", () => {
+    expect(resolveIconPalette(classification(null, { government: true }))).toBe(
+      "government",
+    );
+    expect(
+      resolveIconPalette(classification(null, { law_enforcement: true })),
+    ).toBe("government");
+  });
+
+  it("lets military outrank government", () => {
+    expect(
+      resolveIconPalette(
+        classification(null, { military: true, government: true }),
+      ),
+    ).toBe("military");
+  });
+
+  it("reads the flags, not the category or mission", () => {
+    // `military_jet` without the flag is not a claim the palette may make.
+    expect(resolveIconPalette(classification("military_jet"))).toBe("civil");
+    expect(
+      resolveIconPalette({ ...classification(null), mission: "military" }),
+    ).toBe("civil");
+  });
+});
+
+describe("resolveAircraftIconImageId", () => {
+  it("composes the silhouette with the palette", () => {
+    expect(
+      resolveAircraftIconImageId({
+        aircraft_type: "K35R",
+        classification: classification("military_transport", { military: true }),
+        on_ground: false,
+      }),
+    ).toBe(iconImageId("tanker", "military"));
+    expect(
+      resolveAircraftIconImageId({
+        aircraft_type: "B738",
+        classification: null,
+        on_ground: false,
+      }),
+    ).toBe(iconImageId("narrowbody", "civil"));
+    expect(
+      resolveAircraftIconImageId({
+        aircraft_type: null,
+        classification: classification("helicopter", { law_enforcement: true }),
+        on_ground: false,
+      }),
+    ).toBe(iconImageId("rotorcraft", "government"));
   });
 });

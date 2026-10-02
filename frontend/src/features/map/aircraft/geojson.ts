@@ -18,8 +18,7 @@
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 
 import { meritsAttention } from "@/features/interesting/lib/ordering";
-import { resolveAircraftIcon } from "@/features/map/aircraft/icons/resolveIcon";
-import { iconImageId } from "@/features/map/aircraft/icons/silhouettes";
+import { resolveAircraftIconImageId } from "@/features/map/aircraft/icons/resolveIcon";
 import { displayPosition } from "@/features/map/aircraft/interpolation";
 import type {
   DepartingRecord,
@@ -65,7 +64,8 @@ export interface AircraftFeatureProperties {
   callsign: string | null;
   /** Degrees clockwise from north, fed straight to `icon-rotate`. */
   track: number;
-  /** MapLibre image id from the icon hierarchy. */
+  /** MapLibre image id: the silhouette from the icon hierarchy in the
+   * palette the classification flags choose (`icons/resolveIcon.ts`). */
   icon: string;
   /** Final icon opacity: staleness and removal fade folded into one number. */
   opacity: number;
@@ -268,7 +268,7 @@ export function buildAircraftFeatureCollection(
         icao,
         callsign: view.callsign,
         track: view.track_deg ?? 0,
-        icon: iconImageId(resolveAircraftIcon(view).shape),
+        icon: resolveAircraftIconImageId(view),
         opacity:
           (stale ? STALE_OPACITY : 1) * (dimmed ? GROUND_DIM_OPACITY : 1),
         stale,
@@ -309,7 +309,7 @@ export function buildAircraftFeatureCollection(
         icao,
         callsign: view.callsign,
         track: view.track_deg ?? 0,
-        icon: iconImageId(resolveAircraftIcon(view).shape),
+        icon: resolveAircraftIconImageId(view),
         opacity: STALE_OPACITY * remaining,
         stale: true,
         mlat: view.position_source === "mlat",
