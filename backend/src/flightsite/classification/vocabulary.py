@@ -170,11 +170,14 @@ class IconCategory(StrEnum):
     A separate vocabulary from :class:`MissionCategory` on purpose: the icon
     layer asks *what shape is this*, and the mission list answers *what is it
     for*. The frontend registry (``frontend/src/features/map/aircraft/icons/
-    resolveIcon.ts``) recognizes ``helicopter`` today and falls every other
-    category through to the generic silhouette — which is exactly the designed
-    behaviour, not a gap: the categories below are the vocabulary the icon set
-    grows into, and emitting them now means a new silhouette is a frontend
-    table entry rather than a backend change.
+    resolveIcon.ts``) draws a silhouette for the airframe categories below —
+    airliner, cargo, business jet, light aircraft, helicopter, military jet,
+    military transport — and falls the operator-flavoured ones (``military``,
+    ``government``, ``law_enforcement``, ``medical``, ``firefighting``) through
+    to the emitter-category and generic levels, since those say who flies the
+    aircraft rather than what it is; the classification flags tint the icon
+    instead. A new silhouette is a frontend table entry rather than a backend
+    change, which is why the vocabulary is emitted in full.
     """
 
     AIRLINER = "airliner"
