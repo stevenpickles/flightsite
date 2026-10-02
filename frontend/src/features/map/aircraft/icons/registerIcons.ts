@@ -19,11 +19,7 @@
 
 import type { StyleImageSource } from "maplibre-gl";
 
-import type { AircraftIconShape } from "@/features/map/aircraft/icons/silhouettes";
-import {
-  AIRCRAFT_ICON_SVGS,
-  iconImageId,
-} from "@/features/map/aircraft/icons/silhouettes";
+import { AIRCRAFT_ICON_SVGS } from "@/features/map/aircraft/icons/silhouettes";
 
 /** Pixel ratio the icons are registered at — see the module docstring. */
 export const ICON_PIXEL_RATIO = 2;
@@ -68,9 +64,10 @@ export const loadViaImageElement: ImageLoader = (dataUri) =>
     image.src = dataUri;
   });
 
-/** Every image id this layer needs, in registration order. */
-export const AIRCRAFT_ICON_NAMES: readonly (AircraftIconShape | "mlat-ring")[] =
-  ["airliner", "rotorcraft", "ground", "mlat-ring"];
+/** Every image id this layer needs — each silhouette in each palette plus
+ * the MLAT ring — in registration order. */
+export const AIRCRAFT_ICON_IMAGE_IDS: readonly string[] =
+  Object.keys(AIRCRAFT_ICON_SVGS);
 
 /**
  * Ensures every aircraft icon is registered on `map`'s current style.
@@ -80,18 +77,31 @@ export const AIRCRAFT_ICON_NAMES: readonly (AircraftIconShape | "mlat-ring")[] =
  * every icon is present, which is what the caller waits on before adding the
  * symbol layers — a layer whose `icon-image` is not yet registered renders
  * nothing and logs a warning per feature per frame.
+ *
+ * All sixty-odd images decode in parallel, once per style load, so the cost
+ * is a one-off per basemap switch rather than anything the frame loop sees.
+ * A decode failure names the image, because the caller's catch is the only
+ * thing between a single bad drawing and an empty map.
  */
 export async function registerAircraftIcons(
   map: IconImageRegistry,
   loadImage: ImageLoader = loadViaImageElement,
 ): Promise<void> {
   await Promise.all(
-    AIRCRAFT_ICON_NAMES.map(async (name) => {
-      const id = iconImageId(name);
+    AIRCRAFT_ICON_IMAGE_IDS.map(async (id) => {
       if (map.hasImage(id)) {
         return;
       }
-      const image = await loadImage(svgDataUri(AIRCRAFT_ICON_SVGS[name]));
+      const svg = AIRCRAFT_ICON_SVGS[id];
+      if (svg === undefined) {
+        throw new Error(`no artwork for icon ${id}`);
+      }
+      let image: StyleImageSource;
+      try {
+        image = await loadImage(svgDataUri(svg));
+      } catch (error) {
+        throw new Error(`failed to decode icon ${id}`, { cause: error });
+      }
       // Re-checked after the await: two concurrent style loads could both have
       // passed the first check, and `addImage` throws on a duplicate id.
       if (!map.hasImage(id)) {

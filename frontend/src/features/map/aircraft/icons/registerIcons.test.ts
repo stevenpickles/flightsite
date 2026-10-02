@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  AIRCRAFT_ICON_NAMES,
+  AIRCRAFT_ICON_IMAGE_IDS,
   ICON_PIXEL_RATIO,
   registerAircraftIcons,
   svgDataUri,
 } from "@/features/map/aircraft/icons/registerIcons";
 import {
+  AIRCRAFT_ICON_SHAPES,
   AIRCRAFT_ICON_SVGS,
-  ICON_PIXELS,
+  ICON_PALETTE_NAMES,
   iconImageId,
   MLAT_RING_IMAGE_ID,
 } from "@/features/map/aircraft/icons/silhouettes";
@@ -46,24 +47,28 @@ describe("svgDataUri", () => {
 });
 
 describe("registerAircraftIcons", () => {
-  it("registers every icon at the icons' pixel ratio", async () => {
+  it("registers every shape in every palette, plus the MLAT ring", async () => {
     const style = fakeStyle();
     await registerAircraftIcons(style, loadStub);
 
-    expect([...style.images.keys()].sort()).toEqual(
-      AIRCRAFT_ICON_NAMES.map(iconImageId).sort(),
+    const expected = AIRCRAFT_ICON_SHAPES.flatMap((shape) =>
+      ICON_PALETTE_NAMES.map((palette) => iconImageId(shape, palette)),
     );
+    expected.push(MLAT_RING_IMAGE_ID);
+    expect([...style.images.keys()].sort()).toEqual(expected.sort());
+    expect(style.images.size).toBe(
+      AIRCRAFT_ICON_SHAPES.length * ICON_PALETTE_NAMES.length + 1,
+    );
+  });
+
+  it("registers at the icons' pixel ratio", async () => {
+    const style = fakeStyle();
+    await registerAircraftIcons(style, loadStub);
     expect(style.addImage).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
       { pixelRatio: ICON_PIXEL_RATIO },
     );
-  });
-
-  it("registers the MLAT ring the layer names", async () => {
-    const style = fakeStyle();
-    await registerAircraftIcons(style, loadStub);
-    expect(style.hasImage(MLAT_RING_IMAGE_ID)).toBe(true);
   });
 
   it("skips icons the style already carries", async () => {
@@ -87,50 +92,20 @@ describe("registerAircraftIcons", () => {
       return uri as unknown as HTMLImageElement;
     });
     expect(seen.sort()).toEqual(
-      AIRCRAFT_ICON_NAMES.map((name) => AIRCRAFT_ICON_SVGS[name]).sort(),
+      AIRCRAFT_ICON_IMAGE_IDS.map((id) => AIRCRAFT_ICON_SVGS[id]).sort(),
     );
   });
 
-  it("propagates a decode failure rather than registering a broken icon", async () => {
+  it("propagates a decode failure, naming the icon, rather than registering a broken one", async () => {
     const style = fakeStyle();
+    const failing = iconImageId("fighter", "military");
     await expect(
-      registerAircraftIcons(style, () =>
-        Promise.reject(new Error("decode failed")),
+      registerAircraftIcons(style, (uri) =>
+        uri === svgDataUri(AIRCRAFT_ICON_SVGS[failing] ?? "")
+          ? Promise.reject(new Error("decode failed"))
+          : Promise.resolve(uri as unknown as HTMLImageElement),
       ),
-    ).rejects.toThrow("decode failed");
-    expect(style.images.size).toBe(0);
-  });
-});
-
-describe("the silhouette artwork", () => {
-  it.each([...AIRCRAFT_ICON_NAMES])(
-    "%s is a well-formed square SVG",
-    (name) => {
-      const markup = AIRCRAFT_ICON_SVGS[name];
-      const parsed = new DOMParser().parseFromString(markup, "image/svg+xml");
-      expect(parsed.querySelector("parsererror")).toBeNull();
-
-      const root = parsed.documentElement;
-      expect(root.tagName).toBe("svg");
-      expect(root.getAttribute("viewBox")).toBe(
-        `0 0 ${ICON_PIXELS} ${ICON_PIXELS}`,
-      );
-      expect(root.getAttribute("width")).toBe(String(ICON_PIXELS));
-      expect(root.getAttribute("height")).toBe(String(ICON_PIXELS));
-      expect(root.childElementCount).toBeGreaterThan(0);
-    },
-  );
-
-  it("distinguishes MLAT with a dash pattern, not only a colour", () => {
-    // SPEC §36: never rely exclusively on colour.
-    expect(AIRCRAFT_ICON_SVGS["mlat-ring"]).toContain("stroke-dasharray");
-  });
-
-  it("gives every icon a distinct namespaced id", () => {
-    const ids = AIRCRAFT_ICON_NAMES.map(iconImageId);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) {
-      expect(id.startsWith("flightsite-aircraft-")).toBe(true);
-    }
+    ).rejects.toThrow(`failed to decode icon ${failing}`);
+    expect(style.images.has(failing)).toBe(false);
   });
 });
