@@ -163,6 +163,7 @@ async def seed(harness: Harness) -> None:
             model="Boeing 737-800",
             operator_name="Alpha Airlines",
             operator_group_slug="alpha",
+            owner="Alpha Leasing Trust",
             mission_category="commercial_passenger",
         ),
         SeedAircraft(
@@ -607,6 +608,10 @@ async def test_top_aircraft_ranks_by_sightings_in_the_window(
     assert items[0]["sightings"] == 3
     assert items[0]["registration"] == "N00001"
     assert items[0]["operator_group"] == "Alpha Airlines"
+    # The registry owner rides beside the operator (slice 095): the Analytics
+    # tables fall back to it when no operator is known.
+    assert items[0]["owner"] == "Alpha Leasing Trust"
+    assert items[1]["owner"] is None
     assert items[1]["military"] is True
 
 

@@ -997,6 +997,9 @@ class AnalyticsAircraftRow(_Model):
     type: str | None = None
     model: str | None = None
     operator: str | None = None
+    #: Registry owner (FAA, where released): the fallback for "who flies it"
+    #: when no operator is known (slice 095).
+    owner: str | None = None
     operator_group: str | None = None
     classification: str | None = None
     military: bool = False
