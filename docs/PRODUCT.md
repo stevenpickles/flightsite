@@ -180,6 +180,14 @@ maximum detection distance; receiver activity over time; first-seen/last-seen
 information; count of never-previously-seen aircraft; locally rare aircraft/type
 information. No period-over-period comparison in v1.
 
+The three "Top …" rankings are tables rather than charts (slice 095): Top aircraft
+lists the tail (linked to the aircraft's history), the type in words with its
+designator beneath, who flies it — the operator, else the registered owner labelled
+as such, else the operator group — and the sighting count; Top types leads with the
+long-form type name over its designator and gives distinct airframes and sightings;
+Top operators the same for operator groups. Long names truncate with the full text
+on hover rather than widening the card.
+
 ### 4.7 Receiver Page (§60–§64, §67)
 
 - Scorecard: aircraft currently visible, positions/sec, messages/sec, max range

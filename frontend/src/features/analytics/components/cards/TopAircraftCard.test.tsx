@@ -1,15 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
-import {
-  createMemoryRouter,
-  MemoryRouter,
-  RouterProvider,
-  useParams,
-} from "react-router-dom";
+import { render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { TopAircraftCard } from "@/features/analytics/components/cards/TopAircraftCard";
 import type { AnalyticsAircraftRow } from "@/lib/api/analytics";
-import { getLastMockChart } from "@/test/echartsMock";
 
 function aircraftRow(
   overrides: Partial<AnalyticsAircraftRow> = {},
@@ -20,6 +14,7 @@ function aircraftRow(
     type: "C17",
     model: "Boeing C-17A Globemaster III",
     operator: "United States Air Force",
+    owner: null,
     operator_group: "US Military",
     classification: "military_transport",
     military: true,
@@ -33,22 +28,27 @@ function aircraftRow(
   };
 }
 
-/** The last option the (mocked) chart was given, narrowed to the parts
- * these tests read: the category-axis label formatter and the tooltip
- * formatter. Both are functions, so the option object is the only way to
- * observe what a bar is labelled with. */
-function lastOption(): {
-  yAxis: {
-    data: string[];
-    axisLabel: { formatter: (value: string, index: number) => string };
-  };
-  tooltip: { formatter: (params: unknown) => string };
-} {
-  const option = getLastMockChart().optionCalls.at(-1);
-  if (option === undefined) {
-    throw new Error("the chart was never given an option");
-  }
-  return option as ReturnType<typeof lastOption>;
+function renderCard(rows: AnalyticsAircraftRow[]) {
+  return render(
+    <MemoryRouter>
+      <TopAircraftCard rows={rows} isLoading={false} />
+    </MemoryRouter>,
+  );
+}
+
+/** The cells of the ranking's body rows, as text, one array per row. */
+function bodyRows(): string[][] {
+  const table = screen.getByRole("table", {
+    name: "Top aircraft by sightings",
+  });
+  return within(table)
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) =>
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent ?? ""),
+    );
 }
 
 describe("TopAircraftCard", () => {
@@ -71,186 +71,118 @@ describe("TopAircraftCard", () => {
   });
 
   it("renders the empty state when there are no rows", () => {
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={[]} isLoading={false} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText("No data for this window.")).toBeInTheDocument();
-  });
-
-  it("renders a chart with an accessible summary naming every row's identity and type", () => {
-    const rows = [
-      aircraftRow({ sightings: 12 }),
-      aircraftRow({
-        icao: "a9c2f0",
-        registration: "N302DN",
-        type: "B738",
-        model: "Boeing 737-800",
-        sightings: 8,
-      }),
-    ];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
-
+    renderCard([]);
     expect(
-      screen.getByRole("img", { name: /top aircraft by sightings/i }),
+      screen.getByText("No aircraft sighted in this window."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/05-8153, C17 Boeing C-17A Globemaster III \(12\)/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/N302DN, B738 Boeing 737-800 \(8\)/),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("labels each bar with the tail number and the type designator", () => {
-    const rows = [
-      aircraftRow({ sightings: 12 }),
+  it("renders a table, not a chart: aircraft, type in words, operator and count", () => {
+    renderCard([
+      aircraftRow(),
       aircraftRow({
-        icao: "a9c2f0",
-        registration: "N302DN",
-        type: "B738",
-        sightings: 8,
-      }),
-    ];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
-
-    const { yAxis } = lastOption();
-    // The axis is drawn bottom-up, so the runner-up comes first.
-    expect(yAxis.data).toEqual(["N302DN", "05-8153"]);
-    expect(yAxis.axisLabel.formatter("N302DN", 0)).toBe(
-      "{ident|N302DN}  {type|B738}",
-    );
-    expect(yAxis.axisLabel.formatter("05-8153", 1)).toBe(
-      "{ident|05-8153}  {type|C17}",
-    );
-  });
-
-  it("falls back to the hex, with no type segment, when the metadata knows nothing", () => {
-    const rows = [
-      aircraftRow({
-        icao: "a9c2f0",
-        registration: null,
-        type: null,
-        model: null,
-        operator: null,
-        operator_group: null,
-        sightings: 3,
-      }),
-    ];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
-
-    const { yAxis, tooltip } = lastOption();
-    expect(yAxis.axisLabel.formatter("A9C2F0", 0)).toBe("{ident|A9C2F0}");
-    expect(tooltip.formatter([{ dataIndex: 0 }])).toBe(
-      "<strong>A9C2F0</strong><br/>3 sightings",
-    );
-    expect(screen.getByText(/A9C2F0 \(3\)/)).toBeInTheDocument();
-  });
-
-  it("puts the hex, model, operator and count in the tooltip", () => {
-    const rows = [
-      aircraftRow({
-        icao: "a9c2f0",
+        icao: "a1b2c3",
         registration: "N302DN",
         type: "B738",
         model: "Boeing 737-800",
         operator: "Delta Air Lines",
-        sightings: 8,
+        operator_group: "Delta",
+        military: false,
+        classification: "commercial_passenger",
+        sightings: 9,
       }),
-    ];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
+    ]);
 
-    const { tooltip } = lastOption();
-    expect(tooltip.formatter([{ dataIndex: 0 }])).toBe(
-      [
-        "<strong>N302DN · A9C2F0</strong>",
-        "B738 Boeing 737-800",
-        "Delta Air Lines",
-        "8 sightings",
-      ].join("<br/>"),
-    );
-    // A hover ECharts cannot map to a row draws nothing rather than crashing.
-    expect(tooltip.formatter([{ dataIndex: 7 }])).toBe("");
-    expect(tooltip.formatter(undefined)).toBe("");
-  });
-
-  it("escapes metadata strings in the tooltip rather than rendering them as markup", () => {
-    const rows = [
-      aircraftRow({
-        registration: "N1<b>",
-        operator: "Ma & Pa's Air",
-        sightings: 1,
-      }),
-    ];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
-
-    const html = lastOption().tooltip.formatter([{ dataIndex: 0 }]);
-    expect(html).toContain("N1&lt;b&gt;");
-    expect(html).toContain("Ma &amp; Pa&#39;s Air");
-    expect(html).toMatch(/<br\/>1 sighting$/);
-  });
-
-  it("navigates to the aircraft detail route on a bar click", () => {
-    function AircraftDetailStub() {
-      const { icao } = useParams();
-      return <p>Detail for {icao}</p>;
-    }
-
-    const rows = [aircraftRow({ icao: "ae1463", registration: "05-8153" })];
-    const router = createMemoryRouter(
-      [
-        {
-          path: "/analytics",
-          element: <TopAircraftCard rows={rows} isLoading={false} />,
-        },
-        { path: "/aircraft/:icao", element: <AircraftDetailStub /> },
-      ],
-      { initialEntries: ["/analytics"] },
-    );
-    render(<RouterProvider router={router} />);
-
-    const instance = getLastMockChart();
-    act(() => {
-      instance.emit("click", { dataIndex: 0, name: "05-8153", value: 12 });
+    const table = screen.getByRole("table", {
+      name: "Top aircraft by sightings",
     });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Aircraft", "Type", "Operator", "Sightings"]);
 
-    expect(screen.getByText("Detail for ae1463")).toBeInTheDocument();
+    expect(bodyRows()).toEqual([
+      [
+        "05-8153",
+        "Boeing C-17A Globemaster IIIC17",
+        "United States Air Force",
+        "12",
+      ],
+      ["N302DN", "Boeing 737-800B738", "Delta Air Lines", "9"],
+    ]);
+    // The backend's order is the ranking; nothing is re-sorted or reversed.
+    expect(bodyRows().map((cells) => cells[0])).toEqual(["05-8153", "N302DN"]);
   });
 
-  it("names the value axis and the bar series (R3-12)", () => {
-    const rows = [aircraftRow({ sightings: 12 })];
-    render(
-      <MemoryRouter>
-        <TopAircraftCard rows={rows} isLoading={false} />
-      </MemoryRouter>,
-    );
+  it("links each aircraft to its history detail route, with the hex on hover", () => {
+    renderCard([aircraftRow()]);
+    const link = screen.getByRole("link", { name: "05-8153" });
+    expect(link).toHaveAttribute("href", "/aircraft/ae1463");
+    expect(link).toHaveAttribute("title", "05-8153 · AE1463");
+  });
 
-    const option = getLastMockChart().optionCalls.at(-1) as {
-      xAxis: { name: string };
-      series: Array<{ name: string }>;
-    };
-    expect(option.xAxis.name).toBe("sightings");
-    expect(option.series[0]?.name).toBe("Sightings");
+  it("falls back to the hex, and says Unknown, when the metadata knows nothing", () => {
+    renderCard([
+      aircraftRow({
+        registration: null,
+        type: null,
+        model: null,
+        operator: null,
+        owner: null,
+        operator_group: null,
+        sightings: 2,
+      }),
+    ]);
+    expect(bodyRows()).toEqual([["AE1463", "Unknown", "—", "2"]]);
+    expect(screen.getByRole("link", { name: "AE1463" })).toHaveAttribute(
+      "title",
+      "AE1463",
+    );
+  });
+
+  it("shows the designator alone when there is no model", () => {
+    renderCard([aircraftRow({ model: null })]);
+    expect(bodyRows()[0]?.[1]).toBe("C17");
+  });
+
+  it("falls back to the registered owner, labelled as such, when no operator is known", () => {
+    renderCard([
+      aircraftRow({
+        operator: null,
+        owner: "Wells Fargo Trust Co",
+        operator_group: "Delta",
+      }),
+    ]);
+    expect(bodyRows()[0]?.[2]).toBe("Wells Fargo Trust Coregistered owner");
+    expect(screen.getByText("registered owner")).toBeInTheDocument();
+  });
+
+  it("falls back to the operator group when neither operator nor owner is known", () => {
+    renderCard([
+      aircraftRow({
+        operator: null,
+        owner: null,
+        operator_group: "US Military",
+      }),
+    ]);
+    expect(bodyRows()[0]?.[2]).toBe("US Military");
+    expect(screen.queryByText("registered owner")).not.toBeInTheDocument();
+  });
+
+  it("tolerates a payload with no owner field (recorded before slice 095)", () => {
+    const row = aircraftRow({ operator: null, operator_group: "Delta" });
+    delete (row as Partial<AnalyticsAircraftRow>).owner;
+    renderCard([row]);
+    expect(bodyRows()[0]?.[2]).toBe("Delta");
+  });
+
+  it("puts the full text of a truncating cell on its title", () => {
+    renderCard([aircraftRow()]);
+    expect(
+      screen.getByTitle("Boeing C-17A Globemaster III"),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("United States Air Force")).toBeInTheDocument();
   });
 });
