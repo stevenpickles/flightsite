@@ -194,6 +194,7 @@ owner decision and are not scheduled.
 | 092 | undici audit hotfix | 091 | opus | low | Hotfix: undici 8.10.1 → 8.11.2 in the frontend lockfile (transitive, under jsdom) to clear the 2026-09-30 advisories failing security/audit on every PR |
 | 093 | brace-expansion audit hotfix | 092 | opus | low | Hotfix: patch brace-expansion in the frontend lockfile (transitive, under eslint → minimatch) to clear the second 2026-09-30 advisory batch failing security/audit |
 | 094 | Aircraft silhouette set and classification tint | 086, 093 | opus | medium | Twenty-one bespoke silhouettes chosen by designator, category or emitter category (§34), a military/government tint as a secondary cue (§36), and demo airframes that exercise every shape |
+| 095 | Analytics top rankings as tables | 094 | opus | low | The three "Top …" Analytics cards become ranked tables — tail, type in words, who flies it (operator, else labelled owner, else group) and the count — with `owner` added to the §3.7 airframe row; no migration |
 
 ## Parallelization Guide
 
