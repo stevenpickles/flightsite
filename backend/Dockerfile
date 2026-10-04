@@ -58,6 +58,21 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 FROM python:3.12.14-slim-bookworm AS runtime
 
+# Security patches the pinned tag has not been rebuilt with. A published
+# `python:…-slim-bookworm` image carries whatever Debian had released the day
+# it was built; a fix that lands afterwards (libpcre2 CVE-2026-103111, the
+# advisory that prompted this) is a fixed HIGH the Trivy gate in
+# .github/workflows/docker.yml rightly fails on, on every PR, until the base
+# tag moves. Upgrading the whole package set at build time is what the
+# frontend image does with `apk upgrade` for the same reason
+# (frontend/Dockerfile): the image is rebuilt on every push, so it is always
+# as patched as bookworm is that day. Nothing is installed — `upgrade` only
+# moves packages the base already has — and the lists are removed again so
+# the layer carries the patched packages and nothing else.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root, fixed-uid user (docs/SECURITY.md §7: both containers run as
 # non-root on minimal base images). uid/gid 1000 is the conventional
 # first-user id and matches common host bind-mount ownership expectations.

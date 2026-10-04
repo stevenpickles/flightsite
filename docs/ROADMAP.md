@@ -194,6 +194,7 @@ owner decision and are not scheduled.
 | 092 | undici audit hotfix | 091 | opus | low | Hotfix: undici 8.10.1 → 8.11.2 in the frontend lockfile (transitive, under jsdom) to clear the 2026-09-30 advisories failing security/audit on every PR |
 | 093 | brace-expansion audit hotfix | 092 | opus | low | Hotfix: patch brace-expansion in the frontend lockfile (transitive, under eslint → minimatch) to clear the second 2026-09-30 advisory batch failing security/audit |
 | 094 | Aircraft silhouette set and classification tint | 086, 093 | opus | medium | Twenty-one bespoke silhouettes chosen by designator, category or emitter category (§34), a military/government tint as a secondary cue (§36), and demo airframes that exercise every shape |
+| 096 | Backend image base-package upgrade hotfix | 094 | opus | low | Hotfix: `apt-get upgrade` in the backend runtime stage to clear the fixed HIGH in the Debian base (libpcre2 CVE-2026-103111) failing the docker Trivy gate on every PR |
 
 ## Parallelization Guide
 
