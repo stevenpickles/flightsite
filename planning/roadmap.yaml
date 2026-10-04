@@ -2837,7 +2837,7 @@ slices:
     title: "Analytics top rankings as tables"
     phase: 9
     branch: "095-analytics-top-tables"
-    status: in_progress
+    status: merged
     depends_on: ["094"]
     objective: "Replace the three horizontal-bar 'Top …' cards on the Analytics page with ranked tables that name the aircraft, say what it is in words, who flies it, and the count (§58) — the bars spent the card on '4, 4, 4, 3' and left the identity to a tooltip."
     scope:
