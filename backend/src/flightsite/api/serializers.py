@@ -1314,21 +1314,29 @@ def analytics_counts_payload(counts: WindowCounts) -> dict[str, Any]:
     }
 
 
-def analytics_seen_aircraft_payload(rank: AircraftRank, window: Window) -> dict[str, Any]:
+def analytics_seen_aircraft_payload(
+    rank: AircraftRank, window: Window, *, mark_new: bool
+) -> dict[str, Any]:
     """One distinct airframe heard in ``window`` — §3.7 ``aircraft``.
 
     ``new`` is the airframe's first-ever observation falling inside the
-    window. It is left false over the whole history: every airframe was first
-    heard somewhere in it, and a flag set on every row says nothing.
+    window. ``mark_new`` is false for the ``t0`` preset, which *asks* for
+    everything: every airframe was first heard somewhere in it, and a flag set
+    on every row says nothing. It stays true for any other window that merely
+    happens to reach back that far — on a day-old install everything heard
+    today really is new today, and the ``counts`` beside it say so.
     """
     return {
         **analytics_aircraft_payload(rank),
-        "new": (not window.whole_history and window.start_ms <= rank.first_seen_ms < window.end_ms),
+        "new": mark_new and window.start_ms <= rank.first_seen_ms < window.end_ms,
     }
 
 
-def analytics_seen_type_payload(seen: TypeSeen) -> dict[str, Any]:
-    """One distinct type designator heard in a window — §3.7 ``types``."""
+def analytics_seen_type_payload(seen: TypeSeen, *, mark_new: bool) -> dict[str, Any]:
+    """One distinct type designator heard in a window — §3.7 ``types``.
+
+    ``mark_new`` as on :func:`analytics_seen_aircraft_payload`.
+    """
     return {
         "type": seen.type_code,
         "description": seen.description,
@@ -1336,7 +1344,7 @@ def analytics_seen_type_payload(seen: TypeSeen) -> dict[str, Any]:
         "unique_aircraft": seen.unique_aircraft,
         "first_seen_at": iso_utc(from_epoch_ms(seen.first_seen_ms)),
         "last_seen_at": iso_utc(from_epoch_ms(seen.last_seen_ms)),
-        "new": seen.new,
+        "new": mark_new and seen.new,
     }
 
 

@@ -22,8 +22,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 
-from flightsite.db import DailyStats
+from flightsite.db import DailyStats, MetaRepository
 
+from ..api.aircraft_history_fixtures import SeedAircraft
+from ..api.sighting_fixtures import SeedSighting, seed_sightings
 from .test_api import Harness, build_harness, get, seed
 
 
@@ -260,6 +262,46 @@ async def test_the_three_lists_agree_with_the_counts(harness: Harness, rest: Asy
         assert aircraft["total"] == counts["unique_aircraft"], preset
         assert types["total"] == counts["unique_types"], preset
         assert sum(row["sightings"] for row in aircraft["items"]) == counts["sightings"], preset
+
+
+# ------------------------------------------------------ a young install
+
+
+async def test_on_a_day_old_install_everything_heard_today_is_new_today(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """When T0 is today, the "today" window reaches back over the whole
+    history. That must not silence the flag the way the ``t0`` preset does:
+    the counts say every aircraft is new, and the rows must agree with them.
+    """
+    first = harness.inside(harness.today, 0.5)
+    await seed_sightings(
+        harness.database,
+        [
+            SeedAircraft(
+                icao24="a00001",
+                first_seen_ms=first,
+                last_seen_ms=first,
+                type_code="B738",
+                model="Boeing 737-800",
+            )
+        ],
+        [SeedSighting(icao24="a00001", started_ms=first)],
+    )
+    await MetaRepository(harness.database).set_t0_once(first)
+
+    counts = await get(rest, "/api/v1/analytics/counts", preset="today")
+    aircraft = await get(rest, "/api/v1/analytics/aircraft", preset="today")
+    types = await get(rest, "/api/v1/analytics/types", preset="today")
+    ever_aircraft = await get(rest, "/api/v1/analytics/aircraft", preset="t0")
+    ever_types = await get(rest, "/api/v1/analytics/types", preset="t0")
+
+    assert counts["new_aircraft"] == counts["unique_aircraft"] == 1
+    assert [row["new"] for row in aircraft["items"]] == [True]
+    assert [row["new"] for row in types["items"]] == [True]
+    # The same rows, asked for as "everything": the flag would mark them all.
+    assert [row["new"] for row in ever_aircraft["items"]] == [False]
+    assert [row["new"] for row in ever_types["items"]] == [False]
 
 
 # ---------------------------------------------------------- sightings log

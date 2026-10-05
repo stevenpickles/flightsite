@@ -838,8 +838,11 @@ standard `preset` / `from` / `to`.
   count inside the window. A `types` row's `first_seen_at` is the receiver's
   first-ever observation of the type, not its first in the window.
 - **`new`** marks an airframe (or a type) the receiver had never heard before the
-  window. Over the whole history (`preset=t0`) it is `false` on every row: it
-  would be true of all of them, and a flag set everywhere says nothing.
+  window. For `preset=t0`, which asks for the whole history, it is `false` on
+  every row: it would be true of all of them, and a flag set everywhere says
+  nothing. Any other window flags honestly even when it happens to reach back to
+  T0 — on a day-old install everything heard today is new today, and
+  `counts.new_aircraft` says the same.
 - `preset=t0` is the whole-history form: `aircraft` is then every discrete
   airframe the receiver has ever heard, with lifetime sighting counts, and
   `types` every discrete type. Both read the `aircraft` table — one row per

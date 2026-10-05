@@ -1047,6 +1047,16 @@ async def analytics_daily(request: Request, window: WindowParams) -> dict[str, A
     return {"window": window.block, "items": [analytics_daily_row_payload(row) for row in rows]}
 
 
+def _marks_new(window: _ResolvedWindow) -> bool:
+    """Whether a "what the window held" list flags its never-heard-before rows.
+
+    Not for the ``t0`` preset: it asks for the whole history, where the flag
+    would be set on every row. Every other window flags honestly, including
+    one that happens to reach back to T0 on a young install.
+    """
+    return window.preset != Preset.SINCE_T0.value
+
+
 @router.get(
     "/analytics/counts",
     response_model=AnalyticsCountsResponse,
@@ -1100,7 +1110,10 @@ async def analytics_seen_aircraft(
     )
     return {
         "window": window.block,
-        "items": [analytics_seen_aircraft_payload(row, window.window) for row in rows],
+        "items": [
+            analytics_seen_aircraft_payload(row, window.window, mark_new=_marks_new(window))
+            for row in rows
+        ],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -1131,7 +1144,7 @@ async def analytics_seen_types(
     )
     return {
         "window": window.block,
-        "items": [analytics_seen_type_payload(row) for row in rows],
+        "items": [analytics_seen_type_payload(row, mark_new=_marks_new(window)) for row in rows],
         "total": total,
         "limit": limit,
         "offset": offset,

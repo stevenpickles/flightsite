@@ -267,8 +267,7 @@ class TypeSeen:
     #: The latest sighting start of the type inside the window.
     last_seen_ms: int
     #: True when that first-ever observation falls inside the window — a type
-    #: this receiver had never heard before it. Always false for a
-    #: whole-history window, where it would be true of everything.
+    #: this receiver had never heard before it.
     new: bool = False
     #: The long form behind the designator, as on :class:`GroupRank`.
     description: str | None = None
@@ -935,7 +934,7 @@ class AnalyticsQueries:
                     unique_aircraft=int(row.unique_aircraft),
                     first_seen_ms=first_ms,
                     last_seen_ms=int(row.last_ms),
-                    new=not window.whole_history and first_ms >= window.start_ms,
+                    new=window.start_ms <= first_ms < window.end_ms,
                     description=described.get(code),
                 )
             )
