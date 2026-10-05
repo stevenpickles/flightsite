@@ -2933,7 +2933,7 @@ slices:
     title: "Sightings by window and grouping"
     phase: 9
     branch: "098-sightings-window-grouping"
-    status: in_progress
+    status: merged
     depends_on: ["097"]
     objective: "Make the Sightings page answer 'what did the receiver hear in this window' three ways: the log, the distinct aircraft, and the distinct types — with the Analytics presets (Today by default) and a live summary line. Since T0 grouped by aircraft or by type is every discrete airframe or type ever heard, which no page listed for types at all (§57, amended by the owner 2026-10-05)."
     scope:
