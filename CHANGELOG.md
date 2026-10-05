@@ -5,6 +5,62 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.12.0] — 2026-10-02
+
+Aircraft on the Live Map now look like what they are. The three-shape icon set is
+replaced by twenty-one first-party silhouettes chosen by type designator, category or the
+aircraft's own emitter category, with military and government aircraft tinted as a
+secondary cue. Demo mode shows the whole set. No schema change.
+
+### Added
+- **Bespoke aircraft silhouettes** (SPEC §34): Cessna-style high-wing single, Cirrus,
+  low-wing single, light twin, twin turboprop, business jet, narrowbody, widebody twin,
+  widebody three/four-engine, fighter, bomber, tanker (boom and all), military transport,
+  maritime patrol, helicopter (redrawn), tiltrotor, tandem rotor, glider and UAV, beside
+  the unchanged generic fallback and its on-the-ground form. The type level keys on the
+  ICAO designator the metadata registries resolve (`C172`, `SR22`, `B738`, `A388`,
+  `F16`, `K35R`, `H47`, …); every backend `icon_category` and the emitter categories
+  `A1`–`A7`, `B1`, `B4` and `B6` map to a shape, so an aircraft with no registry entry
+  still draws what its transponder says it is. Original MIT artwork, recorded in
+  `docs/LICENSES.md`
+- **Classification tint** (SPEC §36): each silhouette is drawn in a civil, a military
+  (olive) and a government / law-enforcement (blue) palette, chosen from the published
+  classification flags alone. The shape stays the primary cue and the classification is
+  always also stated in text, so nothing is said by colour alone
+- **Demo airframes for every shape**: commercial, rare, first-ever and MLAT demo profiles
+  carry a type designator and model with no operator — so a demo 737 is drawn as a 737
+  while its classification stays honestly unknown — and fighters, a bomber and a Chinook
+  join the demo military traffic. Ground traffic and the emitter-only helicopter are
+  left as they were
+
+### Changed
+- The icon resolver's chain (type → category → emitter → generic) and its ground rule are
+  unchanged; its tables are populated. A typed airliner keeps its planform while taxiing,
+  so the ground icon now appears only on traffic no registry describes
+- Sixty-four icon images (21 shapes × 3 palettes + the MLAT ring) register once per
+  basemap style load, in parallel; a drawing that fails to decode is now reported in the
+  browser console by name instead of silently leaving the map without aircraft, and the
+  e2e suite probes a sample of registered images
+- `docs/PRODUCT.md` describes the silhouette set and the tint; `docs/LICENSES.md` records
+  the artwork's new location
+
+### Upgrade notes
+- No migration and no configuration change. `docker compose pull && docker compose up -d`
+  is the whole upgrade; a backup first is still the documented habit.
+- The new icons draw from `aircraft_type` and `classification`, which come from the
+  imported metadata registries (Settings → Metadata → Update Aircraft Metadata). An
+  install that has never imported metadata sees the emitter-category shapes (light,
+  airliner, heavy, high-performance, rotorcraft, glider, UAV) and the generic fallback.
+- Palette colours and the designator tables live in
+  `frontend/src/features/map/aircraft/icons/`; a new silhouette is a drawing plus a table
+  row.
+
+### Known issues
+- A P-8 and a 737-800 share a planform and differ only by tint (the P-8 is a 737); the
+  detail panel states the classification. The KC-10 carries the `DC10` designator and the
+  A330 MRTT the `A332`, so both draw as their civil airframes. Carried over: #255, #241,
+  #244, #153 (deferred), #209–#212
+
 ## [0.11.0] — 2026-10-01
 
 The post-v0.10.0 usability and observatory program (`docs/design/080-feature-program.md`),
