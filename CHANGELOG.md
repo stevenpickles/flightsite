@@ -5,6 +5,77 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.13.0] — 2026-10-05
+
+A round of interface work on the Analytics and Sightings pages: rankings you can read,
+a Today view that draws the day hour by hour, and a Sightings page that shows a time
+window three ways and sorts by any column. No schema change.
+
+### Added
+- **Sightings by window.** The Sightings page takes the Analytics presets — Today (the
+  default), 7 days, 30 days, This year, Since T0 — and heads the window with a live
+  summary: sightings, distinct aircraft, distinct types, and aircraft never seen before
+- **Group by Sightings / Aircraft / Types.** The same window as the log, as one row per
+  distinct aircraft, or as one row per distinct type. Since T0 grouped by aircraft or by
+  type lists every discrete airframe or type the receiver has ever heard. A type row
+  opens the aircraft of that type; anything first heard inside the window carries a
+  "New" / "First sighting" badge
+- **Sortable headers on the Sightings page.** Every column of the aircraft and type
+  lists, and every column of the log except Classification and Status, sorts its list:
+  one click sorts, a second reverses. Words start A to Z, numbers and times largest and
+  latest first; unknowns sort last either way; the sort is kept in the URL
+- **Today, by the hour.** On a one-day window the Analytics time-series cards —
+  aircraft & sightings, maximum detection distance, receiver activity,
+  military / government / police activity, never seen before — are drawn hour by hour
+  on a shared axis instead of as a single point or bar that showed nothing without a
+  mouse-over
+- API, all additive: `GET /api/v1/analytics/hourly`, `/analytics/counts`,
+  `/analytics/aircraft` and `/analytics/types` (the last two paginated, with `sort` and
+  `order`); `preset` on `GET /api/v1/sightings`, `first_sighting` on its rows, and seven
+  more sort keys (`ended_at`, `tail`, `aircraft_type`, `operator`, `lowest_altitude_ft`,
+  `highest_altitude_ft`, `position_count`); `owner` on the airframe rows of
+  `top-aircraft` and the rarity lists
+
+### Changed
+- **Top aircraft** is a table rather than a horizontal bar chart: the tail number (or the
+  hex when no registration is known), linked to the aircraft's history; the type in
+  words — `Airbus A220-300` — with the designator beneath; who flies it; and the sighting
+  count. "Who flies it" is the operator, falling back to the **registered owner**
+  (labelled as such, since it is as often a leasing trust as an airline) and then the
+  operator group
+- **Top types** leads with the long-form type name over its designator and gives the
+  number of distinct airframes beside the sightings; **Top operators** does the same
+  for operators
+- **Locally rare** uses the same table format, full width, its two lists side by side
+- The Sightings page's raw from/to date inputs are replaced by the presets
+
+### Fixed
+- The Aircraft, Sightings and Activity pages could not be scrolled to their end: the
+  table was cut off after about ten rows and the pagination was never on screen (#270;
+  present in v0.12.0 and earlier)
+- Pages that draw charts (Analytics, Receiver, Feeders) showed two vertical scrollbars;
+  each page now has one
+- The backend image upgrades its Debian base packages at build time, the counterpart of
+  the frontend image's `apk upgrade`: the pinned base tag predated the fix for libpcre2
+  CVE-2026-103111 (HIGH), which the image scan flagged on every build
+- The development server proxies the live WebSocket (`npm run dev` hung on
+  "Connecting"; part of #267)
+
+### Upgrade notes
+- No migration and no configuration change: `docker compose pull && docker compose up -d`.
+- The type names and operators come from the imported metadata registries (Settings →
+  Metadata → Update Aircraft Metadata); an aircraft no registry describes shows
+  "Unknown" and "—".
+- The Sightings page no longer reads `from=` / `to=` from its address: a bookmarked link
+  that carried dates opens on Today. `GET /api/v1/sightings` still accepts both. ### Known issues
+- Sorting the Sightings log by one of the new columns over **Since T0** scans every
+  sighting; on a multi-year history this has not been measured and may be slow on a
+  Pi (#272). Within Today / 7 days / 30 days it sorts only that window
+- #267 (remainder): under `npm run dev` only, React StrictMode leaves the map camera
+  on its placeholder; production builds are unaffected
+- Carried over: #260 (a DB-flush timing test that can exceed its budget on a slow CI
+  runner), #255, #241, #244, #153 (deferred), #209–#212
+
 ## [0.12.0] — 2026-10-02
 
 Aircraft on the Live Map now look like what they are. The three-shape icon set is
