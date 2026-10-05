@@ -187,7 +187,8 @@ as such, else the operator group — and the sighting count; Top types leads wit
 long-form type name over its designator and gives distinct airframes and sightings;
 Top operators the same for operator groups. Long names truncate with the full text
 on hover rather than widening the card. The Locally rare card lists its rare aircraft
-and rare types in the same two formats (slice 097).
+and rare types in the same two formats, side by side across the page's full width
+(slice 097).
 
 Over a single-day window (the Today preset) the three day-granular time series —
 aircraft & sighting counts, maximum detection distance, receiver activity — are drawn

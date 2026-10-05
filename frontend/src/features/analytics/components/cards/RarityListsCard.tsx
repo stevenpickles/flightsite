@@ -11,6 +11,11 @@
  * lifetime sighting count; a rare type leads with its long-form name over
  * the designator, then distinct airframes and sightings. Type designators
  * have no detail route in this app, so rare-type rows stay plain text.
+ *
+ * The card spans the page's full width with the two tables side by side.
+ * Stacked in one grid column it stood several times taller than the charts
+ * beside it, and a grid row is as tall as its tallest card — so its
+ * neighbours became large, mostly empty boxes.
  */
 import type {
   AnalyticsAircraftRow,
@@ -85,14 +90,15 @@ export function RarityListsCard({
       error={error}
       errorDetail={errorDetail}
       onRetry={onRetry}
+      className="lg:col-span-2 xl:col-span-3"
     >
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-foreground">
-          <span className="font-semibold">{neverSeenBefore}</span> aircraft
-          never seen before this window.
-        </p>
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">{neverSeenBefore}</span> aircraft never
+        seen before this window.
+      </p>
 
-        <div>
+      <div className="grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2">
+        <div className="min-w-0">
           <h3 className={SECTION_HEADING}>
             Rare aircraft{" "}
             <span className="normal-case">
@@ -108,7 +114,7 @@ export function RarityListsCard({
           />
         </div>
 
-        <div>
+        <div className="min-w-0">
           <h3 className={SECTION_HEADING}>Rare types</h3>
           <RankingTable
             columns={RARE_TYPE_COLUMNS}
