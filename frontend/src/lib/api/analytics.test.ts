@@ -6,6 +6,7 @@ import {
   analyticsQueryKeys,
   getAnalyticsClassificationActivity,
   getAnalyticsDaily,
+  getAnalyticsHourly,
   getAnalyticsRarity,
   getAnalyticsSummary,
   getAnalyticsTopAircraft,
@@ -31,6 +32,43 @@ const EMPTY_WINDOW = {
   last_day: "2026-08-31",
   timezone: "UTC",
 };
+
+describe("getAnalyticsHourly", () => {
+  it("asks for one receiver-local day by date", async () => {
+    const fetchMock = vi.fn((_input?: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        jsonResponse({
+          day: "2026-10-05",
+          timezone: "America/New_York",
+          items: [],
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = await getAnalyticsHourly("2026-10-05");
+
+    const url = new URL(
+      String(fetchMock.mock.calls[0]?.[0]),
+      "http://localhost",
+    );
+    expect(url.pathname).toBe("/api/v1/analytics/hourly");
+    expect(url.searchParams.get("day")).toBe("2026-10-05");
+    expect(url.searchParams.has("preset")).toBe(false);
+    expect(body.day).toBe("2026-10-05");
+  });
+
+  it("keys the query by day so a new day is a new fetch", () => {
+    expect(analyticsQueryKeys.hourly("2026-10-05")).toEqual([
+      "analytics",
+      "hourly",
+      "2026-10-05",
+    ]);
+    expect(analyticsQueryKeys.hourly("2026-10-06")).not.toEqual(
+      analyticsQueryKeys.hourly("2026-10-05"),
+    );
+  });
+});
 
 describe("getAnalyticsDaily", () => {
   it("sends only the preset by default", async () => {

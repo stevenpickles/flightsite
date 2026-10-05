@@ -485,7 +485,7 @@ size class to include.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `preset` (the §3.7 presets, resolved in receiver-local time; ignored when `from`/`to` are given — slice 098), `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Each row carries `first_sighting`: whether it contains the airframe's first-ever observation. Sort: `started_at` (default desc), `ended_at`, `duration_s`, `tail` (registration, else last callsign), `aircraft_type` (model, else designator), `operator`, `closest_approach_nm`, `max_range_nm`, `lowest_altitude_ft`, `highest_altitude_ft`, `position_count` — one per sortable column of the Sightings page (slice 100). The text keys ignore case. Only `started_at` and `max_range_nm` are index-backed; the others sort the filtered window. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
@@ -681,7 +681,11 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/top-operators` | Most common operators / groups. |
 | `GET /api/v1/analytics/classification-activity` | Military/government/police activity over time. |
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
+| `GET /api/v1/analytics/hourly` | One receiver-local day, hour by hour (slice 097). Param: `day=YYYY-MM-DD` (default: today in the receiver's timezone). Takes no `preset`. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
+| `GET /api/v1/analytics/counts` | A window's four headline figures, counted live: sightings, distinct aircraft, distinct types, new aircraft (slice 098). |
+| `GET /api/v1/analytics/aircraft` | Every distinct aircraft heard in the window, most-sighted first. Paginated (`limit`, `offset`, exact `total`); optional `type=<designator>` (slice 098). Sort (slice 100): `sightings` (default desc), `registration` (else the address), `type` (model, else designator), `operator` (else the registered owner), `first_seen`, `last_seen`. |
+| `GET /api/v1/analytics/types` | Every distinct ICAO type heard in the window, busiest first. Paginated (slice 098). Sort (slice 100): `sightings` (default desc), `type` (the description, else the designator), `aircraft` (distinct airframes), `first_seen` (first ever), `last_seen`. |
 
 **"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
 real latency — the flush pass runs every 30 s and only for days something touched
@@ -755,6 +759,114 @@ designator's shorthand — `"Boeing 737-800"` for `B738` — derived from the im
 metadata as the model string most of that type's known airframes carry, so it
 needs no separate designator dataset; it is `null` when no airframe of the type
 carries a model, and always `null` for an operator group.
+
+`top-aircraft` and the `rarity` endpoint's `rare_aircraft` share the airframe row
+shape (`icao`, `registration`, `type`, `model`, `operator`, `operator_group`, the
+classification flags, `sightings`, `first_seen_at`/`last_seen_at`, `max_range_nm`),
+plus `owner` (slice 095): the registry owner where a source released one — the FAA
+registrant for a US tail — and `null` otherwise. It is the fallback for "who flies
+it" when `operator` is unknown, and is as often a leasing trust or a bank as an
+airline, which is why it is a separate field rather than folded into `operator`.
+
+**`hourly` is one day at the resolution that shows its shape** (slice 097). A
+window of a single day gives the day-granular series exactly one point, which is
+no chart; the Analytics page asks for this instead.
+
+```jsonc
+// GET /api/v1/analytics/hourly?day=2026-10-05
+{
+  "day": "2026-10-05", "timezone": "America/New_York",
+  "items": [
+    { "t": "2026-10-05T04:00:00.000Z", "hour": 0,       // 00:00 local
+      "sightings": 3, "unique_aircraft": 2,
+      "military": 1, "government": 0, "law_enforcement": 0, "new_aircraft": 2,
+      "messages": 41000, "positions": 3200, "max_range_nm": 188.2 },
+    { "t": "2026-10-05T05:00:00.000Z", "hour": 1,       // a quiet hour
+      "sightings": 0, "unique_aircraft": 0,
+      "military": 0, "government": 0, "law_enforcement": 0, "new_aircraft": 0,
+      "messages": 12000, "positions": 900, "max_range_nm": null },
+    { "t": "2026-10-05T23:00:00.000Z", "hour": 19,      // not begun yet
+      "sightings": null, "unique_aircraft": null,
+      "military": null, "government": null, "law_enforcement": null,
+      "new_aircraft": null,
+      "messages": null, "positions": null, "max_range_nm": null }
+  ]
+}
+```
+
+- Buckets are **UTC hours** — the key of `receiver_metrics_hourly` — that begin
+  inside the local day, each carrying the local `hour` (0–23) it begins in. That
+  is the day's 24 local hours in a whole-hour zone; 23 or 25 across a DST change,
+  where a fall-back day names one hour twice. In a half-hour zone the bucket
+  straddling local midnight belongs to the day it begins in.
+- **Every bucket of the day is returned**, so a client can lay out the whole day
+  and fill it as it happens.
+- `sightings` counts sightings that **started** in the hour, so a day's buckets
+  sum to its sighting count. `unique_aircraft` is the distinct aircraft with a
+  sighting **overlapping** the hour — "heard this hour" — and is therefore not
+  additive: an aircraft overhead from 09:50 to 10:10 is one aircraft in each hour.
+- `military`, `government` and `law_enforcement` (slice 099) are the sightings
+  that started in the hour whose airframe carries that classification flag — the
+  per-hour form of the daily row's figures of the same names, summing to them
+  over the day. `new_aircraft` is the airframes whose first-ever observation fell
+  in the hour, summing to the day's "never seen before".
+- All of these are live reads: a real number, zero included, for every hour that
+  has begun, and `null` only for an hour still in the future.
+- `messages`, `positions` and `max_range_nm` come from the hourly receiver
+  metrics and are `null` where that table has no row — before recording started,
+  or an hour the receiver was not running — never `0`.
+
+**`counts`, `aircraft` and `types` say what a window held** (slice 098) — the
+Sightings page's summary line and its two grouped views. All three take the
+standard `preset` / `from` / `to`.
+
+```jsonc
+// GET /api/v1/analytics/counts?preset=today
+{ "window": { "preset": "today", "…": "…" },
+  "sightings": 142, "unique_aircraft": 97, "unique_types": 31, "new_aircraft": 12 }
+
+// GET /api/v1/analytics/aircraft?preset=today&limit=50&offset=0
+{ "window": { "…": "…" }, "total": 97, "limit": 50, "offset": 0,
+  "items": [ { "icao": "a1b2c3", "registration": "N228BZ", "type": "BCS3",
+               "model": "Airbus A220-300", "operator": "Breeze Airways",
+               "sightings": 4, "new": false, "…": "…" } ] }
+
+// GET /api/v1/analytics/types?preset=today
+{ "window": { "…": "…" }, "total": 31, "limit": 50, "offset": 0,
+  "items": [ { "type": "BCS3", "description": "Airbus A220-300",
+               "sightings": 11, "unique_aircraft": 3,
+               "first_seen_at": "2026-09-02T14:10:03.000Z",
+               "last_seen_at": "2026-10-05T18:41:20.000Z", "new": false } ] }
+```
+
+- **Counted live.** None of the three reads a rollup, so the figures agree with
+  the sightings log to the second — unlike `summary`, whose totals are sums over
+  `daily_stats` and say so with `complete`. `aircraft.total == counts.unique_aircraft`
+  and `types.total == counts.unique_types` for the same window, always.
+- **Sorting** follows §2.4 on both lists: `sort` and `order`, unknowns last in
+  both directions, text keys case-insensitive, and a stable tie-break (the
+  address for `aircraft`, the designator for `types`, ascending either way) so
+  paging through a tied key never repeats or skips a row. A key the list does
+  not have is a `422`.
+- An `aircraft` row is the `top-aircraft` row shape plus `new`; `sightings` is the
+  count inside the window. A `types` row's `first_seen_at` is the receiver's
+  first-ever observation of the type, not its first in the window.
+- **`new`** marks an airframe (or a type) the receiver had never heard before the
+  window. For `preset=t0`, which asks for the whole history, it is `false` on
+  every row: it would be true of all of them, and a flag set everywhere says
+  nothing. Any other window flags honestly even when it happens to reach back to
+  T0 — on a day-old install everything heard today is new today, and
+  `counts.new_aircraft` says the same.
+- `preset=t0` is the whole-history form: `aircraft` is then every discrete
+  airframe the receiver has ever heard, with lifetime sighting counts, and
+  `types` every discrete type. Both read the `aircraft` table — one row per
+  airframe — rather than every sighting.
+- An airframe no registry gives a type counts in `unique_aircraft` and appears
+  in `aircraft`, and belongs to no row of `types`.
+
+A `rarity` response's `rare_types` rows carry `description` (slice 097), the same
+long-form type name a `top-types` row does, `null` when no imported airframe of
+the type carries a model.
 
 ### 3.9 Receiver statistics — slices 033/034
 

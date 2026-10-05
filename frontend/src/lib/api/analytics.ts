@@ -14,7 +14,11 @@
  * stays a self-contained read of one small file, the same call every other
  * `/api/v1` client in this directory makes.
  */
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 
 /** §3.7's time presets, spelled as the query values. */
 export type AnalyticsPreset = "today" | "7d" | "30d" | "ytd" | "t0";
@@ -82,6 +86,10 @@ export interface AnalyticsAircraftRow {
   type: string | null;
   model: string | null;
   operator: string | null;
+  /** Registry owner (FAA, where released) — the fallback for "who flies it"
+   * when no operator is known (slice 095). Optional so a payload recorded
+   * before the field existed (the visual-test HAR) still parses. */
+  owner?: string | null;
   operator_group: string | null;
   classification: string | null;
   military: boolean;
@@ -137,10 +145,97 @@ export interface AnalyticsClassificationResponse {
 /** One locally rare type designator (receiver-relative, since T0). */
 export interface AnalyticsRareType {
   type: string;
+  /** The long form behind the designator, as on a top-types row (slice
+   * 097). Optional so a payload recorded before the field existed still
+   * parses. */
+  description?: string | null;
   unique_aircraft: number;
   total_sightings: number;
   first_seen_at: string;
   last_seen_at: string;
+}
+
+/** One UTC-hour bucket of a receiver-local day (`GET
+ * /api/v1/analytics/hourly`, slice 097). The traffic counts are `null` only
+ * for an hour that has not begun — a zero is a measurement; the receiver
+ * figures are `null` where no hourly metrics row exists. */
+export interface AnalyticsHourlyRow {
+  /** UTC instant the bucket begins. */
+  t: string;
+  /** The receiver-local hour the bucket begins in, 0–23. A fall-back day
+   * names one hour twice; a spring-forward day skips one. */
+  hour: number;
+  /** Sightings that started in the hour — the day's buckets sum to its
+   * sighting count. */
+  sightings: number | null;
+  /** Distinct aircraft heard during the hour. Not additive across hours. */
+  unique_aircraft: number | null;
+  /** Sightings started in the hour by the airframe's classification — the
+   * per-hour form of the daily row's figures (slice 099). Optional so a
+   * payload recorded before the fields existed still parses. */
+  military?: number | null;
+  government?: number | null;
+  law_enforcement?: number | null;
+  /** Aircraft first ever heard in the hour (slice 099). */
+  new_aircraft?: number | null;
+  messages: number | null;
+  positions: number | null;
+  max_range_nm: number | null;
+}
+
+export interface AnalyticsHourlyResponse {
+  /** Receiver-local `YYYY-MM-DD`. */
+  day: string;
+  timezone: string;
+  items: AnalyticsHourlyRow[];
+}
+
+/** A window's four headline figures, counted live (`GET
+ * /api/v1/analytics/counts`, slice 098). */
+export interface AnalyticsCountsResponse {
+  window: AnalyticsWindow;
+  sightings: number;
+  unique_aircraft: number;
+  /** Distinct ICAO type designators among the window's aircraft. */
+  unique_types: number;
+  /** Aircraft whose first-ever observation fell inside the window. */
+  new_aircraft: number;
+}
+
+/** One distinct aircraft heard in a window: the ranking row plus whether the
+ * receiver had never heard it before the window. */
+export interface AnalyticsSeenAircraftRow extends AnalyticsAircraftRow {
+  new: boolean;
+}
+
+export interface AnalyticsSeenAircraftResponse {
+  window: AnalyticsWindow;
+  items: AnalyticsSeenAircraftRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** One distinct ICAO type designator heard in a window. */
+export interface AnalyticsSeenTypeRow {
+  type: string;
+  description: string | null;
+  sightings: number;
+  unique_aircraft: number;
+  /** The receiver's first-ever observation of the type. */
+  first_seen_at: string;
+  /** The latest sighting start of the type inside the window. */
+  last_seen_at: string;
+  /** True when the receiver had never heard the type before the window. */
+  new: boolean;
+}
+
+export interface AnalyticsSeenTypesResponse {
+  window: AnalyticsWindow;
+  items: AnalyticsSeenTypeRow[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface AnalyticsRarityResponse {
@@ -267,6 +362,89 @@ export function getAnalyticsDaily(
   );
 }
 
+/** Sort keys of the distinct-aircraft list (slice 100). The text keys order
+ * by what a row displays; unknown values sort last either way. */
+export type SeenAircraftSortKey =
+  | "sightings"
+  | "registration"
+  | "type"
+  | "operator"
+  | "first_seen"
+  | "last_seen";
+
+/** Sort keys of the distinct-type list; `type` is the designator. */
+export type SeenTypeSortKey =
+  "sightings" | "type" | "aircraft" | "first_seen" | "last_seen";
+
+/** A page of one of the "what the window held" lists (slice 098). */
+export interface AnalyticsPageParams extends AnalyticsWindowParams {
+  limit: number;
+  offset: number;
+  order?: "asc" | "desc" | undefined;
+}
+
+export interface AnalyticsSeenAircraftParams extends AnalyticsPageParams {
+  /** Restrict to one ICAO type designator. */
+  type?: string | undefined;
+  sort?: SeenAircraftSortKey | undefined;
+}
+
+export interface AnalyticsSeenTypesParams extends AnalyticsPageParams {
+  sort?: SeenTypeSortKey | undefined;
+}
+
+function pageQuery(
+  params: AnalyticsPageParams & { sort?: string | undefined },
+): URLSearchParams {
+  const search = windowQuery(params);
+  search.set("limit", String(params.limit));
+  search.set("offset", String(params.offset));
+  if (params.sort !== undefined) {
+    search.set("sort", params.sort);
+  }
+  if (params.order !== undefined) {
+    search.set("order", params.order);
+  }
+  return search;
+}
+
+export function getAnalyticsCounts(
+  params: AnalyticsWindowParams,
+): Promise<AnalyticsCountsResponse> {
+  return apiV1Fetch<AnalyticsCountsResponse>(
+    `/api/v1/analytics/counts?${windowQuery(params).toString()}`,
+  );
+}
+
+export function getAnalyticsSeenAircraft(
+  params: AnalyticsSeenAircraftParams,
+): Promise<AnalyticsSeenAircraftResponse> {
+  const search = pageQuery(params);
+  if (params.type !== undefined) {
+    search.set("type", params.type);
+  }
+  return apiV1Fetch<AnalyticsSeenAircraftResponse>(
+    `/api/v1/analytics/aircraft?${search.toString()}`,
+  );
+}
+
+export function getAnalyticsSeenTypes(
+  params: AnalyticsSeenTypesParams,
+): Promise<AnalyticsSeenTypesResponse> {
+  return apiV1Fetch<AnalyticsSeenTypesResponse>(
+    `/api/v1/analytics/types?${pageQuery(params).toString()}`,
+  );
+}
+
+/** One receiver-local day, hour by hour. `day` is `YYYY-MM-DD`. */
+export function getAnalyticsHourly(
+  day: string,
+): Promise<AnalyticsHourlyResponse> {
+  return apiV1Fetch<AnalyticsHourlyResponse>(
+    `/api/v1/analytics/hourly?${new URLSearchParams({ day }).toString()}`,
+  );
+}
+
 export function getAnalyticsClassificationActivity(
   params: AnalyticsWindowParams,
 ): Promise<AnalyticsClassificationResponse> {
@@ -321,6 +499,13 @@ export const analyticsQueryKeys = {
     ["analytics", "summary", params, localDate] as const,
   daily: (params: AnalyticsWindowParams) =>
     ["analytics", "daily", params] as const,
+  hourly: (day: string | undefined) => ["analytics", "hourly", day] as const,
+  counts: (params: AnalyticsWindowParams) =>
+    ["analytics", "counts", params] as const,
+  seenAircraft: (params: AnalyticsSeenAircraftParams) =>
+    ["analytics", "aircraft", params] as const,
+  seenTypes: (params: AnalyticsSeenTypesParams) =>
+    ["analytics", "types", params] as const,
   classification: (params: AnalyticsWindowParams) =>
     ["analytics", "classification-activity", params] as const,
   topAircraft: (params: AnalyticsTopParams) =>
@@ -384,6 +569,67 @@ export function useAnalyticsDailyQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.daily(params),
     queryFn: () => getAnalyticsDaily(params),
+    ...RESILIENT_QUERY_OPTIONS,
+  });
+}
+
+/** Options for the Sightings page's queries: it refreshes on the list
+ * pages' cadence, and only while the first page is showing. */
+export interface AnalyticsListQueryOptions {
+  enabled?: boolean;
+  refetchInterval?: number | false;
+}
+
+export function useAnalyticsCountsQuery(
+  params: AnalyticsWindowParams,
+  options: AnalyticsListQueryOptions = {},
+): UseQueryResult<AnalyticsCountsResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.counts(params),
+    queryFn: () => getAnalyticsCounts(params),
+    ...RESILIENT_QUERY_OPTIONS,
+    ...options,
+  });
+}
+
+/** One page of the window's distinct aircraft. `placeholderData` keeps the
+ * previous page on screen while the next loads, as the list pages do. */
+export function useAnalyticsSeenAircraftQuery(
+  params: AnalyticsSeenAircraftParams,
+  options: AnalyticsListQueryOptions = {},
+): UseQueryResult<AnalyticsSeenAircraftResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.seenAircraft(params),
+    queryFn: () => getAnalyticsSeenAircraft(params),
+    placeholderData: keepPreviousData,
+    ...RESILIENT_QUERY_OPTIONS,
+    ...options,
+  });
+}
+
+/** One page of the window's distinct types. */
+export function useAnalyticsSeenTypesQuery(
+  params: AnalyticsSeenTypesParams,
+  options: AnalyticsListQueryOptions = {},
+): UseQueryResult<AnalyticsSeenTypesResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.seenTypes(params),
+    queryFn: () => getAnalyticsSeenTypes(params),
+    placeholderData: keepPreviousData,
+    ...RESILIENT_QUERY_OPTIONS,
+    ...options,
+  });
+}
+
+/** The hourly breakdown of one receiver-local day. Disabled until a day is
+ * known — the page only asks for it when its window is a single day. */
+export function useAnalyticsHourlyQuery(
+  day: string | undefined,
+): UseQueryResult<AnalyticsHourlyResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.hourly(day),
+    queryFn: () => getAnalyticsHourly(day ?? ""),
+    enabled: day !== undefined,
     ...RESILIENT_QUERY_OPTIONS,
   });
 }

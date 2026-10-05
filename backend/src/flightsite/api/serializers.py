@@ -132,7 +132,16 @@ from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
 from flightsite.alerts.model import InterestingState, StoredAlertMatch
 from flightsite.analytics.bucketing import Window
-from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, RareType, Summary
+from flightsite.analytics.queries import (
+    AircraftRank,
+    DailyRow,
+    GroupRank,
+    HourlyRow,
+    RareType,
+    Summary,
+    TypeSeen,
+    WindowCounts,
+)
 from flightsite.api.receiver_stats import CommonRecord, MostFrequentAircraft, SignalHistogram
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
@@ -1033,6 +1042,20 @@ def _open_block(row: RowMapping, now_ms: int | None) -> dict[str, Any]:
     }
 
 
+def _contains_first_observation(row: RowMapping) -> bool:
+    """True when the sighting holds the airframe's first-ever observation.
+
+    Containment rather than equality with ``started_ms``: the airframe's
+    ``first_seen_ms`` and its first sighting's start are written by different
+    paths, and "this is the one it was first heard in" should not depend on
+    their agreeing to the millisecond. An open sighting runs to now.
+    """
+    first_seen = row["first_seen_ms"]
+    if first_seen is None or row["started_ms"] > first_seen:
+        return False
+    return row["ended_ms"] is None or first_seen <= row["ended_ms"]
+
+
 def sighting_row_payload(row: RowMapping, *, now_ms: int | None = None) -> dict[str, Any]:
     """One Sightings page row — ``docs/API.md`` §3.6, SPEC §57's column list.
 
@@ -1077,6 +1100,7 @@ def sighting_row_payload(row: RowMapping, *, now_ms: int | None = None) -> dict[
         "position_count": row["pos_count"],
         "had_emergency": bool(row["had_emergency"]),
         "max_alert_severity": row["max_alert_severity"],
+        "first_sighting": _contains_first_observation(row),
         "provenance": provenance,
     }
 
@@ -1253,6 +1277,7 @@ def analytics_aircraft_payload(rank: AircraftRank) -> dict[str, Any]:
         "type": rank.type_code,
         "model": rank.model,
         "operator": rank.operator_name,
+        "owner": rank.owner,
         "operator_group": rank.operator_group,
         "classification": rank.mission_category,
         "military": rank.military,
@@ -1279,10 +1304,72 @@ def analytics_group_payload(rank: GroupRank) -> dict[str, Any]:
     }
 
 
+def analytics_counts_payload(counts: WindowCounts) -> dict[str, Any]:
+    """A window's four headline figures — §3.7 ``counts``."""
+    return {
+        "sightings": counts.sightings,
+        "unique_aircraft": counts.unique_aircraft,
+        "unique_types": counts.unique_types,
+        "new_aircraft": counts.new_aircraft,
+    }
+
+
+def analytics_seen_aircraft_payload(
+    rank: AircraftRank, window: Window, *, mark_new: bool
+) -> dict[str, Any]:
+    """One distinct airframe heard in ``window`` — §3.7 ``aircraft``.
+
+    ``new`` is the airframe's first-ever observation falling inside the
+    window. ``mark_new`` is false for the ``t0`` preset, which *asks* for
+    everything: every airframe was first heard somewhere in it, and a flag set
+    on every row says nothing. It stays true for any other window that merely
+    happens to reach back that far — on a day-old install everything heard
+    today really is new today, and the ``counts`` beside it say so.
+    """
+    return {
+        **analytics_aircraft_payload(rank),
+        "new": mark_new and window.start_ms <= rank.first_seen_ms < window.end_ms,
+    }
+
+
+def analytics_seen_type_payload(seen: TypeSeen, *, mark_new: bool) -> dict[str, Any]:
+    """One distinct type designator heard in a window — §3.7 ``types``.
+
+    ``mark_new`` as on :func:`analytics_seen_aircraft_payload`.
+    """
+    return {
+        "type": seen.type_code,
+        "description": seen.description,
+        "sightings": seen.sightings,
+        "unique_aircraft": seen.unique_aircraft,
+        "first_seen_at": iso_utc(from_epoch_ms(seen.first_seen_ms)),
+        "last_seen_at": iso_utc(from_epoch_ms(seen.last_seen_ms)),
+        "new": mark_new and seen.new,
+    }
+
+
+def analytics_hourly_row_payload(row: HourlyRow) -> dict[str, Any]:
+    """One UTC-hour bucket of a receiver-local day — §3.7 ``hourly``."""
+    return {
+        "t": iso_utc(from_epoch_ms(row.hour_start_ms)),
+        "hour": row.hour,
+        "sightings": row.sightings,
+        "unique_aircraft": row.unique_aircraft,
+        "military": row.military,
+        "government": row.government,
+        "law_enforcement": row.law_enforcement,
+        "new_aircraft": row.new_aircraft,
+        "messages": row.messages,
+        "positions": row.positions,
+        "max_range_nm": _rounded(row.max_range_nm),
+    }
+
+
 def analytics_rare_type_payload(rare: RareType) -> dict[str, Any]:
     """One locally rare type designator."""
     return {
         "type": rare.type_code,
+        "description": rare.description,
         "unique_aircraft": rare.unique_aircraft,
         "total_sightings": rare.total_sightings,
         "first_seen_at": iso_utc(from_epoch_ms(rare.first_seen_ms)),
@@ -1395,9 +1482,13 @@ __all__ = [
     "airport_feature_collection_payload",
     "alert_match_payload",
     "analytics_aircraft_payload",
+    "analytics_counts_payload",
     "analytics_daily_row_payload",
     "analytics_group_payload",
+    "analytics_hourly_row_payload",
     "analytics_rare_type_payload",
+    "analytics_seen_aircraft_payload",
+    "analytics_seen_type_payload",
     "analytics_summary_payload",
     "analytics_window_payload",
     "iso_utc",

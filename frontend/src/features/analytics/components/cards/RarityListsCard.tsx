@@ -1,14 +1,22 @@
 /**
  * "Locally rare aircraft/type information" plus the window's never-seen-
- * before total (SPEC §58, `GET /api/v1/analytics/rarity`) — two compact
+ * before total (SPEC §58, `GET /api/v1/analytics/rarity`) — two ranked
  * tables rather than a chart: rarity is a short, specific list of airframes
  * and types, exactly the case where a table reads faster than a plot.
- * Rare-aircraft rows link to the aircraft detail route (roadmap slice 029);
- * type designators have no detail route in this app, so rare-type rows stay
- * plain text.
+ *
+ * Both tables use the "Top …" cards' presentation (slice 097), so an
+ * aircraft or a type reads the same wherever the page lists it: a rare
+ * aircraft is its tail (linked to the aircraft detail route, roadmap slice
+ * 029), its type in words over the designator, who flies it, and its
+ * lifetime sighting count; a rare type leads with its long-form name over
+ * the designator, then distinct airframes and sightings. Type designators
+ * have no detail route in this app, so rare-type rows stay plain text.
+ *
+ * The card spans the page's full width with the two tables side by side.
+ * Stacked in one grid column it stood several times taller than the charts
+ * beside it, and a grid row is as tall as its tallest card — so its
+ * neighbours became large, mostly empty boxes.
  */
-import { Link } from "react-router-dom";
-
 import type {
   AnalyticsAircraftRow,
   AnalyticsRareType,
@@ -16,7 +24,14 @@ import type {
 } from "@/lib/api/analytics";
 
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
-import { humanizeSlug } from "@/features/analytics/lib/format";
+import {
+  AIRCRAFT_RANKING_COLUMNS,
+  namedCell,
+} from "@/features/analytics/components/rankingColumns";
+import {
+  RankingTable,
+  type RankingColumn,
+} from "@/features/analytics/components/RankingTable";
 
 export interface RarityListsCardProps {
   window?: AnalyticsWindow;
@@ -29,6 +44,32 @@ export interface RarityListsCardProps {
   errorDetail?: string;
   onRetry?: () => void;
 }
+
+const RARE_TYPE_COLUMNS: ReadonlyArray<RankingColumn<AnalyticsRareType>> = [
+  {
+    key: "name",
+    heading: "Type",
+    width: 62,
+    render: (row) => namedCell(row.description, row.type),
+  },
+  {
+    key: "aircraft",
+    heading: "Aircraft",
+    width: 18,
+    align: "right",
+    render: (row) => row.unique_aircraft,
+  },
+  {
+    key: "sightings",
+    heading: "Sightings",
+    width: 20,
+    align: "right",
+    render: (row) => row.total_sightings,
+  },
+];
+
+const SECTION_HEADING =
+  "mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 
 export function RarityListsCard({
   window,
@@ -49,100 +90,39 @@ export function RarityListsCard({
       error={error}
       errorDetail={errorDetail}
       onRetry={onRetry}
+      className="lg:col-span-2 xl:col-span-3"
     >
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-foreground">
-          <span className="font-semibold">{neverSeenBefore}</span> aircraft
-          never seen before this window.
-        </p>
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">{neverSeenBefore}</span> aircraft never
+        seen before this window.
+      </p>
 
-        <div>
-          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2">
+        <div className="min-w-0">
+          <h3 className={SECTION_HEADING}>
             Rare aircraft{" "}
             <span className="normal-case">
               (lifetime sightings ≤ {rareMaxSightings})
             </span>
           </h3>
-          {rareAircraft.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No rare aircraft in this window.
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th scope="col" className="py-1 pr-2 font-semibold">
-                    Aircraft
-                  </th>
-                  <th scope="col" className="py-1 pr-2 font-semibold">
-                    Type
-                  </th>
-                  <th scope="col" className="py-1 text-right font-semibold">
-                    Sightings
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rareAircraft.map((row) => (
-                  <tr key={row.icao} className="border-t border-border/60">
-                    <td className="py-1 pr-2">
-                      <Link
-                        to={`/aircraft/${row.icao}`}
-                        className="font-medium text-accent hover:underline"
-                      >
-                        {row.registration ?? row.icao.toUpperCase()}
-                      </Link>
-                    </td>
-                    <td className="py-1 pr-2 text-muted-foreground">
-                      {row.type ?? "Unknown"}
-                    </td>
-                    <td className="py-1 text-right">{row.sightings}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <RankingTable
+            columns={AIRCRAFT_RANKING_COLUMNS}
+            rows={rareAircraft}
+            rowKey={(row) => row.icao}
+            emptyLabel="No rare aircraft in this window."
+            ariaLabel="Rare aircraft"
+          />
         </div>
 
-        <div>
-          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Rare types
-          </h3>
-          {rareTypes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No rare types in this window.
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th scope="col" className="py-1 pr-2 font-semibold">
-                    Type
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1 pr-2 text-right font-semibold"
-                  >
-                    Aircraft
-                  </th>
-                  <th scope="col" className="py-1 text-right font-semibold">
-                    Sightings
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rareTypes.map((row) => (
-                  <tr key={row.type} className="border-t border-border/60">
-                    <td className="py-1 pr-2">{humanizeSlug(row.type)}</td>
-                    <td className="py-1 pr-2 text-right">
-                      {row.unique_aircraft}
-                    </td>
-                    <td className="py-1 text-right">{row.total_sightings}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <div className="min-w-0">
+          <h3 className={SECTION_HEADING}>Rare types</h3>
+          <RankingTable
+            columns={RARE_TYPE_COLUMNS}
+            rows={rareTypes}
+            rowKey={(row) => row.type}
+            emptyLabel="No rare types in this window."
+            ariaLabel="Rare types"
+          />
         </div>
       </div>
     </AnalyticsCard>

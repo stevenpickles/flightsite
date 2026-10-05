@@ -13,6 +13,7 @@ import {
   ANALYTICS_REFETCH_INTERVAL_MS,
   useAnalyticsClassificationActivityQuery,
   useAnalyticsDailyQuery,
+  useAnalyticsHourlyQuery,
   useAnalyticsRarityQuery,
   useAnalyticsTopAircraftQuery,
   useAnalyticsTopOperatorsQuery,
@@ -36,6 +37,7 @@ import {
   describeError,
   latestDataUpdatedAt,
 } from "@/features/analytics/lib/format";
+import { singleDayOf } from "@/features/analytics/lib/series";
 import { formatReceiverLocalClock } from "@/features/receiver/lib/format";
 
 const item = requireNavItem("/analytics");
@@ -94,6 +96,26 @@ export function AnalyticsPage() {
   const topOperatorsQuery = useAnalyticsTopOperatorsQuery({ preset });
   const rarityQuery = useAnalyticsRarityQuery({ preset });
 
+  // A window of exactly one receiver-local day has one day-granular point
+  // to plot, which is no chart at all (slices 097, 099) — so every daily
+  // time-series card draws that day hour by hour instead. The day comes
+  // from the resolved window the daily response echoes, never from the
+  // browser's clock: "today" is the receiver's today.
+  const singleDay = singleDayOf(dailyQuery.data?.window);
+  const hourlyQuery = useAnalyticsHourlyQuery(singleDay);
+  const byHour = singleDay !== undefined;
+  const hourly = byHour ? (hourlyQuery.data?.items ?? []) : undefined;
+  // Only reachable once the daily query has answered (it supplies the day),
+  // so this failure is never part of the "everything failed" banner and
+  // always carries its own message and Retry.
+  const hourlyCardProps = byHour
+    ? independentCardProps(
+        hourlyQuery,
+        "Could not load the hourly breakdown.",
+        false,
+      )
+    : {};
+
   // R3-08: every analytics query failing at once (an unreachable API) gets
   // one banner instead of nine identical "Failed to fetch" paragraphs.
   const allFailed =
@@ -134,6 +156,7 @@ export function AnalyticsPage() {
     topTypesQuery.dataUpdatedAt,
     topOperatorsQuery.dataUpdatedAt,
     rarityQuery.dataUpdatedAt,
+    hourlyQuery.dataUpdatedAt,
   ]);
 
   return (
@@ -188,7 +211,8 @@ export function AnalyticsPage() {
 
         <TopGroupCard
           title="Top types"
-          ariaLabel="Top types by sightings, horizontal bar chart"
+          ariaLabel="Top types by sightings"
+          nameHeading="Type"
           emptyLabel="No types sighted in this window."
           window={topTypesQuery.data?.window}
           rows={topTypesQuery.data?.items ?? []}
@@ -202,7 +226,8 @@ export function AnalyticsPage() {
 
         <TopGroupCard
           title="Top operators"
-          ariaLabel="Top operators by sightings, horizontal bar chart"
+          ariaLabel="Top operators by sightings"
+          nameHeading="Operator"
           emptyLabel="No operators sighted in this window."
           window={topOperatorsQuery.data?.window}
           rows={topOperatorsQuery.data?.items ?? []}
@@ -218,19 +243,25 @@ export function AnalyticsPage() {
           window={classificationQuery.data?.window}
           series={classificationQuery.data?.series ?? []}
           complete={classificationQuery.data?.complete}
-          isLoading={classificationQuery.isPending}
+          hourly={hourly}
+          isLoading={
+            classificationQuery.isPending || (byHour && hourlyQuery.isPending)
+          }
           {...independentCardProps(
             classificationQuery,
             "Could not load classification activity.",
             allFailed,
           )}
+          {...hourlyCardProps}
         />
 
         <DailyCountsCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
-          isLoading={dailyQuery.isPending}
+          hourly={hourly}
+          isLoading={dailyQuery.isPending || (byHour && hourlyQuery.isPending)}
           {...dailyCardError}
+          {...hourlyCardProps}
         />
 
         <MaxDistanceCard
@@ -243,22 +274,32 @@ export function AnalyticsPage() {
           // the card as still loading rather than show the wrong unit.
           // `isPending` (not `!isSuccess`) so a *failed* receiver fetch still
           // settles into the fallback rather than loading forever.
-          isLoading={dailyQuery.isPending || receiverQuery.isPending}
+          hourly={hourly}
+          isLoading={
+            dailyQuery.isPending ||
+            receiverQuery.isPending ||
+            (byHour && hourlyQuery.isPending)
+          }
           {...dailyCardError}
+          {...hourlyCardProps}
         />
 
         <ReceiverActivityCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
-          isLoading={dailyQuery.isPending}
+          hourly={hourly}
+          isLoading={dailyQuery.isPending || (byHour && hourlyQuery.isPending)}
           {...dailyCardError}
+          {...hourlyCardProps}
         />
 
         <NeverSeenBeforeCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
-          isLoading={dailyQuery.isPending}
+          hourly={hourly}
+          isLoading={dailyQuery.isPending || (byHour && hourlyQuery.isPending)}
           {...dailyCardError}
+          {...hourlyCardProps}
         />
 
         <RarityListsCard

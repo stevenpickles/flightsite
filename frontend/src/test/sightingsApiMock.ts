@@ -1,6 +1,13 @@
 import { vi } from "vitest";
 
 import type { AircraftDetail } from "@/lib/api/aircraft";
+import type {
+  AnalyticsCountsResponse,
+  AnalyticsPreset,
+  AnalyticsSeenAircraftRow,
+  AnalyticsSeenTypeRow,
+  AnalyticsWindow,
+} from "@/lib/api/analytics";
 import type { ReceiverInfo } from "@/lib/api/live";
 import type {
   SightingDetail,
@@ -159,6 +166,70 @@ export interface MockSightingsApiOptions {
   /** `icao -> AircraftDetail`, for the detail page's registration lookup. */
   aircraft?: Record<string, AircraftDetail>;
   receiver?: ReceiverInfo;
+  /** `GET /api/v1/analytics/counts` — the Sightings page's summary line
+   * (slice 098). Defaults to zeros for the requested preset. */
+  counts?:
+    | Partial<Omit<AnalyticsCountsResponse, "window">>
+    | ((url: URL) => Partial<Omit<AnalyticsCountsResponse, "window">>);
+  /** `GET /api/v1/analytics/aircraft` — the aircraft grouping. */
+  seenAircraft?:
+    AnalyticsSeenAircraftRow[] | ((url: URL) => AnalyticsSeenAircraftRow[]);
+  /** `GET /api/v1/analytics/types` — the type grouping. */
+  seenTypes?: AnalyticsSeenTypeRow[] | ((url: URL) => AnalyticsSeenTypeRow[]);
+}
+
+/** The window block a "what the window held" response echoes for a preset. */
+function mockWindow(url: URL): AnalyticsWindow {
+  const preset = (url.searchParams.get("preset") ?? "today") as AnalyticsPreset;
+  return {
+    preset,
+    from: "2026-08-31T07:00:00.000Z",
+    to: "2026-09-01T07:00:00.000Z",
+    first_day: "2026-08-31",
+    last_day: "2026-08-31",
+    timezone: "America/Los_Angeles",
+  };
+}
+
+/** A distinct-aircraft row for the aircraft grouping. */
+export function seenAircraftRow(
+  overrides: Partial<AnalyticsSeenAircraftRow> = {},
+): AnalyticsSeenAircraftRow {
+  return {
+    icao: "a1b2c3",
+    registration: "N228BZ",
+    type: "BCS3",
+    model: "Airbus A220-300",
+    operator: "Breeze Airways",
+    owner: null,
+    operator_group: "Breeze",
+    classification: "commercial_passenger",
+    military: false,
+    government: false,
+    law_enforcement: false,
+    sightings: 4,
+    first_seen_at: "2026-08-02T14:10:03.000Z",
+    last_seen_at: "2026-08-31T18:41:20.000Z",
+    max_range_nm: 201.4,
+    new: false,
+    ...overrides,
+  };
+}
+
+/** A distinct-type row for the type grouping. */
+export function seenTypeRow(
+  overrides: Partial<AnalyticsSeenTypeRow> = {},
+): AnalyticsSeenTypeRow {
+  return {
+    type: "BCS3",
+    description: "Airbus A220-300",
+    sightings: 11,
+    unique_aircraft: 3,
+    first_seen_at: "2026-08-02T14:10:03.000Z",
+    last_seen_at: "2026-08-31T18:41:20.000Z",
+    new: false,
+    ...overrides,
+  };
 }
 
 const EMPTY_LIST: SightingListResponse = {
@@ -210,6 +281,40 @@ export function installSightingsApiMock(options: MockSightingsApiOptions = {}) {
           );
         }
         return jsonResponse(detail);
+      }
+
+      if (url.pathname === "/api/v1/analytics/counts" && method === "GET") {
+        const counts =
+          typeof options.counts === "function"
+            ? options.counts(url)
+            : (options.counts ?? {});
+        return jsonResponse({
+          window: mockWindow(url),
+          sightings: 0,
+          unique_aircraft: 0,
+          unique_types: 0,
+          new_aircraft: 0,
+          ...counts,
+        });
+      }
+      if (
+        (url.pathname === "/api/v1/analytics/aircraft" ||
+          url.pathname === "/api/v1/analytics/types") &&
+        method === "GET"
+      ) {
+        const source =
+          url.pathname === "/api/v1/analytics/aircraft"
+            ? options.seenAircraft
+            : options.seenTypes;
+        const items =
+          typeof source === "function" ? source(url) : (source ?? []);
+        return jsonResponse({
+          window: mockWindow(url),
+          items,
+          total: items.length,
+          limit: Number(url.searchParams.get("limit") ?? 50),
+          offset: Number(url.searchParams.get("offset") ?? 0),
+        });
       }
 
       if (url.pathname === "/api/v1/sightings" && method === "GET") {

@@ -11,6 +11,7 @@ import type { AnalyticsWindow } from "@/lib/api/analytics";
 
 import { Button } from "@/components/ui/button";
 import { formatWindowLabel } from "@/features/analytics/lib/format";
+import { cn } from "@/lib/utils";
 
 export interface AnalyticsCardProps {
   title: string;
@@ -31,6 +32,9 @@ export interface AnalyticsCardProps {
    * failure is already explained and retried by a page-level banner instead
    * of its own button (R3-08's daily-backed cards). */
   onRetry?: () => void;
+  /** Extra classes for the card's own box — how a card that needs more
+   * than one grid column asks for it (`lg:col-span-2`, say). */
+  className?: string;
   children: ReactNode;
 }
 
@@ -41,10 +45,16 @@ export function AnalyticsCard({
   error,
   errorDetail,
   onRetry,
+  className,
   children,
 }: AnalyticsCardProps) {
   return (
-    <section className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
+    <section
+      className={cn(
+        "flex flex-col gap-2 rounded-lg border border-border bg-card p-4",
+        className,
+      )}
+    >
       <header>
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         {window !== undefined && (

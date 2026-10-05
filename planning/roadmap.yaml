@@ -159,6 +159,13 @@ releases:
       designator, category or emitter category, a military/government tint as a
       secondary cue, and demo airframes that exercise every shape (slice 094; no
       migration). Recorded 2026-10-02."
+  - version: "v0.13.0"
+    after_phase: 9
+    theme: "Analytics and Sightings, reworked from the owner's review: the Top and
+      Locally rare cards as ranked tables with type names and operators, a Today
+      view drawn hour by hour, the Sightings page by time window and grouped by
+      sighting, aircraft or type with sortable headers, and the scrolling fixes
+      (slices 095-100; no migration). Recorded 2026-10-05."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -2838,6 +2845,194 @@ slices:
     preferred_agent: opus
     risk_level: medium
     notes: "Owner request of 2026-10-02. Frontend-heavy. The palette is a secondary cue: classification is also surfaced as text in the detail panel, filters and label indicator, which is how §36's colour rule is satisfied."
+
+  - id: "095"
+    title: "Analytics top rankings as tables"
+    phase: 9
+    branch: "095-analytics-top-tables"
+    status: merged
+    depends_on: ["094"]
+    objective: "Replace the three horizontal-bar 'Top …' cards on the Analytics page with ranked tables that name the aircraft, say what it is in words, who flies it, and the count (§58) — the bars spent the card on '4, 4, 4, 3' and left the identity to a tooltip."
+    scope:
+      - "frontend: RankingTable primitive (fixed layout, truncating cells with full text on hover, right-aligned tabular counts); TopAircraftCard = Aircraft (linked) / Type (model over designator) / Operator (operator, else registered owner labelled, else group) / Sightings; TopGroupCard = Type-or-Operator (description over label) / Aircraft / Sightings"
+      - "backend: `owner` on the §3.7 airframe row (top-aircraft, rarity) from aircraft_metadata_resolved — additive, no migration"
+      - "visual suite: analytics baselines retaken (viewport 1600 -> 1700), readiness wait moved from the chart's img role to the table"
+    out_of_scope:
+      - "the other six Analytics cards (charts stay charts)"
+      - "a detail route for a type designator or an operator group"
+      - "per-row trend or sparkline"
+    acceptance_criteria:
+      - "Top aircraft shows, per row, the registration or hex linked to the aircraft detail, the model in words (designator beneath), the operator or labelled owner or group, and the sighting count, in the backend's order"
+      - "Top types leads with the long-form type name; Top operators with the operator; both show distinct aircraft and sightings"
+      - "an API payload without `owner` (the recorded visual fixture) still renders"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken baselines"
+    required_tests: [card unit tests against table semantics, AnalyticsPage test, analytics API test for owner, visual baselines]
+    expected_artifacts:
+      - frontend/src/features/analytics/components/RankingTable.tsx
+      - frontend/src/features/analytics/components/cards/TopAircraftCard.tsx
+      - frontend/src/features/analytics/components/cards/TopGroupCard.tsx
+      - backend/src/flightsite/analytics/queries.py
+      - docs/API.md
+      - e2e/visual/__screenshots__/analytics-dark.png
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner request of 2026-10-04 with a screenshot of the bar card; ships in v0.13.0."
+
+  - id: "096"
+    title: "Backend image base-package upgrade hotfix"
+    phase: 9
+    branch: "096-backend-image-apt-upgrade"
+    status: merged
+    depends_on: ["094"]
+    objective: "Hotfix: clear the fixed HIGH in the backend image's Debian base (libpcre2-8-0 CVE-2026-103111, 10.42-1+deb12u1 -> deb12u2, published after python:3.12.14-slim-bookworm was built) that fails the required docker Trivy gate on every PR."
+    scope:
+      - "backend/Dockerfile runtime stage: apt-get update && apt-get upgrade -y --no-install-recommends, lists removed — the counterpart of the frontend image's `apk upgrade`"
+    out_of_scope:
+      - "moving the pinned base tag"
+      - "any Python dependency bump"
+    acceptance_criteria:
+      - "the docker job's Trivy scan of the backend image reports no fixed HIGH/CRITICAL finding"
+      - "the image still runs as uid 1000 and the e2e stack built from it is green"
+    required_tests: [docker workflow (build + Trivy), e2e]
+    expected_artifacts:
+      - backend/Dockerfile
+    preferred_agent: opus
+    risk_level: low
+    notes: "Surfaced by PR #263's docker job on 2026-10-04. Added by Fable outside the phase plan; same class as 092/093."
+
+  - id: "097"
+    title: "Analytics today view by hour, and rarity tables"
+    phase: 9
+    branch: "097-analytics-today-hourly"
+    status: merged
+    depends_on: ["095"]
+    objective: "Make the Analytics Today view draw something: over a one-day window the day-granular time series had a single point and hid its marker, so three cards were blank until hovered. Draw that day hour by hour instead, and give the Locally rare card the Top aircraft table format (§58)."
+    scope:
+      - "backend: `GET /api/v1/analytics/hourly?day=` — UTC-hour buckets of one receiver-local day with sightings started, aircraft heard, messages, positions and max range; future hours null; no migration"
+      - "backend: `description` on rarity `rare_types` rows, derived as top-types derives it"
+      - "frontend: DailyCountsCard, MaxDistanceCard and ReceiverActivityCard take the hourly breakdown when the window is one day (bars for counts, lines for range and receiver activity); line markers shown on any series of 31 points or fewer"
+      - "frontend: RarityListsCard on RankingTable — rare aircraft with the shared Aircraft/Type/Operator/Sightings columns, rare types leading with the long-form name; the card spans the grid's full width with the two tables side by side, so its height no longer stretches the row beside it"
+      - "visual suite: fixtures re-recorded (the recorded Since-T0 window is one day, so the page needs `analytics/hourly`, which the old recording lacked) and every baseline retaken; analytics viewport 1700 -> 2150"
+      - "polish in the same cards: the Sightings column is wide enough for its own heading; y-axis names no longer clipped or under the legend"
+      - "dev server: `ws: true` on the `/api` proxy so `npm run dev` / `vite preview` forward the live socket (first half of issue #267)"
+    out_of_scope:
+      - "hourly views for multi-day windows"
+      - "the classification and never-seen-before cards' own single-day presentation (both are bars and already visible)"
+      - "the StrictMode one-time-recentre quirk (second half of #267)"
+    acceptance_criteria:
+      - "on the Today preset the three time-series cards show marks without hovering, on an hour axis covering the whole day"
+      - "an hour that has not begun is empty, a begun hour with no traffic is zero, and an hour with no receiver metrics row is a gap"
+      - "a DST day returns 23 or 25 buckets; a half-hour zone attributes each bucket to the day it begins in"
+      - "the Locally rare tables present aircraft and types exactly as the Top cards do"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken analytics baselines"
+    required_tests: [hourly query incl. DST and half-hour zone, hourly API, card hourly modes and line markers, rarity table, AnalyticsPage single-day vs multi-day, visual baselines]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_hourly.py
+      - frontend/src/features/analytics/lib/series.ts
+      - frontend/src/features/analytics/components/cards/
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback from the 2026-10-05 visual review of slices 094-095; ships in v0.13.0."
+
+  - id: "098"
+    title: "Sightings by window and grouping"
+    phase: 9
+    branch: "098-sightings-window-grouping"
+    status: merged
+    depends_on: ["097"]
+    objective: "Make the Sightings page answer 'what did the receiver hear in this window' three ways: the log, the distinct aircraft, and the distinct types — with the Analytics presets (Today by default) and a live summary line. Since T0 grouped by aircraft or by type is every discrete airframe or type ever heard, which no page listed for types at all (§57, amended by the owner 2026-10-05)."
+    scope:
+      - "backend: `GET /api/v1/analytics/counts` (sightings, distinct aircraft, distinct types, new aircraft — live), `/analytics/aircraft` and `/analytics/types` (paginated distinct lists with a `new` flag; `type=` filter on aircraft); `preset` on `/sightings`; `first_sighting` on sighting rows; no migration"
+      - "frontend: preset bar on the Sightings page (Today default; Since T0 when arriving with an exact `icao` link), summary line, Group by Sightings / Aircraft / Types, two new paginated tables; the raw date inputs are replaced by the presets"
+      - "SPEC §57: dated owner amendment recording the grouped views and the Today default"
+      - "fix (issue #270): the Aircraft, Sightings and Activity pages could not be scrolled — their roots were pinned to the height of the scroll container, which squeezed the table's overflow-hidden wrapper instead of overflowing; `min-h-full`, plus an e2e spec that scrolls with the mouse wheel"
+    out_of_scope:
+      - "retiring the standalone Aircraft page (kept as the searchable lifetime registry; revisit after use)"
+      - "a detail route for a type designator"
+      - "custom from/to ranges in the UI"
+    acceptance_criteria:
+      - "the Sightings page opens on today's sightings in the receiver's local day, with the four counts above the table"
+      - "Group by Aircraft and Types list each distinct airframe / type of the window once, paginated, with totals equal to the summary line"
+      - "Since T0 grouped by Aircraft lists every airframe ever heard; grouped by Types, every type"
+      - "an existing `/sightings?icao=` link still shows all of that aircraft's sightings"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, e2e green"
+    required_tests: [counts/aircraft/types API incl. whole-history and type filter, list-vs-counts agreement, sightings preset and first_sighting, URL state, page tests per grouping, e2e sightings flow]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_seen.py
+      - frontend/src/features/sightings/
+      - planning/SPEC.md
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner request of 2026-10-05; design chosen by the owner from three options (presets + Group by, with the summary line). Ships in v0.13.0."
+
+  - id: "099"
+    title: "Analytics today view: classification and never-seen-before by hour"
+    phase: 9
+    branch: "099-analytics-hourly-classification"
+    status: merged
+    depends_on: ["097", "098"]
+    objective: "Finish slice 097's Today view: the two bar cards it left alone — military/government/police activity and never seen before — drew one bar for the whole day beside three cards drawn hour by hour. Draw them by the hour too, on the same axis (§58)."
+    scope:
+      - "backend: `analytics/hourly` rows gain `military`, `government`, `law_enforcement` (sightings started in the hour, by airframe classification) and `new_aircraft` (airframes first ever heard in the hour); live reads, null for hours not begun; no migration"
+      - "frontend: ClassificationActivityCard and NeverSeenBeforeCard take the hourly breakdown when the window is one day — stacked bars per hour, and bars per hour — and tolerate a payload without the new fields"
+      - "visual suite: fixtures re-recorded for the new fields and every baseline retaken"
+    out_of_scope:
+      - "hourly views for multi-day windows"
+      - "an 'interesting' series per hour"
+    acceptance_criteria:
+      - "on the Today preset all five day-granular time-series cards share the hour axis"
+      - "the per-hour classification figures sum to the day's classification-activity totals, and the per-hour new aircraft to the day's never-seen-before"
+      - "a sighting is counted in the hour it started, once, however long it ran"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken baselines"
+    required_tests: [hourly query classification and new-aircraft cases, hourly-vs-daily agreement, card hourly modes incl. legacy payload, AnalyticsPage single-day, visual baselines]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_hourly.py
+      - frontend/src/features/analytics/components/cards/ClassificationActivityCard.tsx
+      - frontend/src/features/analytics/components/cards/NeverSeenBeforeCard.tsx
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback of 2026-10-05 on the review stack: the two cards 'should [be the] same style' as the three hourly ones. Stacked on 098; ships in v0.13.0."
+
+  - id: "100"
+    title: "Sortable Sightings headers and a single page scrollbar"
+    phase: 9
+    branch: "100-sightings-sorting"
+    status: merged
+    depends_on: ["098", "099"]
+    objective: "Let every column of the Sightings page's three lists order its list, ascending or descending (§57), and remove the second vertical scrollbar the Analytics page grew."
+    scope:
+      - "backend: `sort`/`order` on `/analytics/aircraft` and `/analytics/types`; `/sightings` gains the sort keys its page lacked (`ended_at`, `tail`, `aircraft_type`, `operator`, `lowest_altitude_ft`, `highest_altitude_ft`, `position_count`); unknowns last both ways, stable tie-breaks; no migration, no new index"
+      - "frontend: one shared SortableHeader for the three tables (`aria-sort`, a second click reverses); a sort per grouping in the URL, reset to the grouping's default when the grouping changes"
+      - "fix: `<main>` becomes the containing block of its content, so the screen-reader-only chart summaries (absolutely positioned) no longer stretch the document and give it a scrollbar of its own beside `<main>`'s on Analytics, Receiver and Feeders"
+    out_of_scope:
+      - "sorting the log by Classification or Status"
+      - "indexes for the new `/sightings` sort keys (they sort the selected window; measuring them over a multi-year T0 window is issue #272)"
+      - "sortable headers on the Aircraft and Activity pages beyond what they already have"
+    acceptance_criteria:
+      - "every header of the aircraft and type lists, and every header of the log but Classification and Status, sorts its list in both directions"
+      - "a column sorts by what it displays; unknown values are last in both directions; paging a tied key never repeats or skips a row"
+      - "the sort survives a reload and a shared link, and an unknown or foreign sort key in a URL falls back to the grouping's default"
+      - "on every page the document itself does not scroll — `<main>` is the only page scrollbar"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, e2e and visual suites green"
+    required_tests: [seen-list sort keys each way incl. unknowns and ties, bounded-window and paged sorts, log text-key sorts, unknown key 422, URL state per grouping, page tests per grouping, e2e sort and single-scrollbar checks]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/src/flightsite/api/sightings.py
+      - backend/tests/analytics/test_seen.py
+      - frontend/src/features/history/components/SortableHeader.tsx
+      - frontend/src/features/sightings/
+      - frontend/src/components/shell/AppShell.tsx
+      - e2e/tests/08-history-scroll.spec.ts
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback of 2026-10-05 on the review stack: 'The Analytics page now has two vertical scrollbars. It should just have one. The Sightings page should have the option to sort by the headers in ascending or descending order.' Stacked on 099; ships in v0.13.0."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

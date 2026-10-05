@@ -15,11 +15,22 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
+import type { AnalyticsPreset } from "@/lib/api/analytics";
 import type { Classification, PositionSource, RouteInfo } from "@/lib/api/live";
 
 /** §3.6's documented sort keys. */
 export type SightingSortKey =
-  "started_at" | "duration_s" | "closest_approach_nm" | "max_range_nm";
+  | "started_at"
+  | "ended_at"
+  | "duration_s"
+  | "tail"
+  | "aircraft_type"
+  | "operator"
+  | "closest_approach_nm"
+  | "max_range_nm"
+  | "lowest_altitude_ft"
+  | "highest_altitude_ft"
+  | "position_count";
 
 export type SortOrder = "asc" | "desc";
 
@@ -73,6 +84,10 @@ export interface SightingRow {
   position_count: number;
   had_emergency: boolean;
   max_alert_severity: AlertSeverity | null;
+  /** True when this sighting holds the aircraft's first-ever observation by
+   * this receiver (slice 098). Optional so a payload recorded before the
+   * field existed still parses. */
+  first_sighting?: boolean;
   provenance: Record<string, string>;
 }
 
@@ -180,6 +195,9 @@ export interface SightingListParams {
   /** Case-insensitive ICAO-address or callsign prefix (`docs/API.md` §3.6,
    * slice 083). */
   q?: string | undefined;
+  /** A §3.7 time preset, resolved by the server in receiver-local time
+   * (slice 098). Ignored by the server when `from`/`to` are given. */
+  preset?: AnalyticsPreset | undefined;
   /** Inclusive lower bound on `started_at`, as a full ISO instant. */
   from?: string;
   /** Inclusive upper bound on `started_at`, as a full ISO instant. */
@@ -200,6 +218,9 @@ function query(params: SightingListParams): string {
   }
   if (params.q !== undefined) {
     search.set("q", params.q);
+  }
+  if (params.preset !== undefined) {
+    search.set("preset", params.preset);
   }
   if (params.from !== undefined) {
     search.set("from", params.from);
@@ -260,6 +281,9 @@ export const sightingsQueryKeys = {
  * same reason `apiV1Fetch` is. */
 export interface RefreshOptions {
   refetchInterval?: number | false;
+  /** `false` holds the request back — the Sightings page only asks for the
+   * grouping that is on screen (slice 098). */
+  enabled?: boolean;
 }
 
 /** One page of the Sightings table. `placeholderData: keepPreviousData`
@@ -272,6 +296,7 @@ export function useSightingListQuery(
     queryKey: sightingsQueryKeys.list(params),
     queryFn: () => getSightingList(params),
     placeholderData: keepPreviousData,
+    enabled: options.enabled ?? true,
     refetchInterval: options.refetchInterval ?? false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,

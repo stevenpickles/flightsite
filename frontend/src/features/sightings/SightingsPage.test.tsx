@@ -43,7 +43,9 @@ describe("SightingsPage", () => {
     renderApp("/sightings");
 
     expect(
-      await screen.findByText(/no sightings match these filters/i),
+      await screen.findByText(
+        /no sightings match this window and these filters/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -271,7 +273,9 @@ describe("SightingsPage", () => {
     renderApp("/sightings?q=ZZZ9");
 
     expect(
-      await screen.findByText(/no sightings match these filters/i),
+      await screen.findByText(
+        /no sightings match this window and these filters/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/aircraft or callsign/i)).toHaveValue("ZZZ9");
   });

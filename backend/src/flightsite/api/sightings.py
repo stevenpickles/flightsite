@@ -65,7 +65,7 @@ descending; that sorts only within groups of equal ranges, not the table.
 
 Nulls sort last in both directions, exactly as
 :func:`flightsite.api.history._direction` orders the Aircraft page and for
-the same §2.7 reason. Three of this endpoint's four sort keys are nullable,
+the same §2.7 reason. Most of this endpoint's sort keys are nullable,
 and ``duration_s`` is the one that made the defect unmissable: an *open*
 sighting has no recorded duration yet, so SQLite's ``NULL``-first ``ASC``
 answered "shortest sighting first" with nothing but open sightings, page
@@ -77,7 +77,15 @@ the descending plan is unchanged.
 
 ``duration_s`` and ``closest_approach_nm`` sorts, and the ``interesting``
 filter, still carry no index and fall back to SQLite scanning the filtered
-result. That is a write-cost decision rather than an oversight: every index on
+result — as does every key slice 100 added so that each column of the
+Sightings page can order it (``ended_at``, the two altitudes,
+``position_count``, and the text keys ``tail``, ``aircraft_type`` and
+``operator``, which order by joined metadata no index on ``sightings`` could
+cover). Since slice 098 the page asks for a time window, today's by default,
+so what such a sort scans is the window rather than the table; over the whole
+history it is a pass over every sighting.
+
+That is a write-cost decision rather than an oversight: every index on
 ``sightings`` is maintained on the INSERT *and* on each 30-second flush that
 rewrites an open sighting's running columns, and a second sort index measured
 ~2.6x the baseline per-sighting write cost again (rev 0013's docstring carries
@@ -110,7 +118,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 
-from sqlalchemy import ColumnElement, Select, UnaryExpression, or_, select
+from sqlalchemy import ColumnElement, Select, UnaryExpression, func, or_, select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import aliased
 
@@ -131,9 +139,25 @@ from flightsite.sightings.vocabulary import position_source_name
 #: §3.6's documented sort keys, mapped to the column each one orders by.
 SORT_COLUMNS: Final[Mapping[str, Any]] = {
     "started_at": Sighting.started_ms,
+    "ended_at": Sighting.ended_ms,
     "duration_s": Sighting.duration_ms,
     "closest_approach_nm": Sighting.closest_approach_nm,
     "max_range_nm": Sighting.max_range_nm,
+    "lowest_altitude_ft": Sighting.lowest_alt_ft,
+    "highest_altitude_ft": Sighting.highest_alt_ft,
+    "position_count": Sighting.pos_count,
+    # The text keys (slice 100) order by what the row displays, without
+    # regard to case: the tail or else the callsign; the model or else the
+    # designator; the operator. They sort on joined metadata, so over the
+    # whole history they cost a pass over every sighting — which is why the
+    # page asks for a time window first.
+    "tail": func.lower(
+        func.coalesce(AircraftMetadataResolved.registration, Sighting.callsign_last)
+    ),
+    "aircraft_type": func.lower(
+        func.coalesce(AircraftMetadataResolved.model, AircraftMetadataResolved.type_code)
+    ),
+    "operator": func.lower(AircraftMetadataResolved.operator_name),
 }
 
 #: §3.6's documented default.
@@ -156,6 +180,7 @@ _LIST_COLUMNS: Final[tuple[Any, ...]] = (
     Sighting.had_emergency,
     Sighting.max_alert_severity,
     Aircraft.icao24,
+    Aircraft.first_seen_ms,
     AircraftMetadataResolved.registration,
     AircraftMetadataResolved.registration_src,
     AircraftMetadataResolved.type_code,

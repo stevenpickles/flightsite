@@ -86,7 +86,11 @@ test.describe("Sightings page", () => {
     // meaningful assertion rather than a coincidence.
     const subject = pickBusiestAircraft(aircraft);
 
-    await page.goto("/sightings");
+    // The subject is chosen from every aircraft ever persisted, so the log
+    // is asked for the same span: the default window is the receiver's
+    // local today (slice 098), which a subject last heard before midnight
+    // would be absent from.
+    await page.goto("/sightings?preset=t0");
     await expect(page.getByTestId("sighting-row").first()).toBeVisible();
 
     // Before filtering there is no reason for the log to be single-aircraft,
@@ -148,7 +152,11 @@ test.describe("Sightings page", () => {
     // callsign (three letters and a flight number) can start with it too.
     const prefix = pickBusiestAircraft(aircraft).icao.slice(0, 5).toLowerCase();
 
-    await page.goto("/sightings");
+    // The subject is chosen from every aircraft ever persisted, so the log
+    // is asked for the same span: the default window is the receiver's
+    // local today (slice 098), which a subject last heard before midnight
+    // would be absent from.
+    await page.goto("/sightings?preset=t0");
     await expect(page.getByTestId("sighting-row").first()).toBeVisible();
     const field = page.getByLabel("Aircraft or callsign");
     await field.fill(prefix.toUpperCase());
@@ -242,5 +250,155 @@ test.describe("Sightings page", () => {
     // resolved a real sighting is what the "not found" branch would deny.
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByText("Sighting not found")).toHaveCount(0);
+  });
+
+  test("opens on today and states what the window held (slice 098)", async ({
+    page,
+    request,
+  }) => {
+    await waitForPersistedSightings(request);
+
+    await page.goto("/sightings");
+    await expect(page.getByRole("radio", { name: "Today" })).toBeChecked();
+
+    // The summary line is the live `counts` for the same window, so its
+    // aircraft figure is the API's — not something the page added up.
+    const counts = (await (
+      await request.get("/api/v1/analytics/counts?preset=t0")
+    ).json()) as { unique_aircraft: number; unique_types: number };
+    expect(counts.unique_aircraft).toBeGreaterThan(0);
+
+    await page.getByRole("radio", { name: "Since T0" }).click();
+    await expect(page).toHaveURL(/[?&]preset=t0/);
+    const summary = page.getByRole("group", { name: "In this window" });
+    await expect(summary).toContainText("sightings");
+    await expect(summary).toContainText("aircraft");
+    await expect(summary).toContainText("types");
+    // Over the whole history "never seen before" would only repeat the
+    // aircraft count, so it is left out.
+    await expect(summary).not.toContainText("never seen before");
+  });
+
+  test("groups the window by aircraft and by type (slice 098)", async ({
+    page,
+    request,
+  }) => {
+    await waitForPersistedSightings(request);
+
+    await page.goto("/sightings?preset=t0");
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+
+    await page.getByRole("radio", { name: "Aircraft" }).click();
+    await expect(page).toHaveURL(/[?&]group=aircraft/);
+    const aircraftRows = page.getByTestId("seen-aircraft-row");
+    await expect(aircraftRows.first()).toBeVisible();
+    // One row per distinct airframe: no address appears twice.
+    const icaos = await aircraftRows.evaluateAll((rows) =>
+      rows.map((row) => (row as HTMLElement).dataset["icao"] ?? ""),
+    );
+    expect(new Set(icaos).size).toBe(icaos.length);
+    // And each is an airframe the API knows.
+    const known = await request.get(`/api/v1/aircraft/${icaos[0]}`);
+    expect(
+      known.ok(),
+      `the grouping listed unknown aircraft ${icaos[0]}`,
+    ).toBeTruthy();
+
+    await page.getByRole("radio", { name: "Types" }).click();
+    await expect(page).toHaveURL(/[?&]group=types/);
+    const typeRows = page.getByTestId("seen-type-row");
+    await expect(typeRows.first()).toBeVisible();
+    const types = await typeRows.evaluateAll((rows) =>
+      rows.map((row) => (row as HTMLElement).dataset["type"] ?? ""),
+    );
+    expect(new Set(types).size).toBe(types.length);
+
+    // A type row opens the aircraft of that type.
+    const chosen = types[0] as string;
+    await typeRows.first().getByRole("button").first().click();
+    await expect(page).toHaveURL(new RegExp(`[?&]type=${chosen}(&|$)`));
+    await expect(page.getByText("Showing only")).toBeVisible();
+    await expect(page.getByTestId("seen-aircraft-row").first()).toBeVisible();
+  });
+
+  test("a header sorts its list, and a second click reverses it (slice 100)", async ({
+    page,
+    request,
+  }) => {
+    await waitForPersistedSightings(request);
+    const sortButton = (name: RegExp) =>
+      page.getByRole("columnheader", { name }).getByRole("button");
+
+    // The type list, by name: what each row leads with, A to Z first.
+    await page.goto("/sightings?preset=t0&group=types");
+    const typeRows = page.getByTestId("seen-type-row");
+    await expect(typeRows.first()).toBeVisible();
+    const typeNames = () =>
+      typeRows.evaluateAll((rows) =>
+        rows.map((row) =>
+          (row.querySelector("button")?.textContent ?? "").toLowerCase(),
+        ),
+      );
+    const ascending = <T extends string | number>(values: T[]) =>
+      values.slice(1).every((value, index) => (values[index] as T) <= value);
+    const descending = <T extends string | number>(values: T[]) =>
+      values.slice(1).every((value, index) => (values[index] as T) >= value);
+
+    await sortButton(/^Type/).click();
+    await expect(page).toHaveURL(/[?&]sort=type&order=asc/);
+    await expect(
+      page.getByRole("columnheader", { name: /^Type/ }),
+    ).toHaveAttribute("aria-sort", "ascending");
+    await expect
+      .poll(async () => ascending(await typeNames()), {
+        message: "the type list is not in A-to-Z order",
+      })
+      .toBe(true);
+    // Demo traffic has more than one type, or neither order proves anything.
+    expect(new Set(await typeNames()).size).toBeGreaterThan(1);
+
+    await sortButton(/^Type/).click();
+    await expect(
+      page.getByRole("columnheader", { name: /^Type/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+    await expect
+      .poll(async () => descending(await typeNames()), {
+        message: "the type list is not in Z-to-A order",
+      })
+      .toBe(true);
+
+    // The aircraft list, by a number: busiest first is the default, so one
+    // click on Sightings turns it round.
+    await page.getByRole("radio", { name: "Aircraft" }).click();
+    const aircraftRows = page.getByTestId("seen-aircraft-row");
+    await expect(aircraftRows.first()).toBeVisible();
+    // The type list's sort did not follow it here.
+    await expect(page).not.toHaveURL(/[?&]sort=/);
+    const sightingCounts = () =>
+      aircraftRows.evaluateAll((rows) =>
+        rows.map((row) => Number(row.children[3]?.textContent ?? "NaN")),
+      );
+    await expect(
+      page.getByRole("columnheader", { name: /^Sightings/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+
+    await sortButton(/^Sightings/).click();
+    await expect(page).toHaveURL(/[?&]order=asc/);
+    await expect
+      .poll(async () => ascending(await sightingCounts()), {
+        message: "the aircraft list is not least-sighted first",
+      })
+      .toBe(true);
+
+    // The log, by a column it could not be sorted by before this slice.
+    await page.getByRole("radio", { name: "Sightings", exact: true }).click();
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+    await sortButton(/^Tail/).click();
+    await expect(page).toHaveURL(/[?&]sort=tail&order=asc/);
+    await expect(
+      page.getByRole("columnheader", { name: /^Tail/ }),
+    ).toHaveAttribute("aria-sort", "ascending");
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+    await expect(page.getByText(/could not be loaded/i)).toHaveCount(0);
   });
 });

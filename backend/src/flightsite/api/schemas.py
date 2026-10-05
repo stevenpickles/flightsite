@@ -317,7 +317,25 @@ class AircraftDetail(_Model):
 
 
 #: ``docs/API.md`` §3.6's documented sort keys for ``GET /api/v1/sightings``.
-SightingSortKey = Literal["started_at", "duration_s", "closest_approach_nm", "max_range_nm"]
+SightingSortKey = Literal[
+    "started_at",
+    "ended_at",
+    "duration_s",
+    "tail",
+    "aircraft_type",
+    "operator",
+    "closest_approach_nm",
+    "max_range_nm",
+    "lowest_altitude_ft",
+    "highest_altitude_ft",
+    "position_count",
+]
+
+#: Sort keys of ``GET /analytics/aircraft`` and ``/analytics/types`` (slice 100).
+SeenAircraftSortKey = Literal[
+    "sightings", "registration", "type", "operator", "first_seen", "last_seen"
+]
+SeenTypeSortKey = Literal["sightings", "type", "aircraft", "first_seen", "last_seen"]
 
 #: §2.8's ``closure_reason`` vocabulary.
 ClosureReasonLiteral = Literal["gap_timeout", "shutdown_recovery", "data_reset"]
@@ -382,6 +400,9 @@ class SightingRow(_Model):
     position_count: int
     had_emergency: bool
     max_alert_severity: AlertSeverityLiteral | None = None
+    #: True when this sighting contains the airframe's first-ever
+    #: observation by this receiver (slice 098).
+    first_sighting: bool = False
 
     #: §2.6. See :class:`AircraftView`'s field of the same name.
     provenance: dict[str, str] = Field(default_factory=dict)
@@ -997,6 +1018,9 @@ class AnalyticsAircraftRow(_Model):
     type: str | None = None
     model: str | None = None
     operator: str | None = None
+    #: Registry owner (FAA, where released): the fallback for "who flies it"
+    #: when no operator is known (slice 095).
+    owner: str | None = None
     operator_group: str | None = None
     classification: str | None = None
     military: bool = False
@@ -1066,10 +1090,100 @@ class AnalyticsRareType(_Model):
     """One locally rare type designator (receiver-relative, since T0)."""
 
     type: str
+    #: The long form behind the designator (slice 097), as on a top-types row.
+    description: str | None = None
     unique_aircraft: int
     total_sightings: int
     first_seen_at: IsoTimestamp
     last_seen_at: IsoTimestamp
+
+
+class AnalyticsHourlyRow(_Model):
+    """One UTC-hour bucket of a receiver-local day (slice 097).
+
+    The traffic counts are ``null`` only for an hour that has not begun; the
+    receiver figures are ``null`` where no hourly metrics row exists.
+    """
+
+    t: IsoTimestamp
+    #: The receiver-local hour the bucket begins in, 0-23.
+    hour: int = Field(ge=0, le=23)
+    sightings: int | None = None
+    unique_aircraft: int | None = None
+    #: Sightings started in the hour by airframe classification (slice 099).
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
+    #: Airframes first ever heard in the hour (slice 099).
+    new_aircraft: int | None = None
+    messages: int | None = None
+    positions: int | None = None
+    max_range_nm: float | None = None
+
+
+class AnalyticsHourlyResponse(_Model):
+    """``GET /api/v1/analytics/hourly``."""
+
+    day: str
+    timezone: str
+    items: list[AnalyticsHourlyRow]
+
+
+class AnalyticsCountsResponse(_Model):
+    """``GET /api/v1/analytics/counts`` — a window's four headline figures."""
+
+    window: AnalyticsWindow
+    sightings: int
+    unique_aircraft: int
+    #: Distinct ICAO type designators among the window's aircraft.
+    unique_types: int
+    #: Airframes whose first-ever observation fell inside the window.
+    new_aircraft: int
+
+
+class AnalyticsSeenAircraftRow(AnalyticsAircraftRow):
+    """One distinct airframe heard in a window (slice 098)."""
+
+    #: True when the airframe's first-ever observation fell inside the
+    #: window. Always false over the whole history, where it would be true of
+    #: every row.
+    new: bool = False
+
+
+class AnalyticsSeenAircraftResponse(_Model):
+    """``GET /api/v1/analytics/aircraft`` — paginated (§2.4)."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsSeenAircraftRow]
+    total: int
+    limit: int
+    offset: int
+
+
+class AnalyticsSeenTypeRow(_Model):
+    """One distinct ICAO type designator heard in a window (slice 098)."""
+
+    type: str
+    #: The long form behind the designator, as on a top-types row.
+    description: str | None = None
+    sightings: int
+    unique_aircraft: int
+    #: The receiver's first-ever observation of any airframe of the type.
+    first_seen_at: IsoTimestamp
+    #: The latest sighting start of the type inside the window.
+    last_seen_at: IsoTimestamp
+    #: True when the receiver had never heard the type before this window.
+    new: bool = False
+
+
+class AnalyticsSeenTypesResponse(_Model):
+    """``GET /api/v1/analytics/types`` — paginated (§2.4)."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsSeenTypeRow]
+    total: int
+    limit: int
+    offset: int
 
 
 class AnalyticsRarityResponse(_Model):
@@ -1812,13 +1926,20 @@ __all__ = [
     "AnalyticsAircraftResponse",
     "AnalyticsAircraftRow",
     "AnalyticsClassificationResponse",
+    "AnalyticsCountsResponse",
     "AnalyticsDailyResponse",
     "AnalyticsDailyRow",
     "AnalyticsGroupResponse",
     "AnalyticsGroupRow",
+    "AnalyticsHourlyResponse",
+    "AnalyticsHourlyRow",
     "AnalyticsPresetLiteral",
     "AnalyticsRareType",
     "AnalyticsRarityResponse",
+    "AnalyticsSeenAircraftResponse",
+    "AnalyticsSeenAircraftRow",
+    "AnalyticsSeenTypeRow",
+    "AnalyticsSeenTypesResponse",
     "AnalyticsSummary",
     "AnalyticsSummaryResponse",
     "AnalyticsWindow",
@@ -1902,6 +2023,8 @@ __all__ = [
     "ReceiverSignalDistribution",
     "ReceptionStats",
     "RouteView",
+    "SeenAircraftSortKey",
+    "SeenTypeSortKey",
     "SightingDetail",
     "SightingEventTypeLiteral",
     "SightingEventView",

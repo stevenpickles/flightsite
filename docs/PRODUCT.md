@@ -171,6 +171,28 @@ per-sighting reception statistics (§51), meaningful sighting events (§52), and
 simplified path. No animated playback in v1 (schema preserves enough for it later,
 §19).
 
+The page shows one time window, chosen with the Analytics presets — **Today** by
+default, in the receiver's local day; Since T0 for an exact-aircraft link — and heads
+it with a live summary: sightings, distinct aircraft, distinct types, and aircraft
+never seen before the window. *Group by* lists the same window three ways (§57 as
+amended 2026-10-05, slice 098): the log; one row per distinct aircraft (tail, type in
+words, operator, sightings in the window, first and last seen); and one row per
+distinct type (name over designator, distinct airframes, sightings, first ever and
+last seen). Since T0 grouped by aircraft or by type is every discrete airframe or
+type the receiver has ever heard. A type row opens the aircraft of that type; each
+summary figure is a shortcut to the grouping that lists it; an aircraft, type or
+sighting the receiver had never heard before the window carries a worded "New" /
+"First sighting" badge.
+
+Every column heading of all three lists sorts its list (slice 100) — the log's
+Classification and Status, which describe a row rather than rank it, excepted. One
+click sorts by the column, a second reverses it: words start A to Z, numbers and
+times start largest and latest first. A column sorts by what it shows (the type
+list's Type by the name, not the designator beneath it), unknowns sort last either
+way, and the sort is kept in the URL. Each grouping has its own default — the log
+newest first, the two lists busiest first — and returns to it when the grouping
+changes.
+
 ### 4.6 Analytics Page (§58)
 
 Time presets: Today, Last 7 Days, Last 30 Days, This Year, Since T0. Analytics: most
@@ -179,6 +201,27 @@ military/government/police activity; daily aircraft count; daily sighting count;
 maximum detection distance; receiver activity over time; first-seen/last-seen
 information; count of never-previously-seen aircraft; locally rare aircraft/type
 information. No period-over-period comparison in v1.
+
+The three "Top …" rankings are tables rather than charts (slice 095): Top aircraft
+lists the tail (linked to the aircraft's history), the type in words with its
+designator beneath, who flies it — the operator, else the registered owner labelled
+as such, else the operator group — and the sighting count; Top types leads with the
+long-form type name over its designator and gives distinct airframes and sightings;
+Top operators the same for operator groups. Long names truncate with the full text
+on hover rather than widening the card. The Locally rare card lists its rare aircraft
+and rare types in the same two formats, side by side across the page's full width
+(slice 097).
+
+Over a single-day window (the Today preset) every day-granular time series —
+military/government/police activity, aircraft & sighting counts, maximum detection
+distance, receiver activity, never seen before — is drawn hour by hour across that
+day rather than as one point or one bar, all five on the same hour axis (slices 097,
+099): classified sightings stacked per hour, sightings started and aircraft heard per
+hour as bars, the farthest detection and the message/position counts per hour as
+lines, and the aircraft first ever heard in each hour as bars. Hours that have not
+begun are empty, not zero. Every line shows its
+point markers when it has few enough points for them to be legible, so a sparse
+series is never an empty plot.
 
 ### 4.7 Receiver Page (§60–§64, §67)
 
