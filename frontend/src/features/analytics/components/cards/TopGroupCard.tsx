@@ -19,9 +19,9 @@
 import type { AnalyticsGroupRow, AnalyticsWindow } from "@/lib/api/analytics";
 
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
+import { namedCell } from "@/features/analytics/components/rankingColumns";
 import {
   RankingTable,
-  Truncated,
   type RankingColumn,
 } from "@/features/analytics/components/RankingTable";
 
@@ -52,19 +52,8 @@ function columnsFor(
     {
       key: "name",
       heading: nameHeading,
-      width: 64,
-      render: (row) =>
-        row.description === null ? (
-          <Truncated text={groupLabel(row)} />
-        ) : (
-          <>
-            <Truncated text={row.description} />
-            <Truncated
-              text={groupLabel(row)}
-              className="text-xs text-muted-foreground"
-            />
-          </>
-        ),
+      width: 62,
+      render: (row) => namedCell(row.description, groupLabel(row)),
     },
     {
       key: "aircraft",
@@ -76,7 +65,7 @@ function columnsFor(
     {
       key: "sightings",
       heading: "Sightings",
-      width: 18,
+      width: 20,
       align: "right",
       render: (row) => row.sightings,
     },

@@ -141,10 +141,41 @@ export interface AnalyticsClassificationResponse {
 /** One locally rare type designator (receiver-relative, since T0). */
 export interface AnalyticsRareType {
   type: string;
+  /** The long form behind the designator, as on a top-types row (slice
+   * 097). Optional so a payload recorded before the field existed still
+   * parses. */
+  description?: string | null;
   unique_aircraft: number;
   total_sightings: number;
   first_seen_at: string;
   last_seen_at: string;
+}
+
+/** One UTC-hour bucket of a receiver-local day (`GET
+ * /api/v1/analytics/hourly`, slice 097). The traffic counts are `null` only
+ * for an hour that has not begun — a zero is a measurement; the receiver
+ * figures are `null` where no hourly metrics row exists. */
+export interface AnalyticsHourlyRow {
+  /** UTC instant the bucket begins. */
+  t: string;
+  /** The receiver-local hour the bucket begins in, 0–23. A fall-back day
+   * names one hour twice; a spring-forward day skips one. */
+  hour: number;
+  /** Sightings that started in the hour — the day's buckets sum to its
+   * sighting count. */
+  sightings: number | null;
+  /** Distinct aircraft heard during the hour. Not additive across hours. */
+  unique_aircraft: number | null;
+  messages: number | null;
+  positions: number | null;
+  max_range_nm: number | null;
+}
+
+export interface AnalyticsHourlyResponse {
+  /** Receiver-local `YYYY-MM-DD`. */
+  day: string;
+  timezone: string;
+  items: AnalyticsHourlyRow[];
 }
 
 export interface AnalyticsRarityResponse {
@@ -271,6 +302,15 @@ export function getAnalyticsDaily(
   );
 }
 
+/** One receiver-local day, hour by hour. `day` is `YYYY-MM-DD`. */
+export function getAnalyticsHourly(
+  day: string,
+): Promise<AnalyticsHourlyResponse> {
+  return apiV1Fetch<AnalyticsHourlyResponse>(
+    `/api/v1/analytics/hourly?${new URLSearchParams({ day }).toString()}`,
+  );
+}
+
 export function getAnalyticsClassificationActivity(
   params: AnalyticsWindowParams,
 ): Promise<AnalyticsClassificationResponse> {
@@ -325,6 +365,7 @@ export const analyticsQueryKeys = {
     ["analytics", "summary", params, localDate] as const,
   daily: (params: AnalyticsWindowParams) =>
     ["analytics", "daily", params] as const,
+  hourly: (day: string | undefined) => ["analytics", "hourly", day] as const,
   classification: (params: AnalyticsWindowParams) =>
     ["analytics", "classification-activity", params] as const,
   topAircraft: (params: AnalyticsTopParams) =>
@@ -388,6 +429,19 @@ export function useAnalyticsDailyQuery(
   return useQuery({
     queryKey: analyticsQueryKeys.daily(params),
     queryFn: () => getAnalyticsDaily(params),
+    ...RESILIENT_QUERY_OPTIONS,
+  });
+}
+
+/** The hourly breakdown of one receiver-local day. Disabled until a day is
+ * known — the page only asks for it when its window is a single day. */
+export function useAnalyticsHourlyQuery(
+  day: string | undefined,
+): UseQueryResult<AnalyticsHourlyResponse> {
+  return useQuery({
+    queryKey: analyticsQueryKeys.hourly(day),
+    queryFn: () => getAnalyticsHourly(day ?? ""),
+    enabled: day !== undefined,
     ...RESILIENT_QUERY_OPTIONS,
   });
 }

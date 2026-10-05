@@ -4,6 +4,7 @@ import type {
   AnalyticsAircraftResponse,
   AnalyticsClassificationResponse,
   AnalyticsDailyResponse,
+  AnalyticsHourlyResponse,
   AnalyticsGroupResponse,
   AnalyticsPreset,
   AnalyticsRarityResponse,
@@ -43,6 +44,9 @@ export interface MockAnalyticsApiOptions {
   /** Serve an error envelope from `GET /api/v1/analytics/summary` instead. */
   summaryStatus?: number;
   daily?: AnalyticsDailyResponse;
+  /** `GET /api/v1/analytics/hourly` — asked for only when the daily
+   * response's window is a single day. */
+  hourly?: AnalyticsHourlyResponse;
   classification?: AnalyticsClassificationResponse;
   topAircraft?: AnalyticsAircraftResponse;
   topTypes?: AnalyticsGroupResponse;
@@ -161,6 +165,15 @@ export function installAnalyticsApiMock(options: MockAnalyticsApiOptions = {}) {
       }
       if (url.pathname === "/api/v1/analytics/daily" && method === "GET") {
         return jsonResponse(options.daily ?? EMPTY_DAILY);
+      }
+      if (url.pathname === "/api/v1/analytics/hourly" && method === "GET") {
+        return jsonResponse(
+          options.hourly ?? {
+            day: url.searchParams.get("day") ?? "2026-08-31",
+            timezone: "America/Los_Angeles",
+            items: [],
+          },
+        );
       }
       if (
         url.pathname === "/api/v1/analytics/classification-activity" &&
