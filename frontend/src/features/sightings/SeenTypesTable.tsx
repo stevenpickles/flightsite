@@ -9,16 +9,24 @@
  * type were heard, how many sightings they made, and when the receiver first
  * ever heard the type and last heard it. A type has no detail route of its
  * own, so the row opens the aircraft grouping narrowed to it — the answer to
- * "which ones?".
+ * "which ones?". Every header sorts (slice 100); Type sorts by the name the
+ * row leads with, falling back to the designator where it has none.
  */
 import { ReceiverTime } from "@/features/aircraft-detail/components/ReceiverTime";
+import { SortableHeader } from "@/features/history/components/SortableHeader";
 import { TableScroller } from "@/features/history/components/TableScroller";
 import { NewBadge } from "@/features/sightings/components/NewBadge";
-import type { AnalyticsSeenTypeRow } from "@/lib/api/analytics";
+import type {
+  AnalyticsSeenTypeRow,
+  SeenTypeSortKey,
+} from "@/lib/api/analytics";
 import { cn } from "@/lib/utils";
 
 export interface SeenTypesTableProps {
   rows: AnalyticsSeenTypeRow[];
+  sort: SeenTypeSortKey;
+  order: "asc" | "desc";
+  onSortChange: (key: SeenTypeSortKey) => void;
   timezone: string;
   /** Opens the aircraft grouping narrowed to one type designator. */
   onTypeSelect: (type: string) => void;
@@ -28,10 +36,14 @@ export interface SeenTypesTableProps {
 
 export function SeenTypesTable({
   rows,
+  sort,
+  order,
+  onSortChange,
   timezone,
   onTypeSelect,
   refreshing = false,
 }: SeenTypesTableProps) {
+  const header = { sort, order, onSortChange };
   return (
     <TableScroller
       className={cn("transition-opacity", refreshing && "opacity-60")}
@@ -44,27 +56,29 @@ export function SeenTypesTable({
         </caption>
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <th scope="col" className="px-3 py-2 font-semibold">
+            <SortableHeader sortKey="type" {...header}>
               Type
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-semibold">
+            </SortableHeader>
+            <SortableHeader sortKey="aircraft" align="right" {...header}>
               Aircraft
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-semibold">
+            </SortableHeader>
+            <SortableHeader sortKey="sightings" align="right" {...header}>
               Sightings
-            </th>
-            <th
-              scope="col"
-              className="hidden px-3 py-2 font-semibold md:table-cell"
+            </SortableHeader>
+            <SortableHeader
+              sortKey="first_seen"
+              className="hidden md:table-cell"
+              {...header}
             >
               First ever seen
-            </th>
-            <th
-              scope="col"
-              className="hidden px-3 py-2 font-semibold sm:table-cell"
+            </SortableHeader>
+            <SortableHeader
+              sortKey="last_seen"
+              className="hidden sm:table-cell"
+              {...header}
             >
               Last seen
-            </th>
+            </SortableHeader>
           </tr>
         </thead>
         <tbody>

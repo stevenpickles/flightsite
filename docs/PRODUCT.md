@@ -184,6 +184,15 @@ summary figure is a shortcut to the grouping that lists it; an aircraft, type or
 sighting the receiver had never heard before the window carries a worded "New" /
 "First sighting" badge.
 
+Every column heading of all three lists sorts its list (slice 100) — the log's
+Classification and Status, which describe a row rather than rank it, excepted. One
+click sorts by the column, a second reverses it: words start A to Z, numbers and
+times start largest and latest first. A column sorts by what it shows (the type
+list's Type by the name, not the designator beneath it), unknowns sort last either
+way, and the sort is kept in the URL. Each grouping has its own default — the log
+newest first, the two lists busiest first — and returns to it when the grouping
+changes.
+
 ### 4.6 Analytics Page (§58)
 
 Time presets: Today, Last 7 Days, Last 30 Days, This Year, Since T0. Analytics: most

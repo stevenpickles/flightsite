@@ -41,8 +41,11 @@ import { GroupSelector } from "@/features/sightings/components/GroupSelector";
 import { WindowSummary } from "@/features/sightings/components/WindowSummary";
 import { useSightingsTableState } from "@/features/sightings/hooks/useSightingsTableState";
 import {
+  DEFAULT_SORT_BY_GROUP,
   PAGE_SIZE,
+  firstOrderFor,
   type SightingsGroup,
+  type SightingsSort,
 } from "@/features/sightings/lib/urlState";
 import { SeenAircraftTable } from "@/features/sightings/SeenAircraftTable";
 import { SeenTypesTable } from "@/features/sightings/SeenTypesTable";
@@ -52,6 +55,8 @@ import {
   useAnalyticsCountsQuery,
   useAnalyticsSeenAircraftQuery,
   useAnalyticsSeenTypesQuery,
+  type SeenAircraftSortKey,
+  type SeenTypeSortKey,
 } from "@/lib/api/analytics";
 import { useReceiverQuery } from "@/lib/api/receiver";
 import {
@@ -155,7 +160,11 @@ export function SightingsPage() {
     {
       limit: PAGE_SIZE,
       offset,
-      sort: state.sort,
+      // `state.sort` is always one of the current grouping's keys
+      // (`parseSightingsTableState`); a query for a grouping that is not on
+      // screen is disabled, so a key of another grouping never reaches it.
+      sort:
+        group === "sightings" ? (state.sort as SightingSortKey) : "started_at",
       order: state.order,
       icao: state.icao,
       q: state.q,
@@ -165,11 +174,27 @@ export function SightingsPage() {
     { refetchInterval, enabled: group === "sightings" },
   );
   const aircraftQuery = useAnalyticsSeenAircraftQuery(
-    { preset, limit: PAGE_SIZE, offset, type: state.type },
+    {
+      preset,
+      limit: PAGE_SIZE,
+      offset,
+      type: state.type,
+      sort:
+        group === "aircraft"
+          ? (state.sort as SeenAircraftSortKey)
+          : "sightings",
+      order: state.order,
+    },
     { refetchInterval, enabled: group === "aircraft" },
   );
   const typesQuery = useAnalyticsSeenTypesQuery(
-    { preset, limit: PAGE_SIZE, offset },
+    {
+      preset,
+      limit: PAGE_SIZE,
+      offset,
+      sort: group === "types" ? (state.sort as SeenTypeSortKey) : "sightings",
+      order: state.order,
+    },
     { refetchInterval, enabled: group === "types" },
   );
   const activeQuery =
@@ -182,24 +207,43 @@ export function SightingsPage() {
   const units = receiverQuery.data?.units ?? "aviation";
   const timezone = receiverQuery.data?.timezone ?? "UTC";
 
-  function handleSortChange(key: SightingSortKey) {
+  /** One click sorts by a column — words A to Z, quantities and times
+   * largest or latest first — and a second click reverses it. */
+  function handleSortChange(key: SightingsSort) {
     if (key === state.sort) {
       setState({ order: state.order === "asc" ? "desc" : "asc" });
     } else {
-      setState({ sort: key, order: "desc" });
+      setState({ sort: key, order: firstOrderFor(key) });
     }
   }
 
   function handleGroupChange(next: SightingsGroup) {
-    // The type filter belongs to the aircraft grouping; leaving it for the
-    // log or the type list drops it rather than hiding an active filter.
-    setState(
-      next === "aircraft" ? { group: next } : { group: next, type: undefined },
-    );
+    if (next === group) {
+      return;
+    }
+    // Each grouping sorts by its own columns, so a change of grouping starts
+    // from that grouping's default order. The type filter belongs to the
+    // aircraft grouping; leaving it for the log or the type list drops it
+    // rather than hiding an active filter.
+    setState({
+      group: next,
+      sort: DEFAULT_SORT_BY_GROUP[next],
+      order: "desc",
+      ...(next === "aircraft" ? {} : { type: undefined }),
+    });
   }
 
   function showAircraftOfType(type: string) {
-    setState({ group: "aircraft", type });
+    setState(
+      group === "aircraft"
+        ? { type }
+        : {
+            group: "aircraft",
+            type,
+            sort: DEFAULT_SORT_BY_GROUP.aircraft,
+            order: "desc",
+          },
+    );
   }
 
   return (
@@ -257,7 +301,7 @@ export function SightingsPage() {
           >
             <SightingsTable
               rows={listQuery.data?.items ?? []}
-              sort={state.sort}
+              sort={state.sort as SightingSortKey}
               order={state.order}
               onSortChange={handleSortChange}
               units={units}
@@ -310,6 +354,9 @@ export function SightingsPage() {
           >
             <SeenAircraftTable
               rows={aircraftQuery.data?.items ?? []}
+              sort={state.sort as SeenAircraftSortKey}
+              order={state.order}
+              onSortChange={handleSortChange}
               timezone={timezone}
               onTypeSelect={showAircraftOfType}
               refreshing={
@@ -340,6 +387,9 @@ export function SightingsPage() {
         >
           <SeenTypesTable
             rows={typesQuery.data?.items ?? []}
+            sort={state.sort as SeenTypeSortKey}
+            order={state.order}
+            onSortChange={handleSortChange}
             timezone={timezone}
             onTypeSelect={showAircraftOfType}
             refreshing={typesQuery.isFetching && typesQuery.isPlaceholderData}
