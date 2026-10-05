@@ -223,3 +223,114 @@ async def test_a_half_hour_zone_attributes_each_utc_bucket_to_the_day_it_begins_
     assert rows[0].hour_start_ms == start + 30 * MINUTE
     assert all(start <= row.hour_start_ms < end for row in rows)
     assert [row.hour for row in rows] == list(range(24))
+
+
+# -------------------------------------------- classification and new aircraft
+
+
+async def test_classified_sightings_are_counted_in_the_hour_they_start(
+    database: Database, zone: ZoneInfo
+) -> None:
+    """The per-hour form of the daily row's military / government /
+    law-enforcement figures (slice 099): sightings, by the airframe's flags."""
+    queries = AnalyticsQueries(database, timezone=NEW_YORK)
+    start = _start(DAY, zone)
+    nine = start + 9 * MS_PER_HOUR
+    ten = start + 10 * MS_PER_HOUR
+    await seed_sightings(
+        database,
+        [
+            SeedAircraft(icao24="a00001", first_seen_ms=nine, last_seen_ms=ten, military=True),
+            SeedAircraft(icao24="a00002", first_seen_ms=nine, last_seen_ms=nine, government=True),
+            SeedAircraft(
+                icao24="a00003", first_seen_ms=ten, last_seen_ms=ten, law_enforcement=True
+            ),
+            # Classified as nothing at all: a sighting, and none of the three.
+            _aircraft("a00004", nine),
+        ],
+        [
+            SeedSighting("a00001", nine + 5 * MINUTE, ended_ms=nine + 10 * MINUTE),
+            SeedSighting("a00001", ten + 5 * MINUTE, ended_ms=ten + 10 * MINUTE),
+            SeedSighting("a00002", nine + 20 * MINUTE, ended_ms=nine + 25 * MINUTE),
+            SeedSighting("a00003", ten + 30 * MINUTE, ended_ms=ten + 35 * MINUTE),
+            SeedSighting("a00004", nine + 40 * MINUTE, ended_ms=nine + 45 * MINUTE),
+        ],
+    )
+
+    rows = await queries.hourly(DAY, now_ms=start + 48 * MS_PER_HOUR)
+
+    assert (rows[9].military, rows[9].government, rows[9].law_enforcement) == (1, 1, 0)
+    assert (rows[10].military, rows[10].government, rows[10].law_enforcement) == (1, 0, 1)
+    assert rows[9].sightings == 3  # the unclassified one is still a sighting
+    assert (rows[8].military, rows[8].government, rows[8].law_enforcement) == (0, 0, 0)
+    assert sum(row.military or 0 for row in rows) == 2
+
+
+async def test_a_long_military_sighting_is_counted_once_in_the_hour_it_started(
+    database: Database, zone: ZoneInfo
+) -> None:
+    queries = AnalyticsQueries(database, timezone=NEW_YORK)
+    start = _start(DAY, zone)
+    began = start + 9 * MS_PER_HOUR + 50 * MINUTE
+    await seed_sightings(
+        database,
+        [SeedAircraft(icao24="a00001", first_seen_ms=began, last_seen_ms=began, military=True)],
+        [SeedSighting("a00001", began, ended_ms=start + 11 * MS_PER_HOUR + 10 * MINUTE)],
+    )
+
+    rows = await queries.hourly(DAY, now_ms=start + 48 * MS_PER_HOUR)
+
+    assert [row.military for row in rows[9:12]] == [1, 0, 0]
+    assert [row.unique_aircraft for row in rows[9:12]] == [1, 1, 1]
+
+
+async def test_new_aircraft_are_counted_in_the_hour_they_were_first_ever_heard(
+    database: Database, zone: ZoneInfo
+) -> None:
+    queries = AnalyticsQueries(database, timezone=NEW_YORK)
+    start = _start(DAY, zone)
+    nine = start + 9 * MS_PER_HOUR
+    await seed_sightings(
+        database,
+        [
+            _aircraft("a00001", nine + 5 * MINUTE),
+            _aircraft("a00002", nine + 50 * MINUTE),
+            _aircraft("a00003", start + 14 * MS_PER_HOUR),
+            # First heard the day before, heard again today: not new today.
+            SeedAircraft(icao24="a00004", first_seen_ms=start - MS_PER_HOUR, last_seen_ms=nine),
+        ],
+        [
+            SeedSighting("a00001", nine + 5 * MINUTE, ended_ms=nine + 6 * MINUTE),
+            SeedSighting("a00002", nine + 50 * MINUTE, ended_ms=nine + 51 * MINUTE),
+            SeedSighting("a00003", start + 14 * MS_PER_HOUR, ended_ms=None),
+            SeedSighting("a00004", nine + 10 * MINUTE, ended_ms=nine + 11 * MINUTE),
+        ],
+    )
+
+    rows = await queries.hourly(DAY, now_ms=start + 48 * MS_PER_HOUR)
+
+    assert rows[9].new_aircraft == 2
+    assert rows[14].new_aircraft == 1
+    assert sum(row.new_aircraft or 0 for row in rows) == 3
+    assert rows[9].unique_aircraft == 3  # the returning aircraft is heard, not new
+
+
+async def test_the_new_figures_are_null_for_hours_that_have_not_begun(
+    database: Database, zone: ZoneInfo
+) -> None:
+    queries = AnalyticsQueries(database, timezone=NEW_YORK)
+    start = _start(DAY, zone)
+
+    rows = await queries.hourly(DAY, now_ms=start + 3 * MS_PER_HOUR + 30 * MINUTE)
+
+    assert all(
+        (row.military, row.government, row.law_enforcement, row.new_aircraft) == (0, 0, 0, 0)
+        for row in rows[:4]
+    )
+    assert all(
+        row.military is None
+        and row.government is None
+        and row.law_enforcement is None
+        and row.new_aircraft is None
+        for row in rows[4:]
+    )

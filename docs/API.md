@@ -779,12 +779,16 @@ no chart; the Analytics page asks for this instead.
   "items": [
     { "t": "2026-10-05T04:00:00.000Z", "hour": 0,       // 00:00 local
       "sightings": 3, "unique_aircraft": 2,
+      "military": 1, "government": 0, "law_enforcement": 0, "new_aircraft": 2,
       "messages": 41000, "positions": 3200, "max_range_nm": 188.2 },
     { "t": "2026-10-05T05:00:00.000Z", "hour": 1,       // a quiet hour
       "sightings": 0, "unique_aircraft": 0,
+      "military": 0, "government": 0, "law_enforcement": 0, "new_aircraft": 0,
       "messages": 12000, "positions": 900, "max_range_nm": null },
     { "t": "2026-10-05T23:00:00.000Z", "hour": 19,      // not begun yet
       "sightings": null, "unique_aircraft": null,
+      "military": null, "government": null, "law_enforcement": null,
+      "new_aircraft": null,
       "messages": null, "positions": null, "max_range_nm": null }
   ]
 }
@@ -801,8 +805,13 @@ no chart; the Analytics page asks for this instead.
   sum to its sighting count. `unique_aircraft` is the distinct aircraft with a
   sighting **overlapping** the hour — "heard this hour" — and is therefore not
   additive: an aircraft overhead from 09:50 to 10:10 is one aircraft in each hour.
-- Both are live reads over `sightings`: a real number, zero included, for every
-  hour that has begun, and `null` only for an hour still in the future.
+- `military`, `government` and `law_enforcement` (slice 099) are the sightings
+  that started in the hour whose airframe carries that classification flag — the
+  per-hour form of the daily row's figures of the same names, summing to them
+  over the day. `new_aircraft` is the airframes whose first-ever observation fell
+  in the hour, summing to the day's "never seen before".
+- All of these are live reads: a real number, zero included, for every hour that
+  has begun, and `null` only for an hour still in the future.
 - `messages`, `positions` and `max_range_nm` come from the hourly receiver
   metrics and are `null` where that table has no row — before recording started,
   or an hour the receiver was not running — never `0`.

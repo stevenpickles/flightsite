@@ -295,6 +295,16 @@ class HourlyRow:
     #: heard this hour". Not additive across hours: an aircraft overhead from
     #: 09:50 to 10:10 is one aircraft in each.
     unique_aircraft: int | None = None
+    #: Sightings that started in the hour whose airframe is classified
+    #: military / government / law enforcement — the per-hour form of the
+    #: daily row's figures of the same names (slice 099). Like ``sightings``,
+    #: a real number for every hour that has begun.
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
+    #: Airframes whose first-ever observation fell in the hour; a day's
+    #: buckets sum to its "never seen before" count.
+    new_aircraft: int | None = None
     messages: int | None = None
     positions: int | None = None
     max_range_nm: float | None = None
@@ -969,13 +979,40 @@ class AnalyticsQueries:
         last_end_ms = buckets[-1] + _MS_PER_HOUR
 
         started = [0] * len(buckets)
+        military = [0] * len(buckets)
+        government = [0] * len(buckets)
+        law_enforcement = [0] * len(buckets)
+        newly_heard = [0] * len(buckets)
         heard: list[set[int]] = [set() for _ in buckets]
         async with self._database.read_session() as session:
             sightings = (
                 await session.execute(
-                    select(Sighting.aircraft_id, Sighting.started_ms, Sighting.ended_ms).where(
+                    select(
+                        Sighting.aircraft_id,
+                        Sighting.started_ms,
+                        Sighting.ended_ms,
+                        AircraftClassification.military,
+                        AircraftClassification.government,
+                        AircraftClassification.law_enforcement,
+                    )
+                    .select_from(Sighting)
+                    .join(Aircraft, Aircraft.id == Sighting.aircraft_id)
+                    # LEFT: an airframe nothing classifies is still a sighting.
+                    .outerjoin(
+                        AircraftClassification,
+                        AircraftClassification.icao24 == Aircraft.icao24,
+                    )
+                    .where(
                         Sighting.started_ms >= first_ms - _HOURLY_SIGHTING_LOOKBACK_MS,
                         Sighting.started_ms < last_end_ms,
+                    )
+                )
+            ).all()
+            first_heard = (
+                await session.scalars(
+                    select(Aircraft.first_seen_ms).where(
+                        Aircraft.first_seen_ms >= first_ms,
+                        Aircraft.first_seen_ms < last_end_ms,
                     )
                 )
             ).all()
@@ -996,13 +1033,20 @@ class AnalyticsQueries:
                 ).all()
             }
 
-        for aircraft_id, sighting_start, sighting_end in sightings:
+        for first_seen_ms in first_heard:
+            newly_heard[(int(first_seen_ms) - first_ms) // _MS_PER_HOUR] += 1
+
+        for aircraft_id, sighting_start, sighting_end, is_mil, is_gov, is_le in sightings:
             # An open sighting is still being heard: it runs to now.
             until_ms = now_ms if sighting_end is None else int(sighting_end)
             if until_ms < first_ms:
                 continue
             if first_ms <= sighting_start < last_end_ms:
-                started[(int(sighting_start) - first_ms) // _MS_PER_HOUR] += 1
+                bucket = (int(sighting_start) - first_ms) // _MS_PER_HOUR
+                started[bucket] += 1
+                military[bucket] += bool(is_mil)
+                government[bucket] += bool(is_gov)
+                law_enforcement[bucket] += bool(is_le)
             lo = max(int(sighting_start), first_ms)
             hi = min(until_ms, last_end_ms - 1)
             for index in range(
@@ -1020,6 +1064,10 @@ class AnalyticsQueries:
                     hour=local_hour(bucket_ms, self._zone),
                     sightings=started[index] if begun else None,
                     unique_aircraft=len(heard[index]) if begun else None,
+                    military=military[index] if begun else None,
+                    government=government[index] if begun else None,
+                    law_enforcement=law_enforcement[index] if begun else None,
+                    new_aircraft=newly_heard[index] if begun else None,
                     messages=None if metrics is None else metrics.messages_total,
                     positions=None if metrics is None else metrics.positions_total,
                     max_range_nm=(
