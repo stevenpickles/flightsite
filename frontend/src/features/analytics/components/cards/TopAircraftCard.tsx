@@ -1,18 +1,19 @@
 /**
- * "Most frequently seen aircraft" (SPEC §58) — a horizontal bar of the
- * window's top airframes by sighting count. Clicking a bar (or its label)
- * opens the aircraft's history detail (roadmap slice 029), the same
- * destination the Aircraft page's table rows use.
+ * "Most frequently seen aircraft" (SPEC §58) — the window's top airframes by
+ * sighting count, as a ranked table (slice 095; a horizontal bar chart
+ * before that). Each row names the aircraft, says what it is in words and
+ * who flies it, and gives the count; the tail links to the aircraft's
+ * history detail (roadmap slice 029), the same destination the Aircraft
+ * page's table rows use.
  *
- * Each bar is labelled with the tail number (the ICAO hex when no
- * registration is known) *and* the ICAO type designator, and its tooltip
- * carries the rest of what the row already knows — model, operator, hex —
- * so the ranking reads as aircraft rather than as a list of registrations
- * (slice 074). The type sits in a second, muted rich-text segment so the
- * identity stays the thing the eye lands on.
+ * "What it is" is the model — `Boeing 737-800` — with the designator in a
+ * muted second line when both are known, or the designator alone when the
+ * registries know only that. "Who flies it" is the operator, falling back
+ * to the registry owner (a leasing trust as often as an airline, which is
+ * why it is labelled rather than silently substituted) and then the
+ * operator group.
  */
-import { useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 import type {
   AnalyticsAircraftRow,
@@ -21,11 +22,10 @@ import type {
 
 import { AnalyticsCard } from "@/features/analytics/components/AnalyticsCard";
 import {
-  EChart,
-  type EChartClickParams,
-} from "@/features/analytics/components/EChart";
-import type { ChartTheme } from "@/features/analytics/lib/chartTheme";
-import { formatSightings, tooltipLines } from "@/features/analytics/lib/format";
+  RankingTable,
+  Truncated,
+  type RankingColumn,
+} from "@/features/analytics/components/RankingTable";
 
 export interface TopAircraftCardProps {
   window?: AnalyticsWindow;
@@ -36,46 +36,100 @@ export interface TopAircraftCardProps {
   onRetry?: () => void;
 }
 
-/** The registration, or the upper-cased hex when none is known — what the
- * category axis names the bar. */
+/** The registration, or the upper-cased hex when none is known. */
 function aircraftIdentity(row: AnalyticsAircraftRow): string {
   return row.registration ?? row.icao.toUpperCase();
 }
 
-/** `"B738 Boeing 737-800"`, `"B738"`, `"Boeing 737-800"`, or `null` when the
- * row knows neither — the type in words, for the tooltip and the summary. */
-function aircraftType(row: AnalyticsAircraftRow): string | null {
-  const parts = [row.type, row.model].filter(
-    (part): part is string => part !== null,
-  );
-  return parts.length === 0 ? null : parts.join(" ");
-}
-
-/** `"N302DN, B738 Boeing 737-800"` — one row of the accessible summary. */
-function aircraftSummary(row: AnalyticsAircraftRow): string {
-  const type = aircraftType(row);
-  return type === null
-    ? aircraftIdentity(row)
-    : `${aircraftIdentity(row)}, ${type}`;
-}
-
-/** The tooltip's first line: the registration with the hex beside it, or
- * just the hex when that is all there is. */
-function aircraftHeadline(row: AnalyticsAircraftRow): string {
-  const hex = row.icao.toUpperCase();
-  return row.registration === null ? hex : `${row.registration} · ${hex}`;
-}
-
-/** ECharts hands an axis-trigger tooltip every series' point for the hovered
- * category; the first one's `dataIndex` is the row. */
-function hoveredIndex(params: unknown): number | undefined {
-  const first = Array.isArray(params) ? params[0] : params;
-  if (typeof first !== "object" || first === null) {
-    return undefined;
+/** Who flies it: operator, else the registry owner, else the operator group.
+ * The `kind` says which, so an owner is never presented as an operator. */
+function aircraftFlownBy(
+  row: AnalyticsAircraftRow,
+): { name: string; kind: "operator" | "owner" | "group" } | null {
+  if (row.operator !== null) {
+    return { name: row.operator, kind: "operator" };
   }
-  const { dataIndex } = first as { dataIndex?: unknown };
-  return typeof dataIndex === "number" ? dataIndex : undefined;
+  if (row.owner !== undefined && row.owner !== null) {
+    return { name: row.owner, kind: "owner" };
+  }
+  if (row.operator_group !== null) {
+    return { name: row.operator_group, kind: "group" };
+  }
+  return null;
 }
+
+const COLUMNS: ReadonlyArray<RankingColumn<AnalyticsAircraftRow>> = [
+  {
+    key: "aircraft",
+    heading: "Aircraft",
+    width: 24,
+    render: (row) => (
+      <Link
+        to={`/aircraft/${row.icao}`}
+        className="block truncate font-medium text-accent hover:underline"
+        title={
+          row.registration === null
+            ? row.icao.toUpperCase()
+            : `${row.registration} · ${row.icao.toUpperCase()}`
+        }
+      >
+        {aircraftIdentity(row)}
+      </Link>
+    ),
+  },
+  {
+    key: "type",
+    heading: "Type",
+    width: 34,
+    render: (row) => {
+      if (row.model === null && row.type === null) {
+        return <span className="text-muted-foreground">Unknown</span>;
+      }
+      if (row.model === null) {
+        return <Truncated text={row.type ?? ""} />;
+      }
+      return (
+        <>
+          <Truncated text={row.model} />
+          {row.type !== null && (
+            <Truncated
+              text={row.type}
+              className="text-xs text-muted-foreground"
+            />
+          )}
+        </>
+      );
+    },
+  },
+  {
+    key: "operator",
+    heading: "Operator",
+    width: 30,
+    render: (row) => {
+      const flownBy = aircraftFlownBy(row);
+      if (flownBy === null) {
+        return <span className="text-muted-foreground">—</span>;
+      }
+      return (
+        <>
+          <Truncated text={flownBy.name} />
+          {flownBy.kind === "owner" && (
+            <span className="block text-xs text-muted-foreground">
+              registered owner
+            </span>
+          )}
+        </>
+      );
+    },
+  },
+  {
+    key: "sightings",
+    heading: "Sightings",
+    width: 12,
+    align: "right",
+    render: (row) => row.sightings,
+  },
+];
 
 export function TopAircraftCard({
   window,
@@ -85,94 +139,6 @@ export function TopAircraftCard({
   errorDetail,
   onRetry,
 }: TopAircraftCardProps) {
-  const navigate = useNavigate();
-
-  // Reversed so the highest-ranked row (rows[0], the backend's own sort)
-  // ends up at the top of the horizontal bar rather than the bottom —
-  // ECharts draws a category axis's first entry lowest.
-  const ordered = useMemo(() => [...rows].reverse(), [rows]);
-
-  const buildOption = useCallback(
-    (theme: ChartTheme) => {
-      if (ordered.length === 0) {
-        return null;
-      }
-      return {
-        color: [theme.series[0]],
-        grid: { left: 8, right: 24, top: 8, bottom: 24, containLabel: true },
-        tooltip: {
-          trigger: "axis" as const,
-          axisPointer: { type: "shadow" as const },
-          formatter: (params: unknown) => {
-            const index = hoveredIndex(params);
-            const row = index === undefined ? undefined : ordered[index];
-            if (!row) {
-              return "";
-            }
-            return tooltipLines([
-              aircraftHeadline(row),
-              aircraftType(row),
-              row.operator ?? row.operator_group,
-              formatSightings(row.sightings),
-            ]);
-          },
-        },
-        xAxis: {
-          type: "value" as const,
-          name: "sightings",
-          nameTextStyle: { color: theme.mutedInk },
-          axisLabel: { color: theme.mutedInk },
-          axisLine: { lineStyle: { color: theme.grid } },
-          splitLine: { lineStyle: { color: theme.grid } },
-        },
-        yAxis: {
-          type: "category" as const,
-          data: ordered.map(aircraftIdentity),
-          axisLabel: {
-            color: theme.ink,
-            formatter: (value: string, index: number) => {
-              const type = ordered[index]?.type ?? null;
-              return type === null
-                ? `{ident|${value}}`
-                : `{ident|${value}}  {type|${type}}`;
-            },
-            rich: {
-              ident: { color: theme.ink },
-              type: { color: theme.mutedInk, fontSize: 11 },
-            },
-          },
-          axisLine: { lineStyle: { color: theme.grid } },
-        },
-        series: [
-          {
-            name: "Sightings",
-            type: "bar" as const,
-            data: ordered.map((row) => row.sightings),
-            barMaxWidth: 18,
-          },
-        ],
-      };
-    },
-    [ordered],
-  );
-
-  const handleMarkClick = useCallback(
-    (params: EChartClickParams) => {
-      const row = ordered[params.dataIndex];
-      if (row) {
-        navigate(`/aircraft/${row.icao}`);
-      }
-    },
-    [navigate, ordered],
-  );
-
-  const summary =
-    rows.length === 0
-      ? "No aircraft sighted in this window."
-      : `Top aircraft by sightings: ${rows
-          .map((row) => `${aircraftSummary(row)} (${row.sightings})`)
-          .join("; ")}.`;
-
   return (
     <AnalyticsCard
       title="Top aircraft"
@@ -182,11 +148,12 @@ export function TopAircraftCard({
       errorDetail={errorDetail}
       onRetry={onRetry}
     >
-      <EChart
-        buildOption={buildOption}
-        ariaLabel="Top aircraft by sightings, horizontal bar chart"
-        summary={summary}
-        onMarkClick={handleMarkClick}
+      <RankingTable
+        columns={COLUMNS}
+        rows={rows}
+        rowKey={(row) => row.icao}
+        emptyLabel="No aircraft sighted in this window."
+        ariaLabel="Top aircraft by sightings"
       />
     </AnalyticsCard>
   );

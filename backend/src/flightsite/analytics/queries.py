@@ -197,6 +197,9 @@ class AircraftRank:
     type_code: str | None = None
     model: str | None = None
     operator_name: str | None = None
+    #: The registry owner (FAA, where released) — who holds the airframe when
+    #: no operator is known; a leasing trust as often as an airline.
+    owner: str | None = None
     operator_group: str | None = None
     mission_category: str | None = None
     military: bool = False
@@ -269,6 +272,7 @@ _AIRFRAME_COLUMNS: Final[tuple[Any, ...]] = (
     AircraftMetadataResolved.type_code,
     AircraftMetadataResolved.model,
     AircraftMetadataResolved.operator_name,
+    AircraftMetadataResolved.owner,
     OperatorGroup.name.label("operator_group"),
     AircraftClassification.mission_category,
     AircraftClassification.military,
@@ -318,6 +322,7 @@ def _rank(row: Any, sightings: int) -> AircraftRank:
         type_code=row.type_code,
         model=row.model,
         operator_name=row.operator_name,
+        owner=row.owner,
         operator_group=row.operator_group,
         mission_category=row.mission_category,
         military=bool(row.military),

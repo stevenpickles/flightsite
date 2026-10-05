@@ -756,6 +756,14 @@ metadata as the model string most of that type's known airframes carry, so it
 needs no separate designator dataset; it is `null` when no airframe of the type
 carries a model, and always `null` for an operator group.
 
+`top-aircraft` and the `rarity` endpoint's `rare_aircraft` share the airframe row
+shape (`icao`, `registration`, `type`, `model`, `operator`, `operator_group`, the
+classification flags, `sightings`, `first_seen_at`/`last_seen_at`, `max_range_nm`),
+plus `owner` (slice 095): the registry owner where a source released one — the FAA
+registrant for a US tail — and `null` otherwise. It is the fallback for "who flies
+it" when `operator` is unknown, and is as often a leasing trust or a bank as an
+airline, which is why it is a separate field rather than folded into `operator`.
+
 ### 3.9 Receiver statistics — slices 033/034
 
 | Path | Returns |

@@ -2839,6 +2839,60 @@ slices:
     risk_level: medium
     notes: "Owner request of 2026-10-02. Frontend-heavy. The palette is a secondary cue: classification is also surfaced as text in the detail panel, filters and label indicator, which is how §36's colour rule is satisfied."
 
+  - id: "095"
+    title: "Analytics top rankings as tables"
+    phase: 9
+    branch: "095-analytics-top-tables"
+    status: merged
+    depends_on: ["094"]
+    objective: "Replace the three horizontal-bar 'Top …' cards on the Analytics page with ranked tables that name the aircraft, say what it is in words, who flies it, and the count (§58) — the bars spent the card on '4, 4, 4, 3' and left the identity to a tooltip."
+    scope:
+      - "frontend: RankingTable primitive (fixed layout, truncating cells with full text on hover, right-aligned tabular counts); TopAircraftCard = Aircraft (linked) / Type (model over designator) / Operator (operator, else registered owner labelled, else group) / Sightings; TopGroupCard = Type-or-Operator (description over label) / Aircraft / Sightings"
+      - "backend: `owner` on the §3.7 airframe row (top-aircraft, rarity) from aircraft_metadata_resolved — additive, no migration"
+      - "visual suite: analytics baselines retaken (viewport 1600 -> 1700), readiness wait moved from the chart's img role to the table"
+    out_of_scope:
+      - "the other six Analytics cards (charts stay charts)"
+      - "a detail route for a type designator or an operator group"
+      - "per-row trend or sparkline"
+    acceptance_criteria:
+      - "Top aircraft shows, per row, the registration or hex linked to the aircraft detail, the model in words (designator beneath), the operator or labelled owner or group, and the sighting count, in the backend's order"
+      - "Top types leads with the long-form type name; Top operators with the operator; both show distinct aircraft and sightings"
+      - "an API payload without `owner` (the recorded visual fixture) still renders"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken baselines"
+    required_tests: [card unit tests against table semantics, AnalyticsPage test, analytics API test for owner, visual baselines]
+    expected_artifacts:
+      - frontend/src/features/analytics/components/RankingTable.tsx
+      - frontend/src/features/analytics/components/cards/TopAircraftCard.tsx
+      - frontend/src/features/analytics/components/cards/TopGroupCard.tsx
+      - backend/src/flightsite/analytics/queries.py
+      - docs/API.md
+      - e2e/visual/__screenshots__/analytics-dark.png
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner request of 2026-10-04 with a screenshot of the bar card; ships in v0.13.0."
+
+  - id: "096"
+    title: "Backend image base-package upgrade hotfix"
+    phase: 9
+    branch: "096-backend-image-apt-upgrade"
+    status: merged
+    depends_on: ["094"]
+    objective: "Hotfix: clear the fixed HIGH in the backend image's Debian base (libpcre2-8-0 CVE-2026-103111, 10.42-1+deb12u1 -> deb12u2, published after python:3.12.14-slim-bookworm was built) that fails the required docker Trivy gate on every PR."
+    scope:
+      - "backend/Dockerfile runtime stage: apt-get update && apt-get upgrade -y --no-install-recommends, lists removed — the counterpart of the frontend image's `apk upgrade`"
+    out_of_scope:
+      - "moving the pinned base tag"
+      - "any Python dependency bump"
+    acceptance_criteria:
+      - "the docker job's Trivy scan of the backend image reports no fixed HIGH/CRITICAL finding"
+      - "the image still runs as uid 1000 and the e2e stack built from it is green"
+    required_tests: [docker workflow (build + Trivy), e2e]
+    expected_artifacts:
+      - backend/Dockerfile
+    preferred_agent: opus
+    risk_level: low
+    notes: "Surfaced by PR #263's docker job on 2026-10-04. Added by Fable outside the phase plan; same class as 092/093."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other

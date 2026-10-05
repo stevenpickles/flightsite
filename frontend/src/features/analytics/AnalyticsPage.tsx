@@ -188,7 +188,8 @@ export function AnalyticsPage() {
 
         <TopGroupCard
           title="Top types"
-          ariaLabel="Top types by sightings, horizontal bar chart"
+          ariaLabel="Top types by sightings"
+          nameHeading="Type"
           emptyLabel="No types sighted in this window."
           window={topTypesQuery.data?.window}
           rows={topTypesQuery.data?.items ?? []}
@@ -202,7 +203,8 @@ export function AnalyticsPage() {
 
         <TopGroupCard
           title="Top operators"
-          ariaLabel="Top operators by sightings, horizontal bar chart"
+          ariaLabel="Top operators by sightings"
+          nameHeading="Operator"
           emptyLabel="No operators sighted in this window."
           window={topOperatorsQuery.data?.window}
           rows={topOperatorsQuery.data?.items ?? []}
