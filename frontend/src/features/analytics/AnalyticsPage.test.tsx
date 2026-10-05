@@ -157,6 +157,18 @@ describe("AnalyticsPage", () => {
     expect(
       screen.getByText(/00:00 — 2 aircraft, 2 sightings/),
     ).toBeInTheDocument();
+    // ...and so do the two bar cards (slice 099), which would otherwise be
+    // one fat bar for the whole day.
+    expect(
+      screen.getByRole("img", {
+        name: "Military, government and law-enforcement activity by hour, stacked bar chart",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", {
+        name: "New aircraft never seen before, by hour, bar chart",
+      }),
+    ).toBeInTheDocument();
 
     const hourlyCalls = fetchMock.mock.calls
       .map(([input]) => String(input))

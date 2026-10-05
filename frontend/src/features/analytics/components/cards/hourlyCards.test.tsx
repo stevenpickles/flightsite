@@ -8,8 +8,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { ClassificationActivityCard } from "@/features/analytics/components/cards/ClassificationActivityCard";
 import { DailyCountsCard } from "@/features/analytics/components/cards/DailyCountsCard";
 import { MaxDistanceCard } from "@/features/analytics/components/cards/MaxDistanceCard";
+import { NeverSeenBeforeCard } from "@/features/analytics/components/cards/NeverSeenBeforeCard";
 import { ReceiverActivityCard } from "@/features/analytics/components/cards/ReceiverActivityCard";
 import type {
   AnalyticsDailyRow,
@@ -26,6 +28,10 @@ function hourRow(
     hour,
     sightings: 0,
     unique_aircraft: 0,
+    military: 0,
+    government: 0,
+    law_enforcement: 0,
+    new_aircraft: 0,
     messages: null,
     positions: null,
     max_range_nm: null,
@@ -38,6 +44,10 @@ const HOURLY: AnalyticsHourlyRow[] = [
   hourRow(0, {
     sightings: 3,
     unique_aircraft: 2,
+    military: 1,
+    government: 0,
+    law_enforcement: 2,
+    new_aircraft: 2,
     messages: 41_000,
     positions: 3_200,
     max_range_nm: 188.2,
@@ -52,11 +62,22 @@ const HOURLY: AnalyticsHourlyRow[] = [
   hourRow(2, {
     sightings: 5,
     unique_aircraft: 4,
+    military: 0,
+    government: 3,
+    law_enforcement: 0,
+    new_aircraft: 1,
     messages: 66_500,
     positions: 5_100,
     max_range_nm: 224.9,
   }),
-  hourRow(3, { sightings: null, unique_aircraft: null }),
+  hourRow(3, {
+    sightings: null,
+    unique_aircraft: null,
+    military: null,
+    government: null,
+    law_enforcement: null,
+    new_aircraft: null,
+  }),
 ];
 
 function dailyRow(
@@ -89,6 +110,7 @@ interface PlottedOption {
     type: string;
     data: Array<number | null>;
     showSymbol?: boolean;
+    stack?: string;
   }>;
 }
 
@@ -253,6 +275,162 @@ describe("ReceiverActivityCard over a single day", () => {
       />,
     );
     expect(screen.getByText("No data for this window.")).toBeInTheDocument();
+  });
+});
+
+describe("ClassificationActivityCard over a single day", () => {
+  it("stacks the three classes per hour, future hours empty", () => {
+    render(
+      <ClassificationActivityCard
+        series={[dailyRow()]}
+        hourly={HOURLY}
+        complete
+        isLoading={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("img", {
+        name: "Military, government and law-enforcement activity by hour, stacked bar chart",
+      }),
+    ).toBeInTheDocument();
+    const option = lastOption();
+    expect(option.xAxis.data).toEqual(["00", "01", "02", "03"]);
+    expect(option.xAxis.name).toBe("hour");
+    expect(option.series.map((series) => series.name)).toEqual([
+      "Military",
+      "Government",
+      "Law enforcement",
+    ]);
+    expect(
+      option.series.every(
+        (series) => series.type === "bar" && series.stack === "classification",
+      ),
+    ).toBe(true);
+    expect(option.series[0]?.data).toEqual([1, 0, 0, null]);
+    expect(option.series[1]?.data).toEqual([0, 0, 3, null]);
+    expect(option.series[2]?.data).toEqual([2, 0, 0, null]);
+  });
+
+  it("summarises only the hours that had classified traffic", () => {
+    render(
+      <ClassificationActivityCard
+        series={[dailyRow()]}
+        hourly={HOURLY}
+        isLoading={false}
+      />,
+    );
+    const summary = screen.getByText(/sightings by hour:/);
+    expect(summary).toHaveTextContent(
+      "00:00 — 1 military, 0 government, 2 law-enforcement",
+    );
+    expect(summary).toHaveTextContent(
+      "02:00 — 0 military, 3 government, 0 law-enforcement",
+    );
+    expect(summary).not.toHaveTextContent("01:00");
+  });
+
+  it("says so when the day has had none", () => {
+    render(
+      <ClassificationActivityCard
+        series={[dailyRow()]}
+        hourly={[hourRow(0), hourRow(1)]}
+        isLoading={false}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "No military, government or law-enforcement activity so far in this day.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("draws an empty day rather than failing on a payload without the fields", () => {
+    // The hourly endpoint as slice 097 shipped it had none of these.
+    const legacy = HOURLY.map((row) => {
+      const copy = { ...row };
+      delete copy.military;
+      delete copy.government;
+      delete copy.law_enforcement;
+      delete copy.new_aircraft;
+      return copy;
+    });
+    render(
+      <ClassificationActivityCard
+        series={[dailyRow()]}
+        hourly={legacy}
+        isLoading={false}
+      />,
+    );
+    expect(lastOption().series[0]?.data).toEqual([null, null, null, null]);
+  });
+
+  it("keeps one stacked bar per day when no hourly breakdown is given", () => {
+    render(
+      <ClassificationActivityCard
+        series={[dailyRow({ military: 4 })]}
+        complete
+        isLoading={false}
+      />,
+    );
+    expect(
+      screen.getByRole("img", {
+        name: "Military, government and law-enforcement activity over time, stacked bar chart",
+      }),
+    ).toBeInTheDocument();
+    expect(lastOption().xAxis.data).toEqual(["2026-10-05"]);
+    expect(lastOption().series[0]?.data).toEqual([4]);
+  });
+});
+
+describe("NeverSeenBeforeCard over a single day", () => {
+  it("draws the aircraft first heard in each hour, future hours empty", () => {
+    render(
+      <NeverSeenBeforeCard
+        items={[dailyRow()]}
+        hourly={HOURLY}
+        isLoading={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("img", {
+        name: "New aircraft never seen before, by hour, bar chart",
+      }),
+    ).toBeInTheDocument();
+    const option = lastOption();
+    expect(option.xAxis.data).toEqual(["00", "01", "02", "03"]);
+    expect(option.xAxis.name).toBe("hour");
+    expect(option.series[0]?.type).toBe("bar");
+    expect(option.series[0]?.data).toEqual([2, 0, 1, null]);
+    expect(
+      screen.getByText(/by hour, 3 total: 00:00 — 2; 02:00 — 1/),
+    ).toBeInTheDocument();
+  });
+
+  it("says so when nothing new has been heard yet", () => {
+    render(
+      <NeverSeenBeforeCard
+        items={[dailyRow()]}
+        hourly={[hourRow(0), hourRow(1)]}
+        isLoading={false}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "No aircraft were heard for the first time so far in this day.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps one bar per day when no hourly breakdown is given", () => {
+    render(<NeverSeenBeforeCard items={[dailyRow()]} isLoading={false} />);
+    expect(
+      screen.getByRole("img", {
+        name: "New aircraft never seen before, by day, bar chart",
+      }),
+    ).toBeInTheDocument();
+    expect(lastOption().series[0]?.data).toEqual([1]);
   });
 });
 
