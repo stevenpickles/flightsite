@@ -1092,6 +1092,12 @@ class AnalyticsHourlyRow(_Model):
     hour: int = Field(ge=0, le=23)
     sightings: int | None = None
     unique_aircraft: int | None = None
+    #: Sightings started in the hour by airframe classification (slice 099).
+    military: int | None = None
+    government: int | None = None
+    law_enforcement: int | None = None
+    #: Airframes first ever heard in the hour (slice 099).
+    new_aircraft: int | None = None
     messages: int | None = None
     positions: int | None = None
     max_range_nm: float | None = None

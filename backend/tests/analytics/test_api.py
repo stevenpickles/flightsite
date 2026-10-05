@@ -818,6 +818,21 @@ async def test_hourly_leaves_hours_that_have_not_begun_null(
     assert all(row["sightings"] is None and row["unique_aircraft"] is None for row in body["items"])
 
 
+async def test_hourly_agrees_with_the_days_own_figures(harness: Harness, rest: AsyncClient) -> None:
+    """The per-hour classification and new-aircraft figures (slice 099) are
+    the day's figures cut by hour, so they must add back up to them."""
+    await seed(harness)
+
+    hourly = (await get(rest, "/api/v1/analytics/hourly"))["items"]
+    rarity = await get(rest, "/api/v1/analytics/rarity", preset="today")
+    activity = await get(rest, "/api/v1/analytics/classification-activity", preset="today")
+
+    assert sum(row["new_aircraft"] or 0 for row in hourly) == rarity["never_seen_before"] == 1
+    assert sum(row["military"] or 0 for row in hourly) == activity["military"] == 1
+    assert sum(row["government"] or 0 for row in hourly) == activity["government"] == 0
+    assert sum(row["law_enforcement"] or 0 for row in hourly) == activity["law_enforcement"] == 0
+
+
 async def test_hourly_rejects_a_day_that_is_not_a_date(rest: AsyncClient) -> None:
     response = await rest.get("/api/v1/analytics/hourly", params={"day": "yesterday"})
 

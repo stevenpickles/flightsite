@@ -203,11 +203,14 @@ on hover rather than widening the card. The Locally rare card lists its rare air
 and rare types in the same two formats, side by side across the page's full width
 (slice 097).
 
-Over a single-day window (the Today preset) the three day-granular time series —
-aircraft & sighting counts, maximum detection distance, receiver activity — are drawn
-hour by hour across that day rather than as one point: sightings started and aircraft
-heard per hour as bars, the farthest detection and the message/position counts per
-hour as lines. Hours that have not begun are empty, not zero. Every line shows its
+Over a single-day window (the Today preset) every day-granular time series —
+military/government/police activity, aircraft & sighting counts, maximum detection
+distance, receiver activity, never seen before — is drawn hour by hour across that
+day rather than as one point or one bar, all five on the same hour axis (slices 097,
+099): classified sightings stacked per hour, sightings started and aircraft heard per
+hour as bars, the farthest detection and the message/position counts per hour as
+lines, and the aircraft first ever heard in each hour as bars. Hours that have not
+begun are empty, not zero. Every line shows its
 point markers when it has few enough points for them to be legible, so a sparse
 series is never an empty plot.
 

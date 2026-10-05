@@ -170,6 +170,14 @@ export interface AnalyticsHourlyRow {
   sightings: number | null;
   /** Distinct aircraft heard during the hour. Not additive across hours. */
   unique_aircraft: number | null;
+  /** Sightings started in the hour by the airframe's classification — the
+   * per-hour form of the daily row's figures (slice 099). Optional so a
+   * payload recorded before the fields existed still parses. */
+  military?: number | null;
+  government?: number | null;
+  law_enforcement?: number | null;
+  /** Aircraft first ever heard in the hour (slice 099). */
+  new_aircraft?: number | null;
   messages: number | null;
   positions: number | null;
   max_range_nm: number | null;

@@ -199,6 +199,7 @@ owner decision and are not scheduled.
 | 096 | Backend image base-package upgrade hotfix | 094 | opus | low | Hotfix: `apt-get upgrade` in the backend runtime stage to clear the fixed HIGH in the Debian base (libpcre2 CVE-2026-103111) failing the docker Trivy gate on every PR |
 | 097 | Analytics today view by hour, and rarity tables | 095 | opus | low | Over a one-day window the three day-granular time-series cards draw the day hour by hour (new `analytics/hourly` endpoint) instead of one invisible point; the Locally rare card adopts the Top aircraft table format; no migration |
 | 098 | Sightings by window and grouping | 097 | opus | medium | The Sightings page takes the Analytics presets (Today by default), heads the window with live counts, and groups it three ways — the log, the distinct aircraft, the distinct types — so Since T0 lists every airframe or type ever heard; three analytics endpoints, no migration |
+| 099 | Analytics today view: classification and never-seen-before by hour | 097, 098 | opus | low | The two bar cards slice 097 left as one bar per day — military/government/police activity and never seen before — are drawn hour by hour on a one-day window, on the same axis as the other three; four new fields on `analytics/hourly`, no migration |
 
 ## Parallelization Guide
 

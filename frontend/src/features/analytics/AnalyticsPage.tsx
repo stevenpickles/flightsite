@@ -97,8 +97,8 @@ export function AnalyticsPage() {
   const rarityQuery = useAnalyticsRarityQuery({ preset });
 
   // A window of exactly one receiver-local day has one day-granular point
-  // to plot, which is no chart at all (slice 097) — so the three daily
-  // time-series cards draw that day hour by hour instead. The day comes
+  // to plot, which is no chart at all (slices 097, 099) — so every daily
+  // time-series card draws that day hour by hour instead. The day comes
   // from the resolved window the daily response echoes, never from the
   // browser's clock: "today" is the receiver's today.
   const singleDay = singleDayOf(dailyQuery.data?.window);
@@ -243,12 +243,16 @@ export function AnalyticsPage() {
           window={classificationQuery.data?.window}
           series={classificationQuery.data?.series ?? []}
           complete={classificationQuery.data?.complete}
-          isLoading={classificationQuery.isPending}
+          hourly={hourly}
+          isLoading={
+            classificationQuery.isPending || (byHour && hourlyQuery.isPending)
+          }
           {...independentCardProps(
             classificationQuery,
             "Could not load classification activity.",
             allFailed,
           )}
+          {...hourlyCardProps}
         />
 
         <DailyCountsCard
@@ -292,8 +296,10 @@ export function AnalyticsPage() {
         <NeverSeenBeforeCard
           window={dailyQuery.data?.window}
           items={dailyQuery.data?.items ?? []}
-          isLoading={dailyQuery.isPending}
+          hourly={hourly}
+          isLoading={dailyQuery.isPending || (byHour && hourlyQuery.isPending)}
           {...dailyCardError}
+          {...hourlyCardProps}
         />
 
         <RarityListsCard
