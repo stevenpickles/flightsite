@@ -37,6 +37,10 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
+        // The live picture is a WebSocket (`/api/v1/ws/live`); without this
+        // the upgrade never reaches the backend and the map stays on
+        // "Connecting" under `npm run dev`.
+        ws: true,
       },
     },
   },
