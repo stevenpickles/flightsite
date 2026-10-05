@@ -3,32 +3,36 @@ import { describe, expect, it } from "vitest";
 import { MAX_SEARCH_LENGTH } from "@/features/history/lib/search";
 import {
   DEFAULT_TABLE_STATE,
-  endOfDayIso,
+  defaultPresetFor,
   parseSightingsTableState,
   serializeSightingsTableState,
-  startOfDayIso,
+  type SightingsTableState,
 } from "@/features/sightings/lib/urlState";
 
 describe("parseSightingsTableState", () => {
-  it("defaults to started_at desc, page 1, no filters for an empty query string", () => {
+  it("defaults to today's log: started_at desc, page 1, no filters", () => {
     expect(parseSightingsTableState(new URLSearchParams())).toEqual(
       DEFAULT_TABLE_STATE,
     );
+    expect(DEFAULT_TABLE_STATE.preset).toBe("today");
+    expect(DEFAULT_TABLE_STATE.group).toBe("sightings");
   });
 
   it("reads a fully-specified query string", () => {
     const params = new URLSearchParams(
-      "sort=duration_s&order=asc&page=3&icao=ae1463&from=2026-08-01&to=2026-08-31&open=true",
+      "preset=30d&group=aircraft&sort=duration_s&order=asc&page=3&icao=ae1463&open=true&type=b738",
     );
 
     expect(parseSightingsTableState(params)).toEqual({
+      preset: "30d",
+      group: "aircraft",
       sort: "duration_s",
       order: "asc",
       page: 3,
       icao: "ae1463",
-      from: "2026-08-01",
-      to: "2026-08-31",
+      q: undefined,
       open: true,
+      type: "B738",
     });
   });
 
@@ -56,7 +60,7 @@ describe("parseSightingsTableState", () => {
     );
   });
 
-  it("lowercases and accepts a valid icao filter", () => {
+  it("lower-cases a valid icao filter", () => {
     const params = new URLSearchParams("icao=AE1463");
 
     expect(parseSightingsTableState(params).icao).toBe("ae1463");
@@ -71,15 +75,6 @@ describe("parseSightingsTableState", () => {
     ).toBeUndefined();
   });
 
-  it("drops a malformed date filter rather than passing it through", () => {
-    expect(
-      parseSightingsTableState(new URLSearchParams("from=not-a-date")).from,
-    ).toBeUndefined();
-    expect(
-      parseSightingsTableState(new URLSearchParams("to=2026/08/01")).to,
-    ).toBeUndefined();
-  });
-
   it("treats any value other than the literal 'true' as open=false", () => {
     expect(parseSightingsTableState(new URLSearchParams("open=1")).open).toBe(
       false,
@@ -87,6 +82,108 @@ describe("parseSightingsTableState", () => {
     expect(
       parseSightingsTableState(new URLSearchParams("open=false")).open,
     ).toBe(false);
+  });
+
+  it("ignores the raw date range the page used before presets", () => {
+    // `?from=…&to=…` links predate slice 098; they open today's log rather
+    // than failing, and the dead keys are not written back.
+    const state = parseSightingsTableState(
+      new URLSearchParams("from=2026-08-01&to=2026-08-31"),
+    );
+    expect(state).toEqual(DEFAULT_TABLE_STATE);
+    expect(serializeSightingsTableState(state).toString()).toBe("");
+  });
+});
+
+describe("the time window (slice 098)", () => {
+  it("reads each preset, and falls back to today for anything else", () => {
+    for (const preset of ["today", "7d", "30d", "ytd", "t0"] as const) {
+      expect(
+        parseSightingsTableState(new URLSearchParams({ preset })).preset,
+      ).toBe(preset);
+    }
+    expect(
+      parseSightingsTableState(new URLSearchParams("preset=fortnight")).preset,
+    ).toBe("today");
+  });
+
+  it("means everything, not today, for an exact-aircraft link with no preset", () => {
+    // The aircraft detail page's "all sightings" link: `?icao=…` alone.
+    expect(defaultPresetFor("ae1463")).toBe("t0");
+    expect(defaultPresetFor(undefined)).toBe("today");
+    expect(
+      parseSightingsTableState(new URLSearchParams("icao=ae1463")).preset,
+    ).toBe("t0");
+  });
+
+  it("lets an explicit preset win over that default", () => {
+    expect(
+      parseSightingsTableState(new URLSearchParams("icao=ae1463&preset=7d"))
+        .preset,
+    ).toBe("7d");
+    expect(
+      parseSightingsTableState(new URLSearchParams("icao=ae1463&preset=today"))
+        .preset,
+    ).toBe("today");
+  });
+
+  it("writes the preset only when it is not what the URL would mean without it", () => {
+    const write = (patch: Partial<SightingsTableState>) =>
+      serializeSightingsTableState({ ...DEFAULT_TABLE_STATE, ...patch });
+
+    expect(write({ preset: "today" }).has("preset")).toBe(false);
+    expect(write({ preset: "7d" }).get("preset")).toBe("7d");
+    // With an exact aircraft, t0 is the implied default and today is not.
+    expect(write({ icao: "ae1463", preset: "t0" }).has("preset")).toBe(false);
+    expect(write({ icao: "ae1463", preset: "today" }).get("preset")).toBe(
+      "today",
+    );
+  });
+
+  it("round-trips the preset beside an exact aircraft either way", () => {
+    for (const preset of ["today", "t0", "30d"] as const) {
+      const state = { ...DEFAULT_TABLE_STATE, icao: "ae1463", preset };
+      expect(
+        parseSightingsTableState(serializeSightingsTableState(state)),
+      ).toEqual(state);
+    }
+  });
+});
+
+describe("the grouping and its type filter (slice 098)", () => {
+  it("reads each grouping, and falls back to the log", () => {
+    for (const group of ["sightings", "aircraft", "types"] as const) {
+      expect(
+        parseSightingsTableState(new URLSearchParams({ group })).group,
+      ).toBe(group);
+    }
+    expect(
+      parseSightingsTableState(new URLSearchParams("group=operators")).group,
+    ).toBe("sightings");
+  });
+
+  it("upper-cases a type designator and drops anything that is not one", () => {
+    expect(
+      parseSightingsTableState(new URLSearchParams("type=b738")).type,
+    ).toBe("B738");
+    expect(parseSightingsTableState(new URLSearchParams("type=P8")).type).toBe(
+      "P8",
+    );
+    expect(
+      parseSightingsTableState(new URLSearchParams("type=Boeing%20737")).type,
+    ).toBeUndefined();
+    expect(
+      parseSightingsTableState(new URLSearchParams("type=TOOLONG")).type,
+    ).toBeUndefined();
+  });
+
+  it("writes the grouping and type only when set", () => {
+    const params = serializeSightingsTableState({
+      ...DEFAULT_TABLE_STATE,
+      group: "aircraft",
+      type: "B738",
+    });
+    expect(params.toString()).toBe("group=aircraft&type=B738");
   });
 });
 
@@ -107,14 +204,16 @@ describe("serializeSightingsTableState", () => {
   });
 
   it("round-trips a fully non-default state", () => {
-    const state = {
-      sort: "max_range_nm" as const,
-      order: "asc" as const,
+    const state: SightingsTableState = {
+      preset: "ytd",
+      group: "aircraft",
+      sort: "max_range_nm",
+      order: "asc",
       page: 2,
       icao: "ae1463",
-      from: "2026-08-01",
-      to: "2026-08-31",
+      q: undefined,
       open: true,
+      type: "C172",
     };
 
     const roundTripped = parseSightingsTableState(
@@ -127,7 +226,12 @@ describe("serializeSightingsTableState", () => {
 
 describe("the q search key (slice 083)", () => {
   it("round-trips beside the exact icao filter without disturbing it", () => {
-    const state = { ...DEFAULT_TABLE_STATE, q: "BAW", icao: "ae1463" };
+    const state: SightingsTableState = {
+      ...DEFAULT_TABLE_STATE,
+      preset: "t0",
+      q: "BAW",
+      icao: "ae1463",
+    };
 
     const params = serializeSightingsTableState(state);
 
@@ -163,12 +267,5 @@ describe("the q search key (slice 083)", () => {
         "q",
       ),
     ).toBe(false);
-  });
-});
-
-describe("startOfDayIso / endOfDayIso", () => {
-  it("produces the inclusive UTC day bounds an API filter expects", () => {
-    expect(startOfDayIso("2026-08-30")).toBe("2026-08-30T00:00:00.000Z");
-    expect(endOfDayIso("2026-08-30")).toBe("2026-08-30T23:59:59.999Z");
   });
 });

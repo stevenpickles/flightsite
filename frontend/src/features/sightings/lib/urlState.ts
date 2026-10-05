@@ -1,18 +1,24 @@
 /**
- * Sightings page state <-> query string: `sort`, `order`, `page`, plus the
- * filters (`icao`, `from`, `to`, `open`) — mirroring
+ * Sightings page state <-> query string: the time window (`preset`), how the
+ * window is grouped (`group`), `sort`, `order`, `page`, and the filters
+ * (`icao`, `q`, `open`, `type`) — mirroring
  * `features/aircraft-page/lib/urlState.ts`'s split (pure `URLSearchParams`
  * in/out, the router-dependent hook is a separate module). Only fields that
  * differ from the default are ever written, so `/sightings` and
  * `/sightings?sort=started_at&order=desc&page=1` are the same page.
  *
- * `from`/`to` are stored as plain `YYYY-MM-DD` calendar dates — what an
- * `<input type="date">` produces — and converted to full UTC-day bounds only
- * where the API is actually called (`SightingsPage`). This is a UTC calendar
- * day, not a receiver-local one: `docs/API.md` §2.2 never returns
- * receiver-local time from the server, and getting a local-day boundary
- * right would need the receiver's timezone threaded through this pure
- * module — a refinement left for a later slice, noted in the roadmap.
+ * **The window is a preset, not a pair of dates** (slice 098). The page used
+ * to take two `<input type="date">` values and convert them to UTC-day bounds
+ * in the browser — a UTC day, not the receiver's, because this pure module
+ * had no timezone to resolve one against. It now names one of the Analytics
+ * presets and lets the server resolve it in receiver-local time, so "today"
+ * means the receiver's today on every surface.
+ *
+ * The default preset is `today` — except when the URL carries an exact `icao`
+ * and no preset of its own. That is the shape of the aircraft detail page's
+ * "all sightings" link, written before presets existed; it means *all* of
+ * that aircraft's sightings, so it reads as `t0`. An explicit `preset` in the
+ * URL always wins.
  *
  * Two aircraft filters, deliberately (slice 083): `q` is what the filter box
  * writes — an ICAO-address *or* callsign prefix, normalized like the
@@ -23,11 +29,24 @@
  */
 
 import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
+import { ANALYTICS_PRESETS, type AnalyticsPreset } from "@/lib/api/analytics";
 import type { SightingSortKey, SortOrder } from "@/lib/api/sightings";
 
 export const DEFAULT_SORT: SightingSortKey = "started_at";
 export const DEFAULT_ORDER: SortOrder = "desc";
 export const PAGE_SIZE = 50;
+
+/** How the window's sightings are grouped: the log itself, one row per
+ * distinct aircraft, or one row per distinct type. */
+export type SightingsGroup = "sightings" | "aircraft" | "types";
+
+export const SIGHTINGS_GROUPS: readonly SightingsGroup[] = [
+  "sightings",
+  "aircraft",
+  "types",
+];
+
+export const DEFAULT_GROUP: SightingsGroup = "sightings";
 
 const SORT_KEYS: readonly SightingSortKey[] = [
   "started_at",
@@ -37,20 +56,24 @@ const SORT_KEYS: readonly SightingSortKey[] = [
 ];
 
 const ICAO_PATTERN = /^[0-9a-f]{6}$/;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TYPE_PATTERN = /^[A-Z0-9]{2,4}$/;
 
 const KEYS = {
+  preset: "preset",
+  group: "group",
   sort: "sort",
   order: "order",
   page: "page",
   icao: "icao",
   q: "q",
-  from: "from",
-  to: "to",
   open: "open",
+  type: "type",
 } as const;
 
 export interface SightingsTableState {
+  /** The time window, as one of the Analytics presets. */
+  preset: AnalyticsPreset;
+  group: SightingsGroup;
   sort: SightingSortKey;
   order: SortOrder;
   /** 1-indexed page number. */
@@ -60,27 +83,45 @@ export interface SightingsTableState {
   /** ICAO-or-callsign prefix search (slice 083), normalized, or
    * `undefined` for none. */
   q?: string | undefined;
-  /** `YYYY-MM-DD`, or `undefined`. */
-  from: string | undefined;
-  /** `YYYY-MM-DD`, or `undefined`. */
-  to: string | undefined;
   /** `true` to show only sightings still open. */
   open: boolean;
+  /** One upper-case ICAO type designator the aircraft grouping is narrowed
+   * to, or `undefined`. */
+  type: string | undefined;
+}
+
+/** The preset a URL without one means: everything for an exact-aircraft
+ * link, today otherwise (module docstring). */
+export function defaultPresetFor(icao: string | undefined): AnalyticsPreset {
+  return icao === undefined ? "today" : "t0";
 }
 
 export const DEFAULT_TABLE_STATE: SightingsTableState = {
+  preset: defaultPresetFor(undefined),
+  group: DEFAULT_GROUP,
   sort: DEFAULT_SORT,
   order: DEFAULT_ORDER,
   page: 1,
   icao: undefined,
   q: undefined,
-  from: undefined,
-  to: undefined,
   open: false,
+  type: undefined,
 };
 
 function isSortKey(value: string): value is SightingSortKey {
   return (SORT_KEYS as readonly string[]).includes(value);
+}
+
+function isPreset(value: string | null): value is AnalyticsPreset {
+  return (
+    value !== null && (ANALYTICS_PRESETS as readonly string[]).includes(value)
+  );
+}
+
+function isGroup(value: string | null): value is SightingsGroup {
+  return (
+    value !== null && (SIGHTINGS_GROUPS as readonly string[]).includes(value)
+  );
 }
 
 /** Restores table state from a query string, defaulting anything absent or
@@ -107,16 +148,19 @@ export function parseSightingsTableState(
 
   const q = searchFromUrl(params.get(KEYS.q));
 
-  const fromRaw = params.get(KEYS.from);
-  const from =
-    fromRaw !== null && DATE_PATTERN.test(fromRaw) ? fromRaw : undefined;
-
-  const toRaw = params.get(KEYS.to);
-  const to = toRaw !== null && DATE_PATTERN.test(toRaw) ? toRaw : undefined;
-
   const open = params.get(KEYS.open) === "true";
 
-  return { sort, order, page, icao, q, from, to, open };
+  const presetRaw = params.get(KEYS.preset);
+  const preset = isPreset(presetRaw) ? presetRaw : defaultPresetFor(icao);
+
+  const groupRaw = params.get(KEYS.group);
+  const group = isGroup(groupRaw) ? groupRaw : DEFAULT_GROUP;
+
+  const typeRaw = params.get(KEYS.type)?.toUpperCase();
+  const type =
+    typeRaw !== undefined && TYPE_PATTERN.test(typeRaw) ? typeRaw : undefined;
+
+  return { preset, group, sort, order, page, icao, q, open, type };
 }
 
 /** Builds the query-string representation of `state` — only the fields that
@@ -125,6 +169,14 @@ export function serializeSightingsTableState(
   state: SightingsTableState,
 ): URLSearchParams {
   const params = new URLSearchParams();
+  // Written whenever it is not what the URL would mean without it — which
+  // depends on `icao`, so `?icao=…&preset=today` is a real, distinct page.
+  if (state.preset !== defaultPresetFor(state.icao)) {
+    params.set(KEYS.preset, state.preset);
+  }
+  if (state.group !== DEFAULT_GROUP) {
+    params.set(KEYS.group, state.group);
+  }
   if (state.sort !== DEFAULT_SORT) {
     params.set(KEYS.sort, state.sort);
   }
@@ -141,28 +193,13 @@ export function serializeSightingsTableState(
   if (q !== undefined) {
     params.set(KEYS.q, q);
   }
-  if (state.from !== undefined) {
-    params.set(KEYS.from, state.from);
-  }
-  if (state.to !== undefined) {
-    params.set(KEYS.to, state.to);
-  }
   if (state.open) {
     params.set(KEYS.open, "true");
   }
+  if (state.type !== undefined) {
+    params.set(KEYS.type, state.type);
+  }
   return params;
-}
-
-/** `YYYY-MM-DD` -> the inclusive UTC start-of-day ISO instant the API's
- * `from` bound expects. */
-export function startOfDayIso(date: string): string {
-  return `${date}T00:00:00.000Z`;
-}
-
-/** `YYYY-MM-DD` -> the inclusive UTC end-of-day ISO instant the API's `to`
- * bound expects. */
-export function endOfDayIso(date: string): string {
-  return `${date}T23:59:59.999Z`;
 }
 
 /** Every key {@link serializeSightingsTableState} may write. */
