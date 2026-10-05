@@ -2940,6 +2940,7 @@ slices:
       - "backend: `GET /api/v1/analytics/counts` (sightings, distinct aircraft, distinct types, new aircraft — live), `/analytics/aircraft` and `/analytics/types` (paginated distinct lists with a `new` flag; `type=` filter on aircraft); `preset` on `/sightings`; `first_sighting` on sighting rows; no migration"
       - "frontend: preset bar on the Sightings page (Today default; Since T0 when arriving with an exact `icao` link), summary line, Group by Sightings / Aircraft / Types, two new paginated tables; the raw date inputs are replaced by the presets"
       - "SPEC §57: dated owner amendment recording the grouped views and the Today default"
+      - "fix (issue #270): the Aircraft, Sightings and Activity pages could not be scrolled — their roots were pinned to the height of the scroll container, which squeezed the table's overflow-hidden wrapper instead of overflowing; `min-h-full`, plus an e2e spec that scrolls with the mouse wheel"
     out_of_scope:
       - "retiring the standalone Aircraft page (kept as the searchable lifetime registry; revisit after use)"
       - "a detail route for a type designator"

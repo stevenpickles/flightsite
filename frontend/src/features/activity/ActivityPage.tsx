@@ -66,7 +66,11 @@ export function ActivityPage() {
   const units = receiverQuery.data?.units ?? "aviation";
 
   return (
-    <div className="flex h-full flex-col px-4 py-6 md:px-8">
+    // `min-h-full`, not `h-full`: `<main>` is the scroll container, and a
+    // column pinned to its height squeezes the table's `overflow-hidden`
+    // wrapper to whatever is left instead of overflowing — which clipped the
+    // table at about ten rows with nothing on the page able to scroll.
+    <div className="flex min-h-full flex-col px-4 py-6 md:px-8">
       <header className="mb-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
