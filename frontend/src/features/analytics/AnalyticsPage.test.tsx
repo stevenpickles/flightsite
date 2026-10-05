@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -60,9 +60,19 @@ describe("AnalyticsPage", () => {
     ).toBeInTheDocument();
 
     const emptyStates = await screen.findAllByText("No data for this window.");
-    // top aircraft, top types, top operators, classification, daily counts,
-    // max distance, receiver activity, never seen before — every chart card.
-    expect(emptyStates.length).toBe(8);
+    // classification, daily counts, max distance, receiver activity, never
+    // seen before — every chart card. The three "Top …" rankings are tables
+    // since slice 095 and say what is missing in their own words.
+    expect(emptyStates.length).toBe(5);
+    expect(
+      screen.getByText("No aircraft sighted in this window."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No types sighted in this window."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No operators sighted in this window."),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("No rare aircraft in this window."),
     ).toBeInTheDocument();
@@ -74,12 +84,19 @@ describe("AnalyticsPage", () => {
     });
     renderAnalyticsPage();
 
+    const table = await screen.findByRole("table", {
+      name: "Top aircraft by sightings",
+    });
     expect(
-      await screen.findByRole("img", { name: /top aircraft by sightings/i }),
+      within(table).getByRole("link", { name: "05-8153" }),
+    ).toHaveAttribute("href", "/aircraft/ae1463");
+    expect(
+      within(table).getByText("Boeing C-17A Globemaster III"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/05-8153, C17 Boeing C-17A Globemaster III \(12\)/),
+      within(table).getByText("United States Air Force"),
     ).toBeInTheDocument();
+    expect(within(table).getByText("12")).toBeInTheDocument();
   });
 
   it("defaults to the today preset and persists a change to the URL", async () => {

@@ -82,6 +82,10 @@ export interface AnalyticsAircraftRow {
   type: string | null;
   model: string | null;
   operator: string | null;
+  /** Registry owner (FAA, where released) — the fallback for "who flies it"
+   * when no operator is known (slice 095). Optional so a payload recorded
+   * before the field existed (the visual-test HAR) still parses. */
+  owner?: string | null;
   operator_group: string | null;
   classification: string | null;
   military: boolean;

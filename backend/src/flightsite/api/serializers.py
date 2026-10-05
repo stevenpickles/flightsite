@@ -1253,6 +1253,7 @@ def analytics_aircraft_payload(rank: AircraftRank) -> dict[str, Any]:
         "type": rank.type_code,
         "model": rank.model,
         "operator": rank.operator_name,
+        "owner": rank.owner,
         "operator_group": rank.operator_group,
         "classification": rank.mission_category,
         "military": rank.military,

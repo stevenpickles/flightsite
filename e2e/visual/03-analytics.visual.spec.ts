@@ -29,7 +29,7 @@ import { VISUAL_THEMES } from "./support/stabilize";
 
 /** Tall enough for all three rows of the card grid without scrolling —
  * see `expectFitsWithoutScrolling`, which fails the run if it stops being. */
-const VIEWPORT_HEIGHT = 1600;
+const VIEWPORT_HEIGHT = 1700;
 
 for (const theme of VISUAL_THEMES) {
   test(`analytics — ${theme}`, async ({ page }) => {
@@ -53,10 +53,17 @@ for (const theme of VISUAL_THEMES) {
       "Top operators",
       "Never seen before",
     ]) {
-      await expect(page.getByRole("heading", { name: cardTitle })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: cardTitle }),
+      ).toBeVisible();
     }
+    // The three rankings are tables since slice 095; the first one carrying
+    // a body row means the replayed top-aircraft response has rendered.
     await expect(
-      page.getByRole("img", { name: "Top aircraft by sightings, horizontal bar chart" }),
+      page
+        .getByRole("table", { name: "Top aircraft by sightings" })
+        .getByRole("link")
+        .first(),
     ).toBeVisible();
     await expect(page.getByText(/^Loading/)).toHaveCount(0);
 

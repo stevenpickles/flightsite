@@ -1,9 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { TopGroupCard } from "@/features/analytics/components/cards/TopGroupCard";
 import type { AnalyticsGroupRow } from "@/lib/api/analytics";
-import { getLastMockChart } from "@/test/echartsMock";
 
 function groupRow(
   overrides: Partial<AnalyticsGroupRow> = {},
@@ -21,27 +20,12 @@ function groupRow(
   };
 }
 
-/** The last option the (mocked) chart was given, narrowed to the parts
- * these tests read. */
-function lastOption(): {
-  yAxis: {
-    data: string[];
-    axisLabel: { formatter: (value: string, index: number) => string };
-  };
-  tooltip: { formatter: (params: unknown) => string };
-} {
-  const option = getLastMockChart().optionCalls.at(-1);
-  if (option === undefined) {
-    throw new Error("the chart was never given an option");
-  }
-  return option as ReturnType<typeof lastOption>;
-}
-
 function renderTypes(rows: AnalyticsGroupRow[]) {
   return render(
     <TopGroupCard
       title="Top types"
       ariaLabel="Top types by sightings"
+      nameHeading="Type"
       emptyLabel="No types sighted in this window."
       rows={rows}
       isLoading={false}
@@ -49,104 +33,106 @@ function renderTypes(rows: AnalyticsGroupRow[]) {
   );
 }
 
+/** The cells of the named ranking's body rows, as text, one array per row. */
+function bodyRows(name: string): string[][] {
+  const table = screen.getByRole("table", { name });
+  return within(table)
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) =>
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent ?? ""),
+    );
+}
+
 describe("TopGroupCard", () => {
   it("renders the empty state with the given empty label", () => {
     renderTypes([]);
-    expect(screen.getByText("No data for this window.")).toBeInTheDocument();
-  });
-
-  it("renders a chart with an accessible summary, falling back to key when label is null", () => {
-    renderTypes([
-      groupRow({ label: "C-17 Globemaster III", sightings: 9 }),
-      groupRow({ key: "B738", label: null, sightings: 4 }),
-    ]);
-
     expect(
-      screen.getByRole("img", { name: "Top types by sightings" }),
+      screen.getByText("No types sighted in this window."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/C-17 Globemaster III \(9\)/)).toBeInTheDocument();
-    expect(screen.getByText(/B738 \(4\)/)).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("shows a type's long-form description beside its designator, and in full in the tooltip", () => {
+  it("renders a table of name, aircraft and sightings, falling back to key when label is null", () => {
     renderTypes([
-      groupRow({
-        key: "B738",
-        label: "B738",
-        description: "Boeing 737-800",
-        sightings: 4,
-        unique_aircraft: 2,
-        days_seen: 3,
-      }),
-      groupRow({
-        key: "C30J",
-        label: "C30J",
-        description: "Lockheed Martin C-130J Super Hercules",
-        sightings: 2,
-        unique_aircraft: 1,
-        days_seen: 0,
-      }),
+      groupRow(),
+      groupRow({ key: "B738", label: null, sightings: 4, unique_aircraft: 2 }),
     ]);
 
-    const { yAxis, tooltip } = lastOption();
-    // Drawn bottom-up, so the runner-up is index 0.
-    expect(yAxis.data).toEqual(["C30J", "B738"]);
-    expect(yAxis.axisLabel.formatter("B738", 1)).toBe(
-      "{ident|B738}  {desc|Boeing 737-800}",
-    );
-    // A long description is cut on the axis but whole in the tooltip.
-    expect(yAxis.axisLabel.formatter("C30J", 0)).toBe(
-      "{ident|C30J}  {desc|Lockheed Martin C-130J…}",
-    );
-    expect(tooltip.formatter([{ dataIndex: 1 }])).toBe(
-      "<strong>B738</strong><br/>Boeing 737-800<br/>4 sightings · 2 aircraft · 3 days",
-    );
-    // `days_seen: 0` is the since-T0 ranking's "not counted", not "zero days".
-    expect(tooltip.formatter([{ dataIndex: 0 }])).toBe(
-      "<strong>C30J</strong><br/>Lockheed Martin C-130J Super Hercules<br/>2 sightings · 1 aircraft",
-    );
-    expect(screen.getByText(/B738 Boeing 737-800 \(4\)/)).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Top types by sightings" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Type", "Aircraft", "Sightings"]);
+    expect(bodyRows("Top types by sightings")).toEqual([
+      ["C-17 Globemaster III", "3", "9"],
+      ["B738", "2", "4"],
+    ]);
   });
 
-  it("labels a row without a description by its label alone", () => {
-    renderTypes([groupRow({ key: "B738", label: null, description: null })]);
-
-    const { yAxis, tooltip } = lastOption();
-    expect(yAxis.axisLabel.formatter("B738", 0)).toBe("{ident|B738}");
-    expect(tooltip.formatter([{ dataIndex: 0 }])).toBe(
-      "<strong>B738</strong><br/>9 sightings · 3 aircraft · 5 days",
+  it("leads a type with its long-form description, the designator muted beneath", () => {
+    renderTypes([
+      groupRow({ key: "B738", label: "B738", description: "Boeing 737-800" }),
+    ]);
+    expect(bodyRows("Top types by sightings")[0]?.[0]).toBe(
+      "Boeing 737-800B738",
     );
-    expect(tooltip.formatter([{ dataIndex: 4 }])).toBe("");
+    expect(screen.getByTitle("Boeing 737-800")).toBeInTheDocument();
+    expect(screen.getByTitle("B738")).toHaveClass("text-muted-foreground");
   });
 
-  it("reuses the same component for operators via title/ariaLabel props", () => {
+  it("shows a row without a description by its label alone", () => {
+    renderTypes([groupRow({ description: null })]);
+    expect(bodyRows("Top types by sightings")[0]?.[0]).toBe(
+      "C-17 Globemaster III",
+    );
+  });
+
+  it("reuses the same component for operators via title, heading and ariaLabel props", () => {
     render(
       <TopGroupCard
         title="Top operators"
         ariaLabel="Top operators by sightings"
+        nameHeading="Operator"
         emptyLabel="No operators sighted in this window."
-        rows={[groupRow({ key: "1", label: "Delta Air Lines", sightings: 6 })]}
+        rows={[
+          groupRow({
+            key: "3",
+            label: "Delta Air Lines",
+            unique_aircraft: 41,
+            sightings: 118,
+          }),
+        ]}
         isLoading={false}
       />,
     );
-
     expect(screen.getByText("Top operators")).toBeInTheDocument();
+    const table = screen.getByRole("table", {
+      name: "Top operators by sightings",
+    });
     expect(
-      screen.getByRole("img", { name: "Top operators by sightings" }),
-    ).toBeInTheDocument();
-    expect(lastOption().yAxis.axisLabel.formatter("Delta Air Lines", 0)).toBe(
-      "{ident|Delta Air Lines}",
-    );
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Operator", "Aircraft", "Sightings"]);
+    expect(bodyRows("Top operators by sightings")).toEqual([
+      ["Delta Air Lines", "41", "118"],
+    ]);
+    // No detail route exists for a group, so the name is text, not a link.
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("names the value axis and the bar series (R3-12)", () => {
-    renderTypes([groupRow()]);
-
-    const option = getLastMockChart().optionCalls.at(-1) as {
-      xAxis: { name: string };
-      series: Array<{ name: string }>;
-    };
-    expect(option.xAxis.name).toBe("sightings");
-    expect(option.series[0]?.name).toBe("Sightings");
+  it("keeps the backend's ranking order", () => {
+    renderTypes([
+      groupRow({ key: "A", label: "First", sightings: 9 }),
+      groupRow({ key: "B", label: "Second", sightings: 5 }),
+      groupRow({ key: "C", label: "Third", sightings: 1 }),
+    ]);
+    expect(bodyRows("Top types by sightings").map((cells) => cells[0])).toEqual(
+      ["First", "Second", "Third"],
+    );
   });
 });
