@@ -153,6 +153,12 @@ releases:
       that?', coverage against the radio horizon, richer alert conditions
       (slices 080-093; migrations 0018-0020). The planned v0.11.0/v0.12.0 split
       was not used. Recorded 2026-10-01."
+  - version: "v0.12.0"
+    after_phase: 9
+    theme: "Aircraft silhouettes: twenty-one bespoke live-map icons chosen by type
+      designator, category or emitter category, a military/government tint as a
+      secondary cue, and demo airframes that exercise every shape (slice 094; no
+      migration). Recorded 2026-10-02."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
