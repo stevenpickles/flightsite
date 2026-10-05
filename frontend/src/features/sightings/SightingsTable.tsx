@@ -23,6 +23,7 @@ import {
 } from "@/features/history/lib/columnPriority";
 import { AlertSeverityBadge } from "@/features/sightings/components/AlertSeverityBadge";
 import { ClosureReasonTooltip } from "@/features/sightings/components/ClosureReasonTooltip";
+import { NewBadge } from "@/features/sightings/components/NewBadge";
 import {
   formatOpenSightingDuration,
   formatSightingDuration,
@@ -257,10 +258,13 @@ export function SightingsTable({
                 )}
               </td>
               <td className={cn("px-3 py-2", CELL.type)}>
-                {row.aircraft_type ?? <UnknownValue />}
-                {row.model !== null && (
+                {/* The type in words first, its designator beneath — the
+                 * order every aircraft list on the site uses since slice
+                 * 095. The designator alone when no registry gives a model. */}
+                {row.model ?? row.aircraft_type ?? <UnknownValue />}
+                {row.model !== null && row.aircraft_type !== null && (
                   <span className="block text-xs text-muted-foreground">
-                    {row.model}
+                    {row.aircraft_type}
                   </span>
                 )}
               </td>
@@ -293,6 +297,9 @@ export function SightingsTable({
               </td>
               <td className={cn("px-3 py-2", CELL.status)}>
                 <div className="flex flex-wrap items-center gap-1">
+                  {row.first_sighting === true && (
+                    <NewBadge label="First sighting" />
+                  )}
                   {row.max_alert_severity !== null && (
                     <AlertSeverityBadge severity={row.max_alert_severity} />
                   )}

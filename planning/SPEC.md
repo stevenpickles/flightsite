@@ -500,6 +500,14 @@ altitude; position count; alert/interesting status. Opening a sighting shows its
 detailed summary and simplified path. Historical animated playback is not required in
 v1.
 
+> **Owner amendment, 2026-10-05.** The Sightings page takes the §58 time presets,
+> with **Today** as its default window, and a summary of what the window held
+> (sightings, distinct aircraft, distinct types, aircraft never seen before). It may
+> group the window three ways — the chronological log above, one row per distinct
+> aircraft, and one row per distinct aircraft type — so that "Since T0" lists every
+> discrete aircraft and every discrete type the receiver has ever seen. The log's
+> columns are unchanged.
+
 # 58. Analytics Page
 
 Time presets: Today, Last 7 Days, Last 30 Days, This Year, Since T0. v1 analytics:

@@ -198,6 +198,7 @@ owner decision and are not scheduled.
 | 095 | Analytics top rankings as tables | 094 | opus | low | The three "Top …" Analytics cards become ranked tables — tail, type in words, who flies it (operator, else labelled owner, else group) and the count — with `owner` added to the §3.7 airframe row; no migration |
 | 096 | Backend image base-package upgrade hotfix | 094 | opus | low | Hotfix: `apt-get upgrade` in the backend runtime stage to clear the fixed HIGH in the Debian base (libpcre2 CVE-2026-103111) failing the docker Trivy gate on every PR |
 | 097 | Analytics today view by hour, and rarity tables | 095 | opus | low | Over a one-day window the three day-granular time-series cards draw the day hour by hour (new `analytics/hourly` endpoint) instead of one invisible point; the Locally rare card adopts the Top aircraft table format; no migration |
+| 098 | Sightings by window and grouping | 097 | opus | medium | The Sightings page takes the Analytics presets (Today by default), heads the window with live counts, and groups it three ways — the log, the distinct aircraft, the distinct types — so Since T0 lists every airframe or type ever heard; three analytics endpoints, no migration |
 
 ## Parallelization Guide
 

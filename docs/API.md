@@ -485,7 +485,7 @@ size class to include.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `preset` (the §3.7 presets, resolved in receiver-local time; ignored when `from`/`to` are given — slice 098), `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Each row carries `first_sighting`: whether it contains the airframe's first-ever observation. Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
@@ -683,6 +683,9 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
 | `GET /api/v1/analytics/hourly` | One receiver-local day, hour by hour (slice 097). Param: `day=YYYY-MM-DD` (default: today in the receiver's timezone). Takes no `preset`. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
+| `GET /api/v1/analytics/counts` | A window's four headline figures, counted live: sightings, distinct aircraft, distinct types, new aircraft (slice 098). |
+| `GET /api/v1/analytics/aircraft` | Every distinct aircraft heard in the window, most-sighted first. Paginated (`limit`, `offset`, exact `total`); optional `type=<designator>` (slice 098). |
+| `GET /api/v1/analytics/types` | Every distinct ICAO type heard in the window, busiest first. Paginated (slice 098). |
 
 **"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
 real latency — the flush pass runs every 30 s and only for days something touched
@@ -803,6 +806,49 @@ no chart; the Analytics page asks for this instead.
 - `messages`, `positions` and `max_range_nm` come from the hourly receiver
   metrics and are `null` where that table has no row — before recording started,
   or an hour the receiver was not running — never `0`.
+
+**`counts`, `aircraft` and `types` say what a window held** (slice 098) — the
+Sightings page's summary line and its two grouped views. All three take the
+standard `preset` / `from` / `to`.
+
+```jsonc
+// GET /api/v1/analytics/counts?preset=today
+{ "window": { "preset": "today", "…": "…" },
+  "sightings": 142, "unique_aircraft": 97, "unique_types": 31, "new_aircraft": 12 }
+
+// GET /api/v1/analytics/aircraft?preset=today&limit=50&offset=0
+{ "window": { "…": "…" }, "total": 97, "limit": 50, "offset": 0,
+  "items": [ { "icao": "a1b2c3", "registration": "N228BZ", "type": "BCS3",
+               "model": "Airbus A220-300", "operator": "Breeze Airways",
+               "sightings": 4, "new": false, "…": "…" } ] }
+
+// GET /api/v1/analytics/types?preset=today
+{ "window": { "…": "…" }, "total": 31, "limit": 50, "offset": 0,
+  "items": [ { "type": "BCS3", "description": "Airbus A220-300",
+               "sightings": 11, "unique_aircraft": 3,
+               "first_seen_at": "2026-09-02T14:10:03.000Z",
+               "last_seen_at": "2026-10-05T18:41:20.000Z", "new": false } ] }
+```
+
+- **Counted live.** None of the three reads a rollup, so the figures agree with
+  the sightings log to the second — unlike `summary`, whose totals are sums over
+  `daily_stats` and say so with `complete`. `aircraft.total == counts.unique_aircraft`
+  and `types.total == counts.unique_types` for the same window, always.
+- An `aircraft` row is the `top-aircraft` row shape plus `new`; `sightings` is the
+  count inside the window. A `types` row's `first_seen_at` is the receiver's
+  first-ever observation of the type, not its first in the window.
+- **`new`** marks an airframe (or a type) the receiver had never heard before the
+  window. For `preset=t0`, which asks for the whole history, it is `false` on
+  every row: it would be true of all of them, and a flag set everywhere says
+  nothing. Any other window flags honestly even when it happens to reach back to
+  T0 — on a day-old install everything heard today is new today, and
+  `counts.new_aircraft` says the same.
+- `preset=t0` is the whole-history form: `aircraft` is then every discrete
+  airframe the receiver has ever heard, with lifetime sighting counts, and
+  `types` every discrete type. Both read the `aircraft` table — one row per
+  airframe — rather than every sighting.
+- An airframe no registry gives a type counts in `unique_aircraft` and appears
+  in `aircraft`, and belongs to no row of `types`.
 
 A `rarity` response's `rare_types` rows carry `description` (slice 097), the same
 long-form type name a `top-types` row does, `null` when no imported airframe of

@@ -382,6 +382,9 @@ class SightingRow(_Model):
     position_count: int
     had_emergency: bool
     max_alert_severity: AlertSeverityLiteral | None = None
+    #: True when this sighting contains the airframe's first-ever
+    #: observation by this receiver (slice 098).
+    first_sighting: bool = False
 
     #: §2.6. See :class:`AircraftView`'s field of the same name.
     provenance: dict[str, str] = Field(default_factory=dict)
@@ -1100,6 +1103,63 @@ class AnalyticsHourlyResponse(_Model):
     day: str
     timezone: str
     items: list[AnalyticsHourlyRow]
+
+
+class AnalyticsCountsResponse(_Model):
+    """``GET /api/v1/analytics/counts`` — a window's four headline figures."""
+
+    window: AnalyticsWindow
+    sightings: int
+    unique_aircraft: int
+    #: Distinct ICAO type designators among the window's aircraft.
+    unique_types: int
+    #: Airframes whose first-ever observation fell inside the window.
+    new_aircraft: int
+
+
+class AnalyticsSeenAircraftRow(AnalyticsAircraftRow):
+    """One distinct airframe heard in a window (slice 098)."""
+
+    #: True when the airframe's first-ever observation fell inside the
+    #: window. Always false over the whole history, where it would be true of
+    #: every row.
+    new: bool = False
+
+
+class AnalyticsSeenAircraftResponse(_Model):
+    """``GET /api/v1/analytics/aircraft`` — paginated (§2.4)."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsSeenAircraftRow]
+    total: int
+    limit: int
+    offset: int
+
+
+class AnalyticsSeenTypeRow(_Model):
+    """One distinct ICAO type designator heard in a window (slice 098)."""
+
+    type: str
+    #: The long form behind the designator, as on a top-types row.
+    description: str | None = None
+    sightings: int
+    unique_aircraft: int
+    #: The receiver's first-ever observation of any airframe of the type.
+    first_seen_at: IsoTimestamp
+    #: The latest sighting start of the type inside the window.
+    last_seen_at: IsoTimestamp
+    #: True when the receiver had never heard the type before this window.
+    new: bool = False
+
+
+class AnalyticsSeenTypesResponse(_Model):
+    """``GET /api/v1/analytics/types`` — paginated (§2.4)."""
+
+    window: AnalyticsWindow
+    items: list[AnalyticsSeenTypeRow]
+    total: int
+    limit: int
+    offset: int
 
 
 class AnalyticsRarityResponse(_Model):
@@ -1842,6 +1902,7 @@ __all__ = [
     "AnalyticsAircraftResponse",
     "AnalyticsAircraftRow",
     "AnalyticsClassificationResponse",
+    "AnalyticsCountsResponse",
     "AnalyticsDailyResponse",
     "AnalyticsDailyRow",
     "AnalyticsGroupResponse",
@@ -1851,6 +1912,10 @@ __all__ = [
     "AnalyticsPresetLiteral",
     "AnalyticsRareType",
     "AnalyticsRarityResponse",
+    "AnalyticsSeenAircraftResponse",
+    "AnalyticsSeenAircraftRow",
+    "AnalyticsSeenTypeRow",
+    "AnalyticsSeenTypesResponse",
     "AnalyticsSummary",
     "AnalyticsSummaryResponse",
     "AnalyticsWindow",

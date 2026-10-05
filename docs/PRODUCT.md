@@ -171,6 +171,19 @@ per-sighting reception statistics (§51), meaningful sighting events (§52), and
 simplified path. No animated playback in v1 (schema preserves enough for it later,
 §19).
 
+The page shows one time window, chosen with the Analytics presets — **Today** by
+default, in the receiver's local day; Since T0 for an exact-aircraft link — and heads
+it with a live summary: sightings, distinct aircraft, distinct types, and aircraft
+never seen before the window. *Group by* lists the same window three ways (§57 as
+amended 2026-10-05, slice 098): the log; one row per distinct aircraft (tail, type in
+words, operator, sightings in the window, first and last seen); and one row per
+distinct type (name over designator, distinct airframes, sightings, first ever and
+last seen). Since T0 grouped by aircraft or by type is every discrete airframe or
+type the receiver has ever heard. A type row opens the aircraft of that type; each
+summary figure is a shortcut to the grouping that lists it; an aircraft, type or
+sighting the receiver had never heard before the window carries a worded "New" /
+"First sighting" badge.
+
 ### 4.6 Analytics Page (§58)
 
 Time presets: Today, Last 7 Days, Last 30 Days, This Year, Since T0. Analytics: most

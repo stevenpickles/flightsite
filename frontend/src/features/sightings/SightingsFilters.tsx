@@ -80,36 +80,6 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
         </p>
       </form>
 
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="sightings-from-filter">From</Label>
-        <Input
-          id="sightings-from-filter"
-          type="date"
-          value={state.from ?? ""}
-          onChange={(event) =>
-            onChange({
-              from: event.target.value === "" ? undefined : event.target.value,
-            })
-          }
-          className="w-40"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="sightings-to-filter">To</Label>
-        <Input
-          id="sightings-to-filter"
-          type="date"
-          value={state.to ?? ""}
-          onChange={(event) =>
-            onChange({
-              to: event.target.value === "" ? undefined : event.target.value,
-            })
-          }
-          className="w-40"
-        />
-      </div>
-
       <Button
         type="button"
         variant={state.open ? "accent" : "outline"}
@@ -120,11 +90,7 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
         Open now
       </Button>
 
-      {(state.icao !== undefined ||
-        state.q !== undefined ||
-        state.from !== undefined ||
-        state.to !== undefined ||
-        state.open) && (
+      {(state.icao !== undefined || state.q !== undefined || state.open) && (
         <Button
           type="button"
           variant="ghost"
@@ -132,13 +98,7 @@ export function SightingsFilters({ state, onChange }: SightingsFiltersProps) {
           className={cn("text-muted-foreground")}
           onClick={() => {
             setSearchInput("");
-            onChange({
-              icao: undefined,
-              q: undefined,
-              from: undefined,
-              to: undefined,
-              open: false,
-            });
+            onChange({ icao: undefined, q: undefined, open: false });
           }}
         >
           Clear filters

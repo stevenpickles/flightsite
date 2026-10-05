@@ -50,7 +50,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     to: "/sightings",
     label: "Sightings",
-    description: "A chronological log of observation periods.",
+    description: "What the receiver heard, by sighting, aircraft or type.",
     icon: Binoculars,
   },
   {

@@ -2929,6 +2929,39 @@ slices:
     risk_level: low
     notes: "Owner feedback from the 2026-10-05 visual review of slices 094-095; ships in v0.13.0."
 
+  - id: "098"
+    title: "Sightings by window and grouping"
+    phase: 9
+    branch: "098-sightings-window-grouping"
+    status: merged
+    depends_on: ["097"]
+    objective: "Make the Sightings page answer 'what did the receiver hear in this window' three ways: the log, the distinct aircraft, and the distinct types — with the Analytics presets (Today by default) and a live summary line. Since T0 grouped by aircraft or by type is every discrete airframe or type ever heard, which no page listed for types at all (§57, amended by the owner 2026-10-05)."
+    scope:
+      - "backend: `GET /api/v1/analytics/counts` (sightings, distinct aircraft, distinct types, new aircraft — live), `/analytics/aircraft` and `/analytics/types` (paginated distinct lists with a `new` flag; `type=` filter on aircraft); `preset` on `/sightings`; `first_sighting` on sighting rows; no migration"
+      - "frontend: preset bar on the Sightings page (Today default; Since T0 when arriving with an exact `icao` link), summary line, Group by Sightings / Aircraft / Types, two new paginated tables; the raw date inputs are replaced by the presets"
+      - "SPEC §57: dated owner amendment recording the grouped views and the Today default"
+      - "fix (issue #270): the Aircraft, Sightings and Activity pages could not be scrolled — their roots were pinned to the height of the scroll container, which squeezed the table's overflow-hidden wrapper instead of overflowing; `min-h-full`, plus an e2e spec that scrolls with the mouse wheel"
+    out_of_scope:
+      - "retiring the standalone Aircraft page (kept as the searchable lifetime registry; revisit after use)"
+      - "a detail route for a type designator"
+      - "custom from/to ranges in the UI"
+    acceptance_criteria:
+      - "the Sightings page opens on today's sightings in the receiver's local day, with the four counts above the table"
+      - "Group by Aircraft and Types list each distinct airframe / type of the window once, paginated, with totals equal to the summary line"
+      - "Since T0 grouped by Aircraft lists every airframe ever heard; grouped by Types, every type"
+      - "an existing `/sightings?icao=` link still shows all of that aircraft's sightings"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, e2e green"
+    required_tests: [counts/aircraft/types API incl. whole-history and type filter, list-vs-counts agreement, sightings preset and first_sighting, URL state, page tests per grouping, e2e sightings flow]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_seen.py
+      - frontend/src/features/sightings/
+      - planning/SPEC.md
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: medium
+    notes: "Owner request of 2026-10-05; design chosen by the owner from three options (presets + Group by, with the summary line). Ships in v0.13.0."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
