@@ -14,7 +14,7 @@
 # Build stage: resolve the locked dependency set and build the package into
 # a self-contained virtualenv.
 # ---------------------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.12.8-python3.12-trixie-slim AS build
+FROM ghcr.io/astral-sh/uv:0.12.23-python3.12-trixie-slim AS build
 
 # UV_COMPILE_BYTECODE: pre-compile .pyc files so the runtime image starts
 #   faster instead of compiling on first import.
@@ -56,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # installs prebuilt manylinux wheels, and only the resulting venv is copied
 # across, so there is no glibc-ABI coupling between the two stages.
 # ---------------------------------------------------------------------------
-FROM python:3.12.14-slim-bookworm AS runtime
+FROM python:3.12.15-slim-bookworm AS runtime
 
 # Security patches the pinned tag has not been rebuilt with. A published
 # `python:…-slim-bookworm` image carries whatever Debian had released the day
