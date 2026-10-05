@@ -2833,6 +2833,28 @@ slices:
     risk_level: medium
     notes: "Owner request of 2026-10-02. Frontend-heavy. The palette is a secondary cue: classification is also surfaced as text in the detail panel, filters and label indicator, which is how §36's colour rule is satisfied."
 
+  - id: "096"
+    title: "Backend image base-package upgrade hotfix"
+    phase: 9
+    branch: "096-backend-image-apt-upgrade"
+    status: merged
+    depends_on: ["094"]
+    objective: "Hotfix: clear the fixed HIGH in the backend image's Debian base (libpcre2-8-0 CVE-2026-103111, 10.42-1+deb12u1 -> deb12u2, published after python:3.12.14-slim-bookworm was built) that fails the required docker Trivy gate on every PR."
+    scope:
+      - "backend/Dockerfile runtime stage: apt-get update && apt-get upgrade -y --no-install-recommends, lists removed — the counterpart of the frontend image's `apk upgrade`"
+    out_of_scope:
+      - "moving the pinned base tag"
+      - "any Python dependency bump"
+    acceptance_criteria:
+      - "the docker job's Trivy scan of the backend image reports no fixed HIGH/CRITICAL finding"
+      - "the image still runs as uid 1000 and the e2e stack built from it is green"
+    required_tests: [docker workflow (build + Trivy), e2e]
+    expected_artifacts:
+      - backend/Dockerfile
+    preferred_agent: opus
+    risk_level: low
+    notes: "Surfaced by PR #263's docker job on 2026-10-04. Added by Fable outside the phase plan; same class as 092/093."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
