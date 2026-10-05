@@ -49,6 +49,8 @@ from flightsite.analytics.queries import (
     RareType,
     Rarity,
     Summary,
+    TypeSeen,
+    WindowCounts,
 )
 from flightsite.analytics.repository import META_KEY_ROLLUP_THROUGH_DAY, AnalyticsRepository
 from flightsite.analytics.rollup import busiest_hour, fold_day
@@ -84,8 +86,10 @@ __all__ = [
     "Rarity",
     "SightingFact",
     "Summary",
+    "TypeSeen",
     "TypeStat",
     "Window",
+    "WindowCounts",
     "busiest_hour",
     "day_bounds_ms",
     "day_start_ms",

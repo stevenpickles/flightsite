@@ -156,6 +156,7 @@ _LIST_COLUMNS: Final[tuple[Any, ...]] = (
     Sighting.had_emergency,
     Sighting.max_alert_severity,
     Aircraft.icao24,
+    Aircraft.first_seen_ms,
     AircraftMetadataResolved.registration,
     AircraftMetadataResolved.registration_src,
     AircraftMetadataResolved.type_code,

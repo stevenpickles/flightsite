@@ -67,11 +67,14 @@ from flightsite.api.schemas import (
     AlertSeverityLiteral,
     AnalyticsAircraftResponse,
     AnalyticsClassificationResponse,
+    AnalyticsCountsResponse,
     AnalyticsDailyResponse,
     AnalyticsGroupResponse,
     AnalyticsHourlyResponse,
     AnalyticsPresetLiteral,
     AnalyticsRarityResponse,
+    AnalyticsSeenAircraftResponse,
+    AnalyticsSeenTypesResponse,
     AnalyticsSummaryResponse,
     CurrentAircraftResponse,
     DiagnosticsResponse,
@@ -99,10 +102,13 @@ from flightsite.api.search import MAX_QUERY_LENGTH
 from flightsite.api.serializers import (
     airport_feature_collection_payload,
     analytics_aircraft_payload,
+    analytics_counts_payload,
     analytics_daily_row_payload,
     analytics_group_payload,
     analytics_hourly_row_payload,
     analytics_rare_type_payload,
+    analytics_seen_aircraft_payload,
+    analytics_seen_type_payload,
     analytics_summary_payload,
 )
 from flightsite.api.sightings import DEFAULT_ORDER as SIGHTINGS_DEFAULT_ORDER
@@ -676,6 +682,15 @@ async def sightings_list(
         datetime | None,
         Query(description="Inclusive upper bound on `started_at` (§2.2)."),
     ] = None,
+    preset: Annotated[
+        AnalyticsPresetLiteral | None,
+        Query(
+            description=(
+                "Time preset resolved in receiver-local time, as on the analytics "
+                "endpoints (§3.7). Ignored when explicit `from`/`to` bounds are given."
+            )
+        ),
+    ] = None,
     interesting: Annotated[
         bool | None,
         Query(description="Restrict to sightings with a non-null `max_alert_severity`."),
@@ -705,14 +720,23 @@ async def sightings_list(
     exact six-hex-digit match; ``q`` (slice 083) is the prefix search over
     address or callsign that the Sightings page's filter box sends.
     """
-    items = await _context(request).sighting_list(
+    context = _context(request)
+    from_ms, to_ms = _bound_ms(from_), _bound_ms(to)
+    if preset is not None and from_ms is None and to_ms is None:
+        # The same resolution the analytics endpoints use, so "today" is the
+        # receiver's local day here too (slice 098). The window is half-open
+        # and this endpoint's `to` is inclusive, hence the millisecond.
+        window = await context.analytics_window(preset=preset, from_ms=None, to_ms=None)
+        if not window.whole_history:
+            from_ms, to_ms = window.start_ms, window.end_ms - 1
+    items = await context.sighting_list(
         limit=limit,
         offset=offset,
         sort=sort,
         order=order,
         icao=icao,
-        from_ms=_bound_ms(from_),
-        to_ms=_bound_ms(to),
+        from_ms=from_ms,
+        to_ms=to_ms,
         interesting=interesting,
         open_only=open,
         q=q,
@@ -1021,6 +1045,97 @@ async def analytics_daily(request: Request, window: WindowParams) -> dict[str, A
     """
     rows = await _context(request).analytics.daily(window.window)
     return {"window": window.block, "items": [analytics_daily_row_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/counts",
+    response_model=AnalyticsCountsResponse,
+    tags=["analytics"],
+    summary="Sightings, distinct aircraft, distinct types and new aircraft in a window",
+)
+async def analytics_counts(request: Request, window: WindowParams) -> dict[str, Any]:
+    """A window's four headline figures, counted live (slice 098).
+
+    What the Sightings page heads its window with. Unlike `summary`, nothing
+    here is read from a rollup, so the figures agree with the sightings log
+    to the second.
+    """
+    counts = await _context(request).analytics.window_counts(window.window)
+    return {"window": window.block, **analytics_counts_payload(counts)}
+
+
+@router.get(
+    "/analytics/aircraft",
+    response_model=AnalyticsSeenAircraftResponse,
+    tags=["analytics"],
+    summary="Every distinct aircraft heard in a window",
+)
+async def analytics_seen_aircraft(
+    request: Request,
+    window: WindowParams,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    type_code: Annotated[
+        str | None,
+        Query(
+            alias="type",
+            pattern=r"^[A-Za-z0-9]{2,4}$",
+            description="Restrict to one ICAO type designator.",
+            examples=["B738"],
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """The window's distinct airframes, most-sighted first, paginated.
+
+    `top-aircraft` without its ceiling (slice 098). Over `preset=t0` this is
+    every discrete airframe the receiver has ever heard.
+    """
+    rows, total = await _context(request).analytics.aircraft_seen(
+        window.window,
+        limit=limit,
+        offset=offset,
+        type_code=None if type_code is None else type_code.upper(),
+    )
+    return {
+        "window": window.block,
+        "items": [analytics_seen_aircraft_payload(row, window.window) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get(
+    "/analytics/types",
+    response_model=AnalyticsSeenTypesResponse,
+    tags=["analytics"],
+    summary="Every distinct aircraft type heard in a window",
+)
+async def analytics_seen_types(
+    request: Request,
+    window: WindowParams,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
+    ] = DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+) -> dict[str, Any]:
+    """The window's distinct ICAO type designators, busiest first, paginated.
+
+    Over `preset=t0` this is every discrete type the receiver has ever heard
+    (slice 098). An airframe no registry gives a type belongs to no row.
+    """
+    rows, total = await _context(request).analytics.types_seen(
+        window.window, limit=limit, offset=offset
+    )
+    return {
+        "window": window.block,
+        "items": [analytics_seen_type_payload(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get(

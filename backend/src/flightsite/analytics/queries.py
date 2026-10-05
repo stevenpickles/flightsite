@@ -236,6 +236,45 @@ class GroupRank:
 
 
 @dataclass(frozen=True, slots=True)
+class WindowCounts:
+    """The four figures the Sightings page heads a window with (slice 098).
+
+    All four are live reads — no rollup stands between a sighting being
+    recorded and its being counted here — so the line agrees with the log
+    beneath it to the second.
+    """
+
+    sightings: int = 0
+    unique_aircraft: int = 0
+    #: Distinct ICAO type designators among the window's aircraft. An airframe
+    #: no registry gives a type is counted in ``unique_aircraft`` and in no type.
+    unique_types: int = 0
+    #: Airframes whose first-ever observation falls inside the window.
+    new_aircraft: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TypeSeen:
+    """One ICAO type designator heard in a window (slice 098)."""
+
+    type_code: str
+    #: Sightings of the type that started inside the window.
+    sightings: int
+    #: Distinct airframes of the type with such a sighting.
+    unique_aircraft: int
+    #: The receiver's first-ever observation of any airframe of the type.
+    first_seen_ms: int
+    #: The latest sighting start of the type inside the window.
+    last_seen_ms: int
+    #: True when that first-ever observation falls inside the window — a type
+    #: this receiver had never heard before it. Always false for a
+    #: whole-history window, where it would be true of everything.
+    new: bool = False
+    #: The long form behind the designator, as on :class:`GroupRank`.
+    description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class HourlyRow:
     """One UTC-hour bucket of ``GET /analytics/hourly`` (slice 097).
 
@@ -647,6 +686,260 @@ class AnalyticsQueries:
         if row is None:
             return None
         return local_hour(int(row[0]), self._zone)
+
+    # ------------------------------------------------- what a window held
+
+    async def window_counts(self, window: Window) -> WindowCounts:
+        """Sightings, distinct aircraft, distinct types and new aircraft.
+
+        The Sightings page's summary line (slice 098). Counted live rather
+        than summed from ``daily_stats``: the page lists sightings as they are
+        recorded, and a heading that trailed its own table by a rollup pass
+        would be the first thing a reader noticed.
+
+        The whole-history forms read ``aircraft`` alone — one row per airframe
+        ever heard — instead of scanning every sighting.
+        """
+        if window.empty:
+            return WindowCounts()
+        typed = AircraftMetadataResolved.type_code.is_not(None)
+        async with self._database.read_session() as session:
+            sightings = int(
+                await session.scalar(
+                    select(func.count()).select_from(Sighting).where(*self._range(window))
+                )
+                or 0
+            )
+            if window.whole_history:
+                types_statement = (
+                    select(func.count(func.distinct(AircraftMetadataResolved.type_code)))
+                    .select_from(Aircraft)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(typed)
+                )
+            else:
+                types_statement = (
+                    select(func.count(func.distinct(AircraftMetadataResolved.type_code)))
+                    .select_from(Sighting)
+                    .join(Aircraft, Aircraft.id == Sighting.aircraft_id)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(*self._range(window), typed)
+                )
+            unique_types = int(await session.scalar(types_statement) or 0)
+            new_aircraft = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Aircraft)
+                    .where(
+                        Aircraft.first_seen_ms >= window.start_ms,
+                        Aircraft.first_seen_ms < window.end_ms,
+                    )
+                )
+                or 0
+            )
+        return WindowCounts(
+            sightings=sightings,
+            unique_aircraft=await self.unique_aircraft(window),
+            unique_types=unique_types,
+            new_aircraft=new_aircraft,
+        )
+
+    async def aircraft_seen(
+        self,
+        window: Window,
+        *,
+        limit: int,
+        offset: int = 0,
+        type_code: str | None = None,
+    ) -> tuple[tuple[AircraftRank, ...], int]:
+        """Every distinct airframe heard in the window, most-sighted first.
+
+        :meth:`top_aircraft` without its ceiling: a page of the ranking and
+        the exact number of airframes it ranks, optionally narrowed to one
+        type designator. Over the whole history this is the ``aircraft`` table
+        itself — every discrete airframe this receiver has ever heard.
+
+        Returns:
+            ``(rows, total)``. ``sightings`` on each row is the count inside
+            the window; the lifetime total for a whole-history window.
+        """
+        if window.empty or limit < 1:
+            return (), 0
+        of_type = () if type_code is None else (AircraftMetadataResolved.type_code == type_code,)
+        async with self._database.read_session() as session:
+            if window.whole_history:
+                total_statement = select(func.count()).select_from(Aircraft)
+                if type_code is not None:
+                    total_statement = total_statement.join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    ).where(*of_type)
+                total = int(await session.scalar(total_statement) or 0)
+                statement = (
+                    _airframe_join(
+                        select(*_AIRFRAME_COLUMNS, Aircraft.sighting_count).select_from(Aircraft)
+                    )
+                    .where(*of_type)
+                    .order_by(Aircraft.sighting_count.desc(), Aircraft.icao24)
+                    .limit(limit)
+                    .offset(offset)
+                )
+                rows = (await session.execute(statement)).all()
+                return tuple(_rank(row, int(row.sighting_count)) for row in rows), total
+
+            counted = (
+                select(Sighting.aircraft_id, func.count().label("sightings"))
+                .where(*self._range(window))
+                .group_by(Sighting.aircraft_id)
+                .subquery()
+            )
+            ranked = select(counted.c.aircraft_id, counted.c.sightings)
+            total_statement = select(func.count()).select_from(counted)
+            if type_code is not None:
+                ranked = (
+                    ranked.join(Aircraft, Aircraft.id == counted.c.aircraft_id)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(*of_type)
+                )
+                total_statement = (
+                    total_statement.join(Aircraft, Aircraft.id == counted.c.aircraft_id)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(*of_type)
+                )
+            total = int(await session.scalar(total_statement) or 0)
+            page = (
+                await session.execute(
+                    ranked.order_by(counted.c.sightings.desc(), counted.c.aircraft_id)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).all()
+            if not page:
+                return (), total
+            counts = {int(row[0]): int(row[1]) for row in page}
+            detail = await self._airframes(session, counts)
+        return (
+            tuple(
+                _rank(detail[aircraft_id], count)
+                for aircraft_id, count in counts.items()
+                if aircraft_id in detail
+            ),
+            total,
+        )
+
+    async def types_seen(
+        self, window: Window, *, limit: int, offset: int = 0
+    ) -> tuple[tuple[TypeSeen, ...], int]:
+        """Every distinct type designator heard in the window, busiest first.
+
+        Counted live from ``sightings`` for a bounded window. Over the whole
+        history it is grouped from ``aircraft`` — one row per airframe, each
+        already carrying its lifetime sighting count and first/last seen — so
+        "every type this receiver has ever heard" costs a pass over the
+        airframes rather than over every sighting, and depends on no rollup.
+
+        An airframe no registry gives a type belongs to no row here.
+        """
+        if window.empty or limit < 1:
+            return (), 0
+        type_column = AircraftMetadataResolved.type_code
+        async with self._database.read_session() as session:
+            if window.whole_history:
+                sightings_sum = func.sum(Aircraft.sighting_count)
+                grouped = (
+                    select(
+                        type_column,
+                        sightings_sum.label("sightings"),
+                        func.count().label("unique_aircraft"),
+                        func.min(Aircraft.first_seen_ms).label("first_ms"),
+                        func.max(Aircraft.last_seen_ms).label("last_ms"),
+                    )
+                    .select_from(Aircraft)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(type_column.is_not(None))
+                    .group_by(type_column)
+                )
+                order = (sightings_sum.desc(), type_column)
+            else:
+                sightings_count = func.count()
+                grouped = (
+                    select(
+                        type_column,
+                        sightings_count.label("sightings"),
+                        func.count(func.distinct(Sighting.aircraft_id)).label("unique_aircraft"),
+                        func.min(Sighting.started_ms).label("first_ms"),
+                        func.max(Sighting.started_ms).label("last_ms"),
+                    )
+                    .select_from(Sighting)
+                    .join(Aircraft, Aircraft.id == Sighting.aircraft_id)
+                    .join(
+                        AircraftMetadataResolved,
+                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                    )
+                    .where(*self._range(window), type_column.is_not(None))
+                    .group_by(type_column)
+                )
+                order = (sightings_count.desc(), type_column)
+            total = int(
+                await session.scalar(select(func.count()).select_from(grouped.subquery())) or 0
+            )
+            page = (
+                await session.execute(grouped.order_by(*order).limit(limit).offset(offset))
+            ).all()
+            if not page:
+                return (), total
+            codes = [str(row[0]) for row in page]
+            lifetime_first: dict[str, int] = {}
+            if not window.whole_history:
+                # When the receiver first heard each of the page's types, at
+                # all: what makes a type "new" in this window.
+                lifetime_first = {
+                    str(code): int(first)
+                    for code, first in (
+                        await session.execute(
+                            select(type_column, func.min(Aircraft.first_seen_ms))
+                            .select_from(Aircraft)
+                            .join(
+                                AircraftMetadataResolved,
+                                AircraftMetadataResolved.icao24 == Aircraft.icao24,
+                            )
+                            .where(type_column.in_(codes))
+                            .group_by(type_column)
+                        )
+                    ).all()
+                }
+        described = await self._type_descriptions(codes)
+        seen: list[TypeSeen] = []
+        for row in page:
+            code = str(row[0])
+            first_ms = min(lifetime_first.get(code, int(row.first_ms)), int(row.first_ms))
+            seen.append(
+                TypeSeen(
+                    type_code=code,
+                    sightings=int(row.sightings or 0),
+                    unique_aircraft=int(row.unique_aircraft),
+                    first_seen_ms=first_ms,
+                    last_seen_ms=int(row.last_ms),
+                    new=not window.whole_history and first_ms >= window.start_ms,
+                    description=described.get(code),
+                )
+            )
+        return tuple(seen), total
 
     # --------------------------------------------------------------- hourly
 
@@ -1084,4 +1377,6 @@ __all__ = [
     "RareType",
     "Rarity",
     "Summary",
+    "TypeSeen",
+    "WindowCounts",
 ]
