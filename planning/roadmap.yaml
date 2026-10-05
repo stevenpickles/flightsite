@@ -2996,7 +2996,7 @@ slices:
     title: "Sortable Sightings headers and a single page scrollbar"
     phase: 9
     branch: "100-sightings-sorting"
-    status: in_progress
+    status: merged
     depends_on: ["098", "099"]
     objective: "Let every column of the Sightings page's three lists order its list, ascending or descending (§57), and remove the second vertical scrollbar the Analytics page grew."
     scope:
@@ -3005,7 +3005,7 @@ slices:
       - "fix: `<main>` becomes the containing block of its content, so the screen-reader-only chart summaries (absolutely positioned) no longer stretch the document and give it a scrollbar of its own beside `<main>`'s on Analytics, Receiver and Feeders"
     out_of_scope:
       - "sorting the log by Classification or Status"
-      - "indexes for the new `/sightings` sort keys (they sort the selected window; measuring them over a multi-year T0 window is tracked separately)"
+      - "indexes for the new `/sightings` sort keys (they sort the selected window; measuring them over a multi-year T0 window is issue #272)"
       - "sortable headers on the Aircraft and Activity pages beyond what they already have"
     acceptance_criteria:
       - "every header of the aircraft and type lists, and every header of the log but Classification and Status, sorts its list in both directions"
