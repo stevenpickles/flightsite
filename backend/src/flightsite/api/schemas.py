@@ -1069,10 +1069,37 @@ class AnalyticsRareType(_Model):
     """One locally rare type designator (receiver-relative, since T0)."""
 
     type: str
+    #: The long form behind the designator (slice 097), as on a top-types row.
+    description: str | None = None
     unique_aircraft: int
     total_sightings: int
     first_seen_at: IsoTimestamp
     last_seen_at: IsoTimestamp
+
+
+class AnalyticsHourlyRow(_Model):
+    """One UTC-hour bucket of a receiver-local day (slice 097).
+
+    The traffic counts are ``null`` only for an hour that has not begun; the
+    receiver figures are ``null`` where no hourly metrics row exists.
+    """
+
+    t: IsoTimestamp
+    #: The receiver-local hour the bucket begins in, 0-23.
+    hour: int = Field(ge=0, le=23)
+    sightings: int | None = None
+    unique_aircraft: int | None = None
+    messages: int | None = None
+    positions: int | None = None
+    max_range_nm: float | None = None
+
+
+class AnalyticsHourlyResponse(_Model):
+    """``GET /api/v1/analytics/hourly``."""
+
+    day: str
+    timezone: str
+    items: list[AnalyticsHourlyRow]
 
 
 class AnalyticsRarityResponse(_Model):
@@ -1819,6 +1846,8 @@ __all__ = [
     "AnalyticsDailyRow",
     "AnalyticsGroupResponse",
     "AnalyticsGroupRow",
+    "AnalyticsHourlyResponse",
+    "AnalyticsHourlyRow",
     "AnalyticsPresetLiteral",
     "AnalyticsRareType",
     "AnalyticsRarityResponse",

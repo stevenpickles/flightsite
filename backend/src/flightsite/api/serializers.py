@@ -132,7 +132,14 @@ from flightsite.airports.overlay import TYPE_SIZE_CLASSES
 from flightsite.airports.records import AirportRecord
 from flightsite.alerts.model import InterestingState, StoredAlertMatch
 from flightsite.analytics.bucketing import Window
-from flightsite.analytics.queries import AircraftRank, DailyRow, GroupRank, RareType, Summary
+from flightsite.analytics.queries import (
+    AircraftRank,
+    DailyRow,
+    GroupRank,
+    HourlyRow,
+    RareType,
+    Summary,
+)
 from flightsite.api.receiver_stats import CommonRecord, MostFrequentAircraft, SignalHistogram
 from flightsite.classification.vocabulary import Confidence, IconCategory, MissionCategory
 from flightsite.config import Settings
@@ -1280,10 +1287,24 @@ def analytics_group_payload(rank: GroupRank) -> dict[str, Any]:
     }
 
 
+def analytics_hourly_row_payload(row: HourlyRow) -> dict[str, Any]:
+    """One UTC-hour bucket of a receiver-local day — §3.7 ``hourly``."""
+    return {
+        "t": iso_utc(from_epoch_ms(row.hour_start_ms)),
+        "hour": row.hour,
+        "sightings": row.sightings,
+        "unique_aircraft": row.unique_aircraft,
+        "messages": row.messages,
+        "positions": row.positions,
+        "max_range_nm": _rounded(row.max_range_nm),
+    }
+
+
 def analytics_rare_type_payload(rare: RareType) -> dict[str, Any]:
     """One locally rare type designator."""
     return {
         "type": rare.type_code,
+        "description": rare.description,
         "unique_aircraft": rare.unique_aircraft,
         "total_sightings": rare.total_sightings,
         "first_seen_at": iso_utc(from_epoch_ms(rare.first_seen_ms)),
@@ -1398,6 +1419,7 @@ __all__ = [
     "analytics_aircraft_payload",
     "analytics_daily_row_payload",
     "analytics_group_payload",
+    "analytics_hourly_row_payload",
     "analytics_rare_type_payload",
     "analytics_summary_payload",
     "analytics_window_payload",

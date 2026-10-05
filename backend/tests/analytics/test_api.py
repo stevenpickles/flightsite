@@ -769,6 +769,59 @@ async def test_rarity_lists_airframes_seen_in_the_window_with_low_lifetime_count
     assert [row["icao"] for row in body["rare_aircraft"]] == ["a00002", "a00003"]
     assert body["rare_max_sightings"] == 2
     assert {row["type"] for row in body["rare_types"]} == {"B738", "C130"}
+    # A rare type carries its long-form name exactly as a top-types row does
+    # (slice 097), so the two tables can lead with it.
+    assert {row["type"]: row["description"] for row in body["rare_types"]} == {
+        "B738": "Boeing 737-800",
+        "C130": "Lockheed C-130",
+    }
+
+
+# ------------------------------------------------------------------ hourly
+
+
+async def test_hourly_defaults_to_the_receivers_local_today(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    await seed(harness)
+
+    body = await get(rest, "/api/v1/analytics/hourly")
+
+    assert body["day"] == harness.today
+    assert body["timezone"] == NEW_YORK
+    # A whole local day of UTC-hour buckets: 24, or 23/25 across a DST change.
+    assert len(body["items"]) in (23, 24, 25)
+    assert all(0 <= row["hour"] <= 23 for row in body["items"])
+    # The seed starts three sightings today, wherever in the day they fall.
+    assert sum(row["sightings"] or 0 for row in body["items"]) == 3
+
+
+async def test_hourly_serves_a_named_past_day_in_full(harness: Harness, rest: AsyncClient) -> None:
+    await seed(harness)
+
+    body = await get(rest, "/api/v1/analytics/hourly", day=harness.yesterday)
+
+    assert body["day"] == harness.yesterday
+    # Yesterday has fully elapsed: every bucket is a measurement, none is null.
+    assert all(row["sightings"] is not None for row in body["items"])
+    # The seed starts two sightings yesterday (a00001's first, and a00003's).
+    assert sum(row["sightings"] for row in body["items"]) == 2
+    assert sum(row["unique_aircraft"] for row in body["items"]) >= 2
+
+
+async def test_hourly_leaves_hours_that_have_not_begun_null(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    body = await get(rest, "/api/v1/analytics/hourly", day=shift_days(harness.today, 1))
+
+    assert body["items"], "tomorrow still lays out its buckets"
+    assert all(row["sightings"] is None and row["unique_aircraft"] is None for row in body["items"])
+
+
+async def test_hourly_rejects_a_day_that_is_not_a_date(rest: AsyncClient) -> None:
+    response = await rest.get("/api/v1/analytics/hourly", params={"day": "yesterday"})
+
+    assert response.status_code == 422
 
 
 async def test_the_rare_threshold_is_a_documented_parameter(

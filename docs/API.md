@@ -681,6 +681,7 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/top-operators` | Most common operators / groups. |
 | `GET /api/v1/analytics/classification-activity` | Military/government/police activity over time. |
 | `GET /api/v1/analytics/daily` | Daily aircraft count, sighting count, new-aircraft count, max range per day. |
+| `GET /api/v1/analytics/hourly` | One receiver-local day, hour by hour (slice 097). Param: `day=YYYY-MM-DD` (default: today in the receiver's timezone). Takes no `preset`. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 
 **"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
@@ -763,6 +764,49 @@ plus `owner` (slice 095): the registry owner where a source released one — the
 registrant for a US tail — and `null` otherwise. It is the fallback for "who flies
 it" when `operator` is unknown, and is as often a leasing trust or a bank as an
 airline, which is why it is a separate field rather than folded into `operator`.
+
+**`hourly` is one day at the resolution that shows its shape** (slice 097). A
+window of a single day gives the day-granular series exactly one point, which is
+no chart; the Analytics page asks for this instead.
+
+```jsonc
+// GET /api/v1/analytics/hourly?day=2026-10-05
+{
+  "day": "2026-10-05", "timezone": "America/New_York",
+  "items": [
+    { "t": "2026-10-05T04:00:00.000Z", "hour": 0,       // 00:00 local
+      "sightings": 3, "unique_aircraft": 2,
+      "messages": 41000, "positions": 3200, "max_range_nm": 188.2 },
+    { "t": "2026-10-05T05:00:00.000Z", "hour": 1,       // a quiet hour
+      "sightings": 0, "unique_aircraft": 0,
+      "messages": 12000, "positions": 900, "max_range_nm": null },
+    { "t": "2026-10-05T23:00:00.000Z", "hour": 19,      // not begun yet
+      "sightings": null, "unique_aircraft": null,
+      "messages": null, "positions": null, "max_range_nm": null }
+  ]
+}
+```
+
+- Buckets are **UTC hours** — the key of `receiver_metrics_hourly` — that begin
+  inside the local day, each carrying the local `hour` (0–23) it begins in. That
+  is the day's 24 local hours in a whole-hour zone; 23 or 25 across a DST change,
+  where a fall-back day names one hour twice. In a half-hour zone the bucket
+  straddling local midnight belongs to the day it begins in.
+- **Every bucket of the day is returned**, so a client can lay out the whole day
+  and fill it as it happens.
+- `sightings` counts sightings that **started** in the hour, so a day's buckets
+  sum to its sighting count. `unique_aircraft` is the distinct aircraft with a
+  sighting **overlapping** the hour — "heard this hour" — and is therefore not
+  additive: an aircraft overhead from 09:50 to 10:10 is one aircraft in each hour.
+- Both are live reads over `sightings`: a real number, zero included, for every
+  hour that has begun, and `null` only for an hour still in the future.
+- `messages`, `positions` and `max_range_nm` come from the hourly receiver
+  metrics and are `null` where that table has no row — before recording started,
+  or an hour the receiver was not running — never `0`.
+
+A `rarity` response's `rare_types` rows carry `description` (slice 097), the same
+long-form type name a `top-types` row does, `null` when no imported airframe of
+the type carries a model.
 
 ### 3.9 Receiver statistics — slices 033/034
 
