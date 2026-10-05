@@ -45,7 +45,8 @@ export function NeverSeenBeforeCard({
       };
       return {
         color: [theme.series[0]],
-        grid: { left: 8, right: 16, top: 16, bottom: 24, containLabel: true },
+        // `top` leaves room for the axis name above the plot.
+        grid: { left: 8, right: 16, top: 32, bottom: 24, containLabel: true },
         tooltip: {
           trigger: "axis" as const,
           axisPointer: { type: "shadow" as const },

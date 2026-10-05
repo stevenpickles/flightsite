@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Final, get_args
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -29,6 +30,7 @@ from fastapi.responses import JSONResponse
 from flightsite import __version__
 from flightsite.airports.overlay import BboxError, parse_bbox
 from flightsite.analytics.bucketing import Preset, Window
+from flightsite.analytics.bucketing import local_day as analytics_local_day
 from flightsite.analytics.queries import (
     DEFAULT_RARE_MAX_SIGHTINGS,
     DEFAULT_TOP_LIMIT,
@@ -67,6 +69,7 @@ from flightsite.api.schemas import (
     AnalyticsClassificationResponse,
     AnalyticsDailyResponse,
     AnalyticsGroupResponse,
+    AnalyticsHourlyResponse,
     AnalyticsPresetLiteral,
     AnalyticsRarityResponse,
     AnalyticsSummaryResponse,
@@ -98,6 +101,7 @@ from flightsite.api.serializers import (
     analytics_aircraft_payload,
     analytics_daily_row_payload,
     analytics_group_payload,
+    analytics_hourly_row_payload,
     analytics_rare_type_payload,
     analytics_summary_payload,
 )
@@ -1017,6 +1021,44 @@ async def analytics_daily(request: Request, window: WindowParams) -> dict[str, A
     """
     rows = await _context(request).analytics.daily(window.window)
     return {"window": window.block, "items": [analytics_daily_row_payload(row) for row in rows]}
+
+
+@router.get(
+    "/analytics/hourly",
+    response_model=AnalyticsHourlyResponse,
+    tags=["analytics"],
+    summary="One receiver-local day, hour by hour",
+)
+async def analytics_hourly(
+    request: Request,
+    day: Annotated[
+        date | None,
+        Query(
+            description=(
+                "Receiver-local calendar date, `YYYY-MM-DD`. Defaults to today "
+                "in the receiver's timezone."
+            )
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Sightings, aircraft heard, messages, positions and max range per hour.
+
+    The day-granular analytics series have one point to draw when the window is
+    a single day; this is that day at hourly resolution (slice 097). Every
+    bucket of the day is returned — the ones that have not begun with `null`
+    counts — so a client can lay out the whole day and fill it as it happens.
+    """
+    context = _context(request)
+    now_ms = utc_now_ms()
+    queries = context.analytics
+    local = analytics_local_day(now_ms, ZoneInfo(context.settings.timezone))
+    resolved = local if day is None else day.isoformat()
+    rows = await queries.hourly(resolved, now_ms=now_ms)
+    return {
+        "day": resolved,
+        "timezone": context.settings.timezone,
+        "items": [analytics_hourly_row_payload(row) for row in rows],
+    }
 
 
 @router.get(

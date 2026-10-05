@@ -59,11 +59,14 @@ describe("AnalyticsPage", () => {
       await screen.findByRole("heading", { level: 1, name: "Analytics" }),
     ).toBeInTheDocument();
 
-    const emptyStates = await screen.findAllByText("No data for this window.");
     // classification, daily counts, max distance, receiver activity, never
     // seen before — every chart card. The three "Top …" rankings are tables
-    // since slice 095 and say what is missing in their own words.
-    expect(emptyStates.length).toBe(5);
+    // since slice 095 and say what is missing in their own words. Waited
+    // for rather than counted on first sight: over this one-day window
+    // three of the five settle only after the hourly breakdown answers.
+    await waitFor(() => {
+      expect(screen.getAllByText("No data for this window.")).toHaveLength(5);
+    });
     expect(
       screen.getByText("No aircraft sighted in this window."),
     ).toBeInTheDocument();
@@ -97,6 +100,95 @@ describe("AnalyticsPage", () => {
       within(table).getByText("United States Air Force"),
     ).toBeInTheDocument();
     expect(within(table).getByText("12")).toBeInTheDocument();
+  });
+
+  it("draws a single-day window hour by hour (slice 097)", async () => {
+    // The mock's window is one receiver-local day, so the page asks for the
+    // hourly breakdown of exactly that day and the three daily time-series
+    // cards switch to it.
+    const { fetchMock } = installAnalyticsApiMock({
+      hourly: {
+        day: "2026-08-31",
+        timezone: "America/Los_Angeles",
+        items: [
+          {
+            t: "2026-08-31T07:00:00.000Z",
+            hour: 0,
+            sightings: 2,
+            unique_aircraft: 2,
+            messages: 41000,
+            positions: 3200,
+            max_range_nm: 188.2,
+          },
+          {
+            t: "2026-08-31T08:00:00.000Z",
+            hour: 1,
+            sightings: null,
+            unique_aircraft: null,
+            messages: null,
+            positions: null,
+            max_range_nm: null,
+          },
+        ],
+      },
+    });
+    renderAnalyticsPage();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Aircraft & sightings by hour",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("img", {
+        name: "Aircraft and sightings by hour, bar chart",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", {
+        name: "Maximum detection distance by hour, line chart",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", {
+        name: "Receiver messages and positions by hour, line chart",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/00:00 — 2 aircraft, 2 sightings/),
+    ).toBeInTheDocument();
+
+    const hourlyCalls = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("/api/v1/analytics/hourly"));
+    expect(hourlyCalls.length).toBeGreaterThan(0);
+    expect(hourlyCalls.every((url) => url.includes("day=2026-08-31"))).toBe(
+      true,
+    );
+  });
+
+  it("keeps daily lines, and asks for no hourly breakdown, over a multi-day window", async () => {
+    const week = {
+      ...analyticsWindow("7d"),
+      first_day: "2026-08-25",
+      last_day: "2026-08-31",
+    };
+    const { fetchMock } = installAnalyticsApiMock({
+      daily: { window: week, items: [] },
+    });
+    renderAnalyticsPage("/analytics?preset=7d");
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Daily aircraft & sighting counts",
+      }),
+    ).toBeInTheDocument();
+    await screen.findAllByText("No data for this window.");
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/api/v1/analytics/hourly"),
+      ),
+    ).toBe(false);
   });
 
   it("defaults to the today preset and persists a change to the URL", async () => {

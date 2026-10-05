@@ -53,7 +53,9 @@ export function ClassificationActivityCard({
           top: 0,
           textStyle: { color: theme.mutedInk },
         },
-        grid: { left: 8, right: 16, top: 32, bottom: 24, containLabel: true },
+        // `top` clears the three-item legend, which is wide enough to run
+        // over the axis name when both share one row.
+        grid: { left: 8, right: 16, top: 52, bottom: 24, containLabel: true },
         tooltip: {
           trigger: "axis" as const,
           valueFormatter: (value: unknown) =>

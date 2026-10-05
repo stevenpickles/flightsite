@@ -57,7 +57,7 @@ from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flightsite.activity.model import ActivityEventType
-from flightsite.analytics.bucketing import Window, day_start_ms, local_hour
+from flightsite.analytics.bucketing import Window, day_bounds_ms, day_start_ms, local_hour
 from flightsite.db import (
     ActivityEvent,
     Aircraft,
@@ -88,6 +88,15 @@ DEFAULT_RARE_MAX_SIGHTINGS: Final = 2
 
 #: Airframes at or below which a type designator reads as locally rare.
 DEFAULT_RARE_MAX_TYPE_AIRCRAFT: Final = 2
+
+_MS_PER_HOUR: Final = 3_600_000
+
+#: How far before a day's first hour a sighting may have started and still be
+#: counted as overlapping it (:meth:`AnalyticsQueries.hourly`). A sighting
+#: closes after ten quiet minutes, so one that has run for a whole day is not
+#: a thing that happens; the bound exists to keep the read an index range over
+#: ``ix_sightings_started`` rather than a scan of every sighting before the day.
+_HOURLY_SIGHTING_LOOKBACK_MS: Final = 24 * _MS_PER_HOUR
 
 #: SPEC §59's "new milestones/records" — the ``activity_events`` types that
 #: are, per :mod:`flightsite.activity.model`, either a milestone (fires once)
@@ -227,6 +236,33 @@ class GroupRank:
 
 
 @dataclass(frozen=True, slots=True)
+class HourlyRow:
+    """One UTC-hour bucket of ``GET /analytics/hourly`` (slice 097).
+
+    The traffic counts are live reads over ``sightings`` and are therefore
+    real numbers for every hour that has begun — a zero is a measurement —
+    and ``None`` only for an hour still in the future. The receiver figures
+    come from slice 033's ``receiver_metrics_hourly`` and are ``None`` where
+    that table has no row: before recording started, or an hour the receiver
+    was not running.
+    """
+
+    hour_start_ms: int
+    #: The receiver-local hour the bucket begins in, ``0``-``23``.
+    hour: int
+    #: Sightings that *started* in the hour, so a day's buckets sum to its
+    #: sighting count.
+    sightings: int | None = None
+    #: Distinct airframes with a sighting overlapping the hour — "aircraft
+    #: heard this hour". Not additive across hours: an aircraft overhead from
+    #: 09:50 to 10:10 is one aircraft in each.
+    unique_aircraft: int | None = None
+    messages: int | None = None
+    positions: int | None = None
+    max_range_nm: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RareType:
     """One locally rare type designator."""
 
@@ -235,6 +271,10 @@ class RareType:
     total_sightings: int
     first_seen_ms: int
     last_seen_ms: int
+    #: The long form behind the designator, derived exactly as
+    #: :attr:`GroupRank.description` is; ``None`` when no imported airframe of
+    #: the type carries a model (slice 097).
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,6 +648,97 @@ class AnalyticsQueries:
             return None
         return local_hour(int(row[0]), self._zone)
 
+    # --------------------------------------------------------------- hourly
+
+    async def hourly(self, day: str, *, now_ms: int) -> tuple[HourlyRow, ...]:
+        """One receiver-local day, hour by hour (slice 097).
+
+        The Analytics page's day-granular charts have a single point to draw
+        when the window is one day, which is no chart at all; this is the same
+        day at the resolution that shows its shape.
+
+        Buckets are **UTC hours** — the key of ``receiver_metrics_hourly``
+        (§6.2) — that begin inside the local day, each labelled with the local
+        hour it begins in. In a zone whose offset is a whole number of hours
+        that is exactly the day's 24 (or, across a DST change, 23 or 25) local
+        hours. In a half-hour zone the bucket straddling local midnight at the
+        start of the day belongs to the day before, by the same rule
+        :meth:`_busiest_hour_today` applies, and for the same reason: a bucket
+        that spans two local days is attributed to the one it begins in.
+
+        Every bucket of the day is returned, the future ones with ``None``
+        counts, so a chart can lay out the whole day and fill it as it happens.
+        """
+        start_ms, end_ms = day_bounds_ms(day, self._zone)
+        first_ms = -(-start_ms // _MS_PER_HOUR) * _MS_PER_HOUR
+        buckets = range(first_ms, end_ms, _MS_PER_HOUR)
+        if not buckets:
+            return ()
+        last_end_ms = buckets[-1] + _MS_PER_HOUR
+
+        started = [0] * len(buckets)
+        heard: list[set[int]] = [set() for _ in buckets]
+        async with self._database.read_session() as session:
+            sightings = (
+                await session.execute(
+                    select(Sighting.aircraft_id, Sighting.started_ms, Sighting.ended_ms).where(
+                        Sighting.started_ms >= first_ms - _HOURLY_SIGHTING_LOOKBACK_MS,
+                        Sighting.started_ms < last_end_ms,
+                    )
+                )
+            ).all()
+            receiver = {
+                int(row.hour_start_ms): row
+                for row in (
+                    await session.execute(
+                        select(
+                            ReceiverMetricHourly.hour_start_ms,
+                            ReceiverMetricHourly.messages_total,
+                            ReceiverMetricHourly.positions_total,
+                            ReceiverMetricHourly.max_range_nm,
+                        ).where(
+                            ReceiverMetricHourly.hour_start_ms >= first_ms,
+                            ReceiverMetricHourly.hour_start_ms < last_end_ms,
+                        )
+                    )
+                ).all()
+            }
+
+        for aircraft_id, sighting_start, sighting_end in sightings:
+            # An open sighting is still being heard: it runs to now.
+            until_ms = now_ms if sighting_end is None else int(sighting_end)
+            if until_ms < first_ms:
+                continue
+            if first_ms <= sighting_start < last_end_ms:
+                started[(int(sighting_start) - first_ms) // _MS_PER_HOUR] += 1
+            lo = max(int(sighting_start), first_ms)
+            hi = min(until_ms, last_end_ms - 1)
+            for index in range(
+                (lo - first_ms) // _MS_PER_HOUR, (hi - first_ms) // _MS_PER_HOUR + 1
+            ):
+                heard[index].add(int(aircraft_id))
+
+        rows: list[HourlyRow] = []
+        for index, bucket_ms in enumerate(buckets):
+            begun = bucket_ms <= now_ms
+            metrics = receiver.get(bucket_ms)
+            rows.append(
+                HourlyRow(
+                    hour_start_ms=bucket_ms,
+                    hour=local_hour(bucket_ms, self._zone),
+                    sightings=started[index] if begun else None,
+                    unique_aircraft=len(heard[index]) if begun else None,
+                    messages=None if metrics is None else metrics.messages_total,
+                    positions=None if metrics is None else metrics.positions_total,
+                    max_range_nm=(
+                        None
+                        if metrics is None or metrics.max_range_nm is None
+                        else float(metrics.max_range_nm)
+                    ),
+                )
+            )
+        return tuple(rows)
+
     # --------------------------------------------------------- top aircraft
 
     async def top_aircraft(
@@ -908,6 +1039,7 @@ class AnalyticsQueries:
                     .limit(max(limit, 0))
                 )
             ).all()
+        described = await self._type_descriptions([str(row.type_code) for row in type_rows])
         return Rarity(
             never_seen_before=never_seen,
             rare_aircraft=tuple(_rank(row, int(row.sighting_count)) for row in rare_rows),
@@ -918,6 +1050,7 @@ class AnalyticsQueries:
                     total_sightings=int(row.total_sightings),
                     first_seen_ms=int(row.first_seen_ms),
                     last_seen_ms=int(row.last_seen_ms),
+                    description=described.get(str(row.type_code)),
                 )
                 for row in type_rows
             ),
@@ -947,6 +1080,7 @@ __all__ = [
     "ClassificationActivity",
     "DailyRow",
     "GroupRank",
+    "HourlyRow",
     "RareType",
     "Rarity",
     "Summary",

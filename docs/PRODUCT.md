@@ -186,7 +186,17 @@ designator beneath, who flies it — the operator, else the registered owner lab
 as such, else the operator group — and the sighting count; Top types leads with the
 long-form type name over its designator and gives distinct airframes and sightings;
 Top operators the same for operator groups. Long names truncate with the full text
-on hover rather than widening the card.
+on hover rather than widening the card. The Locally rare card lists its rare aircraft
+and rare types in the same two formats, side by side across the page's full width
+(slice 097).
+
+Over a single-day window (the Today preset) the three day-granular time series —
+aircraft & sighting counts, maximum detection distance, receiver activity — are drawn
+hour by hour across that day rather than as one point: sightings started and aircraft
+heard per hour as bars, the farthest detection and the message/position counts per
+hour as lines. Hours that have not begun are empty, not zero. Every line shows its
+point markers when it has few enough points for them to be legible, so a sparse
+series is never an empty plot.
 
 ### 4.7 Receiver Page (§60–§64, §67)
 
