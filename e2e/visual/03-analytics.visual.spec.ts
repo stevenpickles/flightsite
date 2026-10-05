@@ -29,7 +29,7 @@ import { VISUAL_THEMES } from "./support/stabilize";
 
 /** Tall enough for all three rows of the card grid without scrolling —
  * see `expectFitsWithoutScrolling`, which fails the run if it stops being. */
-const VIEWPORT_HEIGHT = 2100;
+const VIEWPORT_HEIGHT = 2150;
 
 for (const theme of VISUAL_THEMES) {
   test(`analytics — ${theme}`, async ({ page }) => {
