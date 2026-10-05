@@ -2962,6 +2962,36 @@ slices:
     risk_level: medium
     notes: "Owner request of 2026-10-05; design chosen by the owner from three options (presets + Group by, with the summary line). Ships in v0.13.0."
 
+  - id: "099"
+    title: "Analytics today view: classification and never-seen-before by hour"
+    phase: 9
+    branch: "099-analytics-hourly-classification"
+    status: merged
+    depends_on: ["097", "098"]
+    objective: "Finish slice 097's Today view: the two bar cards it left alone — military/government/police activity and never seen before — drew one bar for the whole day beside three cards drawn hour by hour. Draw them by the hour too, on the same axis (§58)."
+    scope:
+      - "backend: `analytics/hourly` rows gain `military`, `government`, `law_enforcement` (sightings started in the hour, by airframe classification) and `new_aircraft` (airframes first ever heard in the hour); live reads, null for hours not begun; no migration"
+      - "frontend: ClassificationActivityCard and NeverSeenBeforeCard take the hourly breakdown when the window is one day — stacked bars per hour, and bars per hour — and tolerate a payload without the new fields"
+      - "visual suite: fixtures re-recorded for the new fields and every baseline retaken"
+    out_of_scope:
+      - "hourly views for multi-day windows"
+      - "an 'interesting' series per hour"
+    acceptance_criteria:
+      - "on the Today preset all five day-granular time-series cards share the hour axis"
+      - "the per-hour classification figures sum to the day's classification-activity totals, and the per-hour new aircraft to the day's never-seen-before"
+      - "a sighting is counted in the hour it started, once, however long it ran"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken baselines"
+    required_tests: [hourly query classification and new-aircraft cases, hourly-vs-daily agreement, card hourly modes incl. legacy payload, AnalyticsPage single-day, visual baselines]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_hourly.py
+      - frontend/src/features/analytics/components/cards/ClassificationActivityCard.tsx
+      - frontend/src/features/analytics/components/cards/NeverSeenBeforeCard.tsx
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback of 2026-10-05 on the review stack: the two cards 'should [be the] same style' as the three hourly ones. Stacked on 098; ships in v0.13.0."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
