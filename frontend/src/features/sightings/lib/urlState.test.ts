@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { MAX_SEARCH_LENGTH } from "@/features/history/lib/search";
 import {
+  DEFAULT_SORT_BY_GROUP,
   DEFAULT_TABLE_STATE,
+  SORT_KEYS_BY_GROUP,
   defaultPresetFor,
+  firstOrderFor,
   parseSightingsTableState,
   serializeSightingsTableState,
   type SightingsTableState,
@@ -20,13 +23,13 @@ describe("parseSightingsTableState", () => {
 
   it("reads a fully-specified query string", () => {
     const params = new URLSearchParams(
-      "preset=30d&group=aircraft&sort=duration_s&order=asc&page=3&icao=ae1463&open=true&type=b738",
+      "preset=30d&group=aircraft&sort=first_seen&order=asc&page=3&icao=ae1463&open=true&type=b738",
     );
 
     expect(parseSightingsTableState(params)).toEqual({
       preset: "30d",
       group: "aircraft",
-      sort: "duration_s",
+      sort: "first_seen",
       order: "asc",
       page: 3,
       icao: "ae1463",
@@ -181,9 +184,110 @@ describe("the grouping and its type filter (slice 098)", () => {
     const params = serializeSightingsTableState({
       ...DEFAULT_TABLE_STATE,
       group: "aircraft",
+      sort: DEFAULT_SORT_BY_GROUP.aircraft,
       type: "B738",
     });
     expect(params.toString()).toBe("group=aircraft&type=B738");
+  });
+});
+
+describe("each grouping's own sort (slice 100)", () => {
+  it("defaults the log to newest first and the two lists to busiest first", () => {
+    expect(DEFAULT_SORT_BY_GROUP).toEqual({
+      sightings: "started_at",
+      aircraft: "sightings",
+      types: "sightings",
+    });
+    expect(
+      parseSightingsTableState(new URLSearchParams("group=aircraft")).sort,
+    ).toBe("sightings");
+    expect(
+      parseSightingsTableState(new URLSearchParams("group=types")).sort,
+    ).toBe("sightings");
+  });
+
+  it("accepts every key of the grouping the URL names", () => {
+    for (const group of ["sightings", "aircraft", "types"] as const) {
+      for (const sort of SORT_KEYS_BY_GROUP[group]) {
+        expect(
+          parseSightingsTableState(new URLSearchParams({ group, sort })).sort,
+        ).toBe(sort);
+      }
+    }
+  });
+
+  it("falls back to the grouping's default for another grouping's key", () => {
+    // `duration_s` orders the log; the aircraft list has no such column, and
+    // its endpoint would reject it.
+    expect(
+      parseSightingsTableState(
+        new URLSearchParams("group=aircraft&sort=duration_s"),
+      ).sort,
+    ).toBe("sightings");
+    expect(
+      parseSightingsTableState(
+        new URLSearchParams("group=types&sort=registration"),
+      ).sort,
+    ).toBe("sightings");
+    expect(
+      parseSightingsTableState(new URLSearchParams("sort=sightings")).sort,
+    ).toBe("started_at");
+  });
+
+  it("offers the log every column the API can order by", () => {
+    expect(SORT_KEYS_BY_GROUP.sightings).toEqual([
+      "started_at",
+      "ended_at",
+      "duration_s",
+      "tail",
+      "aircraft_type",
+      "operator",
+      "closest_approach_nm",
+      "max_range_nm",
+      "lowest_altitude_ft",
+      "highest_altitude_ft",
+      "position_count",
+    ]);
+  });
+
+  it("writes a grouping's sort only when it is not that grouping's default", () => {
+    const write = (patch: Partial<SightingsTableState>) =>
+      serializeSightingsTableState({ ...DEFAULT_TABLE_STATE, ...patch });
+
+    expect(write({ group: "aircraft", sort: "sightings" }).has("sort")).toBe(
+      false,
+    );
+    expect(
+      write({ group: "aircraft", sort: "operator", order: "asc" }).toString(),
+    ).toBe("group=aircraft&sort=operator&order=asc");
+    expect(
+      write({ group: "types", sort: "type", order: "asc" }).toString(),
+    ).toBe("group=types&sort=type&order=asc");
+  });
+
+  it("sorts words A to Z on a first click and everything else largest first", () => {
+    for (const sort of [
+      "tail",
+      "aircraft_type",
+      "operator",
+      "registration",
+      "type",
+    ] as const) {
+      expect(firstOrderFor(sort)).toBe("asc");
+    }
+    for (const sort of [
+      "started_at",
+      "ended_at",
+      "duration_s",
+      "max_range_nm",
+      "position_count",
+      "sightings",
+      "aircraft",
+      "first_seen",
+      "last_seen",
+    ] as const) {
+      expect(firstOrderFor(sort)).toBe("desc");
+    }
   });
 });
 
@@ -207,7 +311,7 @@ describe("serializeSightingsTableState", () => {
     const state: SightingsTableState = {
       preset: "ytd",
       group: "aircraft",
-      sort: "max_range_nm",
+      sort: "operator",
       order: "asc",
       page: 2,
       icao: "ae1463",

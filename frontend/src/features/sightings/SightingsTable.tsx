@@ -15,6 +15,7 @@ import {
   formatAltitude,
   formatDistance,
 } from "@/features/aircraft-detail/lib/format";
+import { SortableHeader } from "@/features/history/components/SortableHeader";
 import { TableScroller } from "@/features/history/components/TableScroller";
 import {
   columnClasses,
@@ -56,7 +57,7 @@ interface Column extends PrioritizedColumn {
  */
 const COLUMNS: readonly Column[] = [
   { key: "started_at", label: "Start", sortKey: "started_at" },
-  { key: "ended_at", label: "End" },
+  { key: "ended_at", label: "End", sortKey: "ended_at" },
   {
     key: "duration_s",
     label: "Duration",
@@ -64,9 +65,9 @@ const COLUMNS: readonly Column[] = [
     align: "right",
     showFrom: "sm",
   },
-  { key: "tail", label: "Tail / callsign" },
-  { key: "type", label: "Type", showFrom: "md" },
-  { key: "operator", label: "Operator", showFrom: "lg" },
+  { key: "tail", label: "Tail / callsign", sortKey: "tail" },
+  { key: "type", label: "Type", sortKey: "aircraft_type", showFrom: "md" },
+  { key: "operator", label: "Operator", sortKey: "operator", showFrom: "lg" },
   { key: "classification", label: "Classification", showFrom: "2xl" },
   {
     key: "closest_approach_nm",
@@ -85,18 +86,21 @@ const COLUMNS: readonly Column[] = [
   {
     key: "lowest_altitude_ft",
     label: "Lowest alt.",
+    sortKey: "lowest_altitude_ft",
     align: "right",
     showFrom: "2xl",
   },
   {
     key: "highest_altitude_ft",
     label: "Highest alt.",
+    sortKey: "highest_altitude_ft",
     align: "right",
     showFrom: "2xl",
   },
   {
     key: "position_count",
     label: "Positions",
+    sortKey: "position_count",
     align: "right",
     showFrom: "2xl",
   },
@@ -143,50 +147,18 @@ export function SightingsTable({
         </caption>
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-            {COLUMNS.map((column) => {
-              const active =
-                column.sortKey !== undefined && column.sortKey === sort;
-              return (
-                <th
-                  key={column.key}
-                  scope="col"
-                  aria-sort={
-                    active
-                      ? order === "asc"
-                        ? "ascending"
-                        : "descending"
-                      : "none"
-                  }
-                  className={cn(
-                    "px-3 py-2 font-semibold",
-                    columnVisibilityClass(column),
-                  )}
-                >
-                  {column.sortKey === undefined ? (
-                    column.label
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onSortChange(column.sortKey as SightingSortKey)
-                      }
-                      className={cn(
-                        "inline-flex items-center gap-1 outline-none hover:text-foreground",
-                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                        active && "text-foreground",
-                      )}
-                    >
-                      {column.label}
-                      {active && (
-                        <span aria-hidden="true">
-                          {order === "asc" ? "▲" : "▼"}
-                        </span>
-                      )}
-                    </button>
-                  )}
-                </th>
-              );
-            })}
+            {COLUMNS.map((column) => (
+              <SortableHeader
+                key={column.key}
+                sortKey={column.sortKey}
+                sort={sort}
+                order={order}
+                onSortChange={onSortChange}
+                className={columnVisibilityClass(column)}
+              >
+                {column.label}
+              </SortableHeader>
+            ))}
           </tr>
         </thead>
         <tbody>

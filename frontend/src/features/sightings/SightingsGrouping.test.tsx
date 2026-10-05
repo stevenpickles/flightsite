@@ -537,3 +537,201 @@ describe("the log within a window", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("sorting by a column header (slice 100)", () => {
+  /** The header cell for `name` in the table on screen. */
+  function header(name: string): HTMLElement {
+    return screen.getByRole("columnheader", { name: new RegExp(`^${name}`) });
+  }
+
+  it("sorts the aircraft list by any header, and reverses on a second click", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = installSightingsApiMock({
+      seenAircraft: [seenAircraftRow()],
+    });
+    const { router } = renderApp("/sightings?group=aircraft");
+    await screen.findByTestId("seen-aircraft-row");
+
+    // Busiest first until a header is clicked, and the table says so.
+    expect(header("Sightings")).toHaveAttribute("aria-sort", "descending");
+    expect(header("Operator")).toHaveAttribute("aria-sort", "none");
+    const first = lastRequestTo(fetchMock, "/api/v1/analytics/aircraft");
+    expect(first.searchParams.get("sort")).toBe("sightings");
+    expect(first.searchParams.get("order")).toBe("desc");
+
+    // Words read A to Z on the first click...
+    await user.click(within(header("Operator")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?group=aircraft&sort=operator&order=asc",
+      );
+    });
+    await waitFor(() => {
+      const request = lastRequestTo(fetchMock, "/api/v1/analytics/aircraft");
+      expect(request.searchParams.get("sort")).toBe("operator");
+      expect(request.searchParams.get("order")).toBe("asc");
+    });
+    expect(header("Operator")).toHaveAttribute("aria-sort", "ascending");
+    expect(header("Sightings")).toHaveAttribute("aria-sort", "none");
+
+    // ...and Z to A on the second.
+    await user.click(within(header("Operator")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?group=aircraft&sort=operator",
+      );
+    });
+    expect(header("Operator")).toHaveAttribute("aria-sort", "descending");
+
+    // A time leads with the latest.
+    await user.click(within(header("Last seen")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?group=aircraft&sort=last_seen",
+      );
+    });
+    await waitFor(() => {
+      expect(
+        lastRequestTo(fetchMock, "/api/v1/analytics/aircraft").searchParams.get(
+          "sort",
+        ),
+      ).toBe("last_seen");
+    });
+  });
+
+  it("makes every aircraft header a sort control", async () => {
+    installSightingsApiMock({ seenAircraft: [seenAircraftRow()] });
+    renderApp("/sightings?group=aircraft");
+    await screen.findByTestId("seen-aircraft-row");
+
+    for (const name of [
+      "Aircraft",
+      "Type",
+      "Operator",
+      "Sightings",
+      "First seen",
+      "Last seen",
+    ]) {
+      expect(within(header(name)).getByRole("button")).toBeInTheDocument();
+    }
+  });
+
+  it("sorts the type list by any header", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = installSightingsApiMock({
+      seenTypes: [seenTypeRow()],
+    });
+    const { router } = renderApp("/sightings?group=types");
+    await screen.findByTestId("seen-type-row");
+
+    for (const name of [
+      "Type",
+      "Aircraft",
+      "Sightings",
+      "First ever seen",
+      "Last seen",
+    ]) {
+      expect(within(header(name)).getByRole("button")).toBeInTheDocument();
+    }
+
+    await user.click(within(header("Type")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?group=types&sort=type&order=asc",
+      );
+    });
+    await waitFor(() => {
+      const request = lastRequestTo(fetchMock, "/api/v1/analytics/types");
+      expect(request.searchParams.get("sort")).toBe("type");
+      expect(request.searchParams.get("order")).toBe("asc");
+    });
+
+    await user.click(within(header("Aircraft")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?group=types&sort=aircraft");
+    });
+  });
+
+  it("returns to page 1 when the sort changes", async () => {
+    const user = userEvent.setup();
+    installSightingsApiMock({ seenAircraft: [seenAircraftRow()] });
+    const { router } = renderApp("/sightings?group=aircraft&page=3");
+    await screen.findByTestId("seen-aircraft-row");
+
+    await user.click(within(header("First seen")).getByRole("button"));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?group=aircraft&sort=first_seen",
+      );
+    });
+  });
+
+  it("starts each grouping from its own default order", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = installSightingsApiMock({
+      list: { items: [sightingRow()], total: null, limit: 50, offset: 0 },
+      seenAircraft: [seenAircraftRow()],
+      seenTypes: [seenTypeRow()],
+    });
+    // The log, sorted by a column only the log has.
+    const { router } = renderApp("/sightings?sort=duration_s&order=asc");
+    await screen.findAllByTestId("sighting-row");
+
+    await user.click(screen.getByRole("radio", { name: "Aircraft" }));
+
+    await screen.findByTestId("seen-aircraft-row");
+    // `duration_s` is not carried over to a list that has no such column.
+    expect(router.state.location.search).toBe("?group=aircraft");
+    const request = lastRequestTo(fetchMock, "/api/v1/analytics/aircraft");
+    expect(request.searchParams.get("sort")).toBe("sightings");
+    expect(request.searchParams.get("order")).toBe("desc");
+  });
+
+  it("sorts the log by its text and altitude columns too", async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = installSightingsApiMock({
+      list: { items: [sightingRow()], total: null, limit: 50, offset: 0 },
+    });
+    const { router } = renderApp("/sightings");
+    await screen.findAllByTestId("sighting-row");
+
+    for (const name of [
+      "Start",
+      "End",
+      "Duration",
+      "Tail / callsign",
+      "Type",
+      "Operator",
+      "Closest approach",
+      "Max range",
+      "Lowest alt.",
+      "Highest alt.",
+      "Positions",
+    ]) {
+      expect(within(header(name)).getByRole("button")).toBeInTheDocument();
+    }
+    // Classification and Status describe a row; they do not order one.
+    expect(
+      within(header("Classification")).queryByRole("button"),
+    ).not.toBeInTheDocument();
+    expect(header("Classification")).not.toHaveAttribute("aria-sort");
+
+    await user.click(within(header("Type")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        "?sort=aircraft_type&order=asc",
+      );
+    });
+    await waitFor(() => {
+      const request = lastRequestTo(fetchMock, "/api/v1/sightings");
+      expect(request.searchParams.get("sort")).toBe("aircraft_type");
+      expect(request.searchParams.get("order")).toBe("asc");
+    });
+
+    await user.click(within(header("Highest alt.")).getByRole("button"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?sort=highest_altitude_ft");
+    });
+  });
+});

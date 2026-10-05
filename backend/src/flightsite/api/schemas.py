@@ -317,7 +317,25 @@ class AircraftDetail(_Model):
 
 
 #: ``docs/API.md`` §3.6's documented sort keys for ``GET /api/v1/sightings``.
-SightingSortKey = Literal["started_at", "duration_s", "closest_approach_nm", "max_range_nm"]
+SightingSortKey = Literal[
+    "started_at",
+    "ended_at",
+    "duration_s",
+    "tail",
+    "aircraft_type",
+    "operator",
+    "closest_approach_nm",
+    "max_range_nm",
+    "lowest_altitude_ft",
+    "highest_altitude_ft",
+    "position_count",
+]
+
+#: Sort keys of ``GET /analytics/aircraft`` and ``/analytics/types`` (slice 100).
+SeenAircraftSortKey = Literal[
+    "sightings", "registration", "type", "operator", "first_seen", "last_seen"
+]
+SeenTypeSortKey = Literal["sightings", "type", "aircraft", "first_seen", "last_seen"]
 
 #: §2.8's ``closure_reason`` vocabulary.
 ClosureReasonLiteral = Literal["gap_timeout", "shutdown_recovery", "data_reset"]
@@ -2005,6 +2023,8 @@ __all__ = [
     "ReceiverSignalDistribution",
     "ReceptionStats",
     "RouteView",
+    "SeenAircraftSortKey",
+    "SeenTypeSortKey",
     "SightingDetail",
     "SightingEventTypeLiteral",
     "SightingEventView",

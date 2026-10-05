@@ -14,6 +14,13 @@
  * So this spec asserts the two things that were false: no box inside
  * `<main>` hides a meaningful part of its own content, and wheeling down
  * `<main>` brings the end of the page into view.
+ *
+ * And the opposite defect (slice 100): a page with two scrollbars. The
+ * screen-reader-only chart summaries are absolutely positioned, and with no
+ * positioned ancestor they were laid out against the document — hundreds of
+ * pixels below the viewport — so the document grew a scrollbar of its own
+ * beside `<main>`'s on every page that draws a chart. The last block asserts
+ * that the document itself never has anywhere to scroll to.
  */
 
 import type { Page } from "@playwright/test";
@@ -127,4 +134,55 @@ test.describe("long pages scroll to their end", () => {
     await expect(rows.last()).toBeInViewport();
     await expect(page.getByText(/^Page 1\b/)).toBeInViewport();
   });
+});
+
+/** How far the document itself can scroll, in pixels: zero when `<main>` is
+ * the page's only scrollbar. */
+async function documentOverflow(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const root = document.scrollingElement ?? document.documentElement;
+    return Math.round(root.scrollHeight - root.clientHeight);
+  });
+}
+
+const EVERY_PAGE = [
+  "/",
+  "/aircraft",
+  "/sightings?preset=t0",
+  "/analytics",
+  "/analytics?preset=t0",
+  "/receiver",
+  "/receiver/feeders",
+  "/alerts",
+  "/activity",
+  "/health",
+  "/settings",
+] as const;
+
+test.describe("a page has one scrollbar", () => {
+  for (const path of EVERY_PAGE) {
+    test(`${path} scrolls inside <main>, never the document`, async ({
+      page,
+      request,
+    }) => {
+      await waitForPersistedSightings(request);
+      await page.setViewportSize({ width: 1280, height: 600 });
+
+      await page.goto(path);
+      await expect(page.locator("main#main-content")).toBeVisible();
+      await expect(page.locator("main").getByText(/^Loading/)).toHaveCount(0);
+
+      expect(
+        await documentOverflow(page),
+        `${path}: the document scrolls as well as <main>`,
+      ).toBeLessThanOrEqual(1);
+      // Still true at the far end of the page, where content positioned
+      // against the wrong box would be pushed furthest.
+      await wheelToEnd(page);
+      expect(
+        await documentOverflow(page),
+        `${path}: the document scrolls once <main> is at its end`,
+      ).toBeLessThanOrEqual(1);
+    });
+  }
 });

@@ -2992,6 +2992,41 @@ slices:
     risk_level: low
     notes: "Owner feedback of 2026-10-05 on the review stack: the two cards 'should [be the] same style' as the three hourly ones. Stacked on 098; ships in v0.13.0."
 
+  - id: "100"
+    title: "Sortable Sightings headers and a single page scrollbar"
+    phase: 9
+    branch: "100-sightings-sorting"
+    status: merged
+    depends_on: ["098", "099"]
+    objective: "Let every column of the Sightings page's three lists order its list, ascending or descending (§57), and remove the second vertical scrollbar the Analytics page grew."
+    scope:
+      - "backend: `sort`/`order` on `/analytics/aircraft` and `/analytics/types`; `/sightings` gains the sort keys its page lacked (`ended_at`, `tail`, `aircraft_type`, `operator`, `lowest_altitude_ft`, `highest_altitude_ft`, `position_count`); unknowns last both ways, stable tie-breaks; no migration, no new index"
+      - "frontend: one shared SortableHeader for the three tables (`aria-sort`, a second click reverses); a sort per grouping in the URL, reset to the grouping's default when the grouping changes"
+      - "fix: `<main>` becomes the containing block of its content, so the screen-reader-only chart summaries (absolutely positioned) no longer stretch the document and give it a scrollbar of its own beside `<main>`'s on Analytics, Receiver and Feeders"
+    out_of_scope:
+      - "sorting the log by Classification or Status"
+      - "indexes for the new `/sightings` sort keys (they sort the selected window; measuring them over a multi-year T0 window is issue #272)"
+      - "sortable headers on the Aircraft and Activity pages beyond what they already have"
+    acceptance_criteria:
+      - "every header of the aircraft and type lists, and every header of the log but Classification and Status, sorts its list in both directions"
+      - "a column sorts by what it displays; unknown values are last in both directions; paging a tied key never repeats or skips a row"
+      - "the sort survives a reload and a shared link, and an unknown or foreign sort key in a URL falls back to the grouping's default"
+      - "on every page the document itself does not scroll — `<main>` is the only page scrollbar"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, e2e and visual suites green"
+    required_tests: [seen-list sort keys each way incl. unknowns and ties, bounded-window and paged sorts, log text-key sorts, unknown key 422, URL state per grouping, page tests per grouping, e2e sort and single-scrollbar checks]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/src/flightsite/api/sightings.py
+      - backend/tests/analytics/test_seen.py
+      - frontend/src/features/history/components/SortableHeader.tsx
+      - frontend/src/features/sightings/
+      - frontend/src/components/shell/AppShell.tsx
+      - e2e/tests/08-history-scroll.spec.ts
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback of 2026-10-05 on the review stack: 'The Analytics page now has two vertical scrollbars. It should just have one. The Sightings page should have the option to sort by the headers in ascending or descending order.' Stacked on 099; ships in v0.13.0."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other

@@ -362,21 +362,49 @@ export function getAnalyticsDaily(
   );
 }
 
+/** Sort keys of the distinct-aircraft list (slice 100). The text keys order
+ * by what a row displays; unknown values sort last either way. */
+export type SeenAircraftSortKey =
+  | "sightings"
+  | "registration"
+  | "type"
+  | "operator"
+  | "first_seen"
+  | "last_seen";
+
+/** Sort keys of the distinct-type list; `type` is the designator. */
+export type SeenTypeSortKey =
+  "sightings" | "type" | "aircraft" | "first_seen" | "last_seen";
+
 /** A page of one of the "what the window held" lists (slice 098). */
 export interface AnalyticsPageParams extends AnalyticsWindowParams {
   limit: number;
   offset: number;
+  order?: "asc" | "desc" | undefined;
 }
 
 export interface AnalyticsSeenAircraftParams extends AnalyticsPageParams {
   /** Restrict to one ICAO type designator. */
   type?: string | undefined;
+  sort?: SeenAircraftSortKey | undefined;
 }
 
-function pageQuery(params: AnalyticsPageParams): URLSearchParams {
+export interface AnalyticsSeenTypesParams extends AnalyticsPageParams {
+  sort?: SeenTypeSortKey | undefined;
+}
+
+function pageQuery(
+  params: AnalyticsPageParams & { sort?: string | undefined },
+): URLSearchParams {
   const search = windowQuery(params);
   search.set("limit", String(params.limit));
   search.set("offset", String(params.offset));
+  if (params.sort !== undefined) {
+    search.set("sort", params.sort);
+  }
+  if (params.order !== undefined) {
+    search.set("order", params.order);
+  }
   return search;
 }
 
@@ -401,7 +429,7 @@ export function getAnalyticsSeenAircraft(
 }
 
 export function getAnalyticsSeenTypes(
-  params: AnalyticsPageParams,
+  params: AnalyticsSeenTypesParams,
 ): Promise<AnalyticsSeenTypesResponse> {
   return apiV1Fetch<AnalyticsSeenTypesResponse>(
     `/api/v1/analytics/types?${pageQuery(params).toString()}`,
@@ -476,7 +504,7 @@ export const analyticsQueryKeys = {
     ["analytics", "counts", params] as const,
   seenAircraft: (params: AnalyticsSeenAircraftParams) =>
     ["analytics", "aircraft", params] as const,
-  seenTypes: (params: AnalyticsPageParams) =>
+  seenTypes: (params: AnalyticsSeenTypesParams) =>
     ["analytics", "types", params] as const,
   classification: (params: AnalyticsWindowParams) =>
     ["analytics", "classification-activity", params] as const,
@@ -581,7 +609,7 @@ export function useAnalyticsSeenAircraftQuery(
 
 /** One page of the window's distinct types. */
 export function useAnalyticsSeenTypesQuery(
-  params: AnalyticsPageParams,
+  params: AnalyticsSeenTypesParams,
   options: AnalyticsListQueryOptions = {},
 ): UseQueryResult<AnalyticsSeenTypesResponse> {
   return useQuery({

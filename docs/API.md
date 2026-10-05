@@ -485,7 +485,7 @@ size class to include.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `preset` (the §3.7 presets, resolved in receiver-local time; ignored when `from`/`to` are given — slice 098), `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Each row carries `first_sighting`: whether it contains the airframe's first-ever observation. Sort: `started_at` (default desc), `duration_s`, `closest_approach_nm`, `max_range_nm`. |
+| `GET /api/v1/sightings` | Chronological log. Filters: `icao`, `q`, `preset` (the §3.7 presets, resolved in receiver-local time; ignored when `from`/`to` are given — slice 098), `from`, `to`, `interesting=true`, `open=true` (currently-open sightings). Each row carries `first_sighting`: whether it contains the airframe's first-ever observation. Sort: `started_at` (default desc), `ended_at`, `duration_s`, `tail` (registration, else last callsign), `aircraft_type` (model, else designator), `operator`, `closest_approach_nm`, `max_range_nm`, `lowest_altitude_ft`, `highest_altitude_ft`, `position_count` — one per sortable column of the Sightings page (slice 100). The text keys ignore case. Only `started_at` and `max_range_nm` are index-backed; the others sort the filtered window. |
 | `GET /api/v1/sightings/{id}` | Sighting detail: flight context, reception stats, events, simplified path. |
 
 `from` and `to` accept full ISO-8601 datetimes (not only calendar days) and bound
@@ -684,8 +684,8 @@ explicit `from`/`to` UTC bounds. Day bucketing is receiver-local (DST-correct).
 | `GET /api/v1/analytics/hourly` | One receiver-local day, hour by hour (slice 097). Param: `day=YYYY-MM-DD` (default: today in the receiver's timezone). Takes no `preset`. |
 | `GET /api/v1/analytics/rarity` | Never-seen-before counts, locally rare aircraft/types. |
 | `GET /api/v1/analytics/counts` | A window's four headline figures, counted live: sightings, distinct aircraft, distinct types, new aircraft (slice 098). |
-| `GET /api/v1/analytics/aircraft` | Every distinct aircraft heard in the window, most-sighted first. Paginated (`limit`, `offset`, exact `total`); optional `type=<designator>` (slice 098). |
-| `GET /api/v1/analytics/types` | Every distinct ICAO type heard in the window, busiest first. Paginated (slice 098). |
+| `GET /api/v1/analytics/aircraft` | Every distinct aircraft heard in the window, most-sighted first. Paginated (`limit`, `offset`, exact `total`); optional `type=<designator>` (slice 098). Sort (slice 100): `sightings` (default desc), `registration` (else the address), `type` (model, else designator), `operator` (else the registered owner), `first_seen`, `last_seen`. |
+| `GET /api/v1/analytics/types` | Every distinct ICAO type heard in the window, busiest first. Paginated (slice 098). Sort (slice 100): `sightings` (default desc), `type` (the description, else the designator), `aircraft` (distinct airframes), `first_seen` (first ever), `last_seen`. |
 
 **"Not computed yet" is `null`, never `0`** (issue #205). The rollup pipeline has
 real latency — the flush pass runs every 30 s and only for days something touched
@@ -843,6 +843,11 @@ standard `preset` / `from` / `to`.
   the sightings log to the second — unlike `summary`, whose totals are sums over
   `daily_stats` and say so with `complete`. `aircraft.total == counts.unique_aircraft`
   and `types.total == counts.unique_types` for the same window, always.
+- **Sorting** follows §2.4 on both lists: `sort` and `order`, unknowns last in
+  both directions, text keys case-insensitive, and a stable tie-break (the
+  address for `aircraft`, the designator for `types`, ascending either way) so
+  paging through a tied key never repeats or skips a row. A key the list does
+  not have is a `422`.
 - An `aircraft` row is the `top-aircraft` row shape plus `new`; `sightings` is the
   count inside the window. A `types` row's `first_seen_at` is the receiver's
   first-ever observation of the type, not its first in the window.

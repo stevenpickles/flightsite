@@ -200,6 +200,7 @@ owner decision and are not scheduled.
 | 097 | Analytics today view by hour, and rarity tables | 095 | opus | low | Over a one-day window the three day-granular time-series cards draw the day hour by hour (new `analytics/hourly` endpoint) instead of one invisible point; the Locally rare card adopts the Top aircraft table format; no migration |
 | 098 | Sightings by window and grouping | 097 | opus | medium | The Sightings page takes the Analytics presets (Today by default), heads the window with live counts, and groups it three ways — the log, the distinct aircraft, the distinct types — so Since T0 lists every airframe or type ever heard; three analytics endpoints, no migration |
 | 099 | Analytics today view: classification and never-seen-before by hour | 097, 098 | opus | low | The two bar cards slice 097 left as one bar per day — military/government/police activity and never seen before — are drawn hour by hour on a one-day window, on the same axis as the other three; four new fields on `analytics/hourly`, no migration |
+| 100 | Sortable Sightings headers and a single page scrollbar | 098, 099 | opus | low | Every column of the Sightings page's three lists sorts its list both ways (`sort`/`order` on `analytics/aircraft` and `analytics/types`, seven more keys on `/sightings`), and `<main>` is again the only page scrollbar; no migration |
 
 ## Parallelization Guide
 

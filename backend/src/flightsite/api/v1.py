@@ -93,6 +93,8 @@ from flightsite.api.schemas import (
     ReceiverSeriesMetric,
     ReceiverSeriesResolution,
     ReceiverSignalDistribution,
+    SeenAircraftSortKey,
+    SeenTypeSortKey,
     SightingDetail,
     SightingListResponse,
     SightingSortKey,
@@ -1096,6 +1098,17 @@ async def analytics_seen_aircraft(
             examples=["B738"],
         ),
     ] = None,
+    sort: Annotated[
+        SeenAircraftSortKey,
+        Query(
+            description=(
+                "What to order by. The text keys follow what a row displays: the "
+                "registration or else the address, the model or else the designator, "
+                "the operator or else the registered owner. Unknown values sort last."
+            )
+        ),
+    ] = "sightings",
+    order: Annotated[SortOrder, Query()] = "desc",
 ) -> dict[str, Any]:
     """The window's distinct airframes, most-sighted first, paginated.
 
@@ -1107,6 +1120,8 @@ async def analytics_seen_aircraft(
         limit=limit,
         offset=offset,
         type_code=None if type_code is None else type_code.upper(),
+        sort=sort,
+        order=order,
     )
     return {
         "window": window.block,
@@ -1133,6 +1148,11 @@ async def analytics_seen_types(
         int, Query(ge=1, le=MAX_LIMIT, description="Page size (§2.4).")
     ] = DEFAULT_LIMIT,
     offset: Annotated[int, Query(ge=0, description="Rows to skip (§2.4).")] = 0,
+    sort: Annotated[
+        SeenTypeSortKey,
+        Query(description="What to order by; `type` is the designator."),
+    ] = "sightings",
+    order: Annotated[SortOrder, Query()] = "desc",
 ) -> dict[str, Any]:
     """The window's distinct ICAO type designators, busiest first, paginated.
 
@@ -1140,7 +1160,7 @@ async def analytics_seen_types(
     (slice 098). An airframe no registry gives a type belongs to no row.
     """
     rows, total = await _context(request).analytics.types_seen(
-        window.window, limit=limit, offset=offset
+        window.window, limit=limit, offset=offset, sort=sort, order=order
     )
     return {
         "window": window.block,

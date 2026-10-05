@@ -351,3 +351,242 @@ async def test_a_sighting_row_says_when_it_is_the_airframes_first(
     assert [flag for icao, flag in firsts if icao == "a00001"] == [True, False, False]
     assert [flag for icao, flag in firsts if icao == "a00002"] == [True]
     assert [flag for icao, flag in firsts if icao == "a00003"] == [True]
+
+
+# ----------------------------------------------------------------- sorting
+
+
+async def _order(rest: AsyncClient, path: str, key: str, **params: object) -> list[str]:
+    body = await get(rest, path, **params)
+    return [row[key] for row in body["items"]]
+
+
+@pytest.mark.parametrize(
+    ("sort", "ascending"),
+    [
+        # The registration, or else the address: the two unregistered
+        # airframes sort by their hex, ahead of the N-numbers.
+        ("registration", ["a00003", "a00004", "a00001", "a00002"]),
+        ("first_seen", ["a00004", "a00001", "a00003", "a00002"]),
+        ("last_seen", ["a00004", "a00003", "a00002", "a00001"]),
+    ],
+)
+async def test_aircraft_sort_by_a_key_every_row_has(
+    harness: Harness, rest: AsyncClient, sort: str, ascending: list[str]
+) -> None:
+    await seed(harness)
+    path = "/api/v1/analytics/aircraft"
+
+    assert await _order(rest, path, "icao", preset="t0", sort=sort, order="asc") == ascending
+    assert await _order(rest, path, "icao", preset="t0", sort=sort, order="desc") == list(
+        reversed(ascending)
+    )
+
+
+@pytest.mark.parametrize("sort", ["type", "operator"])
+async def test_aircraft_sort_puts_unknowns_last_in_either_direction(
+    harness: Harness, rest: AsyncClient, sort: str
+) -> None:
+    """a00001 is a Boeing flown by Alpha, a00002 a Lockheed flown by Beta; the
+    other two are known to no registry, and an unknown is not a letter of the
+    alphabet — it goes last ascending *and* descending."""
+    await seed(harness)
+    path = "/api/v1/analytics/aircraft"
+
+    assert await _order(rest, path, "icao", preset="t0", sort=sort, order="asc") == [
+        "a00001",
+        "a00002",
+        "a00003",
+        "a00004",
+    ]
+    assert await _order(rest, path, "icao", preset="t0", sort=sort, order="desc") == [
+        "a00002",
+        "a00001",
+        "a00003",
+        "a00004",
+    ]
+
+
+async def test_aircraft_sort_by_sightings_breaks_ties_by_address_both_ways(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    await seed(harness)
+    path = "/api/v1/analytics/aircraft"
+
+    # Three airframes tie on one sighting each; the address orders them
+    # ascending whichever way the count runs, so a page never repeats a row.
+    assert await _order(rest, path, "icao", preset="t0", sort="sightings", order="desc") == [
+        "a00001",
+        "a00002",
+        "a00003",
+        "a00004",
+    ]
+    assert await _order(rest, path, "icao", preset="t0", sort="sightings", order="asc") == [
+        "a00002",
+        "a00003",
+        "a00004",
+        "a00001",
+    ]
+
+
+async def test_aircraft_sort_applies_inside_a_bounded_window_and_across_pages(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    await seed(harness)
+    path = "/api/v1/analytics/aircraft"
+
+    assert await _order(rest, path, "icao", preset="today", sort="registration", order="desc") == [
+        "a00002",
+        "a00001",
+    ]
+    first = await get(rest, path, preset="t0", sort="first_seen", order="asc", limit=2)
+    second = await get(rest, path, preset="t0", sort="first_seen", order="asc", limit=2, offset=2)
+    assert [row["icao"] for row in first["items"] + second["items"]] == [
+        "a00004",
+        "a00001",
+        "a00003",
+        "a00002",
+    ]
+    assert first["total"] == second["total"] == 4
+
+
+@pytest.mark.parametrize(
+    ("sort", "ascending"),
+    [
+        ("type", ["B738", "C130"]),
+        ("sightings", ["C130", "B738"]),
+        ("first_seen", ["B738", "C130"]),  # a B738 was heard yesterday
+        ("last_seen", ["C130", "B738"]),
+    ],
+)
+async def test_types_sort_each_way(
+    harness: Harness, rest: AsyncClient, sort: str, ascending: list[str]
+) -> None:
+    await seed(harness)
+    path = "/api/v1/analytics/types"
+
+    assert await _order(rest, path, "type", preset="t0", sort=sort, order="asc") == ascending
+    assert await _order(rest, path, "type", preset="t0", sort=sort, order="desc") == list(
+        reversed(ascending)
+    )
+
+
+async def test_types_sort_by_type_follows_the_name_a_row_leads_with(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """A row shows the type's name over its designator, so that is what the
+    Type header orders by: sorted by the codes underneath, "Bell Boeing
+    MV-22B Osprey" (V22) would sit below "Cirrus SR22" and the list would
+    read as unsorted. A type no airframe names falls back to its designator,
+    and case does not split the list."""
+    heard = harness.inside(harness.today, 0.5)
+    airframes = [
+        ("a00001", "V22", "Bell Boeing MV-22B Osprey"),
+        ("a00002", "SR22", "Cirrus SR22"),
+        ("a00003", "B738", "boeing 737-800"),
+        ("a00004", "DISC", None),
+    ]
+    await seed_sightings(
+        harness.database,
+        [
+            SeedAircraft(
+                icao24=icao,
+                first_seen_ms=heard,
+                last_seen_ms=heard,
+                type_code=type_code,
+                model=model,
+            )
+            for icao, type_code, model in airframes
+        ],
+        [SeedSighting(icao24=icao, started_ms=heard) for icao, _, _ in airframes],
+    )
+    await MetaRepository(harness.database).set_t0_once(heard)
+    path = "/api/v1/analytics/types"
+    by_name = ["V22", "B738", "SR22", "DISC"]  # Bell…, boeing…, Cirrus…, disc
+
+    for preset in ("today", "t0"):
+        assert await _order(rest, path, "type", preset=preset, sort="type", order="asc") == by_name
+        assert await _order(rest, path, "type", preset=preset, sort="type", order="desc") == list(
+            reversed(by_name)
+        )
+    # The names order the whole list, not just the page they are shown on.
+    second = await get(rest, path, preset="t0", sort="type", order="asc", limit=2, offset=2)
+    assert [(row["type"], row["description"]) for row in second["items"]] == [
+        ("SR22", "Cirrus SR22"),
+        ("DISC", None),
+    ]
+    assert second["total"] == 4
+
+
+async def test_types_sort_by_first_seen_uses_the_lifetime_first_in_a_bounded_window(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    """Today both types were heard, the C-130 earlier in the day — but the
+    column shows when the receiver *first ever* heard the type, and a B738
+    was heard yesterday. The sort follows the column."""
+    await seed(harness)
+
+    assert await _order(
+        rest, "/api/v1/analytics/types", "type", preset="today", sort="first_seen", order="asc"
+    ) == ["B738", "C130"]
+
+
+async def test_types_tied_on_a_key_keep_designator_order_both_ways(
+    harness: Harness, rest: AsyncClient
+) -> None:
+    await seed(harness)
+    path = "/api/v1/analytics/types"
+
+    # One airframe of each: a tie, broken by the designator, ascending.
+    assert await _order(rest, path, "type", preset="t0", sort="aircraft", order="asc") == [
+        "B738",
+        "C130",
+    ]
+    assert await _order(rest, path, "type", preset="t0", sort="aircraft", order="desc") == [
+        "B738",
+        "C130",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("sort", "order", "expected"),
+    [
+        # What the row displays, case-insensitively, unknowns last.
+        ("tail", "asc", ["a00001", "a00001", "a00001", "a00002", "a00003"]),
+        ("tail", "desc", ["a00002", "a00001", "a00001", "a00001", "a00003"]),
+        ("aircraft_type", "desc", ["a00002", "a00001", "a00001", "a00001", "a00003"]),
+        ("operator", "asc", ["a00001", "a00001", "a00001", "a00002", "a00003"]),
+    ],
+)
+async def test_the_sightings_log_sorts_by_its_text_columns(
+    harness: Harness, rest: AsyncClient, sort: str, order: str, expected: list[str]
+) -> None:
+    await seed(harness)
+
+    assert (
+        await _order(rest, "/api/v1/sightings", "icao", preset="7d", sort=sort, order=order)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "sort", ["ended_at", "lowest_altitude_ft", "highest_altitude_ft", "position_count"]
+)
+async def test_the_sightings_log_accepts_every_documented_sort_key(
+    harness: Harness, rest: AsyncClient, sort: str
+) -> None:
+    await seed(harness)
+
+    for order in ("asc", "desc"):
+        body = await get(rest, "/api/v1/sightings", preset="7d", sort=sort, order=order)
+        assert len(body["items"]) == 5
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/v1/analytics/aircraft", "/api/v1/analytics/types", "/api/v1/sightings"],
+)
+async def test_an_unknown_sort_key_is_rejected(rest: AsyncClient, path: str) -> None:
+    response = await rest.get(path, params={"sort": "altitude"})
+
+    assert response.status_code == 422

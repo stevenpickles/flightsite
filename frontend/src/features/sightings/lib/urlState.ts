@@ -20,6 +20,12 @@
  * that aircraft's sightings, so it reads as `t0`. An explicit `preset` in the
  * URL always wins.
  *
+ * **Each grouping sorts by its own columns** (slice 100): the log by a
+ * sighting's, the aircraft list by an airframe's, the type list by a type's.
+ * They share the `sort` / `order` keys, read against the grouping the URL
+ * names — a key that belongs to another grouping falls back to this one's
+ * default rather than being sent to an endpoint that would reject it.
+ *
  * Two aircraft filters, deliberately (slice 083): `q` is what the filter box
  * writes — an ICAO-address *or* callsign prefix, normalized like the
  * Aircraft page's (`features/history/lib/search.ts`) — and `icao` stays the
@@ -29,12 +35,22 @@
  */
 
 import { normalizeSearch, searchFromUrl } from "@/features/history/lib/search";
-import { ANALYTICS_PRESETS, type AnalyticsPreset } from "@/lib/api/analytics";
+import {
+  ANALYTICS_PRESETS,
+  type AnalyticsPreset,
+  type SeenAircraftSortKey,
+  type SeenTypeSortKey,
+} from "@/lib/api/analytics";
 import type { SightingSortKey, SortOrder } from "@/lib/api/sightings";
 
 export const DEFAULT_SORT: SightingSortKey = "started_at";
 export const DEFAULT_ORDER: SortOrder = "desc";
 export const PAGE_SIZE = 50;
+
+/** Any grouping's sort key. Which ones are valid depends on the grouping —
+ * {@link SORT_KEYS_BY_GROUP}. */
+export type SightingsSort =
+  SightingSortKey | SeenAircraftSortKey | SeenTypeSortKey;
 
 /** How the window's sightings are grouped: the log itself, one row per
  * distinct aircraft, or one row per distinct type. */
@@ -48,12 +64,69 @@ export const SIGHTINGS_GROUPS: readonly SightingsGroup[] = [
 
 export const DEFAULT_GROUP: SightingsGroup = "sightings";
 
-const SORT_KEYS: readonly SightingSortKey[] = [
+const LOG_SORT_KEYS: readonly SightingSortKey[] = [
   "started_at",
+  "ended_at",
   "duration_s",
+  "tail",
+  "aircraft_type",
+  "operator",
   "closest_approach_nm",
   "max_range_nm",
+  "lowest_altitude_ft",
+  "highest_altitude_ft",
+  "position_count",
 ];
+
+const AIRCRAFT_SORT_KEYS: readonly SeenAircraftSortKey[] = [
+  "sightings",
+  "registration",
+  "type",
+  "operator",
+  "first_seen",
+  "last_seen",
+];
+
+const TYPE_SORT_KEYS: readonly SeenTypeSortKey[] = [
+  "sightings",
+  "type",
+  "aircraft",
+  "first_seen",
+  "last_seen",
+];
+
+/** The columns each grouping can be ordered by. */
+export const SORT_KEYS_BY_GROUP: Record<
+  SightingsGroup,
+  readonly SightingsSort[]
+> = {
+  sightings: LOG_SORT_KEYS,
+  aircraft: AIRCRAFT_SORT_KEYS,
+  types: TYPE_SORT_KEYS,
+};
+
+/** What each grouping is ordered by until a header is clicked: the log
+ * newest first, the two lists busiest first. */
+export const DEFAULT_SORT_BY_GROUP: Record<SightingsGroup, SightingsSort> = {
+  sightings: DEFAULT_SORT,
+  aircraft: "sightings",
+  types: "sightings",
+};
+
+/** Sort keys whose values are words rather than quantities or times. */
+const TEXT_SORT_KEYS: ReadonlySet<SightingsSort> = new Set<SightingsSort>([
+  "tail",
+  "aircraft_type",
+  "operator",
+  "registration",
+  "type",
+]);
+
+/** The direction a column sorts in on its first click: words read A to Z,
+ * everything else leads with its largest or latest. */
+export function firstOrderFor(sort: SightingsSort): SortOrder {
+  return TEXT_SORT_KEYS.has(sort) ? "asc" : "desc";
+}
 
 const ICAO_PATTERN = /^[0-9a-f]{6}$/;
 const TYPE_PATTERN = /^[A-Z0-9]{2,4}$/;
@@ -74,7 +147,8 @@ export interface SightingsTableState {
   /** The time window, as one of the Analytics presets. */
   preset: AnalyticsPreset;
   group: SightingsGroup;
-  sort: SightingSortKey;
+  /** One of the current grouping's sort keys ({@link SORT_KEYS_BY_GROUP}). */
+  sort: SightingsSort;
   order: SortOrder;
   /** 1-indexed page number. */
   page: number;
@@ -108,8 +182,14 @@ export const DEFAULT_TABLE_STATE: SightingsTableState = {
   type: undefined,
 };
 
-function isSortKey(value: string): value is SightingSortKey {
-  return (SORT_KEYS as readonly string[]).includes(value);
+function isSortKeyOf(
+  group: SightingsGroup,
+  value: string | null,
+): value is SightingsSort {
+  return (
+    value !== null &&
+    (SORT_KEYS_BY_GROUP[group] as readonly string[]).includes(value)
+  );
 }
 
 function isPreset(value: string | null): value is AnalyticsPreset {
@@ -129,8 +209,13 @@ function isGroup(value: string | null): value is SightingsGroup {
 export function parseSightingsTableState(
   params: URLSearchParams,
 ): SightingsTableState {
+  const groupRaw = params.get(KEYS.group);
+  const group = isGroup(groupRaw) ? groupRaw : DEFAULT_GROUP;
+
   const sortRaw = params.get(KEYS.sort);
-  const sort = sortRaw !== null && isSortKey(sortRaw) ? sortRaw : DEFAULT_SORT;
+  const sort = isSortKeyOf(group, sortRaw)
+    ? sortRaw
+    : DEFAULT_SORT_BY_GROUP[group];
 
   const orderRaw = params.get(KEYS.order);
   const order: SortOrder =
@@ -153,9 +238,6 @@ export function parseSightingsTableState(
   const presetRaw = params.get(KEYS.preset);
   const preset = isPreset(presetRaw) ? presetRaw : defaultPresetFor(icao);
 
-  const groupRaw = params.get(KEYS.group);
-  const group = isGroup(groupRaw) ? groupRaw : DEFAULT_GROUP;
-
   const typeRaw = params.get(KEYS.type)?.toUpperCase();
   const type =
     typeRaw !== undefined && TYPE_PATTERN.test(typeRaw) ? typeRaw : undefined;
@@ -177,7 +259,7 @@ export function serializeSightingsTableState(
   if (state.group !== DEFAULT_GROUP) {
     params.set(KEYS.group, state.group);
   }
-  if (state.sort !== DEFAULT_SORT) {
+  if (state.sort !== DEFAULT_SORT_BY_GROUP[state.group]) {
     params.set(KEYS.sort, state.sort);
   }
   if (state.order !== DEFAULT_ORDER) {

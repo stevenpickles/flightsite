@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from flightsite.app import create_app
@@ -136,12 +137,42 @@ def test_the_sightings_sort_keys_are_published() -> None:
     operation = schema()["paths"]["/api/v1/sightings"]["get"]
     sort_param = next(param for param in operation["parameters"] if param["name"] == "sort")
 
+    # One per sortable column of the Sightings page's log (slice 100).
     assert set(sort_param["schema"]["enum"]) == {
         "started_at",
+        "ended_at",
         "duration_s",
+        "tail",
+        "aircraft_type",
+        "operator",
         "closest_approach_nm",
         "max_range_nm",
+        "lowest_altitude_ft",
+        "highest_altitude_ft",
+        "position_count",
     }
+
+
+@pytest.mark.parametrize(
+    ("path", "keys"),
+    [
+        (
+            "/api/v1/analytics/aircraft",
+            {"sightings", "registration", "type", "operator", "first_seen", "last_seen"},
+        ),
+        (
+            "/api/v1/analytics/types",
+            {"sightings", "type", "aircraft", "first_seen", "last_seen"},
+        ),
+    ],
+)
+def test_the_seen_list_sort_keys_are_published(path: str, keys: set[str]) -> None:
+    # The two grouped lists of the Sightings page sort by their own columns.
+    parameters = {param["name"]: param for param in schema()["paths"][path]["get"]["parameters"]}
+
+    assert set(parameters["sort"]["schema"]["enum"]) == keys
+    assert parameters["sort"]["schema"]["default"] == "sightings"
+    assert set(parameters["order"]["schema"]["enum"]) == {"asc", "desc"}
 
 
 def test_the_positioned_filter_is_documented() -> None:

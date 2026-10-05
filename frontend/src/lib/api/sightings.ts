@@ -20,7 +20,17 @@ import type { Classification, PositionSource, RouteInfo } from "@/lib/api/live";
 
 /** §3.6's documented sort keys. */
 export type SightingSortKey =
-  "started_at" | "duration_s" | "closest_approach_nm" | "max_range_nm";
+  | "started_at"
+  | "ended_at"
+  | "duration_s"
+  | "tail"
+  | "aircraft_type"
+  | "operator"
+  | "closest_approach_nm"
+  | "max_range_nm"
+  | "lowest_altitude_ft"
+  | "highest_altitude_ft"
+  | "position_count";
 
 export type SortOrder = "asc" | "desc";
 

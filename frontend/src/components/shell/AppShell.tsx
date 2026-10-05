@@ -62,7 +62,17 @@ export function AppShell() {
         <aside aria-label="Sidebar" className="h-full shrink-0">
           <Sidebar />
         </aside>
-        <main id="main-content" className="h-full flex-1 overflow-y-auto">
+        {/* `relative` makes this the containing block for every absolutely
+         * positioned descendant. Without it the charts' screen-reader
+         * summaries (`sr-only` is `position: absolute`) were laid out against
+         * the document instead: they sat at their place far down the page,
+         * outside this element's scrolling, and stretched the *document* to
+         * reach them — a second vertical scrollbar beside this one on every
+         * page with a chart. */}
+        <main
+          id="main-content"
+          className="relative h-full flex-1 overflow-y-auto"
+        >
           <Outlet />
         </main>
       </div>

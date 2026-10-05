@@ -320,4 +320,85 @@ test.describe("Sightings page", () => {
     await expect(page.getByText("Showing only")).toBeVisible();
     await expect(page.getByTestId("seen-aircraft-row").first()).toBeVisible();
   });
+
+  test("a header sorts its list, and a second click reverses it (slice 100)", async ({
+    page,
+    request,
+  }) => {
+    await waitForPersistedSightings(request);
+    const sortButton = (name: RegExp) =>
+      page.getByRole("columnheader", { name }).getByRole("button");
+
+    // The type list, by name: what each row leads with, A to Z first.
+    await page.goto("/sightings?preset=t0&group=types");
+    const typeRows = page.getByTestId("seen-type-row");
+    await expect(typeRows.first()).toBeVisible();
+    const typeNames = () =>
+      typeRows.evaluateAll((rows) =>
+        rows.map((row) =>
+          (row.querySelector("button")?.textContent ?? "").toLowerCase(),
+        ),
+      );
+    const ascending = <T extends string | number>(values: T[]) =>
+      values.slice(1).every((value, index) => (values[index] as T) <= value);
+    const descending = <T extends string | number>(values: T[]) =>
+      values.slice(1).every((value, index) => (values[index] as T) >= value);
+
+    await sortButton(/^Type/).click();
+    await expect(page).toHaveURL(/[?&]sort=type&order=asc/);
+    await expect(
+      page.getByRole("columnheader", { name: /^Type/ }),
+    ).toHaveAttribute("aria-sort", "ascending");
+    await expect
+      .poll(async () => ascending(await typeNames()), {
+        message: "the type list is not in A-to-Z order",
+      })
+      .toBe(true);
+    // Demo traffic has more than one type, or neither order proves anything.
+    expect(new Set(await typeNames()).size).toBeGreaterThan(1);
+
+    await sortButton(/^Type/).click();
+    await expect(
+      page.getByRole("columnheader", { name: /^Type/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+    await expect
+      .poll(async () => descending(await typeNames()), {
+        message: "the type list is not in Z-to-A order",
+      })
+      .toBe(true);
+
+    // The aircraft list, by a number: busiest first is the default, so one
+    // click on Sightings turns it round.
+    await page.getByRole("radio", { name: "Aircraft" }).click();
+    const aircraftRows = page.getByTestId("seen-aircraft-row");
+    await expect(aircraftRows.first()).toBeVisible();
+    // The type list's sort did not follow it here.
+    await expect(page).not.toHaveURL(/[?&]sort=/);
+    const sightingCounts = () =>
+      aircraftRows.evaluateAll((rows) =>
+        rows.map((row) => Number(row.children[3]?.textContent ?? "NaN")),
+      );
+    await expect(
+      page.getByRole("columnheader", { name: /^Sightings/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+
+    await sortButton(/^Sightings/).click();
+    await expect(page).toHaveURL(/[?&]order=asc/);
+    await expect
+      .poll(async () => ascending(await sightingCounts()), {
+        message: "the aircraft list is not least-sighted first",
+      })
+      .toBe(true);
+
+    // The log, by a column it could not be sorted by before this slice.
+    await page.getByRole("radio", { name: "Sightings", exact: true }).click();
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+    await sortButton(/^Tail/).click();
+    await expect(page).toHaveURL(/[?&]sort=tail&order=asc/);
+    await expect(
+      page.getByRole("columnheader", { name: /^Tail/ }),
+    ).toHaveAttribute("aria-sort", "ascending");
+    await expect(page.getByTestId("sighting-row").first()).toBeVisible();
+    await expect(page.getByText(/could not be loaded/i)).toHaveCount(0);
+  });
 });

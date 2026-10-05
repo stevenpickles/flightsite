@@ -89,6 +89,19 @@ DEFAULT_RARE_MAX_SIGHTINGS: Final = 2
 #: Airframes at or below which a type designator reads as locally rare.
 DEFAULT_RARE_MAX_TYPE_AIRCRAFT: Final = 2
 
+#: Sort keys of the two "what a window held" lists (slice 100), and the one
+#: both default to: the busiest first.
+DEFAULT_SEEN_SORT: Final = "sightings"
+SEEN_AIRCRAFT_SORTS: Final = (
+    "sightings",
+    "registration",
+    "type",
+    "operator",
+    "first_seen",
+    "last_seen",
+)
+SEEN_TYPE_SORTS: Final = ("sightings", "type", "aircraft", "first_seen", "last_seen")
+
 _MS_PER_HOUR: Final = 3_600_000
 
 #: How far before a day's first hour a sighting may have started and still be
@@ -271,6 +284,17 @@ class TypeSeen:
     new: bool = False
     #: The long form behind the designator, as on :class:`GroupRank`.
     description: str | None = None
+
+
+#: How each :data:`SEEN_TYPE_SORTS` key orders a :class:`TypeSeen`.
+_SEEN_TYPE_KEYS: Final[dict[str, Any]] = {
+    "sightings": lambda row: row.sightings,
+    # What the row leads with: the name in words, else the designator.
+    "type": lambda row: (row.description or row.type_code).casefold(),
+    "aircraft": lambda row: row.unique_aircraft,
+    "first_seen": lambda row: row.first_seen_ms,
+    "last_seen": lambda row: row.last_seen_ms,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -766,13 +790,22 @@ class AnalyticsQueries:
         limit: int,
         offset: int = 0,
         type_code: str | None = None,
+        sort: str = DEFAULT_SEEN_SORT,
+        order: str = "desc",
     ) -> tuple[tuple[AircraftRank, ...], int]:
         """Every distinct airframe heard in the window, most-sighted first.
 
-        :meth:`top_aircraft` without its ceiling: a page of the ranking and
-        the exact number of airframes it ranks, optionally narrowed to one
-        type designator. Over the whole history this is the ``aircraft`` table
+        :meth:`top_aircraft` without its ceiling: a page of the list and the
+        exact number of airframes in it, optionally narrowed to one type
+        designator. Over the whole history this is the ``aircraft`` table
         itself — every discrete airframe this receiver has ever heard.
+
+        Args:
+            sort: one of :data:`SEEN_AIRCRAFT_SORTS` (validated by the caller).
+                The text keys order by what the row displays: the registration
+                or else the address; the model or else the designator; the
+                operator or else the registered owner.
+            order: ``"asc"`` or ``"desc"``. Unknown values sort last either way.
 
         Returns:
             ``(rows, total)``. ``sightings`` on each row is the count inside
@@ -780,59 +813,50 @@ class AnalyticsQueries:
         """
         if window.empty or limit < 1:
             return (), 0
-        of_type = () if type_code is None else (AircraftMetadataResolved.type_code == type_code,)
+        metadata = AircraftMetadataResolved
         async with self._database.read_session() as session:
             if window.whole_history:
-                total_statement = select(func.count()).select_from(Aircraft)
-                if type_code is not None:
-                    total_statement = total_statement.join(
-                        AircraftMetadataResolved,
-                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
-                    ).where(*of_type)
-                total = int(await session.scalar(total_statement) or 0)
-                statement = (
-                    _airframe_join(
-                        select(*_AIRFRAME_COLUMNS, Aircraft.sighting_count).select_from(Aircraft)
-                    )
-                    .where(*of_type)
-                    .order_by(Aircraft.sighting_count.desc(), Aircraft.icao24)
-                    .limit(limit)
-                    .offset(offset)
+                sightings_column: Any = Aircraft.sighting_count
+                base = select(Aircraft.id, sightings_column.label("sightings")).select_from(
+                    Aircraft
                 )
-                rows = (await session.execute(statement)).all()
-                return tuple(_rank(row, int(row.sighting_count)) for row in rows), total
-
-            counted = (
-                select(Sighting.aircraft_id, func.count().label("sightings"))
-                .where(*self._range(window))
-                .group_by(Sighting.aircraft_id)
-                .subquery()
-            )
-            ranked = select(counted.c.aircraft_id, counted.c.sightings)
-            total_statement = select(func.count()).select_from(counted)
+            else:
+                counted = (
+                    select(Sighting.aircraft_id, func.count().label("sightings"))
+                    .where(*self._range(window))
+                    .group_by(Sighting.aircraft_id)
+                    .subquery()
+                )
+                sightings_column = counted.c.sightings
+                base = (
+                    select(Aircraft.id, sightings_column.label("sightings"))
+                    .select_from(counted)
+                    .join(Aircraft, Aircraft.id == counted.c.aircraft_id)
+                )
+            # LEFT: an airframe no registry describes is still in the list.
+            base = base.outerjoin(metadata, metadata.icao24 == Aircraft.icao24)
             if type_code is not None:
-                ranked = (
-                    ranked.join(Aircraft, Aircraft.id == counted.c.aircraft_id)
-                    .join(
-                        AircraftMetadataResolved,
-                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
-                    )
-                    .where(*of_type)
-                )
-                total_statement = (
-                    total_statement.join(Aircraft, Aircraft.id == counted.c.aircraft_id)
-                    .join(
-                        AircraftMetadataResolved,
-                        AircraftMetadataResolved.icao24 == Aircraft.icao24,
-                    )
-                    .where(*of_type)
-                )
-            total = int(await session.scalar(total_statement) or 0)
+                base = base.where(metadata.type_code == type_code)
+
+            keys: dict[str, Any] = {
+                "sightings": sightings_column,
+                "registration": func.lower(func.coalesce(metadata.registration, Aircraft.icao24)),
+                "type": func.lower(func.coalesce(metadata.model, metadata.type_code)),
+                "operator": func.lower(func.coalesce(metadata.operator_name, metadata.owner)),
+                "first_seen": Aircraft.first_seen_ms,
+                "last_seen": Aircraft.last_seen_ms,
+            }
+            key = keys[sort]
+            direction = (key.asc() if order == "asc" else key.desc()).nulls_last()
+
+            total = int(
+                await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+            )
+            # The address breaks ties, ascending whatever the direction, so
+            # paging a tied key never repeats or skips an airframe.
             page = (
                 await session.execute(
-                    ranked.order_by(counted.c.sightings.desc(), counted.c.aircraft_id)
-                    .limit(limit)
-                    .offset(offset)
+                    base.order_by(direction, Aircraft.icao24.asc()).limit(limit).offset(offset)
                 )
             ).all()
             if not page:
@@ -849,7 +873,13 @@ class AnalyticsQueries:
         )
 
     async def types_seen(
-        self, window: Window, *, limit: int, offset: int = 0
+        self,
+        window: Window,
+        *,
+        limit: int,
+        offset: int = 0,
+        sort: str = DEFAULT_SEEN_SORT,
+        order: str = "desc",
     ) -> tuple[tuple[TypeSeen, ...], int]:
         """Every distinct type designator heard in the window, busiest first.
 
@@ -859,6 +889,20 @@ class AnalyticsQueries:
         "every type this receiver has ever heard" costs a pass over the
         airframes rather than over every sighting, and depends on no rollup.
 
+        The grouped rows are ordered and paged here rather than in SQL. There
+        is one row per type — hundreds at most — the aggregate has to visit
+        every one of them whatever the page, and two of the sort keys are not
+        columns of the windowed aggregate at all: when the receiver *first
+        ever* heard the type, and the type's name in words.
+
+        Args:
+            sort: one of :data:`SEEN_TYPE_SORTS` (validated by the caller).
+                ``type`` orders by what a row leads with — the description,
+                else the designator — case-insensitively, as the aircraft
+                list's ``type`` does; a list headed by names and ordered by
+                the codes beneath them reads as unsorted.
+            order: ``"asc"`` or ``"desc"``.
+
         An airframe no registry gives a type belongs to no row here.
         """
         if window.empty or limit < 1:
@@ -866,11 +910,10 @@ class AnalyticsQueries:
         type_column = AircraftMetadataResolved.type_code
         async with self._database.read_session() as session:
             if window.whole_history:
-                sightings_sum = func.sum(Aircraft.sighting_count)
                 grouped = (
                     select(
                         type_column,
-                        sightings_sum.label("sightings"),
+                        func.sum(Aircraft.sighting_count).label("sightings"),
                         func.count().label("unique_aircraft"),
                         func.min(Aircraft.first_seen_ms).label("first_ms"),
                         func.max(Aircraft.last_seen_ms).label("last_ms"),
@@ -883,13 +926,11 @@ class AnalyticsQueries:
                     .where(type_column.is_not(None))
                     .group_by(type_column)
                 )
-                order = (sightings_sum.desc(), type_column)
             else:
-                sightings_count = func.count()
                 grouped = (
                     select(
                         type_column,
-                        sightings_count.label("sightings"),
+                        func.count().label("sightings"),
                         func.count(func.distinct(Sighting.aircraft_id)).label("unique_aircraft"),
                         func.min(Sighting.started_ms).label("first_ms"),
                         func.max(Sighting.started_ms).label("last_ms"),
@@ -903,20 +944,13 @@ class AnalyticsQueries:
                     .where(*self._range(window), type_column.is_not(None))
                     .group_by(type_column)
                 )
-                order = (sightings_count.desc(), type_column)
-            total = int(
-                await session.scalar(select(func.count()).select_from(grouped.subquery())) or 0
-            )
-            page = (
-                await session.execute(grouped.order_by(*order).limit(limit).offset(offset))
-            ).all()
-            if not page:
-                return (), total
-            codes = [str(row[0]) for row in page]
+            groups = (await session.execute(grouped)).all()
+            if not groups:
+                return (), 0
             lifetime_first: dict[str, int] = {}
             if not window.whole_history:
-                # When the receiver first heard each of the page's types, at
-                # all: what makes a type "new" in this window.
+                # When the receiver first heard each type, at all: what makes
+                # a type "new" in this window, and what "first seen" shows.
                 lifetime_first = {
                     str(code): int(first)
                     for code, first in (
@@ -927,14 +961,14 @@ class AnalyticsQueries:
                                 AircraftMetadataResolved,
                                 AircraftMetadataResolved.icao24 == Aircraft.icao24,
                             )
-                            .where(type_column.in_(codes))
+                            .where(type_column.in_([str(row[0]) for row in groups]))
                             .group_by(type_column)
                         )
                     ).all()
                 }
-        described = await self._type_descriptions(codes)
+
         seen: list[TypeSeen] = []
-        for row in page:
+        for row in groups:
             code = str(row[0])
             first_ms = min(lifetime_first.get(code, int(row.first_ms)), int(row.first_ms))
             seen.append(
@@ -945,10 +979,25 @@ class AnalyticsQueries:
                     first_seen_ms=first_ms,
                     last_seen_ms=int(row.last_ms),
                     new=window.start_ms <= first_ms < window.end_ms,
-                    description=described.get(code),
                 )
             )
-        return tuple(seen), total
+        # Stable sorts, least significant first: the designator breaks ties
+        # ascending whatever the direction, as the address does for aircraft.
+        seen.sort(key=lambda row: row.type_code)
+        if sort == "type":
+            # The one key that needs every row described before the page is
+            # cut, rather than only the rows of the page.
+            seen = await self._described(seen)
+        seen.sort(key=_SEEN_TYPE_KEYS[sort], reverse=order != "asc")
+        page = seen[offset : offset + limit]
+        if sort != "type":
+            page = await self._described(page)
+        return tuple(page), len(seen)
+
+    async def _described(self, rows: Sequence[TypeSeen]) -> list[TypeSeen]:
+        """``rows`` with each type's description filled in, order kept."""
+        described = await self._type_descriptions([row.type_code for row in rows])
+        return [replace(row, description=described.get(row.type_code)) for row in rows]
 
     # --------------------------------------------------------------- hourly
 
@@ -1412,9 +1461,12 @@ class AnalyticsQueries:
 __all__ = [
     "DEFAULT_RARE_MAX_SIGHTINGS",
     "DEFAULT_RARE_MAX_TYPE_AIRCRAFT",
+    "DEFAULT_SEEN_SORT",
     "DEFAULT_TOP_LIMIT",
     "MAX_TOP_LIMIT",
     "MILESTONE_EVENT_TYPES",
+    "SEEN_AIRCRAFT_SORTS",
+    "SEEN_TYPE_SORTS",
     "AircraftRank",
     "AnalyticsQueries",
     "ClassificationActivity",
