@@ -196,6 +196,7 @@ owner decision and are not scheduled.
 | 094 | Aircraft silhouette set and classification tint | 086, 093 | opus | medium | Twenty-one bespoke silhouettes chosen by designator, category or emitter category (§34), a military/government tint as a secondary cue (§36), and demo airframes that exercise every shape |
 | 095 | Analytics top rankings as tables | 094 | opus | low | The three "Top …" Analytics cards become ranked tables — tail, type in words, who flies it (operator, else labelled owner, else group) and the count — with `owner` added to the §3.7 airframe row; no migration |
 | 096 | Backend image base-package upgrade hotfix | 094 | opus | low | Hotfix: `apt-get upgrade` in the backend runtime stage to clear the fixed HIGH in the Debian base (libpcre2 CVE-2026-103111) failing the docker Trivy gate on every PR |
+| 097 | Analytics today view by hour, and rarity tables | 095 | opus | low | Over a one-day window the three day-granular time-series cards draw the day hour by hour (new `analytics/hourly` endpoint) instead of one invisible point; the Locally rare card adopts the Top aircraft table format; no migration |
 
 ## Parallelization Guide
 

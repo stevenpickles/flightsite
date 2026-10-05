@@ -2887,6 +2887,41 @@ slices:
     risk_level: low
     notes: "Surfaced by PR #263's docker job on 2026-10-04. Added by Fable outside the phase plan; same class as 092/093."
 
+  - id: "097"
+    title: "Analytics today view by hour, and rarity tables"
+    phase: 9
+    branch: "097-analytics-today-hourly"
+    status: in_progress
+    depends_on: ["095"]
+    objective: "Make the Analytics Today view draw something: over a one-day window the day-granular time series had a single point and hid its marker, so three cards were blank until hovered. Draw that day hour by hour instead, and give the Locally rare card the Top aircraft table format (§58)."
+    scope:
+      - "backend: `GET /api/v1/analytics/hourly?day=` — UTC-hour buckets of one receiver-local day with sightings started, aircraft heard, messages, positions and max range; future hours null; no migration"
+      - "backend: `description` on rarity `rare_types` rows, derived as top-types derives it"
+      - "frontend: DailyCountsCard, MaxDistanceCard and ReceiverActivityCard take the hourly breakdown when the window is one day (bars for counts, lines for range and receiver activity); line markers shown on any series of 31 points or fewer"
+      - "frontend: RarityListsCard on RankingTable — rare aircraft with the shared Aircraft/Type/Operator/Sightings columns, rare types leading with the long-form name"
+      - "polish in the same cards: the Sightings column is wide enough for its own heading; y-axis names no longer clipped or under the legend"
+      - "dev server: `ws: true` on the `/api` proxy so `npm run dev` / `vite preview` forward the live socket (first half of issue #267)"
+    out_of_scope:
+      - "hourly views for multi-day windows"
+      - "the classification and never-seen-before cards' own single-day presentation (both are bars and already visible)"
+      - "the StrictMode one-time-recentre quirk (second half of #267)"
+    acceptance_criteria:
+      - "on the Today preset the three time-series cards show marks without hovering, on an hour axis covering the whole day"
+      - "an hour that has not begun is empty, a begun hour with no traffic is zero, and an hour with no receiver metrics row is a gap"
+      - "a DST day returns 23 or 25 buckets; a half-hour zone attributes each bucket to the day it begins in"
+      - "the Locally rare tables present aircraft and types exactly as the Top cards do"
+      - "frontend lint/typecheck/test, backend ruff/mypy/pytest, visual suite green on retaken analytics baselines"
+    required_tests: [hourly query incl. DST and half-hour zone, hourly API, card hourly modes and line markers, rarity table, AnalyticsPage single-day vs multi-day, visual baselines]
+    expected_artifacts:
+      - backend/src/flightsite/analytics/queries.py
+      - backend/tests/analytics/test_hourly.py
+      - frontend/src/features/analytics/lib/series.ts
+      - frontend/src/features/analytics/components/cards/
+      - docs/API.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner feedback from the 2026-10-05 visual review of slices 094-095; ships in v0.13.0."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
