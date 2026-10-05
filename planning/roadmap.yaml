@@ -159,6 +159,13 @@ releases:
       designator, category or emitter category, a military/government tint as a
       secondary cue, and demo airframes that exercise every shape (slice 094; no
       migration). Recorded 2026-10-02."
+  - version: "v0.13.0"
+    after_phase: 9
+    theme: "Analytics and Sightings, reworked from the owner's review: the Top and
+      Locally rare cards as ranked tables with type names and operators, a Today
+      view drawn hour by hour, the Sightings page by time window and grouped by
+      sighting, aircraft or type with sortable headers, and the scrolling fixes
+      (slices 095-100; no migration). Recorded 2026-10-05."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
