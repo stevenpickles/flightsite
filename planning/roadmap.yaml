@@ -2891,14 +2891,15 @@ slices:
     title: "Analytics today view by hour, and rarity tables"
     phase: 9
     branch: "097-analytics-today-hourly"
-    status: in_progress
+    status: merged
     depends_on: ["095"]
     objective: "Make the Analytics Today view draw something: over a one-day window the day-granular time series had a single point and hid its marker, so three cards were blank until hovered. Draw that day hour by hour instead, and give the Locally rare card the Top aircraft table format (§58)."
     scope:
       - "backend: `GET /api/v1/analytics/hourly?day=` — UTC-hour buckets of one receiver-local day with sightings started, aircraft heard, messages, positions and max range; future hours null; no migration"
       - "backend: `description` on rarity `rare_types` rows, derived as top-types derives it"
       - "frontend: DailyCountsCard, MaxDistanceCard and ReceiverActivityCard take the hourly breakdown when the window is one day (bars for counts, lines for range and receiver activity); line markers shown on any series of 31 points or fewer"
-      - "frontend: RarityListsCard on RankingTable — rare aircraft with the shared Aircraft/Type/Operator/Sightings columns, rare types leading with the long-form name"
+      - "frontend: RarityListsCard on RankingTable — rare aircraft with the shared Aircraft/Type/Operator/Sightings columns, rare types leading with the long-form name; the card spans the grid's full width with the two tables side by side, so its height no longer stretches the row beside it"
+      - "visual suite: fixtures re-recorded (the recorded Since-T0 window is one day, so the page needs `analytics/hourly`, which the old recording lacked) and every baseline retaken; analytics viewport 1700 -> 2150"
       - "polish in the same cards: the Sightings column is wide enough for its own heading; y-axis names no longer clipped or under the legend"
       - "dev server: `ws: true` on the `/api` proxy so `npm run dev` / `vite preview` forward the live socket (first half of issue #267)"
     out_of_scope:
