@@ -12,6 +12,7 @@ from flightsite.feeders.docker import (
     DockerClient,
     DockerHealthProbe,
     LogDemuxer,
+    LogLine,
     demux,
     parse_docker_time,
     split_timestamp,
@@ -78,6 +79,23 @@ class Recorder:
 
 def client(recorder: Recorder) -> DockerClient:
     return DockerClient("/var/run/docker.sock", transport=httpx.MockTransport(recorder))
+
+
+async def test_logs_observer_sees_every_line_before_the_filter() -> None:
+    """A caller can learn that the container is logging at all, not only
+    whether anything it cares about was logged (slice 101)."""
+    lines = [f"2026-09-21T14:0{index}:00.000000000Z line {index}" for index in range(4)]
+    recorder = Recorder({"/logs": httpx.Response(200, content=framed_log(lines))})
+    docker = client(recorder)
+    seen: list[LogLine] = []
+
+    kept = await docker.logs(
+        "ultrafeeder", tail=10, match=lambda text: text == "line 2", observe=seen.append
+    )
+
+    assert kept is not None and [line.text for line in kept] == ["line 2"]
+    assert [line.text for line in seen] == ["line 0", "line 1", "line 2", "line 3"]
+    assert seen[-1].ts_ms == parse_docker_time("2026-09-21T14:03:00.000000000Z")
 
 
 async def test_logs_are_requested_read_only_with_timestamps_and_filtered() -> None:
