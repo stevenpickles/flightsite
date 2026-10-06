@@ -72,7 +72,9 @@ export interface FeederMlatStatus {
 /** `ultrafeeder`'s BeastReduce ADS-B-out connection state, from container
  * logs — only present with the Docker socket configured. */
 export interface FeederAdsbOutStatus {
-  connected: boolean;
+  /** `null` when no transition has been seen, or the container's log has
+   * gone silent and the last one no longer counts (slice 101). */
+  connected: boolean | null;
   since: string | null;
 }
 

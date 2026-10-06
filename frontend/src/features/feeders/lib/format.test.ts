@@ -91,6 +91,9 @@ describe("formatAdsbOutChip", () => {
     expect(formatAdsbOutChip({ connected: true, since: null })).toBe(
       "ADS-B out: connected",
     );
+    expect(formatAdsbOutChip({ connected: null, since: null })).toBe(
+      "ADS-B out: not observed",
+    );
     expect(formatAdsbOutChip({ connected: false, since: null })).toBe(
       "ADS-B out: disconnected",
     );
