@@ -3034,6 +3034,27 @@ slices:
     risk_level: low
     notes: "Owner feedback of 2026-10-05 on the review stack: 'The Analytics page now has two vertical scrollbars. It should just have one. The Sightings page should have the option to sort by the headers in ascending or descending order.' Stacked on 099; ships in v0.13.0."
 
+  - id: "102"
+    title: "Frontend audit: source-map-js GHSA-68fv-2mgg-jv7q"
+    phase: 9
+    branch: "102-frontend-audit-source-map-js"
+    status: merged
+    depends_on: []
+    objective: "Clear the high advisory GHSA-68fv-2mgg-jv7q (event-loop denial of service in source-map-js, published 2026-10-06) that fails the frontend audit on every PR; a transitive dev dependency of Tailwind's Vite plugin and the coverage tooling, not shipped to the browser."
+    scope:
+      - "frontend lockfile: source-map-js 1.2.1 -> 1.2.2 via npm audit fix; nothing else moves"
+    out_of_scope:
+      - "any other dependency update (the open Dependabot PRs stay as they are)"
+    acceptance_criteria:
+      - "npm audit --audit-level=high reports nothing; build, typecheck and tests unchanged"
+      - "security/audit green"
+    required_tests: [existing frontend suite]
+    expected_artifacts:
+      - frontend/package-lock.json
+    preferred_agent: opus
+    risk_level: low
+    notes: "Hotfix in the slice 096 pattern: an advisory published after v0.13.0 shipped, blocking slice 101's PR (#277). Numbered after 101, which was branched first."
+
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,
 # 027, 031, 033, 035, 037, 038, 052) are ADDITIONALLY serialized against each other
