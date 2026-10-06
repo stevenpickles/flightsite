@@ -305,12 +305,15 @@ class DockerClient:
         since_s: int | None = None,
         tail: int = 500,
         match: Callable[[str], bool] | None = None,
+        observe: Callable[[LogLine], None] | None = None,
     ) -> list[LogLine] | None:
         """Recent log lines of ``name``, oldest first; ``None`` if it cannot be read.
 
         ``match`` filters lines as they stream in, so a large ``tail`` costs
         the bytes on the wire but not the memory of keeping them. At most
-        ``tail`` matching lines are returned — the newest ones.
+        ``tail`` matching lines are returned — the newest ones. ``observe``
+        sees every line before the filter, matched or not: how a caller
+        learns that the container is logging at all (slice 101).
         """
         params: dict[str, str | int] = {
             "stdout": 1,
@@ -327,6 +330,8 @@ class DockerClient:
         def keep(lines: list[str]) -> None:
             for raw in lines:
                 line = split_timestamp(raw)
+                if observe is not None:
+                    observe(line)
                 if match is None or match(line.text):
                     kept.append(line)
 

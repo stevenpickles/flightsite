@@ -166,6 +166,11 @@ releases:
       view drawn hour by hour, the Sightings page by time window and grouped by
       sighting, aircraft or type with sortable headers, and the scrolling fixes
       (slices 095-100; no migration). Recorded 2026-10-05."
+  - version: "v0.13.1"
+    after_phase: 9
+    theme: "Patch: false feeder outages from a silent ultrafeeder log (#276), the
+      ADS-B-out chip wording, and the source-map-js advisory (slices 101-102; no
+      migration). Recorded 2026-10-06."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."
@@ -3033,6 +3038,59 @@ slices:
     preferred_agent: opus
     risk_level: low
     notes: "Owner feedback of 2026-10-05 on the review stack: 'The Analytics page now has two vertical scrollbars. It should just have one. The Sightings page should have the option to sort by the headers in ascending or descending order.' Stacked on 099; ships in v0.13.0."
+
+  - id: "101"
+    title: "Feeders: a silent ultrafeeder log is not evidence"
+    phase: 9
+    branch: "101-feeders-silent-log"
+    status: merged
+    depends_on: ["077"]
+    objective: "Stop the ultrafeeder probe declaring ADS-B Exchange and AeroDataBox offline on the strength of a container log that logs nothing (issue #276): a transition line is evidence only while the log is alive, and the lines the probe acts on are recorded so the next false outage can be explained."
+    scope:
+      - "backend: DockerClient.logs observes every line it demuxes, not only the matched ones; the ultrafeeder probe tracks the newest line of any kind and, when the container has logged nothing for an hour, reports ADS-B out as not observed (connected null, a message naming the cause) and judges the feeder on MLAT; a fresh transition is honoured as soon as it appears"
+      - "backend: every Beast transition line the probe acts on is logged with the feeder, its timestamp and text, and whether the read was the first or incremental"
+      - "frontend: the ADS-B out chip reads 'not observed' for a null connected, instead of 'disconnected'"
+      - "docs: API.md and ADR-0017 record the rule"
+    out_of_scope:
+      - "correcting the false episodes already recorded on the owner's receiver"
+      - "a replacement source for ADS-B out (readsb's status document carries no connector state)"
+      - "establishing where the false disconnect lines came from — this slice records the evidence for the next occurrence"
+    acceptance_criteria:
+      - "an ultrafeeder whose log is silent reads up on healthy MLAT with ADS-B out not observed, whatever the last transition line said"
+      - "a transition line newer than the silence threshold is honoured in both directions; a live log keeps a disconnect verdict"
+      - "every acted-on transition appears in the backend log with its timestamp and text"
+      - "backend ruff/mypy/pytest, frontend lint/typecheck/test green"
+    required_tests: [silent log after established and after disconnected, fresh transition on a silent log, live log keeps the verdict, observer sees unmatched lines, chip wording]
+    expected_artifacts:
+      - backend/src/flightsite/feeders/ultrafeeder.py
+      - backend/src/flightsite/feeders/docker.py
+      - backend/tests/feeders/test_vendors.py
+      - frontend/src/features/feeders/lib/format.ts
+      - docs/API.md
+      - docs/adr/0017-feeder-status-sources.md
+    preferred_agent: opus
+    risk_level: low
+    notes: "Owner report of 2026-10-06 (issue #276): two feeders shown offline for hours while both were feeding. Both false outages ended only at a backend restart."
+  - id: "102"
+    title: "Frontend audit: source-map-js GHSA-68fv-2mgg-jv7q"
+    phase: 9
+    branch: "102-frontend-audit-source-map-js"
+    status: merged
+    depends_on: []
+    objective: "Clear the high advisory GHSA-68fv-2mgg-jv7q (event-loop denial of service in source-map-js, published 2026-10-06) that fails the frontend audit on every PR; a transitive dev dependency of Tailwind's Vite plugin and the coverage tooling, not shipped to the browser."
+    scope:
+      - "frontend lockfile: source-map-js 1.2.1 -> 1.2.2 via npm audit fix; nothing else moves"
+    out_of_scope:
+      - "any other dependency update (the open Dependabot PRs stay as they are)"
+    acceptance_criteria:
+      - "npm audit --audit-level=high reports nothing; build, typecheck and tests unchanged"
+      - "security/audit green"
+    required_tests: [existing frontend suite]
+    expected_artifacts:
+      - frontend/package-lock.json
+    preferred_agent: opus
+    risk_level: low
+    notes: "Hotfix in the slice 096 pattern: an advisory published after v0.13.0 shipped, blocking slice 101's PR (#277). Numbered after 101, which was branched first."
 
 # Parallelization guide (dependency-derived; Fable owns merge order). Slices adding
 # Alembic migrations or extending the slice-009 persistence worker (021, 024, 026,

@@ -47,6 +47,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.11.0 | 9 | The usability and observatory expansion program shipped as one release: units on every surface, ten sidebar sections (SPEC §10 amended), keyboard shortcuts, share links and QR hand-off, list search, a phone Live Map and installable shell, map display controls; decoder emitter category, selected altitude and emergency state, receiver self-alerts, 'What was that?', coverage against the radio horizon, richer alert conditions (slices 080–093; migrations 0018–0020; the planned v0.11.0/v0.12.0 split was not used; recorded 2026-10-01) |
 | v0.12.0 | 9 | Aircraft silhouettes: twenty-one bespoke live-map icons chosen by type designator, category or emitter category, a military/government tint as a secondary cue, and demo airframes that exercise every shape (slice 094; no migration; recorded 2026-10-02) |
 | v0.13.0 | 9 | Analytics and Sightings, reworked from the owner's review: the Top and Locally rare cards as ranked tables with type names and operators, a Today view drawn hour by hour, the Sightings page by time window and grouped by sighting, aircraft or type with sortable headers, and the scrolling fixes (slices 095–100; no migration; recorded 2026-10-05) |
+| v0.13.1 | 9 | Patch: false feeder outages from a silent ultrafeeder log (#276), the ADS-B-out chip wording, and the source-map-js advisory (slices 101–102; no migration; recorded 2026-10-06) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices
@@ -202,6 +203,8 @@ owner decision and are not scheduled.
 | 098 | Sightings by window and grouping | 097 | opus | medium | The Sightings page takes the Analytics presets (Today by default), heads the window with live counts, and groups it three ways — the log, the distinct aircraft, the distinct types — so Since T0 lists every airframe or type ever heard; three analytics endpoints, no migration |
 | 099 | Analytics today view: classification and never-seen-before by hour | 097, 098 | opus | low | The two bar cards slice 097 left as one bar per day — military/government/police activity and never seen before — are drawn hour by hour on a one-day window, on the same axis as the other three; four new fields on `analytics/hourly`, no migration |
 | 100 | Sortable Sightings headers and a single page scrollbar | 098, 099 | opus | low | Every column of the Sightings page's three lists sorts its list both ways (`sort`/`order` on `analytics/aircraft` and `analytics/types`, seven more keys on `/sightings`), and `<main>` is again the only page scrollbar; no migration |
+| 101 | Feeders: a silent ultrafeeder log is not evidence | 077 | opus | low | The ultrafeeder probe stops treating a months-old transition line in a log that logs nothing as the state of ADS-B out (#276): a silent log reads 'not observed' and the feeder is judged on MLAT; every transition acted on is logged |
+| 102 | Frontend audit: source-map-js GHSA-68fv-2mgg-jv7q | — | opus | low | Lockfile bump of a transitive dev dependency (source-map-js 1.2.1 → 1.2.2) for a high advisory published 2026-10-06 that failed the audit on every PR |
 
 ## Parallelization Guide
 
