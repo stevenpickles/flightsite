@@ -3038,7 +3038,7 @@ slices:
     title: "Feeders: a silent ultrafeeder log is not evidence"
     phase: 9
     branch: "101-feeders-silent-log"
-    status: in_progress
+    status: merged
     depends_on: ["077"]
     objective: "Stop the ultrafeeder probe declaring ADS-B Exchange and AeroDataBox offline on the strength of a container log that logs nothing (issue #276): a transition line is evidence only while the log is alive, and the lines the probe acts on are recorded so the next false outage can be explained."
     scope:
