@@ -202,6 +202,7 @@ owner decision and are not scheduled.
 | 098 | Sightings by window and grouping | 097 | opus | medium | The Sightings page takes the Analytics presets (Today by default), heads the window with live counts, and groups it three ways — the log, the distinct aircraft, the distinct types — so Since T0 lists every airframe or type ever heard; three analytics endpoints, no migration |
 | 099 | Analytics today view: classification and never-seen-before by hour | 097, 098 | opus | low | The two bar cards slice 097 left as one bar per day — military/government/police activity and never seen before — are drawn hour by hour on a one-day window, on the same axis as the other three; four new fields on `analytics/hourly`, no migration |
 | 100 | Sortable Sightings headers and a single page scrollbar | 098, 099 | opus | low | Every column of the Sightings page's three lists sorts its list both ways (`sort`/`order` on `analytics/aircraft` and `analytics/types`, seven more keys on `/sightings`), and `<main>` is again the only page scrollbar; no migration |
+| 101 | Feeders: a silent ultrafeeder log is not evidence | 077 | opus | low | The ultrafeeder probe stops treating a months-old transition line in a log that logs nothing as the state of ADS-B out (#276): a silent log reads 'not observed' and the feeder is judged on MLAT; every transition acted on is logged |
 
 ## Parallelization Guide
 
