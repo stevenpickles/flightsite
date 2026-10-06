@@ -109,6 +109,17 @@ coordinates) that must never leave the backend.
   (`flightsite.config.secret_field_paths`) now discovers `dict[str, SecretStr]` fields,
   so masking, `secrets.yaml` write-back, the mask-means-unchanged rule and diagnostics
   redaction cover every stats URL without a parallel list.
+- **A log that logs nothing is not a source** (amended 2026-10-06, slice 101, issue
+  #276). The ultrafeeder ADS-B-out signal is a *transition* — the last "established" or
+  "disconnected" line — and a transition is the state only while the container keeps
+  logging: readsb reconnects within seconds, and with ultrafeeder's `LOGLEVEL=error` or
+  readsb's `--quiet` the reconnection is never logged. The owner's receiver showed two
+  feeds offline for hours on the strength of a log that had been silent for a month. So
+  the probe also watches the newest line of *any* kind; after an hour without one the
+  last transition is withheld either way (`adsb_out.connected: null`, a message naming
+  the silence), the feeder is judged on MLAT, and a newer transition is honoured as
+  soon as it appears. Every transition acted on is written to the backend log with its
+  timestamp and text, so a false outage can be explained after the fact.
 - **Vendor formats will drift.** Each parser is isolated in its own module and tested
   against captured fixtures; a document that stops parsing is a failed poll
   (`feeder_poll_failures`, the `feeders` recent-error category), then `down` after the

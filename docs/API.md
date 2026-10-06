@@ -1308,6 +1308,11 @@ feeders configured answers `200` with an empty `feeders` list, never `404`.
   document), `docker` (container logs or health through the opt-in socket), or `none`.
 - **`mlat`** and **`adsb_out`** are `null` for kinds that do not have them, and
   `adsb_out` is `null` for `ultrafeeder` entries whenever the Docker socket is unset.
+  `adsb_out.connected` is `null` when the socket is set but the state cannot be read:
+  no transition line in the container's log, or a log that has gone silent for an hour
+  (slice 101 — a months-old "disconnected" or "established" line is not the state when
+  ultrafeeder's `LOGLEVEL` stops it logging the next one). The feeder is then judged
+  on MLAT and `message` says so; `since` keeps the last transition's time.
   An MLAT client with zero peers reads `degraded` only after three consecutive polls,
   and never `down`. `mlat.good_sync_pct` is a percentage, 0–100, over the client's
   last hour.

@@ -119,5 +119,10 @@ export function formatAdsbOutChip(
   if (adsbOut === null) {
     return null;
   }
+  if (adsbOut.connected === null) {
+    // Seen through the socket but not observable: no transition line, or a
+    // container that has stopped logging them (slice 101, issue #276).
+    return "ADS-B out: not observed";
+  }
   return adsbOut.connected ? "ADS-B out: connected" : "ADS-B out: disconnected";
 }

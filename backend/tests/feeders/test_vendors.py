@@ -12,7 +12,9 @@ import copy
 from typing import Any
 
 import httpx
+import pytest
 
+from flightsite.feeders import ultrafeeder as ultrafeeder_module
 from flightsite.feeders.docker import DockerClient, LogLine, split_timestamp
 from flightsite.feeders.fr24 import Fr24Probe, parse_monitor
 from flightsite.feeders.model import FeederState, Observability
@@ -25,6 +27,7 @@ from flightsite.feeders.opensky import (
 from flightsite.feeders.piaware import PiawareProbe, parse_status
 from flightsite.feeders.readsb import ReadsbProbe
 from flightsite.feeders.ultrafeeder import (
+    LOG_SILENT_AFTER_MS,
     ZERO_PEER_TOLERANCE,
     UltrafeederProbe,
     mlat_stats_path,
@@ -422,6 +425,187 @@ async def test_adsb_out_connected_with_mlat_unwell_is_degraded() -> None:
 
     assert result.state is FeederState.DEGRADED
     assert result.adsb_out is not None and result.adsb_out.connected is True
+
+
+def docker_with_reads(reads: list[list[str]]) -> DockerClient:
+    """A socket whose successive log reads answer with successive line sets."""
+    answers = iter(reads)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/logs"):
+            return httpx.Response(200, content=framed_log(next(answers, [])))
+        return httpx.Response(200, text="OK")
+
+    return DockerClient("/var/run/docker.sock", transport=httpx.MockTransport(handle))
+
+
+def stamped(offset_s: int, text: str) -> str:
+    """A log line Docker stamped ``offset_s`` seconds after the fixture's now."""
+    from datetime import UTC, datetime
+
+    moment = datetime.fromtimestamp(FIXTURE_NOW_S + offset_s, UTC)
+    return f"{moment.strftime('%Y-%m-%dT%H:%M:%S')}.000000000Z {text}"
+
+
+ESTABLISHED = "[readsb] BeastReduce TCP output: Connection established: {host} (1.2.3.4) port 30004"
+DISCONNECTED = (
+    "[readsb] BeastReduce TCP output: Remote server disconnected: {host} (1.2.3.4) port 30004"
+)
+#: Old enough that nothing logged since counts as silence.
+AGES_AGO_S = -30 * 24 * 3600
+
+
+class RecordingLogger:
+    """Stands in for the module logger: the real one may be a cached bound
+    logger ``capture_logs`` cannot intercept once the app has been built."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def _record(self, event: str, **fields: Any) -> None:
+        self.events.append((event, fields))
+
+    debug = info = warning = error = _record
+
+
+@pytest.fixture
+def transition_log(monkeypatch: pytest.MonkeyPatch) -> RecordingLogger:
+    recorder = RecordingLogger()
+    monkeypatch.setattr(ultrafeeder_module, "logger", recorder)
+    return recorder
+
+
+async def test_a_silent_log_withholds_a_stale_disconnect_and_judges_on_mlat(
+    transition_log: RecordingLogger,
+) -> None:
+    """The owner's case (issue #276): the container has logged nothing for a
+    month, its last word on the Beast output is a disconnect, and the feed
+    is in fact up. The disconnect is not evidence of anything any more."""
+    docker = docker_with_reads(
+        [
+            [
+                stamped(AGES_AGO_S, ESTABLISHED.format(host=ADB)),
+                stamped(AGES_AGO_S + 60, DISCONNECTED.format(host=ADB)),
+            ]
+        ]
+    )
+    probe = ultrafeeder(ADB, {"/" + mlat_stats_path(ADB, 31090): mlat_doc()}, docker)
+
+    result = await probe.probe(FIXTURE_NOW_MS)
+
+    assert result.state is FeederState.UP
+    assert result.observability is Observability.DOCKER
+    assert result.adsb_out is not None
+    assert result.adsb_out.connected is None
+    assert result.last_data_sent_ms is None
+    assert result.message is not None
+    assert "logged nothing" in result.message
+    assert "ultrafeeder" in result.message
+    assert "LOGLEVEL" in result.message
+
+
+async def test_a_silent_log_withholds_a_stale_established_line_too() -> None:
+    """Symmetry: a months-old "established" is no more the state than a
+    months-old disconnect. The feeder is judged on MLAT either way."""
+    docker = docker_with_reads([[stamped(AGES_AGO_S, ESTABLISHED.format(host=ADSBX))]])
+    probe = ultrafeeder(ADSBX, {"/" + mlat_stats_path(ADSBX, 31090): mlat_doc()}, docker)
+
+    result = await probe.probe(FIXTURE_NOW_MS)
+
+    assert result.state is FeederState.UP
+    assert result.adsb_out is not None and result.adsb_out.connected is None
+    assert result.metrics["adsb_out_connected"] is None
+    # With MLAT unwell as well, nothing says the feed is up.
+    silent = docker_with_reads([[stamped(AGES_AGO_S, ESTABLISHED.format(host=ADSBX))]])
+    unwell = ultrafeeder(ADSBX, {}, silent)
+    assert (await unwell.probe(FIXTURE_NOW_MS)).state is FeederState.DOWN
+
+
+async def test_a_fresh_transition_is_honoured_whatever_the_log_did_before() -> None:
+    """A disconnect logged a moment ago is evidence; one logged a month ago
+    is not. The same probe, two reads."""
+    docker = docker_with_reads(
+        [
+            [stamped(AGES_AGO_S, ESTABLISHED.format(host=ADB))],
+            [stamped(-10, DISCONNECTED.format(host=ADB))],
+            [],
+        ]
+    )
+    # MLAT stays healthy throughout: its document is as fresh as each poll.
+    clock = {"now_s": FIXTURE_NOW_S}
+    documents = {
+        "/" + mlat_stats_path(ADB, 31090): lambda request: httpx.Response(
+            200, json=mlat_doc(now=clock["now_s"])
+        )
+    }
+    probe = ultrafeeder(ADB, documents, docker)
+
+    first = await probe.probe(FIXTURE_NOW_MS)
+    clock["now_s"] += 15
+    second = await probe.probe(FIXTURE_NOW_MS + 15_000)
+    clock["now_s"] += LOG_SILENT_AFTER_MS // 1000 + 60
+    much_later = await probe.probe(FIXTURE_NOW_MS + 15_000 + LOG_SILENT_AFTER_MS + 60_000)
+
+    assert first.state is FeederState.UP
+    assert first.adsb_out is not None and first.adsb_out.connected is None
+    assert second.state is FeederState.DOWN
+    assert second.adsb_out is not None and second.adsb_out.connected is False
+    assert second.message == "ADS-B output disconnected"
+    # ...and once the container falls silent again, so does the verdict.
+    assert much_later.state is FeederState.UP
+    assert much_later.adsb_out is not None and much_later.adsb_out.connected is None
+
+
+async def test_a_logging_container_keeps_its_disconnect_verdict() -> None:
+    """Chatter of any kind keeps the log alive: readsb retrying a dead
+    connection logs the retries, and the mlat-client logs its statistics."""
+    docker = docker_with_reads(
+        [
+            [stamped(-3 * 3600, DISCONNECTED.format(host=ADB))],
+            [stamped(-30, f"[mlat-client][{ADB}] peer_count: 1")],
+        ]
+    )
+    probe = ultrafeeder(ADB, {"/" + mlat_stats_path(ADB, 31090): mlat_doc()}, docker)
+
+    first = await probe.probe(FIXTURE_NOW_MS)
+    second = await probe.probe(FIXTURE_NOW_MS + 15_000)
+
+    # Three hours old with nothing since: withheld...
+    assert first.state is FeederState.UP
+    assert first.adsb_out is not None and first.adsb_out.connected is None
+    # ...but an unrelated line a moment ago shows the container is talking,
+    # so its last word on the Beast output stands.
+    assert second.state is FeederState.DOWN
+    assert second.adsb_out is not None and second.adsb_out.connected is False
+
+
+async def test_every_transition_acted_on_is_logged_with_its_evidence(
+    transition_log: RecordingLogger,
+) -> None:
+    docker = docker_with_reads(
+        [
+            [stamped(-120, ESTABLISHED.format(host=ADSBX))],
+            [],
+            [stamped(-5, DISCONNECTED.format(host=ADSBX))],
+        ]
+    )
+    probe = ultrafeeder(ADSBX, {"/" + mlat_stats_path(ADSBX, 31090): mlat_doc()}, docker)
+
+    await probe.probe(FIXTURE_NOW_MS)
+    await probe.probe(FIXTURE_NOW_MS + 15_000)
+    await probe.probe(FIXTURE_NOW_MS + 30_000)
+
+    events = [
+        fields for event, fields in transition_log.events if event == "feeder_adsb_out_transition"
+    ]
+    assert [e["read"] for e in events] == ["first", "incremental"]
+    assert [e["connected"] for e in events] == [True, False]
+    assert all(e["feeder"] == "adsbexchange" and e["container"] == "ultrafeeder" for e in events)
+    assert events[0]["line_ts_ms"] == FIXTURE_NOW_MS - 120_000
+    assert events[1]["line_ts_ms"] == FIXTURE_NOW_MS - 5_000
+    assert "Remote server disconnected" in events[1]["line"]
+    assert events[1]["applied"] is True
+    assert events[1]["matched"] == 1
 
 
 async def test_unreachable_socket_falls_back_to_mlat_and_says_so() -> None:
