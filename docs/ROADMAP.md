@@ -203,6 +203,7 @@ owner decision and are not scheduled.
 | 099 | Analytics today view: classification and never-seen-before by hour | 097, 098 | opus | low | The two bar cards slice 097 left as one bar per day — military/government/police activity and never seen before — are drawn hour by hour on a one-day window, on the same axis as the other three; four new fields on `analytics/hourly`, no migration |
 | 100 | Sortable Sightings headers and a single page scrollbar | 098, 099 | opus | low | Every column of the Sightings page's three lists sorts its list both ways (`sort`/`order` on `analytics/aircraft` and `analytics/types`, seven more keys on `/sightings`), and `<main>` is again the only page scrollbar; no migration |
 | 101 | Feeders: a silent ultrafeeder log is not evidence | 077 | opus | low | The ultrafeeder probe stops treating a months-old transition line in a log that logs nothing as the state of ADS-B out (#276): a silent log reads 'not observed' and the feeder is judged on MLAT; every transition acted on is logged |
+| 102 | Frontend audit: source-map-js GHSA-68fv-2mgg-jv7q | — | opus | low | Lockfile bump of a transitive dev dependency (source-map-js 1.2.1 → 1.2.2) for a high advisory published 2026-10-06 that failed the audit on every PR |
 
 ## Parallelization Guide
 
