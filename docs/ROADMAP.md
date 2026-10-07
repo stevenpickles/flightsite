@@ -47,6 +47,7 @@ Releases are prepared on `release/vX.Y.Z` branches from qualified `dev`; the mer
 | v0.11.0 | 9 | The usability and observatory expansion program shipped as one release: units on every surface, ten sidebar sections (SPEC §10 amended), keyboard shortcuts, share links and QR hand-off, list search, a phone Live Map and installable shell, map display controls; decoder emitter category, selected altitude and emergency state, receiver self-alerts, 'What was that?', coverage against the radio horizon, richer alert conditions (slices 080–093; migrations 0018–0020; the planned v0.11.0/v0.12.0 split was not used; recorded 2026-10-01) |
 | v0.12.0 | 9 | Aircraft silhouettes: twenty-one bespoke live-map icons chosen by type designator, category or emitter category, a military/government tint as a secondary cue, and demo airframes that exercise every shape (slice 094; no migration; recorded 2026-10-02) |
 | v0.13.0 | 9 | Analytics and Sightings, reworked from the owner's review: the Top and Locally rare cards as ranked tables with type names and operators, a Today view drawn hour by hour, the Sightings page by time window and grouped by sighting, aircraft or type with sortable headers, and the scrolling fixes (slices 095–100; no migration; recorded 2026-10-05) |
+| v0.13.1 | 9 | Patch: false feeder outages from a silent ultrafeeder log (#276), the ADS-B-out chip wording, and the source-map-js advisory (slices 101–102; no migration; recorded 2026-10-06) |
 | v1.0.0 | 8 | Qualified stable release per SPEC §114 definition of done |
 
 ## Slices

@@ -166,6 +166,11 @@ releases:
       view drawn hour by hour, the Sightings page by time window and grouped by
       sighting, aircraft or type with sortable headers, and the scrolling fixes
       (slices 095-100; no migration). Recorded 2026-10-05."
+  - version: "v0.13.1"
+    after_phase: 9
+    theme: "Patch: false feeder outages from a silent ultrafeeder log (#276), the
+      ADS-B-out chip wording, and the source-map-js advisory (slices 101-102; no
+      migration). Recorded 2026-10-06."
   - version: "v1.0.0"
     after_phase: 8
     theme: "Qualified stable release per SPEC.md §114 definition of done."

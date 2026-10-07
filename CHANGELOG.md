@@ -5,6 +5,42 @@ follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/) (`0.x.y` during pre-1.0 development).
 This file is updated only on release branches (see `docs/RELEASE.md`).
 
+## [0.13.1] — 2026-10-06
+
+A patch for the Feeders page: ADS-B Exchange and AeroDataBox could be shown offline for
+hours while both were feeding. No schema change.
+
+### Fixed
+- **False feeder outages.** The ADS-B-out state of an ultrafeeder connector is read from
+  the container's log — the latest "Connection established" or "disconnected" line.
+  Such a line is only the state while the container keeps logging; readsb reconnects
+  within seconds, and with ultrafeeder's `LOGLEVEL=error` (or readsb's `--quiet`) the
+  reconnection is never logged, so a disconnect could stand until the next restart. The
+  probe now also watches the newest line of *any* kind: after an hour without one the
+  last transition is withheld either way, the feeder is judged on MLAT, and the card
+  says "ADS-B out: not observed" with a message naming the silence. A newer transition
+  is honoured as soon as it appears, and every transition the probe acts on is written
+  to the backend log with its timestamp and text (#276)
+- The ADS-B-out chip read an unknown state as "disconnected"; it now reads "not observed"
+
+### Security
+- `source-map-js` 1.2.1 → 1.2.2 in the frontend lockfile for GHSA-68fv-2mgg-jv7q (high;
+  a transitive development dependency of the build tooling, never shipped to the browser)
+
+### Upgrade notes
+- No migration and no configuration change: `docker compose pull && docker compose up -d`.
+- On a receiver whose ultrafeeder runs with `LOGLEVEL=error`, the two connector feeders
+  will show "ADS-B out: not observed" and be judged on MLAT. Restoring ultrafeeder's
+  default log level makes the ADS-B-out signal observable again; it is not required.
+- The false outage episodes already recorded, and the availability figures they distort,
+  are not rewritten.
+
+### Known issues
+- Where the disconnect lines behind the false outages came from is not established; this
+  release records the evidence for the next occurrence (#276, closed with the fix)
+- Carried over: #272, #260 (two more hits on 2026-10-06), #267 (remainder), #255, #241,
+  #244, #153 (deferred), #209–#212
+
 ## [0.13.0] — 2026-10-05
 
 A round of interface work on the Analytics and Sightings pages: rankings you can read,
